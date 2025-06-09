@@ -1,7 +1,8 @@
 [package]
-name = "http-server"
+name = "alumina-firmware"
 version = "0.1.0"
 authors = [
+    "Timothy Schmidt <timschmidt@gmail.com>",
     "Anatol Ulrich <anatol.ulrich@ferrous-systems.com>",
     "Sergio Gasquez <sergio.gasquez@gmail.com>",
 ]

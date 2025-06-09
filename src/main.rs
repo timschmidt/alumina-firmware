@@ -277,31 +277,31 @@ fn main() -> Result<()> {
     // 2. Write a handler that returns the index page
     server.fn_handler("/", Method::Get, |request| {  // User interface index.html
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/html"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/index.html"))?;
+        response?.write_all(include_bytes!("../ui/index.html"))?;
         Ok(())
     })?;
 
     server.fn_handler("/index.js", Method::Get, |request| {  // User interface index.js
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui-ffdcf7433f4e3095.js"))?;
+        response?.write_all(include_bytes!("../../alumina-ui/target/wasm-bindgen/release/alumina-ui.js"))?;
         Ok(())
     })?;
 
     server.fn_handler("/zstd.js", Method::Get, |request| {  // User interface zstd.js polyfill for decompressing the wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../zstd.js.min.gz"))?;
+        response?.write_all(include_bytes!("../ui/zstd.js.min.gz"))?;
         Ok(())
     })?;
 
     server.fn_handler("/index.wasm", Method::Get, |request| {  // User interface wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "zstd")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui-ffdcf7433f4e3095_bg.wasm"))?;
+        response?.write_all(include_bytes!("../../alumina-ui/target/wasm-bindgen/release/alumina-ui_bg.wasm"))?;
         Ok(())
     })?;
 
     server.fn_handler("/favicon.ico", Method::Get, |request| {  // User interface icon
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "image/gif")]);
-        response?.write_all(include_bytes!("../favicon.gif"))?;
+        response?.write_all(include_bytes!("../ui/favicon.gif"))?;
         Ok(())
     })?;
 

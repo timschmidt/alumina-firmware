@@ -30,6 +30,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-firmware"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "embedded-svc",
+ "embuild",
+ "esp-idf-hal",
+ "esp-idf-svc",
+ "esp-idf-sys",
+ "httparse",
+ "shtcx",
+ "stepgen",
+ "toml-cfg",
+ "wifi",
+]
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -764,23 +781,6 @@ name = "hermit-abi"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fed44880c466736ef9a5c5b5facefb5ed0785676d0c02d612db14e54f0d84286"
-
-[[package]]
-name = "http-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "embedded-svc",
- "embuild",
- "esp-idf-hal",
- "esp-idf-svc",
- "esp-idf-sys",
- "httparse",
- "shtcx",
- "stepgen",
- "toml-cfg",
- "wifi",
-]
 
 [[package]]
 name = "httparse"
