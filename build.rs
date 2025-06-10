@@ -1,4 +1,6 @@
 // use std::process::Command;
+use std::{env, fs, path::PathBuf, io::{Write, Cursor}};
+use flate2::{write::GzEncoder, Compression};
 
 #[toml_cfg::toml_config]
 pub struct Config {
@@ -9,10 +11,39 @@ pub struct Config {
 }
 
 fn main() -> anyhow::Result<()> {
-   // Build GUI WASM
-   // Command::new("../egui/scripts/build_demo_web.sh").arg("--release").status().unwrap();
+	// build gui
+	
+	// Locate dist directory: workspace_root/alumina-ui/dist
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    let dist_dir = manifest_dir.join("..").join("alumina-ui").join("dist");
+    let out_dir = manifest_dir.join("ui");
 
-   // Check if the `cfg.toml` file exists and has been filled out.
+    // ---------- index.html → gzip ----------
+    let html_src = dist_dir.join("index.html");
+    println!("cargo:rerun-if-changed={}", html_src.display());
+    let html_data = fs::read(&html_src)?;
+    let mut html_enc = GzEncoder::new(Vec::new(), Compression::best());
+    html_enc.write_all(&html_data)?;
+    fs::write(out_dir.join("index.html.gz"), html_enc.finish()?)?;
+
+    // ---------- alumina-ui.js → zstd ----------
+    let js_src = dist_dir.join("alumina-ui.js");
+    println!("cargo:rerun-if-changed={}", js_src.display());
+    let js_data = fs::read(&js_src)?;
+    let mut js_enc = GzEncoder::new(Vec::new(), Compression::best());
+    js_enc.write_all(&js_data)?;
+    fs::write(out_dir.join("alumina-ui.js.gz"), js_enc.finish()?)?;
+
+    // ---------- alumina-ui_bg.wasm → zstd ----------
+    let wasm_src = dist_dir.join("alumina-ui_bg.wasm");
+    println!("cargo:rerun-if-changed={}", wasm_src.display());
+    let wasm_data = fs::read(&wasm_src)?;
+    fs::write(
+        out_dir.join("alumina-ui_bg.wasm.zst"),
+        zstd::encode_all(Cursor::new(wasm_data), 22)?,
+    )?;
+
+	// Check if the `cfg.toml` file exists and has been filled out.
     if !std::path::Path::new("cfg.toml").exists() {
         anyhow::bail!("You need to create a `cfg.toml` file with your Wi-Fi credentials! Use `cfg.toml.example` as a template.");
     }
