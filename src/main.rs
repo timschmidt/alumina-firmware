@@ -283,25 +283,25 @@ fn main() -> Result<()> {
 
     server.fn_handler("/index.js", Method::Get, |request| {  // User interface index.js
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui.js"))?;
+        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui.js.gz"))?;
         Ok(())
     })?;
 
     server.fn_handler("/zstd.js", Method::Get, |request| {  // User interface zstd.js polyfill for decompressing the wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../ui/zstd.js.min.gz"))?;
+        response?.write_all(include_bytes!("../../alumina-ui/dist/zstd.js.gz"))?;
         Ok(())
     })?;
 
     server.fn_handler("/index.wasm", Method::Get, |request| {  // User interface wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "zstd")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm"))?;
+        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.zst"))?;
         Ok(())
     })?;
 
     server.fn_handler("/favicon.ico", Method::Get, |request| {  // User interface icon
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "image/gif")]);
-        response?.write_all(include_bytes!("../ui/favicon.gif"))?;
+        response?.write_all(include_bytes!("../../alumina-ui/dist/favicon.ico"))?;
         Ok(())
     })?;
 
