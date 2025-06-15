@@ -4,12 +4,16 @@ use embedded_svc::{http::Method, http::Headers, io::Write};
 use esp_idf_hal::{
     i2c::{I2cConfig, I2cDriver},
     prelude::*,
-    gpio::OutputPin
+    gpio::OutputPin,
+    modem::Modem,
 };
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     http::server::{Configuration, EspHttpServer},
     tls::X509,
+    wifi::EspWifi,
+    timer::EspTaskTimerService,
+    nvs::EspDefaultNvsPartition,
 };
 use std::{
     sync::{Arc, Mutex},
@@ -18,7 +22,12 @@ use std::{
     collections::HashMap,
     cell::RefCell,
 };
-use embedded_svc::io::Read;
+use embedded_svc::{
+	io::Read,
+};
+use embedded_svc::wifi::{
+    AccessPointConfiguration, AuthMethod, Configuration as WifiConfiguration,
+};
 use wifi::wifi;
 use stepgen::Stepgen;
 
@@ -38,7 +47,7 @@ const BLOCK_BUFFER_SIZE: usize = 20;
 
 #[toml_cfg::toml_config]
 pub struct Config {
-    #[default("")]
+    #[default("Alumina")]
     wifi_ssid: &'static str,
     #[default("")]
     wifi_psk: &'static str,
@@ -184,6 +193,38 @@ fn vec_gcd(numbers: &[i32]) -> i32 {
     0
 }
 
+/// Start the radio as a Soft-AP and return the running `EspWifi`.
+pub fn wifi_ap(
+    ssid: &str,
+    psk:  &str,
+    modem: Modem,
+    sysloop: EspSystemEventLoop,
+) -> Result<EspWifi<'static>> {
+    // Grab the default NVS partition (needed by the old API)
+    let nvs = EspDefaultNvsPartition::take()?;
+
+    // Bring up the driver
+    let mut wifi = EspWifi::new(modem, sysloop.clone(), Some(nvs))?;
+
+    // ---- Soft-AP configuration -----------------------------------------
+    let ap_cfg = AccessPointConfiguration {
+        ssid: ssid.into(),
+        password: psk.into(),
+        auth_method: if psk.is_empty() {
+            AuthMethod::None
+        } else {
+            AuthMethod::WPA2Personal
+        },
+        channel: 1,
+        max_connections: 4,
+        ..Default::default()
+    };
+
+    wifi.set_configuration(&WifiConfiguration::AccessPoint(ap_cfg))?;
+    wifi.start()?;                 // AP is up
+    Ok(wifi)                       // return the driver if you need it later
+}
+
 fn main() -> Result<()> {
     esp_idf_sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
@@ -195,12 +236,12 @@ fn main() -> Result<()> {
     let app_config = CONFIG;
 
     // Connect to the Wi-Fi network
-    let _wifi = wifi(
-        app_config.wifi_ssid,
-        app_config.wifi_psk,
-        peripherals.modem,
-        sysloop,
-    )?;
+    let _wifi = wifi_ap(
+		app_config.wifi_ssid,
+		app_config.wifi_psk,
+		peripherals.modem,
+		sysloop,
+	)?;
 
     let planner = RefCell::new(Planner::new(BLOCK_BUFFER_SIZE));
     let mut stepper = Stepper::new();
@@ -276,24 +317,24 @@ fn main() -> Result<()> {
 
     // 2. Write a handler that returns the index page
     server.fn_handler("/", Method::Get, |request| {  // User interface index.html
-        let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/html"), ("Content-Encoding", "gzip")]);
+        let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/html"), ("Content-Encoding", "text")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/index.html"))?;
         Ok(())
     })?;
 
-    server.fn_handler("/index.js", Method::Get, |request| {  // User interface index.js
+    server.fn_handler("/alumina-ui.js.gz", Method::Get, |request| {  // User interface index.js
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui.js.gz"))?;
         Ok(())
     })?;
 
-    server.fn_handler("/zstd.js", Method::Get, |request| {  // User interface zstd.js polyfill for decompressing the wasm binary
+    server.fn_handler("/zstd.js.gz", Method::Get, |request| {  // User interface zstd.js polyfill for decompressing the wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/zstd.js.gz"))?;
         Ok(())
     })?;
 
-    server.fn_handler("/index.wasm", Method::Get, |request| {  // User interface wasm binary
+    server.fn_handler("/alumina-ui_bg.wasm.zst", Method::Get, |request| {  // User interface wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "zstd")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.zst"))?;
         Ok(())
