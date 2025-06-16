@@ -221,8 +221,8 @@ pub fn wifi_ap(
     };
 
     wifi.set_configuration(&WifiConfiguration::AccessPoint(ap_cfg))?;
-    wifi.start()?;                 // AP is up
-    Ok(wifi)                       // return the driver if you need it later
+    wifi.start()?; // AP is up
+    Ok(wifi) // return the driver if you need it later
 }
 
 fn main() -> Result<()> {
@@ -328,15 +328,9 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    server.fn_handler("/zstd.js.gz", Method::Get, |request| {  // User interface zstd.js polyfill for decompressing the wasm binary
-        let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/zstd.js.gz"))?;
-        Ok(())
-    })?;
-
-    server.fn_handler("/alumina-ui_bg.wasm.zst", Method::Get, |request| {  // User interface wasm binary
-        let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "zstd")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.zst"))?;
+    server.fn_handler("/alumina-ui_bg.wasm.br", Method::Get, |request| {  // User interface wasm binary
+        let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "br")]);
+        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.br"))?;
         Ok(())
     })?;
 
@@ -792,16 +786,3 @@ fn main() -> Result<()> {
 fn temperature(val: f32) -> String {
     format!("chip temperature: {:.2}°C", val)
 }
-
-// Format results as RON string
-//fn format_scan_results(results: &[WifiScanResult]) -> String {
-//    // Build RON string
-//    format!(
-//        "[{}]",
-//        results
-//            .iter()
-//            .map(|r| format!("{{ssid: \"{}\", signal: {}}}", r.ssid, r.signal))
-//            .collect::<Vec<_>>()
-//            .join(", ")
-//    )
-//}
