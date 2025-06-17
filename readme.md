@@ -1,3 +1,6 @@
+## Community
+[![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/9WkD3WFxMC)
+
 To build:
 
 cargo run --release
