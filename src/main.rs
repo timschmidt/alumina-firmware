@@ -322,13 +322,13 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    server.fn_handler("/alumina-ui.js.gz", Method::Get, |request| {  // User interface index.js
-        let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript"), ("Content-Encoding", "gzip")]);
+    server.fn_handler("/alumina-ui.js", Method::Get, |request| {  // User interface index.js
+        let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript; charset=utf-8"), ("Content-Encoding", "gzip")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui.js.gz"))?;
         Ok(())
     })?;
 
-    server.fn_handler("/alumina-ui_bg.wasm.br", Method::Get, |request| {  // User interface wasm binary
+    server.fn_handler("/alumina-ui_bg.wasm", Method::Get, |request| {  // User interface wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "br")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.br"))?;
         Ok(())
