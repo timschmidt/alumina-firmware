@@ -1,15 +1,16 @@
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/9WkD3WFxMC)
 
-To build:
-
+## Development
+### Build and flash firmware
+```shell
 cargo run --release
-
-A new WASM file will be built, stripped, and gzip compressed within the egui directory and linked in to the build.
+```
 
 to flash devices which make use of a ch340 USB serial adapter you must modify ~/.config/espflash.toml like so:
 
-```                                                                                                                                                                                   3,23          All
+```toml
+3,23          All
 [connection]
 # esp32-c3
 #serial = "/dev/ttyACM0"
@@ -25,3 +26,4 @@ serial = "/dev/ttyUSB0"
 [[usb_device]] 
 vid="1a86"
 pid="7523"
+```
