@@ -42,11 +42,16 @@ impl Planner {
     }
 
     pub fn recalculate_trapezoids(&mut self) {
-        let mut block_index = self.tail;
-        while block_index != self.head {
-            let block = &mut self.block_buffer[block_index];
-            block.calculate_trapezoid();
-            block_index = (block_index + 1) % self.block_buffer.len();
-        }
-    }
+		let mut block_index = self.tail;
+		let mut prev_exit_rate = 0.0;
+
+		while block_index != self.head {
+			let block = &mut self.block_buffer[block_index];
+			block.calculate_trapezoid(prev_exit_rate);
+			// for the next one this becomes the “previous” speed
+			prev_exit_rate = block.exit_rate;
+
+			block_index = (block_index + 1) % self.block_buffer.len();
+		}
+	}
 }

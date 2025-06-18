@@ -3,8 +3,6 @@ name = "alumina-firmware"
 version = "0.1.0"
 authors = [
     "Timothy Schmidt <timschmidt@gmail.com>",
-    "Anatol Ulrich <anatol.ulrich@ferrous-systems.com>",
-    "Sergio Gasquez <sergio.gasquez@gmail.com>",
 ]
 edition = "2021"
 resolver = "2"
@@ -20,8 +18,7 @@ panic = "abort"
 incremental = false
 
 [profile.dev]
-debug = true    # Symbols are nice and they don't increase the size on Flash
-#opt-level = "z"
+debug = true
 
 [features]
 default = ["native"]
