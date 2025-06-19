@@ -28,7 +28,6 @@ use embedded_svc::{
 use embedded_svc::wifi::{
     AccessPointConfiguration, AuthMethod, Configuration as WifiConfiguration,
 };
-use wifi::wifi;
 use stepgen::Stepgen;
 
 // If using the `binstart` feature of `esp-idf-sys`, always keep this module imported
@@ -39,6 +38,7 @@ pub mod planner;
 pub mod serial;
 pub mod pins;
 pub mod commandbuffer;
+pub mod wifi;
 
 use crate::planner::Planner;
 use crate::interrupts::Stepper;

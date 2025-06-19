@@ -47,10 +47,10 @@ dependencies = [
  "esp-idf-sys",
  "flate2",
  "httparse",
+ "log",
  "shtcx",
  "stepgen",
  "toml-cfg",
- "wifi",
  "zstd",
 ]
 
@@ -964,12 +964,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.17"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abb12e687cfb44aa40f41fc3978ef76448f9b6038cad6aef4259d3c095a2382e"
-dependencies = [
- "cfg-if",
-]
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "memchr"
@@ -1647,19 +1644,6 @@ dependencies = [
  "either",
  "libc",
  "once_cell",
-]
-
-[[package]]
-name = "wifi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "embedded-svc",
- "embuild",
- "esp-idf-hal",
- "esp-idf-svc",
- "esp-idf-sys",
- "log",
 ]
 
 [[package]]
