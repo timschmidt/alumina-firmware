@@ -26,3 +26,10 @@ serial = "/dev/ttyUSB0"
 vid="1a86"
 pid="7523"
 ```
+
+## Todo
+- BLE support
+- get motion control working
+- klipper style multi-mcu support
+- get endstops and homing working
+- implement sd card support
