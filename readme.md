@@ -10,7 +10,6 @@ cargo run --release
 to flash devices which make use of a ch340 USB serial adapter you must modify ~/.config/espflash.toml like so:
 
 ```toml
-3,23          All
 [connection]
 # esp32-c3
 #serial = "/dev/ttyACM0"
