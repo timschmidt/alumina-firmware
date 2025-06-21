@@ -35,3 +35,4 @@ pid="7523"
 - klipper style multi-mcu support
 - get endstops and homing working
 - implement sd card support
+- update to more recent esp-idf and supporting crates
