@@ -15,6 +15,7 @@ use esp_idf_svc::{
     timer::EspTaskTimerService,
     nvs::EspDefaultNvsPartition,
 };
+use esp_idf_sys::esp_timer_get_time;
 use std::{
     sync::{Arc, Mutex},
     thread::sleep,
@@ -331,22 +332,28 @@ fn main() -> Result<()> {
         Ok(())
     })?;
 
-    server.fn_handler("/time", Method::Get, |request| {  // return contents of microcontroller cycle counter
-        // todo: read timer contents here
-        let timer = 0;
-        let timer_text = timer.to_string();
+	server.fn_handler("/time", Method::Get, |request| {
+		// microseconds since boot
+		let us = unsafe { esp_timer_get_time() } as u64;
+		let ms = us / 1000;
+		let body = format!("Time: {}", ms); // UI parser extracts the number
+		let response = request.into_response(200, Some(&body), &[("Content-Type","text/plain")]);
+		response?.flush()?;
+		Ok(())
+	})?;
 
-        let response = request.into_response(200, Some(&("Time: ".to_owned() + &timer_text)), &[("Content-Type", "text/ron")]);
-        response?.flush()?;
-        Ok(())
-    })?;
-
-    server.fn_handler("/files", Method::Get, |request| {  // List files stored on SD card
-
-        let response = request.into_response(200, Some("Files: "), &[("Content-Type", "text/ron")]);
-        response?.flush()?;
-        Ok(())
-    })?;
+    server.fn_handler("/files", Method::Post, move |mut request| {
+		let mut buf = [0u8; 2048];
+		let mut data: Vec<u8> = Vec::new();
+		loop {
+			let n = request.read(&mut buf)?;
+			if n == 0 { break; }
+			data.extend_from_slice(&buf[..n]);
+		}
+		let response = request.into_response(200, Some(&format!("received: {} bytes", data.len())), &[("Content-Type","text/plain")]);
+		response?.flush()?;
+		Ok(())
+	})?;
 
     server.fn_handler("/files", Method::Post, move|mut request| {  // Upload file to SD card
 
@@ -750,10 +757,35 @@ fn main() -> Result<()> {
                 let response = request.into_response(200, Some("D19 low"), &[("Content-Type", "text/plain")]);
                 response?.flush()?;
             },*/
-            "g0" => {
-                planner.borrow_mut().buffer_line(10.0, 0.0, 0.0, 0.0, 1500.0, 0);
-                planner.borrow_mut().recalculate_trapezoids();
-            }
+            s if s == "g0" || s.starts_with("g0 ") => {
+				// Formats: "g0" or "g0 x10 y0 z0 f1500"
+				let mut x = 10.0;
+				let mut y = 0.0;
+				let mut z = 0.0;
+				let mut f = 1500.0;
+
+				for tok in s.split_whitespace().skip(1) {
+					if let Some(val) = tok.get(1..).and_then(|v| v.parse::<f32>().ok()) {
+						match &tok[..1] {
+							"x" | "X" => x = val,
+							"y" | "Y" => y = val,
+							"z" | "Z" => z = val,
+							"f" | "F" => f = val,
+							_ => {}
+						}
+					}
+				}
+
+				planner.borrow_mut().buffer_line(x, y, z, 0.0, f, 0);
+				planner.borrow_mut().recalculate_trapezoids();
+
+				let response = request.into_response(
+					200,
+					Some("Queued G0"),
+					&[("Content-Type", "text/plain")],
+				);
+				response?.flush()?;
+			}
             _ => {
                 println!("Unknown command: {}", payload);
                 // ... handle unknown command ...
