@@ -11,7 +11,8 @@ use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     http::server::{Configuration, EspHttpServer},
     tls::X509,
-    wifi::EspWifi,
+    netif::{EspNetif, EspNetifWait},
+    wifi::{EspWifi, WifiWait},
     timer::EspTaskTimerService,
     nvs::EspDefaultNvsPartition,
 };
@@ -191,33 +192,42 @@ fn vec_gcd(numbers: &[i32]) -> i32 {
 /// Start the radio as a Soft-AP and return the running `EspWifi`.
 pub fn wifi_ap(
     ssid: &str,
-    psk:  &str,
+    psk: &str,
     modem: Modem,
     sysloop: EspSystemEventLoop,
 ) -> Result<EspWifi<'static>> {
-    // Grab the default NVS partition (needed by the old API)
-    let nvs = EspDefaultNvsPartition::take()?;
+    // Do not restore stale Wi-Fi config from NVS for AP-only mode
+    let mut wifi = EspWifi::new(modem, sysloop.clone(), None)?;
 
-    // Bring up the driver
-    let mut wifi = EspWifi::new(modem, sysloop.clone(), Some(nvs))?;
-
-    // ---- Soft-AP configuration -----------------------------------------
     let ap_cfg = AccessPointConfiguration {
         ssid: ssid.into(),
         password: psk.into(),
-        auth_method: if psk.is_empty() {
-            AuthMethod::None
-        } else {
-            AuthMethod::WPA2Personal
-        },
+        auth_method: if psk.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
+        ssid_hidden: false,
         channel: 1,
         max_connections: 4,
         ..Default::default()
     };
 
     wifi.set_configuration(&WifiConfiguration::AccessPoint(ap_cfg))?;
-    wifi.start()?; // AP is up
-    Ok(wifi) // return the driver if you need it later
+    wifi.start()?;
+
+    // Wait until the driver reports started…
+    if !WifiWait::new(&sysloop)?.wait_with_timeout(Duration::from_secs(10), || {
+        wifi.is_started().unwrap()
+    }) {
+        anyhow::bail!("SoftAP did not start");
+    }
+
+    // …and until the AP netif is actually up (DHCP server running, beacons going)
+    if !EspNetifWait::new::<EspNetif>(wifi.ap_netif(), &sysloop)?.wait_with_timeout(
+        Duration::from_secs(10),
+        || wifi.ap_netif().is_up().unwrap(),
+    ) {
+        anyhow::bail!("SoftAP netif did not come up");
+    }
+
+    Ok(wifi)
 }
 
 fn main() -> Result<()> {
@@ -249,8 +259,8 @@ fn main() -> Result<()> {
     let d0 = d0_main.clone();
     let d1_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio1)?));
     let d1 = d1_main.clone();
-    let d2_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio2)?));
-    let d2 = d2_main.clone();
+    //let d2_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio2)?));
+    //let d2 = d2_main.clone();
     let d3_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio3)?));
     let d3 = d3_main.clone();
     let d4_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio4)?));
@@ -263,16 +273,17 @@ fn main() -> Result<()> {
     let d7 = d7_main.clone();
     //let d8_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio8)?));
     //let d8 = d8_main.clone();
-    let d9_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio9)?));
-    let d9 = d9_main.clone();
+    //let d9_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio9)?));
+    //let d9 = d9_main.clone();
     //let d10_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio10)?));
     //let d10 = d10_main.clone();
-    let d11_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio11)?));
-    let d11 = d11_main.clone();
+    // 11, 12, and 13 are used for SPI flash
+    //let d11_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio11)?));
+    //let d11 = d11_main.clone();
     let d12_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio12)?));
     let d12 = d12_main.clone();
-    let d13_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio13)?));
-    let d13 = d13_main.clone();
+    //let d13_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio13)?));
+    //let d13 = d13_main.clone();
     //let d14_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio14)?));
     //let d14 = d14_main.clone();
     //let d15_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio15)?));
@@ -354,13 +365,6 @@ fn main() -> Result<()> {
 		response?.flush()?;
 		Ok(())
 	})?;
-
-    server.fn_handler("/files", Method::Post, move|mut request| {  // Upload file to SD card
-
-        let response = request.into_response(200, Some("Files: "), &[("Content-Type", "text/ron")]);
-        response?.flush()?;
-        Ok(())
-    })?;
 
     server.fn_handler("/queue", Method::Get, |request| {  // respond with queue status
         let queue: Vec<i32> = vec![];
@@ -469,22 +473,6 @@ fn main() -> Result<()> {
                 let response = request.into_response(200, Some("D1 low"), &[("Content-Type", "text/plain")]);
                 response?.flush()?;
             },
-            "d2_high" => {
-                println!("Setting D2 high");
-                // ... Set pin D2 high ...
-                d2.lock().unwrap().set_high()?;
-
-                let response = request.into_response(200, Some("D2 high"), &[("Content-Type", "text/plain")]);
-                response?.flush()?;
-            },
-            "d2_low" => {
-                println!("Setting D2 low");
-                // ... Set pin D2 low ...
-                d2.lock().unwrap().set_low()?;
-
-                let response = request.into_response(200, Some("D2 low"), &[("Content-Type", "text/plain")]);
-                response?.flush()?;
-            },
             "d3_high" => {
                 println!("Setting D3 high");
                 // ... Set pin D3 high ...
@@ -580,7 +568,7 @@ fn main() -> Result<()> {
 
                 let response = request.into_response(200, Some("D8 low"), &[("Content-Type", "text/plain")]);
                 response?.flush()?;
-            }, */
+            },
             "d9_high" => {
                 println!("Setting D9 high");
                 // ... Set pin D9 high ...
@@ -596,7 +584,7 @@ fn main() -> Result<()> {
 
                 let response = request.into_response(200, Some("D9 low"), &[("Content-Type", "text/plain")]);
                 response?.flush()?;
-            }, /*
+            },
             "d10_high" => {
                 println!("Setting D10 high");
                 // ... Set pin D10 high ...
@@ -612,7 +600,7 @@ fn main() -> Result<()> {
 
                 let response = request.into_response(200, Some("D10 low"), &[("Content-Type", "text/plain")]);
                 response?.flush()?;
-            }, */
+            },
             "d11_high" => {
                 println!("Setting D11 high");
                 // ... Set pin D11 high ...
@@ -660,7 +648,7 @@ fn main() -> Result<()> {
 
                 let response = request.into_response(200, Some("D13 low"), &[("Content-Type", "text/plain")]);
                 response?.flush()?;
-            },/*
+            },
             "d14_high" => {
                 println!("Setting D14 high");
                 // ... Set pin D14 high ...

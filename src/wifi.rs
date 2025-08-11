@@ -56,10 +56,14 @@ pub fn wifi(
             ..Default::default()
         },
         AccessPointConfiguration {
-            ssid: "aptest".into(),
-            channel: channel.unwrap_or(1),
-            ..Default::default()
-        },
+			ssid: ssid.into(),
+			password: pass.into(),
+			auth_method: if pass.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
+			ssid_hidden: false,
+			channel: channel.unwrap_or(1),
+			max_connections: 4,
+			..Default::default()
+		},
     ))?;
 
     wifi.start()?;
