@@ -344,12 +344,14 @@ fn main() -> Result<()> {
     })?;
 
 	server.fn_handler("/time", Method::Get, |request| {
-		// microseconds since boot
 		let us = unsafe { esp_timer_get_time() } as u64;
 		let ms = us / 1000;
-		let body = format!("Time: {}", ms); // UI parser extracts the number
-		let response = request.into_response(200, Some(&body), &[("Content-Type","text/plain")]);
-		response?.flush()?;
+		// Return a plain number that the UI can parse easily:
+		let body = format!("{}\n", ms);
+		let mut resp = request.into_response(200, Some("OK"),
+			&[("Content-Type","text/plain")])?;
+		resp.write_all(body.as_bytes())?;
+		resp.flush()?;
 		Ok(())
 	})?;
 
@@ -361,8 +363,11 @@ fn main() -> Result<()> {
 			if n == 0 { break; }
 			data.extend_from_slice(&buf[..n]);
 		}
-		let response = request.into_response(200, Some(&format!("received: {} bytes", data.len())), &[("Content-Type","text/plain")]);
-		response?.flush()?;
+		let mut resp = request.into_response(200, Some("OK"),
+			&[("Content-Type","text/plain")])?;
+		let body = format!("received: {} bytes\n", data.len());
+		resp.write_all(body.as_bytes())?;
+		resp.flush()?;
 		Ok(())
 	})?;
 
