@@ -38,3 +38,4 @@ pid="7523"
 - get endstops and homing working
 - implement sd card support
 - update to more recent esp-idf and supporting crates
+- add internet cloud to diagram animation
