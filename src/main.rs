@@ -371,13 +371,49 @@ fn main() -> Result<()> {
 		Ok(())
 	})?;
 
-    server.fn_handler("/queue", Method::Get, |request| {  // respond with queue status
-        let queue: Vec<i32> = vec![];
+	server.fn_handler("/queue", Method::Get, |request| {
+		let mut resp = request.into_response(200, Some("OK"),
+			&[("Content-Type","text/plain")])?;
+		resp.write_all(b"Queue: []\n")?;
+		resp.flush()?;
+		Ok(())
+	})?;
 
-        let response = request.into_response(200, Some("Queue: "), &[("Content-Type", "text/ron")]);
-        response?.flush()?;
-        Ok(())
-    })?;
+	{
+        // Clone the pin handles into this closure so we can read levels
+        let d0 = d0_main.clone();
+        let d1 = d1_main.clone();
+        let d3 = d3_main.clone();
+        let d4 = d4_main.clone();
+        let d5 = d5_main.clone();
+        let d6 = d6_main.clone();
+        let d7 = d7_main.clone();
+        let d12 = d12_main.clone();
+		server.fn_handler("/pins", Method::Get, move |request| {
+			// Output-mode friendly: read the output latch
+			let d0v  = d0.lock().unwrap().is_set_high()  as u8;
+			let d1v  = d1.lock().unwrap().is_set_high()  as u8;
+			let d3v  = d3.lock().unwrap().is_set_high()  as u8;
+			let d4v  = d4.lock().unwrap().is_set_high()  as u8;
+			let d5v  = d5.lock().unwrap().is_set_high()  as u8;
+			let d6v  = d6.lock().unwrap().is_set_high()  as u8;
+			let d7v  = d7.lock().unwrap().is_set_high()  as u8;
+			let d12v = d12.lock().unwrap().is_set_high() as u8;
+
+			let body = format!(
+				r#"{{"D0":{},"D1":{},"D3":{},"D4":{},"D5":{},"D6":{},"D7":{},"D12":{}}}"#,
+				d0v, d1v, d3v, d4v, d5v, d6v, d7v, d12v
+			);
+
+			let response = request.into_response(
+				200,
+				Some(&body),
+				&[("Content-Type", "application/json")],
+			);
+			response?.flush()?;
+			Ok(())
+		})?;
+	}
 
     server.fn_handler("/queue", Method::Post, move|mut request| {
 
