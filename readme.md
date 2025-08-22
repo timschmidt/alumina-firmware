@@ -7,6 +7,11 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
 
+## Hardware
+### MKS TinyBee
+<img src="https://raw.githubusercontent.com/makerbase-mks/MKS-TinyBee/refs/heads/main/hardware/Image/MKS%20TinyBee%20V1.x%20Wiring.png" width="60%" alt="MKS TinyBee"/>
+[GitHub](https://github.com/makerbase-mks/MKS-TinyBee/)
+
 ## HTTP API
 ```
 /						GET index.html
@@ -53,3 +58,4 @@ pid="7523"
 - implement sd card support
 - update to more recent esp-idf and supporting crates
 - add internet cloud to diagram animation
+- bus pirate features
