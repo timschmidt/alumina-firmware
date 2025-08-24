@@ -193,35 +193,52 @@ fn vec_gcd(numbers: &[i32]) -> i32 {
 /// Start the radio as a Soft-AP and return the running `EspWifi`.
 pub fn wifi_ap(
     ssid: &str,
-    psk: &str,
-    modem: Modem,
+    pass: &str,
+    modem: esp_idf_hal::modem::Modem,
     sysloop: EspSystemEventLoop,
-) -> Result<EspWifi<'static>> {
-    // 1) Take default NVS and pass it to the Wi-Fi driver
+) -> Result<BlockingWifi<EspWifi<'static>>> {
+    // NVS is required on IDF 5.x for Wi-Fi (cal data, etc.)
     let nvs = EspDefaultNvsPartition::take()?;
-    let mut wifi = EspWifi::new(modem, sysloop.clone(), Some(nvs))?;
+    let mut wifi = BlockingWifi::wrap(
+        EspWifi::new(modem, sysloop.clone(), Some(nvs))?,
+        sysloop,
+    )?;
+
+    // Convert &str -> heapless strings used by embedded-svc, mapping () -> anyhow::Error
+    let ssid = ssid
+        .try_into()
+        .map_err(|_| anyhow!("SSID too long (max 32)"))?;
+    let password = pass
+        .try_into()
+        .map_err(|_| anyhow!("password too long (max 64)"))?;
+
+    // Choose auth based on password presence (WPA2 requires >= 8 chars)
+    let auth_method = if pass.is_empty() {
+        AuthMethod::None
+    } else {
+        if pass.len() < 8 {
+            anyhow::bail!("WPA2 password must be at least 8 characters");
+        }
+        AuthMethod::WPA2Personal
+    };
 
     let ap_cfg = AccessPointConfiguration {
-        ssid: ssid.try_into().map_err(|_| anyhow!("SSID too long (max 32)"))?,
-        password: psk.try_into().map_err(|_| anyhow!("password too long (max 64)"))?,
-        auth_method: if psk.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
+        ssid,
+        password,
+        auth_method,
         ssid_hidden: false,
-        channel: 1,
+        channel: 11,          // try 6 or 11 if you like
         max_connections: 4,
         ..Default::default()
     };
 
     wifi.set_configuration(&WifiConfiguration::AccessPoint(ap_cfg))?;
     wifi.start()?;
+    wifi.wait_netif_up()?;   // waits until the AP netif is up
 
-	// Wait up to 10s for SoftAP netif up
-	let deadline = Instant::now() + Duration::from_secs(10);
-	while !wifi.ap_netif().is_up()? {
-		if Instant::now() >= deadline {
-			anyhow::bail!("SoftAP netif did not come up");
-		}
-		std::thread::sleep(Duration::from_millis(100));
-	}
+    // Optional: quick visibility log
+    let ip = wifi.wifi().ap_netif().get_ip_info()?;
+    log::info!("SoftAP up at {:?}", ip);
 
     Ok(wifi)
 }

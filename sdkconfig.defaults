@@ -1,5 +1,5 @@
 # Rust often needs a bit of an extra main task stack size compared to C (the default is 3K)
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=7000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 CONFIG_LWIP_LOCAL_HOSTNAME="alumina"
 CONFIG_COMPILER_OPTIMIZATION="Release"
 CONFIG_ESP_HTTPS_SERVER_ENABLE=y
