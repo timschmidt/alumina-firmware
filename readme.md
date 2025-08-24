@@ -53,10 +53,18 @@ pid="7523"
 
 ## Todo
 - BLE support
+- flesh out wifi scan / connect and nvs support
 - get motion control working
 - klipper style multi-mcu support
 - get endstops and homing working
 - implement sd card support
+- data logging (from IMU, temp/humid, received commands) to SD available space
 - add internet cloud to diagram animation
 - crunch board graphics and link at compile time for diagnostics tab
 - bus pirate features
+- support http://wiki.fluidnc.com/en/hardware/existing_hardware
+- FoC Servo support
+- MPPT
+- Active Rectification support
+- PID / bang-bang heater control
+- 
