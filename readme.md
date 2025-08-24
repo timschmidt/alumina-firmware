@@ -57,6 +57,6 @@ pid="7523"
 - klipper style multi-mcu support
 - get endstops and homing working
 - implement sd card support
-- update to more recent esp-idf and supporting crates
 - add internet cloud to diagram animation
+- crunch board graphics and link at compile time for diagnostics tab
 - bus pirate features
