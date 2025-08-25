@@ -2,7 +2,6 @@
 //! All values are the board’s labeled IO numbers from the provided reference.
 
 #![allow(non_upper_case_globals)]
-
 pub mod pins {
     // -------------------------
     // Heaters
@@ -111,5 +110,9 @@ pub struct MksTinyBee;
 
 impl MksTinyBee {
     pub const NAME: &'static str = "mks_tinybee";
+    
+    /// Path to a board pinout image / schematic.
+    /// Replace with the correct relative path in your repo or an external URL.
+    pub const IMAGE_PATH: &'static str = "../../docs/board_images/mks_tinybee.png";
 }
 

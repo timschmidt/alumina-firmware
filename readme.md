@@ -28,7 +28,7 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 ## Development
 ### Build and flash firmware
 ```shell
-export IDF_PATH=~/.espressif/esp-idf/v5.4.1/
+export IDF_PATH="~/.espressif/esp-idf/v5.4.1/"
 
 cargo run --release
 ```
