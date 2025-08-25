@@ -23,6 +23,7 @@ debug = true
 [features]
 default = ["native"]
 native = ["esp-idf-sys/native"]
+board-mks_tinybee = []
 
 [dependencies]
 anyhow = { version = "1" }

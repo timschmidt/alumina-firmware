@@ -42,7 +42,9 @@ pub mod serial;
 pub mod pins;
 pub mod commandbuffer;
 pub mod wifi;
+pub mod boards;
 
+use crate::boards::active::pins::*;
 use crate::planner::Planner;
 use crate::interrupts::Stepper;
 
