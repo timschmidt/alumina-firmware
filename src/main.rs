@@ -44,7 +44,7 @@ pub mod commandbuffer;
 pub mod wifi;
 pub mod boards;
 
-use crate::boards::active::pins::*;
+use crate::boards::{active::pins::*, BoardInfo,};
 use crate::planner::Planner;
 use crate::interrupts::Stepper;
 
@@ -356,6 +356,35 @@ fn main() -> Result<()> {
         response?.write_all(include_bytes!("../../alumina-ui/dist/favicon.ico"))?;
         Ok::<(), anyhow::Error>(())
     })?;
+    
+    server.fn_handler("/board", Method::Get, |request| -> anyhow::Result<()> {
+		let name = <boards::active::MksTinyBee as BoardInfo>::name();
+		let mime = <boards::active::MksTinyBee as BoardInfo>::image_mime();
+		let body = format!(r#"{{"name":"{}","image_mime":"{}","image_url":"/board/image"}}"#, name, mime);
+
+		let response = request.into_response(
+			200,
+			Some(&body),
+			&[("Content-Type","application/json")]
+		);
+		response?.flush()?;
+		Ok::<(), anyhow::Error>(())
+	})?;
+
+	server.fn_handler("/board/image", Method::Get, |request| -> anyhow::Result<()> {
+		let bytes = <boards::active::MksTinyBee as BoardInfo>::image_bytes();
+		let mime = <boards::active::MksTinyBee as BoardInfo>::image_mime();
+
+		// NOTE: we write the raw bytes; set a long-ish cache to avoid spam refetches
+		let mut resp = request.into_response(
+			200,
+			Some("OK"),
+			&[("Content-Type", mime), ("Cache-Control","public, max-age=86400")]
+		)?;
+		resp.write_all(bytes)?;
+		resp.flush()?;
+		Ok::<(), anyhow::Error>(())
+	})?;
 
 	server.fn_handler("/time", Method::Get, |request| -> anyhow::Result<()> {
 		let us = unsafe { esp_timer_get_time() } as u64;

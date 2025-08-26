@@ -69,4 +69,3 @@ pid="7523"
 - MPPT
 - Active Rectification support
 - PID / bang-bang heater control
-- 

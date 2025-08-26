@@ -111,8 +111,8 @@ pub struct MksTinyBee;
 impl MksTinyBee {
     pub const NAME: &'static str = "mks_tinybee";
     
-    /// Path to a board pinout image / schematic.
-    /// Replace with the correct relative path in your repo or an external URL.
-    pub const IMAGE_PATH: &'static str = "../../docs/board_images/mks_tinybee.png";
+	// NEW: compile-time embed of the board image so it’s available to the web server
+    pub const IMAGE_BYTES: &'static [u8] = include_bytes!("../../docs/board_images/mks_tinybee.png");
+    pub const IMAGE_MIME: &'static str = "image/png";
 }
 
