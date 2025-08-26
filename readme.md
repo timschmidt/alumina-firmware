@@ -18,8 +18,6 @@ The two parts of Alumina are linked together at compile time and fit in the onbo
    - draws geometry using WebGL and egui
    - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
 
-<img src="doc/alumina-diagram.png" width="40%" alt="Diagram"/>
-
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
 
