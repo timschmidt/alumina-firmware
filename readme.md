@@ -23,6 +23,8 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 /time					GET 
 /files					POST 
 /queue					GET, POST 
+/board					GET json: {{"name":"{}","image_mime":"{}","image_url":"/board/image"}}
+/board/image			GET PNG formatted board image
 ```
 
 ## Development
