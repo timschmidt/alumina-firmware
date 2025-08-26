@@ -6,14 +6,14 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 
 Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
 
-The two parts of Alumina are linked together at compile time and fit in the onboard flash of a microcontroller, reducing design complexity, part count, and cost.
- - [firmware](https://github.com/timschmidt/alumina-firmware)
+Firmware and UI get linked together at compile time and fit in the onboard flash of a single microcontroller, reducing design complexity, part count, and cost.
+ - [Alumina Firmware](https://github.com/timschmidt/alumina-firmware)
    - targets the xtensa and risc-v esp32 microcontrollers
    - sets up a Wifi AP called "Alumina"
    - serves the Alumina UI via HTTP
    - responds to commands from the Alumina UI via HTTP
    - performs motion planning and step generation
- - [UI](https://github.com/timschmidt/alumina-ui)
+ - [Alumina UI](https://github.com/timschmidt/alumina-ui)
    - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
    - draws geometry using WebGL and egui
    - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
