@@ -2,7 +2,21 @@
 
 # Alumina Firmware
 
-Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.  There are two parts to Alumina: the [firmware](https://github.com/timschmidt/alumina-firmware) which targets the esp32 and esp32-c series microcontrollers, sets up a Wifi AP called "Alumina", serves the Alumina UI via HTTP, responds to commands from the Alumina UI via HTTP, and performs motion planning and step generation.  The [UI](https://github.com/timschmidt/alumina-ui) targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly), draws geometry using WebGL and egui, and manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs).  Both parts fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
+Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.
+
+There are two parts to Alumina:
+ - [firmware](https://github.com/timschmidt/alumina-firmware)
+   - targets the xtensa and risc-v esp32 microcontrollers
+   - sets up a Wifi AP called "Alumina"
+   - serves the Alumina UI via HTTP
+   - responds to commands from the Alumina UI via HTTP
+   - performs motion planning and step generation
+ - [UI](https://github.com/timschmidt/alumina-ui)
+   - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
+   - draws geometry using WebGL and egui
+   - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
+
+Both parts fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
@@ -71,3 +85,4 @@ pid="7523"
 - MPPT
 - Active Rectification support
 - PID / bang-bang heater control
+- rename board to device
