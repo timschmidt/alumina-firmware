@@ -16,7 +16,7 @@ There are two parts to Alumina:
    - draws geometry using WebGL and egui
    - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
 
-Both parts fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
+Both parts are linked together at compile time and fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
