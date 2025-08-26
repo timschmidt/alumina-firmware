@@ -44,9 +44,11 @@ The two parts of Alumina are linked together at compile time and fit in the onbo
 ## Development
 ### Build and flash firmware
 ```shell
+cargo install espup
+espup install
 export IDF_PATH="~/.espressif/esp-idf/v5.4.1/"
 
-cargo run --release
+cargo run --release --features="board-mks_tinybee"
 ```
 
 to flash devices which make use of a ch340 USB serial adapter you must modify ~/.config/espflash.toml like so:
