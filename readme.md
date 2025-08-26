@@ -4,7 +4,7 @@
 
 Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.
 
-Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
+Try the [Alumina UI Web Demo](https://timschmidt.github.io/alumina-ui/)
 
 Firmware and UI get linked together at compile time and fit in the onboard flash of a single microcontroller, reducing design complexity, part count, and cost.
  - [Alumina Firmware](https://github.com/timschmidt/alumina-firmware)
@@ -16,7 +16,15 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
  - [Alumina UI](https://github.com/timschmidt/alumina-ui)
    - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
    - draws geometry using WebGL and egui
-   - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
+   - works in any browser, desktop or mobile
+   - CAD using [csgrs](https://github.com/timschmidt/csgrs) and [egui_node_graph2](https://github.com/trevyn/egui_node_graph2)
+   - calculate and display 2D slices of 3D models
+   - Communicates with Alumina Firmware to display diagnostic log, graph, and photo of the controller
+   - Fits in < 4Mb microcontroller flash, including firmware
+   - (planned) multiple controllers in sync
+   - (planned) use [wgmath](https://wgmath.rs/) to move most CAD and geometry and toolpath calculation to the GPU
+   - (planned) port to [embassy](https://embassy.dev/) and [FoA](https://github.com/esp32-open-mac/FoA) and [smol](https://github.com/smol-rs/smol/blob/master/examples/simple-server.rs)
+   - (planned) port to other embassy hardware targets
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
