@@ -13,6 +13,8 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
    - serves the Alumina UI via HTTP
    - responds to commands from the Alumina UI via HTTP
    - performs motion planning and step generation
+   - (planned) port to [embassy](https://embassy.dev/) and [FoA](https://github.com/esp32-open-mac/FoA) and [smol](https://github.com/smol-rs/smol/blob/master/examples/simple-server.rs)
+   - (planned) port to other embassy hardware targets
  - [Alumina UI](https://github.com/timschmidt/alumina-ui)
    - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
    - draws geometry using WebGL and egui
@@ -23,8 +25,6 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
    - Fits in < 4Mb microcontroller flash, including firmware
    - (planned) multiple controllers in sync
    - (planned) use [wgmath](https://wgmath.rs/) to move most CAD and geometry and toolpath calculation to the GPU
-   - (planned) port to [embassy](https://embassy.dev/) and [FoA](https://github.com/esp32-open-mac/FoA) and [smol](https://github.com/smol-rs/smol/blob/master/examples/simple-server.rs)
-   - (planned) port to other embassy hardware targets
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
