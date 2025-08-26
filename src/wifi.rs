@@ -1,15 +1,13 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
+use core::convert::TryInto;
 use embedded_svc::wifi::{
     AccessPointConfiguration, AuthMethod, ClientConfiguration, Configuration, Wifi,
 };
 use esp_idf_hal::peripheral;
-use esp_idf_svc::{
-    eventloop::EspSystemEventLoop,
-    netif::{EspNetif, EspNetifWait},
-    wifi::{EspWifi, WifiWait},
-};
+use esp_idf_svc::{eventloop::EspSystemEventLoop, netif::EspNetif, wifi::EspWifi};
 use log::info;
 use std::{net::Ipv4Addr, time::Duration};
+use std::time::Instant;
 
 pub fn wifi(
     ssid: &str,
@@ -18,6 +16,7 @@ pub fn wifi(
     sysloop: EspSystemEventLoop,
 ) -> Result<Box<EspWifi<'static>>> {
     let mut auth_method = AuthMethod::WPA2Personal;
+
     if ssid.is_empty() {
         bail!("Missing WiFi name")
     }
@@ -25,14 +24,12 @@ pub fn wifi(
         auth_method = AuthMethod::None;
         info!("Wifi password is empty");
     }
-    let mut wifi = Box::new(EspWifi::new(modem, sysloop.clone(), None)?);
 
+    let mut wifi = Box::new(EspWifi::new(modem, sysloop.clone(), None)?);
     info!("Wifi created, about to scan");
 
     let ap_infos = wifi.scan()?;
-
-    let ours = ap_infos.into_iter().find(|a| a.ssid == ssid);
-
+    let ours = ap_infos.into_iter().find(|a| a.ssid.as_str() == ssid);
     let channel = if let Some(ours) = ours {
         info!(
             "Found configured access point {} on channel {}",
@@ -49,50 +46,59 @@ pub fn wifi(
 
     wifi.set_configuration(&Configuration::Mixed(
         ClientConfiguration {
-            ssid: ssid.into(),
-            password: pass.into(),
+            // heapless::String<32/64>: convert with try_into (fails if too long)
+            ssid: ssid
+                .try_into()
+                .map_err(|_| anyhow!("SSID too long (max 32)"))?,
+            password: pass
+                .try_into()
+                .map_err(|_| anyhow!("password too long (max 64)"))?,
             channel,
             auth_method,
             ..Default::default()
         },
         AccessPointConfiguration {
-			ssid: ssid.into(),
-			password: pass.into(),
-			auth_method: if pass.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
-			ssid_hidden: false,
-			channel: channel.unwrap_or(1),
-			max_connections: 4,
-			..Default::default()
-		},
+            ssid: ssid
+                .try_into()
+                .map_err(|_| anyhow!("SSID too long (max 32)"))?,
+            password: pass
+                .try_into()
+                .map_err(|_| anyhow!("password too long (max 64)"))?,
+            auth_method: if pass.is_empty() {
+                AuthMethod::None
+            } else {
+                AuthMethod::WPA2Personal
+            },
+            ssid_hidden: false,
+            channel: channel.unwrap_or(1),
+            max_connections: 4,
+            ..Default::default()
+        },
     ))?;
 
     wifi.start()?;
-
     info!("Starting wifi...");
 
-    if !WifiWait::new(&sysloop)?
-        .wait_with_timeout(Duration::from_secs(20), || wifi.is_started().unwrap())
-    {
-        bail!("Wifi did not start");
-    }
-
     info!("Connecting wifi...");
-
     wifi.connect()?;
 
-    if !EspNetifWait::new::<EspNetif>(wifi.sta_netif(), &sysloop)?.wait_with_timeout(
-        Duration::from_secs(20),
-        || {
-            wifi.is_connected().unwrap()
-                && wifi.sta_netif().get_ip_info().unwrap().ip != Ipv4Addr::new(0, 0, 0, 0)
-        },
-    ) {
-        bail!("Wifi did not connect or did not receive a DHCP lease");
-    }
+    // Wait up to 20s for connected + DHCP
+	let deadline = Instant::now() + Duration::from_secs(20);
+	loop {
+	 if wifi.is_connected()? {
+		 if let Ok(ip) = wifi.sta_netif().get_ip_info() {
+			 if ip.ip != Ipv4Addr::new(0, 0, 0, 0) {
+				 break;
+			 }
+		 }
+	 }
+	 if Instant::now() >= deadline {
+		 bail!("Wifi did not connect or did not receive a DHCP lease");
+	 }
+	 std::thread::sleep(Duration::from_millis(100));
+	}
 
     let ip_info = wifi.sta_netif().get_ip_info()?;
-
     info!("Wifi DHCP info: {:?}", ip_info);
-
     Ok(wifi)
 }

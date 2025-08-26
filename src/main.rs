@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use core::str;
 use embedded_svc::{http::Method, http::Headers, io::Write};
 use esp_idf_hal::{
@@ -11,8 +11,8 @@ use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     http::server::{Configuration, EspHttpServer},
     tls::X509,
-    netif::{EspNetif, EspNetifWait},
-    wifi::{EspWifi, WifiWait},
+    netif::EspNetif,
+    wifi::{BlockingWifi, EspWifi},
     timer::EspTaskTimerService,
     nvs::EspDefaultNvsPartition,
 };
@@ -23,6 +23,7 @@ use std::{
     time::Duration,
     collections::HashMap,
     cell::RefCell,
+    time::Instant,
 };
 use embedded_svc::{
 	io::Read,
@@ -41,7 +42,9 @@ pub mod serial;
 pub mod pins;
 pub mod commandbuffer;
 pub mod wifi;
+pub mod boards;
 
+use crate::boards::{active::pins::*, BoardInfo,};
 use crate::planner::Planner;
 use crate::interrupts::Stepper;
 
@@ -192,40 +195,52 @@ fn vec_gcd(numbers: &[i32]) -> i32 {
 /// Start the radio as a Soft-AP and return the running `EspWifi`.
 pub fn wifi_ap(
     ssid: &str,
-    psk: &str,
-    modem: Modem,
+    pass: &str,
+    modem: esp_idf_hal::modem::Modem,
     sysloop: EspSystemEventLoop,
-) -> Result<EspWifi<'static>> {
-    // Do not restore stale Wi-Fi config from NVS for AP-only mode
-    let mut wifi = EspWifi::new(modem, sysloop.clone(), None)?;
+) -> Result<BlockingWifi<EspWifi<'static>>> {
+    // NVS is required on IDF 5.x for Wi-Fi (cal data, etc.)
+    let nvs = EspDefaultNvsPartition::take()?;
+    let mut wifi = BlockingWifi::wrap(
+        EspWifi::new(modem, sysloop.clone(), Some(nvs))?,
+        sysloop,
+    )?;
+
+    // Convert &str -> heapless strings used by embedded-svc, mapping () -> anyhow::Error
+    let ssid = ssid
+        .try_into()
+        .map_err(|_| anyhow!("SSID too long (max 32)"))?;
+    let password = pass
+        .try_into()
+        .map_err(|_| anyhow!("password too long (max 64)"))?;
+
+    // Choose auth based on password presence (WPA2 requires >= 8 chars)
+    let auth_method = if pass.is_empty() {
+        AuthMethod::None
+    } else {
+        if pass.len() < 8 {
+            anyhow::bail!("WPA2 password must be at least 8 characters");
+        }
+        AuthMethod::WPA2Personal
+    };
 
     let ap_cfg = AccessPointConfiguration {
-        ssid: ssid.into(),
-        password: psk.into(),
-        auth_method: if psk.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal },
+        ssid,
+        password,
+        auth_method,
         ssid_hidden: false,
-        channel: 1,
+        channel: 11,          // try 6 or 11 if you like
         max_connections: 4,
         ..Default::default()
     };
 
     wifi.set_configuration(&WifiConfiguration::AccessPoint(ap_cfg))?;
     wifi.start()?;
+    wifi.wait_netif_up()?;   // waits until the AP netif is up
 
-    // Wait until the driver reports started…
-    if !WifiWait::new(&sysloop)?.wait_with_timeout(Duration::from_secs(10), || {
-        wifi.is_started().unwrap()
-    }) {
-        anyhow::bail!("SoftAP did not start");
-    }
-
-    // …and until the AP netif is actually up (DHCP server running, beacons going)
-    if !EspNetifWait::new::<EspNetif>(wifi.ap_netif(), &sysloop)?.wait_with_timeout(
-        Duration::from_secs(10),
-        || wifi.ap_netif().is_up().unwrap(),
-    ) {
-        anyhow::bail!("SoftAP netif did not come up");
-    }
+    // Optional: quick visibility log
+    let ip = wifi.wifi().ap_netif().get_ip_info()?;
+    log::info!("SoftAP up at {:?}", ip);
 
     Ok(wifi)
 }
@@ -255,33 +270,32 @@ fn main() -> Result<()> {
     // let config = I2cConfig::new().baudrate(100.kHz().into());
     // let i2c = I2cDriver::new(i2c, sda, scl, &config)?;
 
-    let d0_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio0)?));
-    let d0 = d0_main.clone();
-    let d1_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio1)?));
-    let d1 = d1_main.clone();
-    //let d2_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio2)?));
-    //let d2 = d2_main.clone();
-    let d3_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio3)?));
-    let d3 = d3_main.clone();
-    let d4_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio4)?));
-    let d4 = d4_main.clone();
-    let d5_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio5)?));
-    let d5 = d5_main.clone();
-    let d6_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio6)?));
-    let d6 = d6_main.clone();
-    let d7_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio7)?));
-    let d7 = d7_main.clone();
-    //let d8_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio8)?));
-    //let d8 = d8_main.clone();
-    //let d9_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio9)?));
-    //let d9 = d9_main.clone();
-    //let d10_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio10)?));
-    //let d10 = d10_main.clone();
-    // 11, 12, and 13 are used for SPI flash
-    //let d11_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio11)?));
-    //let d11 = d11_main.clone();
-    let d12_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio12)?));
-    let d12 = d12_main.clone();
+    // ===== ESP32-WROOM-32U SAFE PIN SELECTION =====
+	// D0..D7 remapped to safe GPIOs on classic ESP32.
+	// If you change wiring, update the numbers here.
+	let d0_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio2)?));   // D0  -> GPIO2
+	let d0 = d0_main.clone();
+
+	let d1_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio23)?));  // D1  -> GPIO23 (relay)
+	let d1 = d1_main.clone();
+
+	let d3_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio4)?));   // D3  -> GPIO4
+	let d3 = d3_main.clone();
+
+	let d4_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio5)?));   // D4  -> GPIO5
+	let d4 = d4_main.clone();
+
+	let d5_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio16)?));  // D5  -> GPIO16
+	let d5 = d5_main.clone();
+
+	let d6_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio17)?));  // D6  -> GPIO17
+	let d6 = d6_main.clone();
+
+	let d7_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio18)?));  // D7  -> GPIO18
+	let d7 = d7_main.clone();
+
+	let d12_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio19)?)); // status LED -> GPIO19
+	let d12 = d12_main.clone();
     //let d13_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio13)?));
     //let d13 = d13_main.clone();
     //let d14_main = Arc::new(Mutex::new(esp_idf_hal::gpio::PinDriver::output(peripherals.pins.gpio14)?));
@@ -319,31 +333,60 @@ fn main() -> Result<()> {
     let mut server = EspHttpServer::new(&webserver_configuration)?;
 
     // 2. Write a handler that returns the index page
-    server.fn_handler("/", Method::Get, |request| {  // User interface index.html
+    server.fn_handler("/", Method::Get, |request| -> anyhow::Result<()> {  // User interface index.html
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/html"), ("Content-Encoding", "text")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/index.html"))?;
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })?;
 
-    server.fn_handler("/alumina-ui.js", Method::Get, |request| {  // User interface index.js
+    server.fn_handler("/alumina-ui.js", Method::Get, |request| -> anyhow::Result<()> {  // User interface index.js
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript; charset=utf-8"), ("Content-Encoding", "gzip")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui.js.gz"))?;
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })?;
 
-    server.fn_handler("/alumina-ui_bg.wasm", Method::Get, |request| {  // User interface wasm binary
+    server.fn_handler("/alumina-ui_bg.wasm", Method::Get, |request| -> anyhow::Result<()> {  // User interface wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "br")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.br"))?;
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })?;
 
-    server.fn_handler("/favicon.ico", Method::Get, |request| {  // User interface icon
+    server.fn_handler("/favicon.ico", Method::Get, |request| -> anyhow::Result<()> {  // User interface icon
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "image/gif")]);
         response?.write_all(include_bytes!("../../alumina-ui/dist/favicon.ico"))?;
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })?;
+    
+    server.fn_handler("/board", Method::Get, |request| -> anyhow::Result<()> {
+		let name = <boards::active::MksTinyBee as BoardInfo>::name();
+		let mime = <boards::active::MksTinyBee as BoardInfo>::image_mime();
+		let body = format!(r#"{{"name":"{}","image_mime":"{}","image_url":"/board/image"}}"#, name, mime);
 
-	server.fn_handler("/time", Method::Get, |request| {
+		let response = request.into_response(
+			200,
+			Some(&body),
+			&[("Content-Type","application/json")]
+		);
+		response?.flush()?;
+		Ok::<(), anyhow::Error>(())
+	})?;
+
+	server.fn_handler("/board/image", Method::Get, |request| -> anyhow::Result<()> {
+		let bytes = <boards::active::MksTinyBee as BoardInfo>::image_bytes();
+		let mime = <boards::active::MksTinyBee as BoardInfo>::image_mime();
+
+		// NOTE: we write the raw bytes; set a long-ish cache to avoid spam refetches
+		let mut resp = request.into_response(
+			200,
+			Some("OK"),
+			&[("Content-Type", mime), ("Cache-Control","public, max-age=86400")]
+		)?;
+		resp.write_all(bytes)?;
+		resp.flush()?;
+		Ok::<(), anyhow::Error>(())
+	})?;
+
+	server.fn_handler("/time", Method::Get, |request| -> anyhow::Result<()> {
 		let us = unsafe { esp_timer_get_time() } as u64;
 		let ms = us / 1000;
 		// Return a plain number that the UI can parse easily:
@@ -352,10 +395,10 @@ fn main() -> Result<()> {
 			&[("Content-Type","text/plain")])?;
 		resp.write_all(body.as_bytes())?;
 		resp.flush()?;
-		Ok(())
+		Ok::<(), anyhow::Error>(())
 	})?;
 
-    server.fn_handler("/files", Method::Post, move |mut request| {
+    server.fn_handler("/files", Method::Post, move |mut request| -> anyhow::Result<()> {
 		let mut buf = [0u8; 2048];
 		let mut data: Vec<u8> = Vec::new();
 		loop {
@@ -368,15 +411,15 @@ fn main() -> Result<()> {
 		let body = format!("received: {} bytes\n", data.len());
 		resp.write_all(body.as_bytes())?;
 		resp.flush()?;
-		Ok(())
+		Ok::<(), anyhow::Error>(())
 	})?;
 
-	server.fn_handler("/queue", Method::Get, |request| {
+	server.fn_handler("/queue", Method::Get, |request| -> anyhow::Result<()> {
 		let mut resp = request.into_response(200, Some("OK"),
 			&[("Content-Type","text/plain")])?;
 		resp.write_all(b"Queue: []\n")?;
 		resp.flush()?;
-		Ok(())
+		Ok::<(), anyhow::Error>(())
 	})?;
 
 	{
@@ -389,7 +432,7 @@ fn main() -> Result<()> {
         let d6 = d6_main.clone();
         let d7 = d7_main.clone();
         let d12 = d12_main.clone();
-		server.fn_handler("/pins", Method::Get, move |request| {
+		server.fn_handler("/pins", Method::Get, move |request| -> anyhow::Result<()> {
 			// Output-mode friendly: read the output latch
 			let d0v  = d0.lock().unwrap().is_set_high()  as u8;
 			let d1v  = d1.lock().unwrap().is_set_high()  as u8;
@@ -411,11 +454,11 @@ fn main() -> Result<()> {
 				&[("Content-Type", "application/json")],
 			);
 			response?.flush()?;
-			Ok(())
+			Ok::<(), anyhow::Error>(())
 		})?;
 	}
 
-    server.fn_handler("/queue", Method::Post, move|mut request| {
+    server.fn_handler("/queue", Method::Post, move|mut request| -> anyhow::Result<()> {
 
         let header = request.header("Accept").unwrap().to_string();
 
@@ -824,7 +867,7 @@ fn main() -> Result<()> {
             },
         }
 
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     })?;
 
     println!("Server awaiting connection");

@@ -2,10 +2,36 @@
 
 # Alumina Firmware
 
-Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.  There are two parts to Alumina: the [firmware](https://github.com/timschmidt/alumina-firmware) which targets the esp32c3 microcontroller, sets up a Wifi AP called "Alumina", serves the [Alumina UI](https://github.com/timschmidt/alumina-ui) via HTTP, responds to commands from the Alumina UI via HTTP, and performs motion planning and step generation.  The UI targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly), draws geometry using WebGL and egui, and manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs).  Both parts fit in the onboard flash of the esp32c3, freeing up pins and peripherals for other tasks.
+Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.
+
+Try the [Alumina UI Web Demo](https://timschmidt.github.io/alumina-ui/)
+
+Firmware and UI get linked together at compile time and fit in the onboard flash of a single microcontroller, reducing design complexity, part count, and cost.
+ - [Alumina Firmware](https://github.com/timschmidt/alumina-firmware)
+   - targets the xtensa and risc-v esp32 microcontrollers
+   - sets up a Wifi AP called "Alumina"
+   - serves the Alumina UI via HTTP
+   - responds to commands from the Alumina UI via HTTP
+   - performs motion planning and step generation
+   - (planned) port to [embassy](https://embassy.dev/) and [FoA](https://github.com/esp32-open-mac/FoA) and [smol](https://github.com/smol-rs/smol/blob/master/examples/simple-server.rs)
+   - (planned) port to other embassy hardware targets
+ - [Alumina UI](https://github.com/timschmidt/alumina-ui)
+   - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
+   - draws geometry using WebGL and egui
+   - works in any browser, desktop or mobile
+   - CAD using [csgrs](https://github.com/timschmidt/csgrs) and [egui_node_graph2](https://github.com/trevyn/egui_node_graph2)
+   - calculate and display 2D slices of 3D models
+   - Communicates with Alumina Firmware to display diagnostic log, graph, and photo of the controller
+   - Fits in < 4Mb microcontroller flash, including firmware
+   - (planned) multiple controllers in sync
+   - (planned) use [wgmath](https://wgmath.rs/) to move most CAD and geometry and toolpath calculation to the GPU
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
+
+## Hardware
+### [MKS TinyBee](https://github.com/makerbase-mks/MKS-TinyBee/)
+<img src="https://raw.githubusercontent.com/makerbase-mks/MKS-TinyBee/refs/heads/main/hardware/Image/MKS%20TinyBee%20V1.x%20Wiring.png" width="60%" alt="MKS TinyBee"/>
 
 ## HTTP API
 ```
@@ -17,12 +43,18 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 /time					GET 
 /files					POST 
 /queue					GET, POST 
+/board					GET json: {{"name":"{}","image_mime":"{}","image_url":"/board/image"}}
+/board/image			GET PNG formatted board image
 ```
 
 ## Development
 ### Build and flash firmware
 ```shell
-cargo run --release
+cargo install espup
+espup install
+export IDF_PATH="~/.espressif/esp-idf/v5.4.1/"
+
+cargo run --release --features="board-mks_tinybee"
 ```
 
 to flash devices which make use of a ch340 USB serial adapter you must modify ~/.config/espflash.toml like so:
@@ -47,9 +79,18 @@ pid="7523"
 
 ## Todo
 - BLE support
+- flesh out wifi scan / connect and nvs support
 - get motion control working
 - klipper style multi-mcu support
 - get endstops and homing working
 - implement sd card support
-- update to more recent esp-idf and supporting crates
+- data logging (from IMU, temp/humid, received commands) to SD available space
 - add internet cloud to diagram animation
+- crunch board graphics and link at compile time for diagnostics tab
+- bus pirate features
+- support http://wiki.fluidnc.com/en/hardware/existing_hardware
+- FoC Servo support
+- MPPT
+- Active Rectification support
+- PID / bang-bang heater control
+- rename board to device
