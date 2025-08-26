@@ -22,10 +22,8 @@ The two parts of Alumina are linked together at compile time and fit in the onbo
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
 
 ## Hardware
-### MKS TinyBee
+### [MKS TinyBee](https://github.com/makerbase-mks/MKS-TinyBee/)
 <img src="https://raw.githubusercontent.com/makerbase-mks/MKS-TinyBee/refs/heads/main/hardware/Image/MKS%20TinyBee%20V1.x%20Wiring.png" width="60%" alt="MKS TinyBee"/>
-
-[MKS TinyBee GitHub](https://github.com/makerbase-mks/MKS-TinyBee/)
 
 ## HTTP API
 ```
