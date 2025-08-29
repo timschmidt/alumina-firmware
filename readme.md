@@ -33,6 +33,9 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 ### [MKS TinyBee](https://github.com/makerbase-mks/MKS-TinyBee/)
 <img src="https://raw.githubusercontent.com/makerbase-mks/MKS-TinyBee/refs/heads/main/hardware/Image/MKS%20TinyBee%20V1.x%20Wiring.png" width="60%" alt="MKS TinyBee"/>
 
+### [Esp32Drive](https://www.aliexpress.us/item/3256804594508948.html)
+<img src="docs/esp32drive.png" width="60%" alt="Esp32Drive"/>
+
 ## HTTP API
 ```
 /						GET index.html
