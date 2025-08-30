@@ -36,6 +36,9 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 ### [Esp32Drive](https://www.aliexpress.us/item/3256804594508948.html)
 <img src="docs/board_images/esp32drive.png" width="60%" alt="Esp32Drive"/>
 
+### [Esp32Cam](https://github.com/raphaelbs/esp32-cam-ai-thinker)
+<img src="docs/board_images/esp32cam.jpg" width="60%", alt="Esp32Cam"/>
+
 ## HTTP API
 ```
 /						GET index.html
