@@ -39,7 +39,9 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 ### [Esp32Cam](https://github.com/raphaelbs/esp32-cam-ai-thinker)
 <img src="docs/board_images/esp32cam.jpg" width="60%" alt="Esp32Cam"/>
 
+### [PD-Stepper](https://github.com/joshr120/PD-Stepper)
 ### [Esp-drone](https://github.com/espressif/esp-drone)
+### [Fugu MPPT](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/)
 
 ## HTTP API
 ```
