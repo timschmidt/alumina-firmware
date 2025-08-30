@@ -39,6 +39,8 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 ### [Esp32Cam](https://github.com/raphaelbs/esp32-cam-ai-thinker)
 <img src="docs/board_images/esp32cam.jpg" width="60%" alt="Esp32Cam"/>
 
+### [Esp-drone](https://github.com/espressif/esp-drone)
+
 ## HTTP API
 ```
 /						GET index.html
