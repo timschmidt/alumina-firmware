@@ -25,6 +25,7 @@ default = ["native"]
 native = ["esp-idf-sys/native"]
 board_mks_tinybee = []
 board_esp32drive = []
+board_esp32cam = []
 
 [dependencies]
 anyhow = { version = "1" }
