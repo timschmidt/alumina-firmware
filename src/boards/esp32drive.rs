@@ -7,7 +7,6 @@ pub mod pins {
 
 }
 
-// A minimal marker type so higher-level code can refer to the active board by type.
 pub struct Device;
 
 impl Device {

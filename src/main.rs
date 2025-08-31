@@ -39,7 +39,6 @@ use esp_idf_sys as _;
 pub mod interrupts;
 pub mod planner;
 pub mod serial;
-pub mod pins;
 pub mod commandbuffer;
 pub mod wifi;
 pub mod boards;

@@ -105,7 +105,6 @@ pub mod pins {
     pub const STATUS_LED: i32 = SD_MISO; // Example alias if you repurpose; adjust as needed
 }
 
-// A minimal marker type so higher-level code can refer to the active board by type.
 pub struct Device;
 
 impl Device {
