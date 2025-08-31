@@ -64,7 +64,7 @@ cargo install espup
 espup install
 export IDF_PATH="~/.espressif/esp-idf/v5.4.1/"
 
-cargo run --release --features="board-mks_tinybee"
+cargo run --release --features="device_mks_tinybee"
 ```
 
 to flash devices which make use of a ch340 USB serial adapter you must modify ~/.config/espflash.toml like so:
