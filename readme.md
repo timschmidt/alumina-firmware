@@ -42,6 +42,7 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 ### [PD-Stepper](https://github.com/joshr120/PD-Stepper)
 ### [Esp-drone](https://github.com/espressif/esp-drone)
 ### [Fugu MPPT](https://www.instructables.com/DIY-1kW-MPPT-Solar-Charge-Controller/)
+### [Spotify Neopixel Visualizer](https://github.com/0xjmux/iot_leddriver_hw)
 
 ## HTTP API
 ```
