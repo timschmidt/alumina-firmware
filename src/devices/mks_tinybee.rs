@@ -1,5 +1,5 @@
-//! MKS TinyBee board pin map (compile-time selected via `board_mks_tinybee` feature).
-//! All values are the board’s labeled IO numbers from the provided reference.
+//! MKS TinyBee device pin map (compile-time selected via `device_mks_tinybee` feature).
+//! All values are the device’s labeled IO numbers from the provided reference.
 
 #![allow(non_upper_case_globals)]
 pub mod pins {
@@ -111,7 +111,7 @@ impl Device {
     pub const NAME: &'static str = "mks_tinybee";
     
 	// NEW: compile-time embed of the board image so it’s available to the web server
-    pub const IMAGE_BYTES: &'static [u8] = include_bytes!("../../docs/board_images/mks_tinybee.png");
+    pub const IMAGE_BYTES: &'static [u8] = include_bytes!("../../docs/device_images/mks_tinybee.png");
     pub const IMAGE_MIME: &'static str = "image/png";
 }
 

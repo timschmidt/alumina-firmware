@@ -23,9 +23,9 @@ debug = true
 [features]
 default = ["native"]
 native = ["esp-idf-sys/native"]
-board_mks_tinybee = []
-board_esp32drive = []
-board_esp32cam = []
+device_mks_tinybee = []
+device_esp32drive = []
+device_esp32cam = []
 
 [dependencies]
 anyhow = { version = "1" }
