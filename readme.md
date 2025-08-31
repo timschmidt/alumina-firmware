@@ -34,10 +34,10 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 <img src="https://raw.githubusercontent.com/makerbase-mks/MKS-TinyBee/refs/heads/main/hardware/Image/MKS%20TinyBee%20V1.x%20Wiring.png" width="60%" alt="MKS TinyBee"/>
 
 ### [Esp32Drive](https://www.aliexpress.us/item/3256804594508948.html)
-<img src="docs/board_images/esp32drive.png" width="60%" alt="Esp32Drive"/>
+<img src="docs/device_images/esp32drive.png" width="60%" alt="Esp32Drive"/>
 
 ### [Esp32Cam](https://github.com/raphaelbs/esp32-cam-ai-thinker)
-<img src="docs/board_images/esp32cam.jpg" width="60%" alt="Esp32Cam"/>
+<img src="docs/device_images/esp32cam.jpg" width="60%" alt="Esp32Cam"/>
 
 ### [PD-Stepper](https://github.com/joshr120/PD-Stepper)
 ### [Esp-drone](https://github.com/espressif/esp-drone)
