@@ -7,30 +7,16 @@
 //!     use crate::boards::active::pins::*;
 //!     let x_step_pin = X_STEP;
 
-#[cfg(feature="board-mks_tinybee")]
+#[cfg(feature="board_mks_tinybee")]
 pub mod mks_tinybee;
 
-pub trait BoardInfo {
-    #[doc=" Human-readable board name."]
-    fn name() -> &'static str;
+#[cfg(feature="board_esp32drive")]
+pub mod esp32drive;
 
-    #[doc=" Raw bytes of the board image (e.g., pinout)."]
-    fn image_bytes() -> &'static [u8];
+#[doc=" The currently selected device, re-exported as `active`."] 
+#[cfg(feature="board_mks_tinybee")] pub use mks_tinybee as active;
+#[cfg(feature="board_esp32drive")] pub use esp32drive as active;
 
-    #[doc=" MIME type for the image bytes."]
-    fn image_mime() -> &'static str;
-}
-
-#[doc=" The currently selected board module, re-exported as `active`."] 
-#[cfg(feature="board-mks_tinybee")] pub use mks_tinybee as active;
-
-#[cfg(feature="board-mks_tinybee")]
-impl BoardInfo for active::MksTinyBee {
-    fn name() -> &'static str { active::MksTinyBee::NAME }
-    fn image_bytes() -> &'static [u8] { active::MksTinyBee::IMAGE_BYTES }
-    fn image_mime() -> &'static str { active::MksTinyBee::IMAGE_MIME }
-}
-
-#[cfg(not(any(feature="board-mks_tinybee",)))]
+#[cfg(not(any(feature="board_mks_tinybee",feature="board_esp32drive",)))]
 compile_error!("No board selected. Enable one of the board features, e.g. `--features board-mks_tinybee`.");
 

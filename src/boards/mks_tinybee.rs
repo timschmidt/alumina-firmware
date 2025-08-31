@@ -1,4 +1,4 @@
-//! MKS TinyBee board pin map (compile-time selected via `board-mks_tinybee` feature).
+//! MKS TinyBee board pin map (compile-time selected via `board_mks_tinybee` feature).
 //! All values are the board’s labeled IO numbers from the provided reference.
 
 #![allow(non_upper_case_globals)]
@@ -106,9 +106,9 @@ pub mod pins {
 }
 
 // A minimal marker type so higher-level code can refer to the active board by type.
-pub struct MksTinyBee;
+pub struct Device;
 
-impl MksTinyBee {
+impl Device {
     pub const NAME: &'static str = "mks_tinybee";
     
 	// NEW: compile-time embed of the board image so it’s available to the web server

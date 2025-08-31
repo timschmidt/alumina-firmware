@@ -104,3 +104,4 @@ pid="7523"
 - Active Rectification support
 - PID / bang-bang heater control
 - rename board to device
+- rename to Alumina Interface / Alumina Device
