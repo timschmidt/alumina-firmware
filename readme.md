@@ -4,7 +4,7 @@
 
 Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.
 
-Try the [Alumina UI Web Demo](https://timschmidt.github.io/alumina-ui/)
+Try the [Alumina Interface Web Demo](https://timschmidt.github.io/alumina-interface/)
 
 Firmware and UI get linked together at compile time and fit in the onboard flash of a single microcontroller, reducing design complexity, part count, and cost.
  - [Alumina Firmware](https://github.com/timschmidt/alumina-firmware)
@@ -15,7 +15,7 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
    - performs motion planning and step generation
    - (planned) port to [embassy](https://embassy.dev/) and [FoA](https://github.com/esp32-open-mac/FoA) and [smol](https://github.com/smol-rs/smol/blob/master/examples/simple-server.rs)
    - (planned) port to other embassy hardware targets
- - [Alumina UI](https://github.com/timschmidt/alumina-ui)
+ - [Alumina Interface](https://github.com/timschmidt/alumina-interface)
    - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
    - draws geometry using WebGL and egui
    - works in any browser, desktop or mobile
