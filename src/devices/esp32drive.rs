@@ -4,6 +4,20 @@
 
 #![allow(non_upper_case_globals)]
 pub mod pins {
+	// IO pins
+    pub const TX0: i32 = 1;
+    pub const RX0: i32 = 3;
+    pub const GPIO17: i32 = 17;
+    pub const GPIO21: i32 = 21;
+    pub const GPIO22: i32 = 22;
+    
+    // Sensor
+    pub const GPIO5: i32 = 5;
+    pub const GPIO18: i32 = 18;
+    pub const GPIO19: i32 = 19;
+    pub const GPIO23: i32 = 23;
+
+	
 
 }
 
