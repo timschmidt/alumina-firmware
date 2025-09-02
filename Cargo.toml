@@ -26,6 +26,7 @@ native = ["esp-idf-sys/native"]
 device_mks_tinybee = []
 device_esp32drive = []
 device_esp32cam = []
+device_xprov5 = []
 
 [dependencies]
 anyhow = { version = "1" }
