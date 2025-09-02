@@ -106,3 +106,4 @@ pid="7523"
 - PID / bang-bang heater control
 - rename board to device
 - rename to Alumina Interface / Alumina Device
+- consider implementing commands similar to https://github.com/simplefoc/Arduino-FOC/blob/master/src/communication/commands.h
