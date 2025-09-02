@@ -32,6 +32,7 @@ Firmware and UI get linked together at compile time and fit in the onboard flash
 ## Hardware
 ### [MKS TinyBee](https://github.com/makerbase-mks/MKS-TinyBee/)
 <img src="https://raw.githubusercontent.com/makerbase-mks/MKS-TinyBee/refs/heads/main/hardware/Image/MKS%20TinyBee%20V1.x%20Wiring.png" width="60%" alt="MKS TinyBee"/>
+
 [FluidNC Wiki Page](http://wiki.fluidnc.com/en/hardware/3rd-party/MKS_TinyBee)
 
 ### [xProV5](http://wiki.fluidnc.com/en/hardware/3rd-party/xPro_V5)
