@@ -7,6 +7,8 @@
 //!     use crate::devices::active::pins::*;
 //!     let x_step_pin = X_STEP;
 
+pub struct Device;
+
 #[cfg(feature="device_mks_tinybee")]
 pub mod mks_tinybee;
 
@@ -19,12 +21,6 @@ pub mod esp32cam;
 #[cfg(feature="device_xprov5")]
 pub mod xprov5;
 
-#[doc=" The currently selected device, re-exported as `active`."] 
-#[cfg(feature="device_mks_tinybee")] pub use mks_tinybee as active;
-#[cfg(feature="device_esp32drive")] pub use esp32drive as active;
-#[cfg(feature="device_esp32cam")] pub use esp32cam as active;
-#[cfg(feature="device_xprov5")] pub use xprov5 as active;
-
 #[cfg(not(any(feature="device_mks_tinybee",feature="device_esp32drive",feature="device_esp32cam",feature="device_xprov5",)))]
-compile_error!("No board selected. Enable one of the device features, e.g. `--features device_mks_tinybee`.");
+compile_error!("No device selected. Enable one of the device features, e.g. `--features device_mks_tinybee`.");
 

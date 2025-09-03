@@ -43,7 +43,6 @@ pub mod commandbuffer;
 pub mod wifi;
 pub mod devices;
 
-use crate::devices::{active::pins::*,};
 use crate::planner::Planner;
 use crate::interrupts::Stepper;
 
@@ -357,8 +356,8 @@ fn main() -> Result<()> {
     })?;
     
     server.fn_handler("/board", Method::Get, |request| -> anyhow::Result<()> {
-		let name = devices::active::Device::NAME;
-		let mime = devices::active::Device::IMAGE_MIME;
+		let name = crate::devices::Device::NAME;
+		let mime = crate::devices::Device::IMAGE_MIME;
 		let body = format!(r#"{{"name":"{}","image_mime":"{}","image_url":"/board/image"}}"#, name, mime);
 
 		let response = request.into_response(
@@ -371,8 +370,8 @@ fn main() -> Result<()> {
 	})?;
 
 	server.fn_handler("/board/image", Method::Get, |request| -> anyhow::Result<()> {
-		let bytes = devices::active::Device::IMAGE_BYTES;
-		let mime = devices::active::Device::IMAGE_MIME;
+		let bytes = crate::devices::Device::IMAGE_BYTES;
+		let mime = crate::devices::Device::IMAGE_MIME;
 
 		// NOTE: we write the raw bytes; set a long-ish cache to avoid spam refetches
 		let mut resp = request.into_response(

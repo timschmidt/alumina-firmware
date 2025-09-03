@@ -1,6 +1,8 @@
 //! esp32cam device pin map (compile-time selected via `device_esp32cam` feature).
 //! All values are the device’s labeled IO numbers from the provided reference.
 
+use crate::devices::Device;
+
 #![allow(non_upper_case_globals)]
 pub mod pins {
 	// Camera module
@@ -40,8 +42,6 @@ pub mod pins {
 	pub const GPIO15: i32 = 15; // SD CMD
 	pub const GPIO16: i32 = 16; // uart2 rx
 }
-
-pub struct Device;
 
 impl Device {
     pub const NAME: &'static str = "esp32cam";

@@ -1,7 +1,9 @@
 //! xProV5 device pin map (compile-time selected via `device_xprov5` feature).
 //! All values are the device’s labeled IO numbers from the provided reference.
-
 #![allow(non_upper_case_globals)]
+
+use crate::devices::Device;
+
 pub mod pins {
     // IO
     pub const MIST: i32 = 21;
@@ -41,8 +43,6 @@ pub mod pins {
     // Convenience aliases
     pub const STATUS_LED: i32 = SD_MISO; // Example alias if you repurpose; adjust as needed
 }
-
-pub struct Device;
 
 impl Device {
     pub const NAME: &'static str = "xprov5";

@@ -1,7 +1,9 @@
 //! MKS TinyBee device pin map (compile-time selected via `device_mks_tinybee` feature).
 //! All values are the device’s labeled IO numbers from the provided reference.
-
 #![allow(non_upper_case_globals)]
+
+use crate::devices::Device;
+
 pub mod pins {
     // -------------------------
     // Heaters
@@ -104,8 +106,6 @@ pub mod pins {
     // -------------------------
     pub const STATUS_LED: i32 = SD_MISO; // Example alias if you repurpose; adjust as needed
 }
-
-pub struct Device;
 
 impl Device {
     pub const NAME: &'static str = "mks_tinybee";
