@@ -6,7 +6,7 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 
 Try the [Alumina Interface Web Demo](https://timschmidt.github.io/alumina-interface/)
 
-Firmware and UI get linked together at compile time and fit in the onboard flash of a single microcontroller, reducing design complexity, part count, and cost.
+Alumina Firmware and Interface get linked together at compile time and fit in the onboard flash of a single microcontroller, reducing design complexity, part count, and cost.
  - [Alumina Firmware](https://github.com/timschmidt/alumina-firmware)
    - targets the xtensa and risc-v esp32 microcontrollers
    - sets up a Wifi AP called "Alumina"
