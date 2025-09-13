@@ -38,6 +38,7 @@ shtcx = { version = "=0.11.0", default-features = false }
 httparse = { version = "1.5.1", default-features = false }
 stepgen = { version = "0.1.3", default-features = false }
 log = { version = "0.4", default-features = false }
+#stepper = { git = "https://github.com/timschmidt/stepper" }
 
 [build-dependencies]
 anyhow = "1"

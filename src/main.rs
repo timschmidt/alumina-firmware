@@ -333,25 +333,25 @@ fn main() -> Result<()> {
     // 2. Write a handler that returns the index page
     server.fn_handler("/", Method::Get, |request| -> anyhow::Result<()> {  // User interface index.html
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/html"), ("Content-Encoding", "text")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/index.html"))?;
+        response?.write_all(include_bytes!("../../alumina-interface/dist/index.html"))?;
         Ok::<(), anyhow::Error>(())
     })?;
 
     server.fn_handler("/alumina-ui.js", Method::Get, |request| -> anyhow::Result<()> {  // User interface index.js
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "text/javascript; charset=utf-8"), ("Content-Encoding", "gzip")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui.js.gz"))?;
+        response?.write_all(include_bytes!("../../alumina-interface/dist/alumina-ui.js.gz"))?;
         Ok::<(), anyhow::Error>(())
     })?;
 
     server.fn_handler("/alumina-ui_bg.wasm", Method::Get, |request| -> anyhow::Result<()> {  // User interface wasm binary
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "application/wasm"), ("Content-Encoding", "br")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/alumina-ui_bg.wasm.br"))?;
+        response?.write_all(include_bytes!("../../alumina-interface/dist/alumina-ui_bg.wasm.br"))?;
         Ok::<(), anyhow::Error>(())
     })?;
 
     server.fn_handler("/favicon.ico", Method::Get, |request| -> anyhow::Result<()> {  // User interface icon
         let response = request.into_response(200, Some("OK"), &[("Content-Type", "image/gif")]);
-        response?.write_all(include_bytes!("../../alumina-ui/dist/favicon.ico"))?;
+        response?.write_all(include_bytes!("../../alumina-interface/dist/favicon.ico"))?;
         Ok::<(), anyhow::Error>(())
     })?;
     
@@ -360,13 +360,14 @@ fn main() -> Result<()> {
 		let mime = crate::devices::Device::IMAGE_MIME;
 		let body = format!(r#"{{"name":"{}","image_mime":"{}","image_url":"/board/image"}}"#, name, mime);
 
-		let response = request.into_response(
+		let mut resp = request.into_response(
 			200,
-			Some(&body),
-			&[("Content-Type","application/json")]
-		);
-		response?.flush()?;
-		Ok::<(), anyhow::Error>(())
+			Some("OK"),
+			&[("Content-Type", "application/json")],
+		)?;
+		resp.write_all(body.as_bytes())?;
+		resp.flush()?;
+		Ok(())
 	})?;
 
 	server.fn_handler("/board/image", Method::Get, |request| -> anyhow::Result<()> {
@@ -446,13 +447,14 @@ fn main() -> Result<()> {
 				d0v, d1v, d3v, d4v, d5v, d6v, d7v, d12v
 			);
 
-			let response = request.into_response(
+			let mut resp = request.into_response(
 				200,
-				Some(&body),
-				&[("Content-Type", "application/json")],
-			);
-			response?.flush()?;
-			Ok::<(), anyhow::Error>(())
+				Some("OK"),
+				&[("Content-Type", "application/json"), ("Cache-Control", "no-store")],
+			)?;
+			resp.write_all(body.as_bytes())?;
+			resp.flush()?;
+			Ok(())
 		})?;
 	}
 

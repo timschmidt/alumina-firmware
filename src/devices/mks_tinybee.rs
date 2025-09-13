@@ -5,22 +5,16 @@
 use crate::devices::Device;
 
 pub mod pins {
-    // -------------------------
     // Heaters
-    // -------------------------
     pub const H_BED: i32 = 144;
     pub const H_E0:  i32 = 145;
     pub const H_E1:  i32 = 146;
 
-    // -------------------------
     // PWM Fans
-    // -------------------------
     pub const FAN1: i32 = 147;
     pub const FAN2: i32 = 148;
 
-    // -------------------------
     // Steppers
-    // -------------------------
     pub const X_ENABLE: i32 = 128;
     pub const X_STEP:   i32 = 129;
     pub const X_DIR:    i32 = 130;
@@ -41,30 +35,22 @@ pub mod pins {
     pub const E1_STEP:   i32 = 141;
     pub const E1_DIR:    i32 = 142;
 
-    // -------------------------
     // Endstops & Detection
-    // -------------------------
     pub const X_STOP: i32 = 33;
     pub const Y_STOP: i32 = 32;
     pub const Z_STOP: i32 = 22;
 
     pub const MT_DET: i32 = 35; // Motor/Material detect (per ref)
 
-    // -------------------------
     // Servo / Probe
-    // -------------------------
     pub const TOUCH_3D: i32 = 2;
 
-    // -------------------------
     // Thermistors (THM)
-    // -------------------------
     pub const TH1: i32 = 36;
     pub const TH2: i32 = 34; // needs jumper selection
     pub const TB:  i32 = 39;
 
-    // -------------------------
     // EXP1 (LCD/Buttons/Beeper)
-    // -------------------------
     pub const BEEPER: i32 = 149;
     pub const BTN_ENC: i32 = 13;
     pub const LCD_EN:  i32 = 21;
@@ -74,9 +60,7 @@ pub mod pins {
     pub const LCD_D6:  i32 = 15;
     pub const LCD_D7:  i32 = 17;
 
-    // -------------------------
     // EXP2 / SD (external)
-    // -------------------------
     pub const SD_MISO: i32 = 19;
     pub const SD_SCK:  i32 = 18;
     pub const BTN_EN1: i32 = 14;
@@ -85,25 +69,19 @@ pub mod pins {
     pub const SD_MOSI: i32 = 23;
     pub const SD_DET:  i32 = 34; // default for SD_DET
 
-    // -------------------------
     // TF Card (onboard)
-    // -------------------------
     pub const TF_CS:   i32 = 5;
     pub const TF_SCK:  i32 = 18;
     pub const TF_MISO: i32 = 19;
     pub const TF_MOSI: i32 = 23;
     pub const TF_DET:  i32 = 34; // default for SD_DET
 
-    // -------------------------
     // UART
-    // -------------------------
     pub const UART2_TXD: i32 = 17;
     pub const UART2_RXD: i32 = 16;
     // USB-to-serial is USART0 (pins depend on SoC/board routing; not exposed here)
 
-    // -------------------------
     // Convenience aliases
-    // -------------------------
     pub const STATUS_LED: i32 = SD_MISO; // Example alias if you repurpose; adjust as needed
 }
 
