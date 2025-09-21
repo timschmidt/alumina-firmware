@@ -25,6 +25,7 @@ pub mod pins {
 
 impl Device {
     pub const NAME: &'static str = "esp32drive";
+    pub const DISPLAY_NAME: &'static str = "ESP32Drive";
     
 	// NEW: compile-time embed of the board image so it’s available to the web server
     pub const IMAGE_BYTES: &'static [u8] = include_bytes!("../../docs/device_images/esp32drive.png");

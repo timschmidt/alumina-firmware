@@ -46,6 +46,7 @@ pub mod pins {
 
 impl Device {
     pub const NAME: &'static str = "xprov5";
+    pub const DISPLAY_NAME: &'static str = "CNC xPro V5";
     
 	// NEW: compile-time embed of the board image so it’s available to the web server
     pub const IMAGE_BYTES: &'static [u8] = include_bytes!("../../docs/device_images/xprov5.png");

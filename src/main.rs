@@ -357,8 +357,9 @@ fn main() -> Result<()> {
     
     server.fn_handler("/device", Method::Get, |request| -> anyhow::Result<()> {
 		let name = crate::devices::Device::NAME;
+		let display_name = crate::devices::Device::DISPLAY_NAME;
 		let mime = crate::devices::Device::IMAGE_MIME;
-		let body = format!(r#"{{"name":"{}","image_mime":"{}","image_url":"/board/image"}}"#, name, mime);
+		let body = format!(r#"{{"name":"{}","display_name":"{}", "image_mime":"{}","image_url":"/board/image"}}"#, name, display_name, mime);
 
 		let mut resp = request.into_response(
 			200,
