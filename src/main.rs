@@ -355,7 +355,7 @@ fn main() -> Result<()> {
         Ok::<(), anyhow::Error>(())
     })?;
     
-    server.fn_handler("/board", Method::Get, |request| -> anyhow::Result<()> {
+    server.fn_handler("/device", Method::Get, |request| -> anyhow::Result<()> {
 		let name = crate::devices::Device::NAME;
 		let mime = crate::devices::Device::IMAGE_MIME;
 		let body = format!(r#"{{"name":"{}","image_mime":"{}","image_url":"/board/image"}}"#, name, mime);
@@ -370,7 +370,7 @@ fn main() -> Result<()> {
 		Ok(())
 	})?;
 
-	server.fn_handler("/board/image", Method::Get, |request| -> anyhow::Result<()> {
+	server.fn_handler("/device/image", Method::Get, |request| -> anyhow::Result<()> {
 		let bytes = crate::devices::Device::IMAGE_BYTES;
 		let mime = crate::devices::Device::IMAGE_MIME;
 
