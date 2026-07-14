@@ -1,73 +1,39 @@
-//! Device selection (compile-time).
+//! Compile-time device selection and metadata.
 //!
-//! Pick a device using a Cargo feature, e.g.:
-//!     cargo build --features device_mks_tinybee
+//! Enable exactly one `device_*` Cargo feature. The selected module supplies its pin map, while
+//! [`Device`] exposes metadata embedded in the HTTP diagnostic interface.
 
-///! Device container
-///! 
-///! functions: stepper_increment, stepper_decrement, stepper_enable, stepper_disable, stepper_settings, 
-///! 
+/// Namespace for metadata associated with the selected controller board.
 pub struct Device;
 
-/*
-// list of commands from SimpleFoC: https://docs.simplefoc.com/commander_interface#commander-commands
- #define CMD_C_D_PID   'D' //!< current d PID & LPF
- #define CMD_C_Q_PID   'Q' //!< current d PID & LPF
- #define CMD_V_PID     'V' //!< velocity PID & LPF
- #define CMD_A_PID     'A' //!< angle PID & LPF
- #define CMD_STATUS    'E' //!< motor status enable/disable
- #define CMD_LIMITS    'L' //!< limits current/voltage/velocity
- #define CMD_MOTION_TYPE  'C' //!< motion control type
- #define CMD_TORQUE_TYPE  'T' //!< torque control type
- #define CMD_SENSOR    'S' //!< sensor offsets
- #define CMD_MONITOR   'M' //!< monitoring
- #define CMD_RESIST    'R' //!< motor phase resistance
- #define CMD_INDUCTANCE    'I' //!< motor phase inductance
- #define CMD_KV_RATING 'K' //!< motor kv rating
- #define CMD_PWMMOD   'W' //!< pwm modulation
-
- // commander configuration
- #define CMD_SCAN    '?' //!< command scaning the network - only for commander
- #define CMD_VERBOSE '@' //!< command setting output mode - only for commander
- #define CMD_DECIMAL '#' //!< command setting decimal places - only for commander
-
- // subcomands
- //pid - lpf
- #define SCMD_PID_P     'P' //!< PID gain P
- #define SCMD_PID_I     'I' //!< PID gain I
- #define SCMD_PID_D     'D' //!< PID gain D
- #define SCMD_PID_RAMP  'R' //!< PID ramp
- #define SCMD_PID_LIM   'L' //!< PID limit
- #define SCMD_LPF_TF    'F' //!< LPF time constant
- // limits
- #define SCMD_LIM_CURR  'C' //!< Limit current
- #define SCMD_LIM_VOLT  'U' //!< Limit voltage
- #define SCMD_LIM_VEL   'V' //!< Limit velocity
- //sensor
- #define SCMD_SENS_MECH_OFFSET 'M' //!< Sensor offset
- #define SCMD_SENS_ELEC_OFFSET 'E' //!< Sensor electrical zero offset
- // monitoring
- #define SCMD_DOWNSAMPLE 'D' //!< Monitoring downsample value
- #define SCMD_CLEAR      'C' //!< Clear all monitored variables
- #define SCMD_GET        'G' //!< Get variable only one value
- #define SCMD_SET        'S' //!< Set variables to be monitored
-
- #define SCMD_PWMMOD_TYPE   'T'  //!<< Pwm modulation type
- #define SCMD_PWMMOD_CENTER 'C'  //!<< Pwm modulation center flag
-*/
-
-#[cfg(feature="device_mks_tinybee")]
+#[cfg(feature = "device_mks_tinybee")]
 pub mod mks_tinybee;
 
-#[cfg(feature="device_esp32drive")]
+#[cfg(feature = "device_esp32drive")]
 pub mod esp32drive;
 
-#[cfg(feature="device_esp32cam")]
+#[cfg(feature = "device_esp32cam")]
 pub mod esp32cam;
 
-#[cfg(feature="device_xprov5")]
+#[cfg(feature = "device_xprov5")]
 pub mod xprov5;
 
-#[cfg(not(any(feature="device_mks_tinybee",feature="device_esp32drive",feature="device_esp32cam",feature="device_xprov5",)))]
-compile_error!("No device selected. Enable one of the device features, e.g. `--features device_mks_tinybee`.");
+#[cfg(not(any(
+    feature = "device_mks_tinybee",
+    feature = "device_esp32drive",
+    feature = "device_esp32cam",
+    feature = "device_xprov5",
+)))]
+compile_error!(
+    "no device selected; enable exactly one device feature, such as `device_mks_tinybee`"
+);
 
+#[cfg(any(
+    all(feature = "device_mks_tinybee", feature = "device_esp32drive"),
+    all(feature = "device_mks_tinybee", feature = "device_esp32cam"),
+    all(feature = "device_mks_tinybee", feature = "device_xprov5"),
+    all(feature = "device_esp32drive", feature = "device_esp32cam"),
+    all(feature = "device_esp32drive", feature = "device_xprov5"),
+    all(feature = "device_esp32cam", feature = "device_xprov5"),
+))]
+compile_error!("device features are mutually exclusive; enable exactly one");
