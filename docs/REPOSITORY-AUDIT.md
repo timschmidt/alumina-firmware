@@ -15,6 +15,8 @@ modified.
 | [`hypertri`](../../hypertri) | 0.4.1 | Exact triangulation/CDT and N-dimensional support | Use native exact output instead of legacy float triangulation paths |
 | [`hypermesh`](../../hypermesh) | 0.1.0 | Exact triangle-mesh topology/booleans and checked graphics-buffer conversion | Native mesh type for current CSGRS and the Hypergraphics bridge |
 | [`hypercurve`](../../hypercurve) | 0.3.1 | Exact lines, arcs, Beziers, NURBS, curve paths/regions, derivatives, parameter domains, finite projection with explicit chord error | Core of exact CAM and certified machine-resolution curve reduction |
+| [`hyperpath`](../../hyperpath) | 0.3.0 | Exact-aware path/toolpath carriers, source-grid/provenance retention, PH curves, exact length/feed reports, corner lookahead, and jerk-ramp scheduling | Primary UI path and feed-schedule substrate; extend rather than recreate path-wide motion math |
+| [`hypersolve`](../../hypersolve) | 0.3.1 | Symbolic constraints, exact direct/Bareiss solving, numerical proposal separation, residual replay, and interval/Krawczyk certification | Certify suitable CAM, kinematic, timing, and calibration candidates; approximate proposals never decide alone |
 | [`csgrs`](../../csgrs) | 0.23.0 | Native `TriangleMesh` and `CurveRegion2`, solid/curve adapters, exact bounds/transforms, graphics mesh adapters | Replace the interface’s removed `Mesh`/`Sketch` API and obsolete feature set |
 | [`hypergraphics`](../../hypergraphics) | 0.1.0 | Exact scene/render boundary, `ExactMesh`, `ExactVertex`, `ExactCamera`, checked `Projection64`, GPU backend types | Own all visualization conversion; render floats remain a one-way boundary |
 
@@ -26,10 +28,21 @@ arbitrary-precision stack. `alumina-interface`/host CAM should compile exact
 geometry into a versioned integer machine IR; firmware should validate and
 execute that IR with bounded integer/fixed-point arithmetic.
 
-Hypercurve supplies the necessary concept for finite curve projection: an
-explicit chord-error bound. It does not by itself define machine calibration,
-timer quantization, step-event proof, or a serialized job format. Those belong in
-`alumina-machine-ir` and the interface CAM layer.
+Hypercurve supplies finite curve projection with an explicit chord-error bound;
+Hyperpath already adds path-wide feed/lookahead/jerk reports; and Hypersolve adds
+the proposal-versus-certified-decision discipline needed for constrained CAM.
+They do not by themselves define board calibration, timer/step/PWM lattices,
+distributed partitioning, or the serialized job format. Those belong in the
+interface compiler and `alumina-machine-ir`.
+
+Additional local Apache-2.0 crates were reviewed for later, concrete uses:
+`hyperbrep` for exact B-rep sources, `hyperphysics` for plant/machine simulation,
+`hypersdf` for implicit process/clearance queries, `hypervoxel` for stock and
+occupancy simulation, `hyperpack` for nesting, `hyperparts` for source-attributed
+part/terminal facts, `hyperevolution` for proposal generation, and
+`hypercircuit` for circuit/board semantics. `hyperdrc` is MIT and relevant to PCB
+release work, not the Alumina runtime. None should enter the WASM dependency set
+without a selected workflow.
 
 ## `alumina-interface`
 
@@ -50,7 +63,7 @@ Reviewed files:
 - Trunk build path and assets already suitable for embedding in firmware after
   reproducible packaging is added.
 
-### Required migration
+### Required redesign
 
 - The manifest still targets CSGRS 0.20.1 with obsolete features, while the
   workspace contains CSGRS 0.23.0 and current Hyper crates.
@@ -68,11 +81,12 @@ Reviewed files:
 - Evaluation is recursive and essentially pure/acyclic. Graph persistence is
   explicitly incomplete. General control requires versioned serialization,
   cycles with explicit state/delay, bounded channels, deterministic scheduling,
-  subgraphs, and migration.
+  subgraphs, and forward versioning for newly released documents. No old graph
+  compatibility is required.
 - Device control is tied to polling `/pins`, reading `/device`, and posting text
-  to `/queue`. Replace this with capability discovery plus binary scheduled
-  command and telemetry streams while retaining a temporary compatibility
-  adapter.
+  to `/queue`. Replace it with the greenfield capability/configuration protocol,
+  binary scheduled commands, immutable jobs, clock mapping, and telemetry; do
+  not retain an adapter.
 - The plot is a small historical pin plot. It needs timestamped ring buffers,
   decimation, triggers, cursors, units, multi-rate channels, XY/frequency views,
   capture/replay, and export.
@@ -96,9 +110,9 @@ Reviewed files include:
 - Builds and embeds interface HTML, gzipped JavaScript, Brotli-compressed WASM,
   favicon, and device imagery.
 - Demonstrates an onboard Wi-Fi access point and embedded HTTP service.
-- Supplies behavior to preserve during migration: `/device`, `/device/image`,
-  `/time`, `/files`, `/queue`, `/pins`, static web assets, command intake, and
-  simple device metadata.
+- Supplies functional examples to reconsider: device identity/image, time,
+  files, queue/pins, static web assets, command intake, and simple metadata. None
+  of its route shapes are preservation requirements.
 - Contains seed board definitions for TinyBee, ESP32Drive, ESP32-CAM, and XProV5,
   plus local TinyBee schematic/reference documents.
 
@@ -122,9 +136,9 @@ Reviewed files include:
   extensions and requires build-time/per-device secret injection; it must never
   inherit a shared private signing key.
 
-The old firmware remains a route/asset/board behavior reference through the M3
-migration gate, then becomes a maintained legacy branch or is archived according
-to the user’s compatibility decision.
+The old firmware remains read-only evidence while the new behavior is specified.
+It is not a migration source, maintained compatibility branch, or endpoint
+contract.
 
 ## `t-deck-async-drivers-rs`
 
@@ -180,19 +194,22 @@ Do not silently relabel imported files under a project-wide dual license.
 
 1. Use `t-deck-async-drivers-rs`, not `alumina-firmware`, as the runtime/toolchain
    baseline.
-2. Preserve `alumina-firmware` behavior through API/asset migration tests, not by
-   retaining ESP-IDF service dependencies.
+2. Reuse useful `alumina-firmware` web-asset and AP behavior as greenfield
+   functional tests, not endpoint parity or ESP-IDF dependencies.
 3. Update `alumina-interface` to the exact stack before defining machine IR, so
    old float/mesh types never become protocol commitments.
 4. Add a narrow Hypergraphics adapter from current CSGRS/Hypermesh native types.
    This may live in Hypergraphics behind an optional feature or in a small
    interface adapter crate, but conversion policy must be owned once.
-5. Keep exact geometry on host/WASM and define one checked exact-to-integer
-   machine boundary. Do not round-trip through graphics buffers.
+5. Make browser/WASM authoritative: compose Hypercurve, Hyperpath, and Hypersolve
+   into one checked exact-to-integer machine boundary. Do not round-trip through
+   graphics buffers.
 6. Model TinyBee output bits and other expanders as distinct typed resources.
 7. Separate step/direction and FOC power hardware behind a common trajectory
    contract; TinyBee alone does not supply a SimpleFOC-style inverter/current
    sensing path.
+8. Cache canonical per-MCU streams on SD; firmware does not parse raw geometry or
+   G-code and the old queue parser is not reused.
 
 ## Workspace hygiene observed
 

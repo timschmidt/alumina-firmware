@@ -18,7 +18,7 @@ universal jitter, loop-rate, or shutdown threshold before hardware is selected.
 
 Run on the host for every change:
 
-- protocol encoding/decoding, version negotiation, malformed/truncated frames,
+- protocol encoding/decoding, exact-version mismatch rejection, malformed/truncated frames,
   maximum lengths, and stable discriminants;
 - board metadata parsing, alias resolution, resource conflicts, active levels,
   engine limitations, and safe-state completeness;
@@ -28,6 +28,8 @@ Run on the host for every change:
   and fail-safe output actions;
 - planner boundary conditions, lookahead, junctions, jerk/acceleration/velocity
   envelopes, feed hold/resume, homing/probing, and kinematics;
+- Hyperpath feed/lookahead/jerk report composition and Hypersolve proposal versus
+  exact/interval-certified acceptance, including precision exhaustion;
 - integer/fixed-point overflow, deterministic rounding, residual/error diffusion,
   timer wraparound, and queue watermark behavior;
 - FOC transforms/control-law unit tests against analytically known vectors and a
@@ -39,8 +41,8 @@ Run on the host for every change:
 
 Use property testing for invariants and targeted regression fixtures for every
 reported defect. Fuzz every untrusted parser in host builds: JSON configuration,
-FluidNC importer, HTTP metadata, binary protocol, graph document, machine IR,
-update manifest, and telemetry decoder.
+UI-only CNC G-code geometry import, HTTP metadata, binary protocol, graph
+document, machine IR, update manifest, SD manifest, and telemetry decoder.
 
 ### 2. Deterministic simulator and trace model
 
@@ -50,6 +52,9 @@ update manifest, and telemetry decoder.
 - configurable motor/plant models for open-loop steppers and initial servo loops;
 - network arrival jitter, queue pressure, command duplication/loss, clock drift,
   and disconnects;
+- multiple boot-scoped MCU cycle counters, heartbeat delay/asymmetry, affine
+  clock fitting, cached partitions, prepare/commit/abort, and partial readiness;
+- SD block latency, corruption, full media, power loss, and prefetch starvation;
 - flash-stall and delayed-service events without pretending to prove hardware
   timing; and
 - trace/replay of every command, state transition, scheduled event, output, sample,
@@ -102,7 +107,11 @@ exclusive. A synthetic “all boards in one binary” build is not useful.
 ### 5. Hardware-in-the-loop smoke suite
 
 Each physical board fixture provides controllable power, serial/JTAG where
-available, loopback/test loads, and a logic analyzer or capture MCU.
+available, loopback/test loads, and a logic analyzer or capture MCU. Initial
+manual fixtures may use the available logic analyzer, webcam, 10 MHz DSO,
+multimeter, USB connection, TinyBee, and T-Deck Pro; automate power/capture as
+the suite stabilizes. Add the received MKS ESP32 FOC V1.0 with a current-limited
+supply and physically safe motor fixture.
 
 Common tests:
 
@@ -112,6 +121,9 @@ Common tests:
 - bus/device discovery, shared-bus arbitration, interrupt/reset/power pins;
 - Wi-Fi AP/STA/provisioning, web assets, command/telemetry, disconnect/reconnect;
 - clock synchronization and scheduled I/O ordering;
+- annotated-photo hotspot identity against the actual board revision;
+- SD resumable upload, digest validation, atomic publish, bounded prefetch, and
+  recovery from full/corrupt/interrupted media;
 - watchdog, emergency stop, limit, fault latch/reset, and output maximum duration;
 - update interruption/rollback and configuration power-loss recovery while idle;
   and
@@ -133,6 +145,7 @@ Measure rather than assume dual-core isolation. Test core 1 while core 0 perform
 - T-Deck EPD refresh plus input/GPS/LoRa activity;
 - worst permitted telemetry encode/decimation and client reconnect behavior;
 - SD/file reads; and
+- long verified SD-job prefetch and block-boundary handoff;
 - rejected flash/NVS/update requests during motion.
 
 Separate idle-only tests perform actual flash write/erase/OTA and confirm that
@@ -164,10 +177,37 @@ Use logic-analyzer/capture hardware to verify:
 Compare the captured event trace to the simulator and machine-IR reference using
 integer timestamps with an explicitly allowed board timing tolerance.
 
-### 8. FOC/servo qualification
+### 8. Wi-Fi multi-MCU and cached-job qualification
 
-FOC begins with current-limited bench hardware, an emergency cutoff, and an
-unloaded or safely restrained motor. Progression:
+Begin with two simulated MCUs, then harmless GPIO start pulses on two physical
+dual-core boards. For every run archive UI send/receive timestamps, raw device
+cycle samples, accepted/rejected heartbeat set, affine rate/offset/uncertainty,
+chosen local start cycles, scheduled and captured start edges, participant boot
+and partition digests, and network/load conditions.
+
+Sweep and inject:
+
+- normal, congested, high-delay, asymmetric, reordered, duplicated, and lost
+  Wi-Fi packets plus AP restart and browser-worker suspension;
+- oscillator drift, cycle wrap, boot-ID change, stale clock fits, deliberately
+  underestimated sync tolerance, and start-tick quantization;
+- one participant missing, faulted, rebooting, wrong configuration, late to
+  prepare/commit, or unable to abort before the guard boundary;
+- wrong/missing/corrupt/full SD partitions and power loss during chunk upload or
+  manifest publication; and
+- attended versus cached-autonomous Wi-Fi loss before prepare, after commit, at
+  start, during execution, and at completion.
+
+The measured edge spread must fall inside the uncertainty predicted before
+commit plus a board-qualified execution bound. Any run outside it is a clock
+model/qualification failure, not a larger undocumented tolerance. Verify that no
+Wi-Fi result is represented as a physical E-stop guarantee and that the machine's
+hardwired safety chain remains effective with all network equipment removed.
+
+### 9. FOC/servo qualification
+
+FOC begins on reconciled MKS ESP32 FOC V1.0 with current-limited bench power, an
+emergency cutoff, and one unloaded or safely restrained motor. Progression:
 
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.
@@ -189,14 +229,18 @@ Record:
 A profile advertises only voltage, estimated-current, DC-current, or FOC-current
 modes actually qualified with its sensing and power stage.
 
-### 9. Interface, graphics, and dataflow tests
+### 10. Interface, graphics, and dataflow tests
 
-- native/WASM unit tests for exact graph evaluation, graph schema migration,
-  unknown-node round trip, type/unit errors, and capability reconciliation;
+- native/WASM unit tests for exact graph evaluation, forward migration among new
+  released schemas (not the old interface), unknown-node round trip, type/unit
+  errors, and capability reconciliation;
 - Hypergraphics visual/golden tests for exact mesh/curve adapters, grid/axes,
   selection, clipping, and large/exact coordinate conversion failures;
 - browser integration tests against simulated firmware capabilities and recorded
   HTTP/WebSocket traces;
+- annotated-photo/hotspot golden tests, overview freshness/quality, cross-linking
+  among board/config/graph/plot, and safe diagnostic leases/timeouts;
+- SD job manager and multi-device clock/readiness/prepare/commit UI tests;
 - property/fuzz tests for graph compiler validation and fixed-memory firmware IR;
 - deterministic simulation/replay of multi-rate stateful graphs;
 - telemetry plot stress with bounded browser memory, decimation, triggers, event
@@ -204,17 +248,21 @@ modes actually qualified with its sensing and power stage.
 - explicit tests proving that GPU `f32` buffers cannot satisfy CAM/machine-IR
   input types.
 
-### 10. Security and recovery tests
+### 11. Security and recovery tests
 
 - parser fuzzing, oversized/deep payload rejection, WebSocket fragmentation,
   slow-loris behavior, connection/command rate limits, and authentication state;
+- default-AP credential setup, scan/join failure, saved-credential corruption,
+  AP recovery, multi-device origin/credential isolation, and LAN/VPN-only threat
+  assumptions;
 - same-origin/CORS and session/CSRF behavior for mutating routes;
 - unique provisioning credentials, secret redaction, and no private-key material
   in repository/artifacts/logs;
 - signed image/web manifest success and tamper/rollback rejection;
 - power cut at each update/configuration commit stage;
-- fail-safe response to Wi-Fi loss, client death, service-core reset, corrupt job,
-  wrong digest, duplicate/stale sequence, and clock-sync loss; and
+- policy-correct response to Wi-Fi loss, client death, service-core reset,
+  corrupt job, wrong digest, duplicate/stale sequence, and clock-sync loss for
+  both attended and explicitly cached-autonomous jobs; and
 - dependency/advisory review with documented disposition.
 
 ## Fault-injection catalog
@@ -229,6 +277,7 @@ action, telemetry event, reset requirements, and tested boards. Minimum catalog:
 - command/telemetry queue overflow, motion underrun, missed real-time deadline;
 - malformed/stale/wrong-config command or machine IR;
 - lost network, clock uncertainty, service task failure;
+- participant prepare/commit/abort loss, boot-ID change, or start disagreement;
 - bus timeout/stuck line and external-device reset;
 - filesystem full/corrupt and update/config persistence interruption; and
 - watchdog expiry in each state.
@@ -239,6 +288,8 @@ For each board/release publish or archive:
 
 - source revision, locked dependencies, toolchain, build command, and SBOM;
 - firmware/web/schema versions and cryptographic digests;
+- global job and every per-MCU partition digest, clock-fit/start evidence, and
+  observed distributed synchronization error where applicable;
 - board revision/schematic provenance and capability snapshot;
 - flash/RAM/IRAM/stack/queue budget report;
 - simulator/property/fuzz summaries;
@@ -258,4 +309,4 @@ For each board/release publish or archive:
 | `motion-qualified -> production-qualified` | sustained stress, recovery, update/security, hardware/release review |
 
 No board is promoted because it resembles another ESP32 board or because an
-upstream FluidNC configuration exists.
+upstream FluidNC configuration exists; those files are research evidence only.

@@ -4,14 +4,16 @@
 
 ```mermaid
 flowchart LR
-    CAD[Exact CAD / CAM graph] --> MIR[Certified machine IR]
-    UI[Alumina interface] <-->|HTTP + WebSocket| SVC
+    CAD[Exact CAD / CAM graph] --> HP[Hyperpath + Hypersolve]
+    HP --> MIR[Certified global job + per-MCU IR]
+    UI[Alumina interface / authoritative WASM compiler] <-->|HTTP + WebSocket over Wi-Fi| SVC
 
     subgraph ESP32[aluminafw on a dual-core ESP32]
         subgraph C0[Core 0 — service executor]
             SVC[Wi-Fi / network / web API]
-            BG[Display, touch, keyboard, GPS, LoRa, files, idle]
+            BG[Display, touch, keyboard, GPS, LoRa, SD, idle]
             VAL[Config and command validation]
+            CACHE[Verified job cache + RT prefetch]
         end
         subgraph X[Bounded inter-core boundary]
             CMD[Command SPSC]
@@ -20,11 +22,11 @@ flowchart LR
         end
         subgraph C1[Core 1 — real-time executor]
             SAFE[Safety supervisor]
-            MOTION[Trajectory and step engine]
+            MOTION[Trajectory interpolation and step engine]
             FOC[FOC and sampled control loops]
             RTIO[Timed I/O, limits, encoders]
         end
-        SVC --> VAL --> CMD --> SAFE
+        SVC --> VAL --> CACHE --> CMD --> SAFE
         URG --> SAFE
         SAFE --> MOTION
         SAFE --> FOC
@@ -41,10 +43,12 @@ flowchart LR
     MACHINE[Validated runtime machine config] --> VAL
 ```
 
-The service core is the only network-facing trust boundary. The real-time core
-does not parse HTTP, JSON, YAML, user strings, filesystem data, or graph files.
-It receives only already validated, bounded binary frames whose schema version,
-configuration digest, sequence, and time range are known.
+The service core is the only network-facing and filesystem-facing trust
+boundary. The real-time core does not parse HTTP, JSON, YAML, user strings,
+filesystem data, G-code, source geometry, or graph files. It receives only
+already validated, bounded binary frames whose exact schema version,
+configuration digest, sequence, and time range are known. A schema mismatch is
+an update error, not a request to enter a compatibility mode.
 
 ## Execution domains
 
@@ -54,10 +58,11 @@ Owns:
 
 - `esp-radio`, Wi-Fi provisioning/AP/STA, `embassy-net`, DHCP/DNS as needed;
 - the HTTP/WebSocket server, request parsing, authentication, static web assets,
-  API compatibility shims, and command admission;
+  Wi-Fi scanning/association, and command admission;
 - configuration parsing, schema validation, persistence, signed OTA staging, and
-  file/SD access;
-- telemetry encoding, decimation, logging, diagnostics, and time synchronization;
+  SD access plus verified job-block prefetch;
+- telemetry encoding, decimation, logging, diagnostics, clock-heartbeat capture,
+  and UI/device time-model samples;
 - T-Deck display, touch, keyboard, battery charger, GPS, and LoRa tasks unless a
   particular signal is deliberately assigned to real-time control;
 - future non-real-time relay/industrial UI buses and general idle/background
@@ -78,8 +83,9 @@ Owns:
 - the monotonic machine clock and scheduled-event dispatcher;
 - safety state, hard limits, emergency stop, enable chains, deadman/watchdogs,
   fault latching, and safe output transitions;
-- kinematics execution, lookahead consumption, jerk-limited segment generation,
-  step pulse engines, homing, and probing;
+- certified-schedule consumption, local constraint checks, jerk/finite-difference
+  interpolation, step pulse engines, homing, probing, and bounded hold/stop
+  fallback;
 - MCPWM/LEDC/RMT/I²S/DMA channels assigned to motion or power control;
 - PWM-synchronized ADC/current sampling, FOC transforms and control loops,
   encoders/PCNT/Hall inputs, and servo following-error logic;
@@ -140,15 +146,10 @@ requires:
 ### Single-core targets
 
 ESP32-C3/C6 and other single-core variants cannot satisfy the requested physical
-core split. The architecture supports metadata for them, but recommends:
-
-- `rt-isolated` production profiles: compile-time reject boards without two
-  application cores; and
-- optional `cooperative-lab` profiles: one executor with documented reduced
-  rates, no simultaneous Wi-Fi and hazardous motion, and a persistent degraded
-  capability flag visible in the interface.
-
-The final policy is listed in `OPEN-QUESTIONS.md`.
+core split. They are out of scope: board selection fails before firmware
+compilation and no cooperative or degraded motion profile is maintained. Chip
+metadata may identify such a target as `unsupported-core-count` so the coverage
+ledger explains the rejection.
 
 ## Proposed workspace
 
@@ -156,7 +157,9 @@ The final policy is listed in `OPEN-QUESTIONS.md`.
 aluminafw/
 ├── Cargo.toml                   # virtual workspace, shared lints/dependencies
 ├── rust-toolchain.toml
-├── LICENSES/                    # chosen project license + imported notices
+├── LICENSE-MIT
+├── LICENSE-APACHE
+├── LICENSES/                    # imported notices and exceptions
 ├── THIRD_PARTY.toml             # source URL, revision, license, modifications
 ├── firmware/
 │   ├── Cargo.toml
@@ -168,18 +171,22 @@ aluminafw/
 │   │   ├── board.toml           # facts/capabilities/aliases/safe states
 │   │   └── src/lib.rs           # typed esp-hal resource construction
 │   ├── t-deck-pro/
+│   ├── mks-esp32-foc-v1/
+│   ├── t-lora-pager/            # late metadata/build stub first
 │   └── ...
 ├── crates/
 │   ├── alumina-protocol/        # no_std shared wire types and schema versions
 │   ├── alumina-board/           # board capability and allocation contracts
 │   ├── alumina-config/          # transactional resource/machine config
 │   ├── alumina-runtime/         # core startup, queues, clocks, budgets
+│   ├── alumina-clock/           # cycle sampling and scheduled starts
 │   ├── alumina-safety/          # state machine and safe-output policies
-│   ├── alumina-motion/          # kinematics, lookahead, jerk planner
+│   ├── alumina-motion/          # integer schedule checks, RT interpolation/hold
 │   ├── alumina-step/            # direct/RMT/I2S pulse backends
 │   ├── alumina-foc/             # motor/sensor/driver/current/control layers
 │   ├── alumina-control-ir/      # deterministic deployed graph subset
 │   ├── alumina-net/             # embassy-net web/API implementation
+│   ├── alumina-storage/         # immutable SD cache and RT prefetch
 │   ├── alumina-machine-ir/      # certified integer toolpath format/validator
 │   └── alumina-sim/             # host simulation and trace/replay
 ├── drivers/                     # imported T-Deck and generic async drivers
@@ -190,6 +197,7 @@ aluminafw/
 │   ├── manifest.toml            # expected interface revision and digests
 │   └── generated/               # ignored build output
 ├── schemas/                     # board, config, graph IR, machine IR, API
+├── board-assets/                # licensed photos, hotspot maps, provenance
 ├── xtask/                       # build/flash/monitor/assets/schema/HIL commands
 ├── tests/
 │   ├── fixtures/
@@ -201,9 +209,10 @@ aluminafw/
 
 Keep crates narrow enough for host testing. Only `firmware`, board packages, and
 hardware backends should depend directly on chip-specific `esp-hal` types.
-Protocol, configuration validation, safety transitions, planner math, graph IR,
-machine IR, and simulation remain portable `no_std` crates with optional `std`
-test features.
+Protocol, configuration validation, safety transitions, integer motion
+validation/interpolation, graph IR, machine IR, and simulation remain portable
+`no_std` crates with optional `std` test features. Exact global path planning
+lives with the authoritative interface/CAM library.
 
 ## Board and machine model
 
@@ -222,8 +231,12 @@ A package supplies:
   interrupt affinity;
 - named devices fitted on the PCB;
 - supported timed-output engines and their limits;
-- aliases matching silkscreen and common upstream configurations; and
-- boot, unconfigured, fault, and watchdog safe states.
+- aliases matching silkscreen and common upstream configurations;
+- boot, unconfigured, fault, and watchdog safe states;
+- licensed annotated board photographs and normalized connector/resource
+  hotspot maps; and
+- static motor-driver, PWM, ADC/current-sense, storage, and clock capabilities
+  needed by the authoritative UI compiler.
 
 The small Rust composition root consumes `esp_hal::Peripherals` exactly once,
 constructs owned resources, and returns separate `ServiceResources` and
@@ -248,8 +261,10 @@ fail with a useful error.
 
 A configuration maps names such as `axis.x.step`, `spindle.pwm`, `probe`,
 `heater.bed`, `serial.modbus`, or `control.loop_1.timer` to resources advertised
-by the board. It may select kinematics, limits, scale factors, control policies,
-and peripherals, but cannot invent a capability.
+by the board. It selects kinematics, limits, driver mode, microstepping, motor
+and encoder facts, rational scale/calibration, measurement uncertainty,
+qualified motion/control limits, process policies, safety chains, and
+peripherals, but cannot invent a capability.
 
 Configuration lifecycle:
 
@@ -262,9 +277,12 @@ Configuration lifecycle:
 6. Send a bounded description to core 1 for independent real-time validation.
 7. Commit on both cores using a canonical digest and enter `Configured`.
 8. Persist only while safe and idle.
+9. Export exact values, bounded measurements, capability/configuration digests,
+   and timing limits needed by the UI to select CAM precision.
 
-A FluidNC importer may translate compatible YAML into this schema, but the
-firmware does not accept arbitrary FluidNC configuration as if it were native.
+FluidNC configuration is research material for board facts, not a supported
+runtime format. Alumina uses one native schema and reports unsupported boards or
+resources directly.
 
 ## Resource abstraction
 
@@ -312,8 +330,10 @@ It does not mean every chip peripheral is production-ready in the first release.
 
 ### Shared protocol crate
 
-`alumina-protocol` is `no_std`, versioned, and usable by firmware, host simulator,
-and interface/WASM. Prefer fixed discriminants, fixed maxima, and an encoding
+`alumina-protocol` is `no_std`, explicitly versioned, and usable by firmware,
+host simulator, and interface/WASM. Firmware and embedded UI ship as one schema
+set; differing versions refuse mutation and request a coordinated update. Prefer
+fixed discriminants, fixed maxima, and an encoding
 such as Postcard only after worst-case size and decode-time measurement. Generate
 JSON Schema/TypeScript descriptions for discovery/configuration without creating
 a second handwritten model.
@@ -336,18 +356,35 @@ Proposed routes:
 | `GET /api/v1/identity` | board, firmware, boot, security, schema versions |
 | `GET /api/v1/capabilities` | resources, devices, limits, clock domains, safety features |
 | `GET/PUT /api/v1/config` | inspect or transactionally stage/commit configuration |
+| `GET/POST /api/v1/network` | scan, inspect, join, leave, or recover AP/STA configuration |
 | `POST /api/v1/commands` | bounded non-stream control requests |
-| `POST /api/v1/jobs` | upload/validate an exact-derived machine-IR job |
+| `GET/POST /api/v1/storage` | capacity, cached manifests/blobs, resumable upload sessions |
+| `POST /api/v1/jobs` | publish/validate an exact-derived per-MCU machine-IR job |
 | `POST /api/v1/jobs/{id}/{action}` | arm, start, hold, resume, cancel |
 | `GET /api/v1/health` | state, faults, queue depths, timing and reset causes |
-| `GET /api/v1/time` | device clock and synchronization samples |
+| `GET /api/v1/time` | timestamped cycle-counter heartbeat samples and clock quality |
 | `GET /api/v1/telemetry` | WebSocket upgrade for binary streams/events |
 | `POST /api/v1/update` | idle-only signed update staging |
 | `/` and immutable assets | compressed Alumina interface bundle |
 
-Compatibility routes from `alumina-firmware` are translated on core 0. Textual
-G-code may be offered as an import/compatibility input, but the real-time core
-executes only validated machine IR or scheduled resource commands.
+There are no legacy routes. Textual G-code and source geometry are never accepted
+by firmware; UI importers convert supported formats to exact paths before job
+compilation. The real-time core executes only locally validated machine IR or
+scheduled resource commands.
+
+### SD jobs and multiple MCUs
+
+Core 0 stores content-addressed job chunks and atomically published manifests on
+SD, then prefetches verified blocks into fixed internal-SRAM queues. Core 1 never
+opens a file or trusts filesystem metadata. Writes and deletion are idle-only;
+reads during a run are bounded and qualified against motion load.
+
+For a distributed job, the UI maintains one measured affine mapping from its
+monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and
+validate its own partition. A prepare/commit exchange installs a sufficiently
+future local hardware start cycle on all participants; start proceeds only while
+clock uncertainty and lead time meet the manifest's tolerance. Details and
+failure semantics are normative in `DISTRIBUTED-JOBS.md`.
 
 ## T-Deck integration
 
@@ -394,28 +431,30 @@ Actual transitions are stricter than this sketch. Key rules:
 
 The motion stack is layered:
 
-1. Path primitives and kinematics in machine coordinates.
-2. Constraint projection from axis velocity, acceleration, jerk, travel, tool,
-   and process limits.
-3. Forward/reverse lookahead and junction planning.
-4. Third-order jerk-limited time law with feed hold/resume and exact end-state
-   guarantees.
-5. Short execution segments carrying start/end velocity or integer finite
-   differences.
-6. Per-axis integer step event generation with deterministic rounding/error
-   accumulation.
+1. Browser/WASM exact path primitives, machine kinematics, and process facts.
+2. Browser/WASM axis constraint projection, forward/reverse lookahead, junction
+   limits, and third-order jerk-limited time law.
+3. Certified quantization into short canonical integer/fixed-point execution
+   segments with exact end-state and error evidence.
+4. Core-0 schema/hash/config validation, SD cache, and bounded prefetch.
+5. Independent core-1 local rate/range/continuity validation and schedule
+   consumption.
+6. Core-1 integer finite-difference interpolation, per-axis step events, and
+   bounded local hold/stop fallback for asynchronous safety events.
 7. Hardware backend: GPIO timer, RMT/DMA, or I²S static/stream.
 
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
-junction integration, and sub-millisecond linear-velocity segments. Aluminafw
-should implement and test the underlying mathematics independently. This avoids
-unintentionally importing g2core’s GPLv2/BeRTOS-exception licensing obligations
-and lets integer determinism and exact machine-IR requirements shape the design.
+junction integration, and sub-millisecond linear-velocity segments. The
+interface compiler and firmware executor implement their respective underlying
+mathematics independently, with shared clean-room requirements and separately
+structured reference tests. This avoids importing g2core’s GPLv2/BeRTOS-exception
+implementation and lets Hyper exactness, integer determinism, and local safety
+shape the design.
 
-The planner reports its bounded compute cost and minimum lookahead horizon. The
-executor never plans from network input at the last moment: core 0 admits work
-far enough ahead, and core 1 maintains low/high watermark telemetry and performs
-a constrained stop before underrun where possible.
+The UI compiler reports precision/refinement cost and the required execution
+horizon. The executor never plans from network input at the last moment: core 0
+admits cached work far enough ahead, and core 1 maintains low/high watermark
+telemetry and performs a constrained stop before underrun where possible.
 
 ## Field-oriented motor control
 
@@ -441,9 +480,20 @@ Velocity, position, trajectory, telemetry, and parameter update rates are
 separate clock domains. Parameter changes are range checked on core 0, converted
 to a complete fixed-size snapshot, and swapped at a safe real-time boundary.
 
-SimpleFOC is a useful modular and behavioral reference and is MIT-licensed, but
-the implementation still needs ESP-specific MCPWM/ADC synchronization, measured
-execution budgets, fixed memory, and Alumina’s safety state machine.
+SimpleFOC is a useful modular and behavioral reference, but Alumina uses a
+clean-room implementation driven by published control mathematics, device
+datasheets, independently written behavioral tests, ESP-specific MCPWM/ADC
+synchronization, measured execution budgets, fixed memory, and Alumina’s safety
+state machine.
+
+The first power profile is MKS ESP32 FOC V1.0, not TinyBee. Vendor examples give
+the initial facts to reconcile against the V1.0 schematic and bench: dual 3-PWM
+stages on GPIOs `32/33/25` with enable `22` and `26/27/14` with enable `12`;
+AS5600 buses on SDA/SCL `19/18` and `23/5`; and inline current inputs `39/36`
+and `35/34` with example 10 mΩ shunts and gain 50. These are ADC1 pins on the
+classic ESP32, avoiding its ADC2/Wi-Fi conflict, but polarity, gain, sampling
+topology, ratings, dead time, and shutdown behavior remain unqualified until
+schematic review and measurement.
 
 ## Exact CAD-to-motor boundary
 
@@ -465,6 +515,10 @@ flowchart LR
 
 - CSGRS solids and native Hypermesh/Hypercurve geometry stay exact.
 - All work/tool/machine transforms used for CAM are exact `Real` operations.
+- Hyperpath owns exact toolpath elements, retained provenance, path length/feed
+  reports, junction lookahead, and jerk-ramp scheduling where available.
+- Hypersolve proposes and certifies constraint solutions; approximate candidates
+  never bypass exact residual or interval-certified replay.
 - A machine profile expresses resolution and calibration as rational values where
   possible, with a separately recorded measurement uncertainty.
 - Hypercurve’s finite projection/subdivision is driven by a machine error budget,
@@ -482,11 +536,12 @@ For each job, define:
 - integer widths and overflow proof/bounds; and
 - constraints for velocity, acceleration, jerk, following error, and tool events.
 
-Machine IR is canonical and hashed. V1 should favor a small auditable instruction
-set: set state, linearly coordinated integer move, wait/synchronize, sampled
-input condition, bounded output action, and job boundary. Native line/arc/Bezier
-opcodes are added only when their integer interpolators can carry a verified
-error envelope and preserve planner constraints.
+Machine IR is canonical and hashed. V1 favors a small auditable instruction set:
+set state, jerk/finite-difference segment, linearly coordinated integer move,
+wait/synchronize, sampled input condition, bounded output action, and job
+boundary. Native line/arc/Bezier opcodes are added only when their integer
+interpolators can carry a verified error envelope and preserve planner
+constraints. A global job is partitioned into one local stream per MCU.
 
 The firmware validates structure and machine constraints; it does not trust a
 browser-provided “certificate” blindly. The host certificate gives a stronger
@@ -497,7 +552,8 @@ can with bounded integer arithmetic.
 
 The graph editor has at least three execution domains:
 
-- `HostExact`: CAD/CAM and arbitrary-precision geometry in the browser/desktop;
+- `HostExact`: authoritative CAD/CAM and arbitrary-precision geometry in
+  browser/WASM;
 - `Service`: network, logging, UI devices, files, slow protocols, noncritical
   logic on core 0; and
 - `Realtime`: a fixed-memory deterministic subset on core 1.
@@ -516,8 +572,12 @@ execute in the real-time graph.
 ## Security and update model
 
 - Provision unique device identity/credentials; no repository-shared private key.
+- Boot into a protected local AP by default and provide scan/join/recovery UI;
+  multi-MCU operation uses a common trusted WLAN or VPN-reachable LAN.
 - Default to same-origin UI/API access and require an authenticated session for
   mutating operations.
+- Permit cross-origin peer access for a multi-MCU workspace only through an
+  explicit authenticated Alumina-origin/bundle policy; never wildcard CORS.
 - Separate user authorization from the physical `Armed` state.
 - Rate-limit and size-limit every parser, upload, and WebSocket stream.
 - Use signed firmware and web bundles, anti-rollback policy where required, and
@@ -527,3 +587,5 @@ execute in the real-time graph.
   hardware permit; never expose them in capability or debug endpoints.
 - Generate an SBOM and record firmware, board, interface, schema, and machine
   configuration digests in diagnostics and job records.
+- Make no direct-Internet safety claim. Optional outbound font or asset access
+  never becomes necessary for operation or mutates the reproducible embedded UI.

@@ -22,12 +22,27 @@ planning evidence trail, not a floating dependency specification.
 - [`hypercurve/Cargo.toml`](../../hypercurve/Cargo.toml) and
   [`hypercurve/src`](../../hypercurve/src) — exact curve/path/region operations
   and finite projection with explicit chord-error control.
+- [`hyperpath/Cargo.toml`](../../hyperpath/Cargo.toml) and
+  [`hyperpath/src`](../../hyperpath/src) — exact-aware path/toolpath carriers,
+  retained provenance, PH curves, path-wide length/feed reports, corner
+  lookahead, and jerk-ramp schedules.
+- [`hypersolve/Cargo.toml`](../../hypersolve/Cargo.toml) and
+  [`hypersolve/src`](../../hypersolve/src) — symbolic constraints, exact direct
+  solving, numerical proposal boundaries, exact replay, and interval/Krawczyk
+  certification.
 - [`csgrs/Cargo.toml`](../../csgrs/Cargo.toml) and
   [`csgrs/src`](../../csgrs/src) — current `TriangleMesh`, curve-region, solid,
   transform, extrusion/revolution/sweep, and graphics adapter APIs.
 - [`hypergraphics/Cargo.toml`](../../hypergraphics/Cargo.toml) and
   [`hypergraphics/src`](../../hypergraphics/src) — exact scene/camera/projection
   boundary and GPU backend.
+- [`hyperbrep`](../../hyperbrep), [`hyperphysics`](../../hyperphysics),
+  [`hypersdf`](../../hypersdf), [`hypervoxel`](../../hypervoxel),
+  [`hyperpack`](../../hyperpack), [`hyperparts`](../../hyperparts),
+  [`hyperevolution`](../../hyperevolution), [`hypercircuit`](../../hypercircuit),
+  and [`hyperdrc`](../../hyperdrc) — audited optional exact B-rep, simulation,
+  implicit/voxel process, nesting, knowledge, optimization, circuit, and PCB DRC
+  crates; planned only for concrete later workflows.
 
 ### Alumina and T-Deck applications
 
@@ -72,6 +87,29 @@ planning evidence trail, not a floating dependency specification.
 - [FluidNC issue 1295](https://github.com/bdring/FluidNC/issues/1295) — field report
   illustrating WebUI/flash activity and real-time behavior; treated as a risk
   signal, not the primary architectural proof.
+
+FluidNC material is used only to research physical boards and timing/resource
+ideas. The resolved plan does not import its YAML, protocol, WebUI, or GRBL
+compatibility.
+
+## MKS ESP32 FOC V1.0 and T-LoRa Pager
+
+- [MKS ESP32 FOC V1.0 vendor branch](https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0)
+  — selected dual-motor FOC board and revision-specific repository.
+- [V1.0 hardware directory](https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0/Hardware)
+  and [V1.0 user-manual directory](https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0/User%20Manual)
+  — schematic/PCB/manual evidence that must be pinned and reconciled with the
+  received board.
+- [V1.0 test-code directory](https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0/Test%20Code)
+  — functional examples for open/closed loop, dual AS5600, current sensing and
+  current control; used to derive independent requirements, never copied as the
+  Alumina FOC implementation.
+- [V1.0 dual current-control example](https://github.com/makerbase-motor/MKS-ESP32FOC/blob/MKS-ESP32-FOC-V1.0/Test%20Code/7_current_control_example/7_current_control_example.ino)
+  — initial dual 3-PWM/enable, I²C sensor, and inline-current pin/gain facts.
+- [LILYGO LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) and
+  [current T-LoRa Pager hardware page](https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/master/docs/hardware/lilygo-t-lora-pager.md)
+  — current ESP32-S3/flash/PSRAM/device/pin source for the late board stub and
+  later full inventory.
 
 ## Embassy and ESP Rust runtime
 
@@ -132,6 +170,12 @@ though aluminafw will not use ESP-IDF services.
 - [SimpleFOC MIT license](https://github.com/simplefoc/Arduino-FOC/blob/master/LICENSE)
   — relevant if implementation code, rather than concepts/tests, is reused.
 
+The resolved project policy is stricter than the licenses require: both planner
+and FOC implementations are clean-room, based on functional descriptions,
+published mathematics, datasheets, and independently authored tests. SimpleFOC
+source copying is not planned despite its MIT license; g2 source copying is
+prohibited by the selected implementation path.
+
 ## Lightweight MCU control reference
 
 - [Klipper code overview](https://www.klipper3d.org/Code_Overview.html) — host/MCU
@@ -144,6 +188,10 @@ though aluminafw will not use ESP-IDF services.
   processing goals.
 - [Klipper GPLv3 license](https://github.com/Klipper3d/klipper/blob/master/COPYING)
   — the Alumina protocol/resource model borrows architectural ideas, not source.
+
+Alumina extends the host/MCU scheduled-work idea to direct browser-managed
+per-MCU affine clock fits and immutable SD-cached job partitions. It does not
+claim Klipper protocol, transport, or implementation compatibility.
 
 ## Graphical dataflow reference
 

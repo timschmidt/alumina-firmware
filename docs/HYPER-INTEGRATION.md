@@ -1,0 +1,137 @@
+# Hyper stack integration
+
+Audit snapshot: 2026-08-10. The browser/WASM side owns these exact and
+certification-heavy crates. Firmware consumes only bounded integer/fixed-point
+artifacts and does not pull arbitrary-precision or `std` geometry into a control
+loop.
+
+## Core dependency set
+
+| Crate | Local version/license | Planned authority |
+| --- | --- | --- |
+| `hyperreal` | 0.13.1, Apache-2.0 | Exact `Rational`/`Real`, checked refinement, and the scalar policy for CAD/CAM/config facts |
+| `hyperlattice` | 0.6.1, Apache-2.0 | Exact work, tool, machine, kinematic, and calibration transforms |
+| `hyperlimit` | 0.4.1, Apache-2.0 | Certified comparisons, limits, intervals, and explicit undecided outcomes |
+| `hypertri` | 0.4.1, Apache-2.0 | Exact triangulation where CAM or visualization requires it |
+| `hypermesh` | 0.1.0, Apache-2.0 | Exact mesh topology and checked graphics conversion |
+| `hypercurve` | 0.3.1, Apache-2.0 | Exact line/arc/Bezier/NURBS paths and regions, derivatives, projection, and chord-error-controlled finite reduction |
+| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, junction lookahead, and jerk scheduling |
+| `hypersolve` | 0.3.1, Apache-2.0 | Symbolic constraints, exact direct solving, numerical proposal separation, exact residual replay, and interval/Krawczyk certification |
+| `csgrs` | 0.23.0, Apache-2.0 | Current solid, `TriangleMesh`, and `CurveRegion2` modeling/CAM source types |
+| `hypergraphics` | 0.1.0, Apache-2.0 | Sole checked exact-scene/camera-to-GPU boundary; never a CAM input |
+
+Pin a mutually compatible commit set in `alumina-interface`. Update the set
+coherently and record it in every job manifest; do not duplicate old and new
+geometry type systems.
+
+## Hyperpath's role
+
+Hyperpath already provides more than a geometric carrier. Its current public
+surface includes path-wide constant-feed, acceleration-limited, and symmetric
+jerk-limited timing; corner lookahead; jerk-ramp and multi-phase jerk-ramp
+schedules; and a combined lookahead feed schedule. Relevant entry points include:
+
+- `FeedPathElement` and retained line/arc/Bezier path facts;
+- `certify_constant_feed_time_for_path`;
+- `certify_acceleration_limited_feed_time_for_path`;
+- `certify_symmetric_jerk_limited_feed_time_for_path`;
+- `certify_corner_lookahead_limits`;
+- `certify_jerk_ramp_feed_schedule` and
+  `certify_multi_phase_jerk_ramp_feed_schedule`; and
+- `certify_lookahead_feed_schedule`.
+
+The interface CAM layer should extend and compose these reports rather than
+introduce unrelated `f64` motion math. Work still required includes machine-axis
+constraint projection, process limits, kinematics, stop/hold replanning,
+step/PWM/timer lattices, canonical serialization, and conservative composition
+of the geometric and temporal certificates.
+
+## Hypersolve's role
+
+Hypersolve follows the needed rule: numerical solvers may propose coordinates,
+but exact retained equations or certified enclosures decide. Use it for problems
+such as:
+
+- constrained feed, transition-time, and lookahead parameter solves;
+- exact machine/calibration constraint systems;
+- kinematic inverse candidates followed by exact residual and branch checks;
+- curve/tool/process incidence and tangency constraints; and
+- calibration or FOC parameter identification when a model can retain an exact
+  or interval-certifiable residual structure.
+
+Prefer exact Bareiss/direct solvers where applicable. Lossy proposal engines
+must carry their precision boundary and pass `certify_candidate` or a stronger
+interval/Krawczyk certificate before affecting canonical CAM. An undecided result
+causes refinement, a conservative fallback, or a user-visible compile failure;
+it never silently becomes `false`, zero, or an accepted path.
+
+## Authoritative compile pipeline
+
+```mermaid
+flowchart LR
+    CAD[CSGRS / Hyperbrep / Hypercurve exact CAD] --> PATH[Hyperpath exact toolpath]
+    PATH --> LIMITS[Machine + process constraints]
+    LIMITS --> SOLVE[Hyperpath schedules + Hypersolve certification]
+    SOLVE --> PREC[Configurable precision and error allocation]
+    PREC --> LATTICE[Integer steps, counts, PWM and timer lattices]
+    LATTICE --> PART[Per-MCU canonical stream partitions]
+    PART --> SIM[Deterministic simulator and certificate replay]
+    SIM --> SD[Immutable SD job caches]
+    SD --> RT[Bounded firmware validation and execution]
+```
+
+All decimal source values, including CNC G-code coordinates, are parsed as exact
+decimal rationals before geometry construction. The local CSGRS/Hypercurve stack
+provides the geometry and arc substrate, but no current load-bearing CNC G-code
+execution contract is assumed. A new UI importer converts only supported source
+semantics into canonical Hypercurve/Hyperpath objects and reports unsupported or
+ambiguous modal behavior before CAM.
+
+## Configurable precision and machine-resolution contract
+
+The connected-device capability record plus stored machine configuration must
+provide, as exact rationals where known and bounded measurements otherwise:
+
+- step angle, microstep modes/current selection, configured microsteps, gearing,
+  belt pitch or screw lead, encoder counts, and calibration/uncertainty;
+- PWM clock/rate/resolution/dead time/minimum pulse, phase topology, ADC trigger
+  phase, shunt/gain/offset/polarity, bus sensing, and qualified control rates;
+- timer clocks, wrap behavior, queue/segment limits, sustainable aggregate event
+  rate, and measured jitter bound;
+- travel, velocity, acceleration, jerk, following-error, tool/process, and
+  interlock limits; and
+- machine/work/tool transforms and the firmware configuration digest.
+
+For each axis and process output, the compiler derives an effective command
+lattice and allocates a requested total error budget among geometry projection,
+spatial quantization, timing quantization, calibration uncertainty, and control
+following error. It refines exact predicates and curves only as far as needed to
+prove the configured budget. The certificate reports each component rather than
+claiming a false single exact result after physical quantization.
+
+## Optional Hyper crates
+
+| Crate | Planned use | Stage |
+| --- | --- | --- |
+| `hyperbrep` 0.2.0 | Exact B-rep source and native curve/surface CAM inputs | Add when interface B-rep authoring/import requires it |
+| `hyperphysics` 0.3.0 | Machine/plant simulation, material/body facts, collision/force replay, physical-limit models | Simulator after the deterministic event model |
+| `hypersdf` 0.2.0 | Implicit geometry, conservative clearance and process-field queries | Optional CAM operations |
+| `hypervoxel` 0.3.0 | Exact grid frames, stock/removal/additive occupancy and collision simulation | Process simulation after first contour workflow |
+| `hyperpack` 0.3.0 | Exact stock/sheet nesting and placement reports | Later CAM/material workflow |
+| `hyperparts` 0.3.0 | Source-attributed part, terminal, motor, driver, and board facts | Evaluate for board/machine knowledge provenance |
+| `hyperevolution` 0.3.0 | Proposal generation for tuning and path optimization with exact replay | Later optimization only |
+| `hypercircuit` 0.3.0 | Circuit/PCB semantics behind board photos, nets, and diagnostics | Later annotated-board schematic view |
+| `hyperdrc` 0.3.0 | PCB release checking | Not an Alumina runtime/CAM dependency |
+
+Optional crates enter only for a concrete workflow. Exactness does not justify
+an unnecessarily large WASM bundle or a second representation of the same facts.
+
+## Firmware boundary
+
+The browser emits a canonical global manifest and per-MCU streams containing
+integer positions/events/ticks, fixed-point coefficients where needed, bounded
+conditions, configuration/capability digests, and certificate summaries. The
+firmware independently checks format, hashes, identities, integer bounds,
+monotonic time, continuity, local rates, safe output duration, and queue memory.
+It does not re-run exact CAD, trust GPU buffers, or accept a certificate in place
+of checks it can perform locally.

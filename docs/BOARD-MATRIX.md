@@ -14,8 +14,8 @@ Research snapshot: 2026-08-10.
 | `motion-qualified` | Timed I/O and safety pass the board’s published trace/load envelope |
 | `production-qualified` | Power-loss, update, sustained load, fault, and release evidence pass |
 
-The interface displays this level and does not imply that a converted FluidNC
-file makes a board electrically or operationally qualified.
+The interface displays this level and does not imply that the existence of an
+upstream FluidNC profile makes a board electrically or operationally qualified.
 
 ## First vertical slices
 
@@ -23,15 +23,18 @@ file makes a board electrically or operationally qualified.
 | --- | --- | --- | --- | --- |
 | MKS TinyBee V1.x | ESP32-WROOM-32U, 8 MiB flash, 520 KiB SRAM, dual core | Requested target with official hardware and FluidNC configuration | I²S shift-register step/heater/fan output, limits, SD, Wi-Fi, XYZ coordinated motion | Tight internal RAM; virtual outputs are not GPIO/PWM; no native FOC power stage/current sensing |
 | LILYGO T-Deck Pro | ESP32-S3, 16 MiB flash, 8 MiB PSRAM, dual core | Existing Embassy drivers and integrated UI/radio hardware | Service-core peripheral parity, web UI, async bus ownership, telemetry | Shared buses and EPD latency require bounded/coalesced service tasks; PSRAM is not real-time memory |
+| MKS ESP32 FOC V1.0 | classic dual-core ESP32; exact module/memory to confirm from received board | Named first servo target with official schematic, manual, and dual-motor examples | Clean-room dual 3-PWM FOC, dual magnetic sensors, inline current sensing | Power/current/thermal claims and sampling/shutdown topology require schematic and bench qualification |
 
 Recommended order:
 
-1. Compile and run T-Deck service tasks under the new core-0 executor while a
+1. Compile and run T-Deck Pro service tasks under the new core-0 executor while a
    synthetic real-time task measures core-1 deadlines.
 2. Bring TinyBee up in safe state, validate physical inputs, then exercise one
    I²S output bit without motors/heaters connected.
 3. Add one axis, logic-analyzer timing tests, three-axis coordination, limits,
-   and finally hazardous loads behind explicit arming and hardware interlocks.
+   SD-cached exact jobs, and the pen/air-cut workflow.
+4. Reconcile MKS ESP32 FOC V1.0, start at low voltage/current with one unloaded
+   motor, and progress from PWM/sensing validation to qualified closed loops.
 
 ## MKS TinyBee model
 
@@ -117,6 +120,48 @@ the import. Audio, storage, IMU/light sensors, modem, vibration, and other fitte
 or optional T-Deck functions should be inventoried against the exact hardware
 revision and added as separate, tested drivers.
 
+## MKS ESP32 FOC V1.0 model
+
+The selected vendor branch describes a dual-motor integrated board based on a
+classic dual-core ESP32. Its schematic, manual, and test programs are hardware
+evidence and functional references; SimpleFOC implementation source is not an
+Alumina source dependency.
+
+Initial facts from the vendor's dual-motor/current-control examples:
+
+| Function | Motor 0 | Motor 1 |
+| --- | --- | --- |
+| 3-PWM phase outputs | GPIO32, GPIO33, GPIO25 | GPIO26, GPIO27, GPIO14 |
+| Driver enable | GPIO22 | GPIO12 |
+| AS5600 I²C SDA/SCL | GPIO19 / GPIO18 | GPIO23 / GPIO5 |
+| Inline current ADC inputs | GPIO39 / GPIO36 | GPIO35 / GPIO34 |
+| Example current-sense parameters | 10 mΩ, gain 50, both gains inverted in software | 10 mΩ, gain 50, both gains inverted in software |
+
+The four current pins are ADC1-class on classic ESP32, which is favorable for
+simultaneous Wi-Fi, but that observation does not prove PWM-synchronized sample
+quality. Before any torque mode is advertised, reconcile the exact board
+revision/module, MOSFET/gate-driver topology, shunts/amplifiers, polarity,
+current range, bus/temperature sensing, enable/fault path, PWM frequency/dead
+time, ADC attenuation/calibration, connector pinout, power input, and cooling.
+Vendor current and voltage figures remain unqualified claims until measured.
+
+The board capability record must expose distinct physical power stages,
+current-sense channels, sensor buses, timer/ADC relationships, and safe disable;
+it must not expose six unrelated generic PWM pins. Runtime configuration adds
+motor pole pairs, phase order, resistance/inductance/flux or KV facts, sensor
+direction/resolution, current/voltage/speed limits, control rates/tuning, and
+calibration uncertainty.
+
+## T-LoRa Pager late target
+
+The current LILYGO T-LoRa Pager uses ESP32-S3 with 16 MiB QSPI flash and 8 MiB
+QSPI PSRAM and satisfies the dual-core policy. The official inventory includes a
+480×222 SPI display, SD, MIA-M10Q GNSS, SX1262-family LoRa options, NFC, motion
+sensor, RTC, charger/gauge, haptics, audio, keyboard, rotary input, and an I/O
+expander. M10 first adds a compile-only board/resource/photo stub from current
+LilyGoLib hardware material. Full driver work waits until TinyBee, T-Deck Pro,
+and the first FOC slice are stable. No Pager feature may delay the first workflow.
+
 ## Existing Alumina board seeds
 
 `alumina-firmware` contains metadata/modules for these boards. They are useful
@@ -126,7 +171,7 @@ inputs but not yet authoritative board packages:
 | --- | --- |
 | `esp32drive` | Reconcile source pin constants with schematic/PCB revision; classify dual-core and power-stage capabilities |
 | `esp32cam` | Identify exact module/camera revision and reserved PSRAM/camera/flash pins before exposing general I/O |
-| `xprov5` | Reconcile the local ESP Rust board documents and decide whether its single-core variants are lab-only |
+| `xprov5` | Reconcile the local ESP Rust board documents; reject any single-core variant before board scheduling |
 | `mks_tinybee` | Replace constants with the typed I²S/TinyBee profile above |
 
 No existing board module is copied blindly into the new board registry.
@@ -139,21 +184,17 @@ official/contributed configuration collections include, among others, MKS
 TinyBee, MKS DLC32, BlackBox X32, 6 Pack variants, Jackpot CNC Controller,
 FYSETC E4, and TMC2130/TMC2209 examples.
 
-“FluidNC compatible” should mean one of two precise things:
+For this greenfield plan, “FluidNC compatible hardware” means only that
+`aluminafw` has an independently reviewed board package for the same physical PCB
+and revision. FluidNC configuration files are valuable evidence for pin maps,
+aliases, bus engines, and hardware use, but are not an accepted or converted
+Alumina format. No binary, WebUI, protocol, YAML, or GRBL compatibility is
+promised.
 
-1. **Board-compatible:** aluminafw has a reviewed board package for the same PCB
-   and revision, including every resource and safe state it claims.
-2. **Configuration-import compatible:** an `xtask` converter accepts a documented
-   subset of FluidNC YAML (`gpio.N`, `i2so.N`, selected axes/motors/buses) and
-   emits Alumina configuration plus explicit unsupported-field diagnostics.
+### Later physical-board candidates
 
-It should not mean binary compatibility with FluidNC, automatic coverage of all
-community configurations, or an exact clone of its web UI/protocol.
-
-### Proposed first-wave candidates
-
-TinyBee is committed by the request. The following remain candidates until the
-user chooses hardware and revisions:
+TinyBee is committed. These remain later physical-board candidates after the
+first targets, MKS FOC, and T-LoRa Pager stub:
 
 | Candidate | Why useful | Due diligence before scheduling |
 | --- | --- | --- |
@@ -163,9 +204,9 @@ user chooses hardware and revisions:
 | BlackBox X32 | Integrated CNC product profile | Hardware availability, published electrical detail, redistribution/support expectations |
 | FYSETC E4 | Multi-axis printer-style ESP32 controller | Revision-specific pin/driver mapping and voltage/load validation |
 
-Pick at most two beyond TinyBee/T-Deck for the first production milestone. The
-board contract should be proven with diversity, but a long untested profile list
-would reduce safety and maintainability.
+Schedule a candidate only when its exact dual-core revision, documentation,
+hardware fixture, and motivating machine are available. A long compile-only
+profile list would reduce safety and maintainability.
 
 ## Board package contract
 
@@ -206,6 +247,10 @@ The actual schema must also express:
 - engine frequency/resolution/DMA/interrupt/core limits;
 - safe boot, unconfigured, fault, watchdog, and power-down values;
 - resource aliases and common FluidNC names;
+- licensed photo asset digests plus normalized connector, device, pin, and net
+  hotspots used by the live diagnostic UI;
+- driver microstep/current modes, step timing, PWM/ADC/sensor relationships,
+  clock resolution, and measured/qualified dynamic limits needed by UI CAM;
 - flash/partition and asset budgets;
 - supported security/update features;
 - CI target and required HIL suite; and

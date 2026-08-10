@@ -1,396 +1,465 @@
 # Aluminafw delivery plan
 
-Research snapshot: 2026-08-10.
+Research and decision snapshot: 2026-08-10.
 
-## Mission and scope
+## Mission
 
-Build a reusable `no_std` Embassy firmware platform for ESP32-based motion,
-automation, instrumentation, and operator-interface boards. Preserve all
-drivers currently present in `t-deck-async-drivers-rs`, retain the useful web
-serving behavior of `alumina-firmware`, update `alumina-interface` to the latest
-local exact-geometry stack and Hypergraphics, and establish an exact and
-testable CAD-to-machine pipeline.
+Build a greenfield `no_std`, Embassy-based platform for dual-core ESP32 motion,
+automation, instrumentation, and embedded operator-interface boards. Copy every
+driver currently present in `t-deck-async-drivers-rs` with provenance, retain
+the embedded-web functionality demonstrated by `alumina-firmware`, and redesign
+`alumina-interface` as the authoritative exact CAD/CAM, configuration, control,
+diagnostic, and graphical-programming environment.
 
-The plan treats the following as separate but coordinated products:
+The coordinated products are:
 
-1. `aluminafw`: embedded runtime, board packages, drivers, safety, motion,
-   protocol, web asset serving, simulator, and build tooling.
-2. `alumina-interface`: exact CAD/CAM, Hypergraphics visualization, device
-   discovery/control, dataflow authoring, plotting, and machine-IR generation.
-3. The Hyper stack and CSGRS: exact modeling, predicates, meshing, curves, and
-   checked graphics/CAM conversion boundaries.
+1. `aluminafw`: thin embedded drivers, dual-core runtime, safety, Wi-Fi/web
+   service, native protocol, SD job cache, bounded command queues, real-time
+   interpolation, step/FOC control, and telemetry.
+2. `alumina-interface`: browser/WASM exact modeling and CAM, machine/job
+   compiler, multi-MCU coordinator, Hypergraphics UI, annotated-board
+   diagnostics, plots, simulation, and typed dataflow authoring.
+3. CSGRS and the Hyper stack: authoritative exact geometry, constraints, path
+   scheduling, certified approximation, graphics conversion, and optional
+   physical/process models.
 
-## Architectural invariants
+## Explicit non-goals
 
-These are release requirements, not aspirations.
+- No compatibility with `alumina-firmware`, the old `alumina-interface`, GRBL,
+  FluidNC configuration/protocol, Klipper protocol, g2 protocol, or SimpleFOC
+  APIs. They are research/behavior references only.
+- No firmware-side parser for G-code, CAD, meshes, graph documents, or raw
+  geometry. G-code import, where useful, terminates in exact UI geometry.
+- No single-core ESP32 build, degraded profile, or cooperative Wi-Fi/motion
+  scheduling.
+- No USB, serial, CAN/TWAI, or other alternative Alumina multi-MCU transport in
+  the first architecture. Wi-Fi is the coordination transport.
+- No claim that a local-LAN device is safe for direct Internet exposure.
+- No arbitrary user code, WASM, allocation, or unbounded graph interpreter on
+  the real-time core.
 
-- The real-time executor owns every peripheral that can affect motion, motor
-  torque, process energy, endstops, or emergency shutdown.
-- Wi-Fi, HTTP, WebSocket, file access, logging, display/input devices, and idle
-  work run on the service executor.
-- Cross-core traffic uses bounded, allocation-free messages. There are no
-  cross-core async bus mutexes and no unbounded command or telemetry queues.
-- Real-time interrupt paths and all transitively accessed data live in internal
-  RAM where required. Flash/NVS writes, OTA, and configuration commits are
-  rejected while a real-time job is armed or running.
-- A board package only describes and instantiates physical facts. Machine
-  semantics live in a separately validated configuration.
-- Configuration is transactional: declare resources, validate capabilities and
-  conflicts, construct inactive objects, establish safe defaults, then commit
-  once with a digest. Partial configuration never arms outputs.
-- Floating-point render data is never a CAM or control input. The machine
-  boundary is an explicit, deterministic conversion from exact values to integer
-  device lattices.
-- Network loss cannot leave an output indefinitely active. Every hazardous
-  scheduled output has a safe default and maximum duration or is owned by an
-  independent safety state machine.
-- Production motion builds on single-core ESP32 variants either fail at compile
-  time or are explicitly labeled a degraded profile; this policy is an open
-  decision, not an implicit fallback.
+## Release invariants
+
+- Core 0 owns Wi-Fi, AP/STA management, HTTP/WebSocket, web assets, SD,
+  configuration parsing, T-Deck peripherals, telemetry presentation, and idle
+  tasks. Core 1 owns all motion, torque, process-energy timing, endstops,
+  emergency response, and deterministic sampled I/O.
+- Cross-core traffic is fixed-capacity and allocation-free. Urgent safety,
+  ordinary commands/job blocks, and telemetry use independent bounded paths.
+- All real-time interrupt code/data and active queues reside in internal memory.
+  Flash/NVS/update writes are impossible while armed or running.
+- A board package contains physical facts and safe states. Stored runtime machine
+  configuration contains attached motor/driver/mechanical/process facts. Neither
+  may silently infer the other.
+- The browser/WASM compiler is authoritative. Exact values remain exact until a
+  named, deterministic, configurable-precision conversion to integer steps,
+  encoder counts, PWM values, ADC units, and timer ticks.
+- Numerical proposals cannot make combinatorial or acceptance decisions without
+  exact/certified replay. Undecided precision is an explicit result.
+- Firmware independently validates every bounded property it can: exact schema,
+  hashes, configuration identity, integer ranges, timing monotonicity, local
+  rates, resource ownership, queue fit, and safe output duration.
+- Network loss cannot create unbounded energy. A cached autonomous job is allowed
+  only when its complete duration, interlocks, and fault policy are local.
+- Every MCU in a distributed job has a complete immutable local SD partition and
+  a measured clock mapping before it can prepare or commit.
+- Physical E-stop and safety-interlock design does not depend on Wi-Fi atomicity.
+
+## First end-to-end workflow
+
+The first workflow is fixed so early work converges on one evidence chain:
+
+1. Author an exact 2D contour containing a line, circular arc, and Bezier.
+2. Fetch a TinyBee capability snapshot and a Cartesian XYZ pen/air-cut machine
+   configuration containing exact steps/mm and bounded calibration facts.
+3. Build the path with Hypercurve/Hyperpath, certify lookahead and jerk-limited
+   timing, allocate an explicit error budget, and quantize to integer I²S step
+   events/ticks in browser/WASM.
+4. Replay identical bytes in `alumina-sim`; inject Wi-Fi loss, limit, queue, SD,
+   and clock faults and compare against the certificate and safety policy.
+5. Upload the immutable manifest/stream to TinyBee SD, validate, arm, and execute
+   with a pen or disconnected/air-cut machine.
+6. Show every relevant connector/resource on an annotated TinyBee photograph and
+   correlate UI scope/logic traces, firmware telemetry, and logic-analyzer
+   captures of step, direction, limits, and job start.
+
+No heater, spindle, laser, plasma, or cutting load is enabled by this workflow.
+Those enter only after the same trace/safety gates pass with harmless loads.
 
 ## Delivery sequence
 
-The milestones are ordered by dependency and evidence, not calendar dates.
-Calendar estimates should be made after first-wave boards, hardware availability,
-and protocol/licensing choices are confirmed.
+Milestones are dependency/evidence gates rather than calendar promises.
 
-### M0 — Decisions, baselines, and reproducible workspace
+### M0 — Governance, clean-room boundaries, and reproducible scaffold
 
 Work:
 
-- Resolve the decisions in `OPEN-QUESTIONS.md`, especially licensing, first-wave
-  boards, single-core policy, and compatibility requirements.
-- Record ADRs for the core split, board model, resource/configuration protocol,
-  machine IR, web stack, security, and licensing/provenance.
-- Pin one compatible Rust/ESP toolchain set across `esp-hal`, `esp-rtos`,
-  `esp-hal-embassy`, `esp-radio`, Embassy, and the chosen HTTP server.
-- Capture reference builds and behavior for `alumina-firmware`,
-  `alumina-interface`, and T-Deck Patina before changing them.
-- Establish CI targets, formatting/lint policies, a dependency-license scan,
-  SBOM generation, and reproducible web-asset embedding.
+- Add standard `LICENSE-MIT` and `LICENSE-APACHE` texts; set new crate manifests
+  to `MIT OR Apache-2.0` and preserve copied-file licensing independently.
+- Add `THIRD_PARTY.toml`, SPDX/header policy, source/behavioral-reference ledger,
+  SBOM and dependency-license CI, and a clean-room contribution checklist.
+- Record ADRs for core ownership, board/machine split, native protocol, exact
+  boundary, SD cache, multi-MCU clocks/start, safety, security, and updates.
+- Pin a mutually compatible Rust/ESP toolchain across `esp-hal`, `esp-rtos`,
+  `esp-hal-embassy`, `esp-radio`, Embassy, networking, HTTP, and serialization.
+- Create the workspace in `ARCHITECTURE.md`, `xtask`, host-test features, schema
+  generation, memory-budget checks, and reproducible UI-asset embedding.
+- Capture black-box functional fixtures from the old Alumina web serving/UI and
+  published g2/SimpleFOC behavior. Fixtures describe results, not source layout.
 
 Exit gate:
 
-- A clean checkout can run host tests and compile minimal T-Deck Pro and TinyBee
-  images using documented commands.
-- ADRs remove ambiguity about source copying and reference-code reuse.
-- No firmware signing key, Wi-Fi secret, or device credential is stored in Git.
+- A clean checkout runs host CI and compiles minimal T-Deck Pro and TinyBee
+  dual-core images with documented commands.
+- Every source/import/reference has a license/provenance disposition; no signing
+  key, Wi-Fi secret, or private credential is present.
+- The clean-room requirements/test authoring and implementation roles/process are
+  documented before motion or FOC implementation starts.
 
-### M1 — Workspace and complete T-Deck driver import
+### M1 — Complete T-Deck driver import and service-peripheral parity
 
 Work:
 
-- Create the workspace described in `ARCHITECTURE.md`.
-- Import every driver crate currently present in `t-deck-async-drivers-rs` with
-  source provenance, notices, copyright headers, and commit identity preserved.
-- Import `embedded-bus-async` and `sx126x-async-rs`; preserve all existing unit,
-  compile, and hardware examples.
-- Generalize the SPI chip-select wrapper from an `esp-hal` output type to
-  `embedded-hal`/`embedded-hal-async` digital traits where practical. Do not
-  rewrite working device protocols merely to fit the new workspace.
-- Keep the existing `Rc` shared-bus pattern local to the service core. Driver
-  handles that are intentionally `!Send` must never cross to the real-time core.
-- Add a machine-readable `THIRD_PARTY.toml` or equivalent provenance ledger.
-
-Imported inventory:
-
-- `embedded-bus-async`
-- `sx126x-async-rs`
-- `t-deck-pro-battery-async` (BQ25896)
-- `t-deck-pro-epd-async` (UC8253/GDEQ031T10)
-- `t-deck-pro-gps-async` (MIA-M10Q)
-- `t-deck-pro-keyboard-async` (TCA8418)
-- `t-deck-pro-lora-async` (SX1262 integration)
-- `t-deck-pro-touch-async` (CST328)
-- `i2c-tester` as a diagnostic example
-- the Patina application as behavioral reference and, where useful, a board
-  example rather than a production firmware dependency
+- Copy the complete current inventory with source revision, copyright headers,
+  Apache-2.0 notice, changes, tests, and examples:
+  `embedded-bus-async`, `sx126x-async-rs`, `t-deck-pro-battery-async`,
+  `t-deck-pro-epd-async`, `t-deck-pro-gps-async`,
+  `t-deck-pro-keyboard-async`, `t-deck-pro-lora-async`,
+  `t-deck-pro-touch-async`, `i2c-tester`, and the Patina behavior fixture.
+- Generalize only the SPI chip-select HAL coupling necessary to reuse the bus;
+  do not gratuitously rewrite working protocols.
+- Keep `Rc`/shared async bus ownership and all intentionally `!Send` handles on
+  core 0. Represent shared I²C/SPI topology in the board package.
+- Convert Patina's task/model/display-coalescing pattern into bounded service
+  actors without making the application a production dependency.
 
 Exit gate:
 
-- Imported crates pass their available host/compile tests.
-- T-Deck Pro initializes all imported devices and reproduces existing input,
-  battery, EPD, GPS, touch, keyboard, and LoRa smoke tests.
-- License/provenance review confirms that imported Apache-2.0 code remains
-  properly marked regardless of the license chosen for new code.
+- All available host/compile tests pass and T-Deck Pro reproduces battery, EPD,
+  GPS, touch, keyboard, LoRa, and shared-bus smoke behavior.
+- A source-to-destination inventory proves that no present T-Deck driver was
+  omitted and no unimplemented fitted peripheral is falsely claimed.
 
-### M2 — Board packages and dual-core Embassy skeleton
+### M2 — Board packages and strict dual-core Embassy runtime
 
 Work:
 
-- Implement mutually exclusive `board-*` features selected through `xtask`,
-  with exactly one ESP chip feature in each firmware build.
-- Define board capabilities, resource aliases, bus topology, DMA channels,
-  interrupt ownership, safe startup levels, memory/flash layout, and optional
-  PSRAM in declarative metadata plus a small Rust composition root.
-- Start one Embassy executor on each core with the ESP runtime’s supported
-  second-core facility. Construct async peripherals on the core that will own
-  their interrupts.
-- Implement fixed-capacity SPSC command, urgent-safety, and telemetry channels.
-- Add a build-time board metadata exporter consumed by the interface and tests.
-- Bring up T-Deck Pro as the service-peripheral slice and TinyBee as the
-  real-time-output slice.
+- Implement exactly-one `board-*` selection through `xtask`; reject any board
+  whose application-core count is below two.
+- Define revisioned board metadata: chip/memory/partitions, pins and virtual
+  resources, buses/devices, DMA/interrupts, strapping/electrical constraints,
+  clock sources, safe states, image/hotspot assets, HIL suite, and qualification.
+- Create small Rust composition roots that consume `esp_hal::Peripherals` once
+  and return disjoint `ServiceResources` and `RealtimeResources`.
+- Start one pinned Embassy executor per core using the supported runtime. Add
+  fixed SPSC job/command and telemetry channels plus an urgent safety mailbox.
+- Bring up T-Deck Pro as the service slice and TinyBee as the real-time slice.
+  Validate the official TinyBee I²S output map and all-safe startup image before
+  connecting motors or heaters.
+- Export canonical board capabilities and an image hotspot map for simulator/UI.
 
 Exit gate:
 
-- A test task on core 0 can saturate networking/display work without missing a
-  synthetic core-1 deadline under the agreed timing threshold.
-- Cross-core APIs accept only fixed-size or fixed-capacity protocol values.
-- Duplicate pins, impossible DMA allocation, unsafe startup defaults, and
-  unsupported capabilities fail before arming.
+- Core 0 can saturate synthetic service work while a core-1 deadline probe stays
+  within an initial measured envelope.
+- Duplicate/impossible pins, DMA, buses, clock ownership, unsafe boot states, and
+  single-core targets fail before arming.
+- Logic-analyzer traces identify every TinyBee shifted bit and safe reset image.
 
-### M3 — Service plane, Wi-Fi, and embedded interface
+### M3 — Native protocol, Wi-Fi/web service, simulator, and SD cache
 
 Work:
 
-- Replace ESP-IDF services with `esp-radio`, `embassy-net`, and a reviewed
-  `no_std` HTTP/WebSocket server. Picoserve is the leading candidate, subject to
-  a stress and security review because it remains pre-1.0.
-- Support provisioning plus AP, STA, and AP+STA modes where the chip permits.
-- Serve versioned pre-compressed interface assets and an immutable manifest.
-- Add `/api/v1` capability, configuration, job, telemetry, health, time, and
-  update endpoints. Keep `/device`, `/pins`, and `/queue` as a temporary,
-  feature-gated migration shim only.
-- Send control and telemetry as compact binary frames over WebSocket; keep JSON
-  for discovery, diagnostics, and human-authored configuration.
-- Add authentication, origin checks, rate/size limits, secure provisioning,
-  signed update verification, and per-device credentials. Do not claim Internet
-  exposure is safe until threat-model tests pass.
-- Serve immutable assets while motion is active only after cache/jitter tests.
-  Never write or erase flash while armed.
+- Use `esp-radio`, `embassy-net`, and a reviewed bounded `no_std` HTTP/WebSocket
+  server. Qualify the chosen server rather than assuming a pre-1.0 implementation
+  is robust.
+- Boot into a protected device AP by default. Serve the exact matching compressed
+  UI and provide scan/join/leave/recovery flows for infrastructure Wi-Fi.
+- Define one greenfield protocol for identity, capabilities, configuration,
+  network setup, clock samples, storage, jobs, commands, health/faults, telemetry,
+  and signed updates. Exact version mismatch is a hard rejection/update flow.
+- Use JSON only for bounded human-facing discovery/configuration and fixed binary
+  frames for command, job-block, clock, waveform, and telemetry streams.
+- Implement authenticated content-addressed SD chunks, resumable uploads,
+  atomic manifests, integrity scans, capacity/health, audit export, and idle-only
+  mutation. Core 0 prefetches verified blocks; core 1 never reads the filesystem.
+- Build `alumina-sim` with virtual time, resource engines, I²S images, safety
+  state, queue/storage/network faults, trace/replay, and recorded board fixtures.
+- Add signed/recoverable firmware+UI update packaging, per-device credentials,
+  request size/rate limits, origin policy, and no direct-Internet claim.
 
 Exit gate:
 
-- The browser discovers board capabilities and streams telemetry without polling
-  individual pins.
-- Network fuzz/stress tests cannot overflow a real-time queue or extend a
-  hazardous output beyond its configured watchdog.
-- An interrupted update leaves a bootable signed image and safe outputs.
+- A fresh device AP serves the UI, scans/joins a WLAN, and remains recoverable
+  after wrong credentials or interrupted configuration.
+- The simulator and TinyBee accept, cache, validate, stream, and discard a
+  synthetic long job with bounded RAM and power-loss-safe storage semantics.
+- Network fuzz/flood and SD stalls cannot overflow RT queues or extend a bounded
+  output; writes/updates are rejected while armed.
 
-### M4 — Klipper-like resource configuration and scheduled I/O
+### M4 — Native machine/resource model and board-aware diagnostic UI
 
 Work:
 
-- Establish and continuously generate the chip-aware implementation/qualification
-  matrix in `PERIPHERAL-COVERAGE.md`; a known but unimplemented peripheral must be
-  discoverable as unavailable rather than silently absent or falsely supported.
-- Define stable typed resource IDs for GPIO, ADC, DAC where present, LEDC/MCPWM
-  PWM, timers, RMT, PCNT, I²S, I²C/SPI devices, UART, TWAI/CAN, USB, Ethernet,
-  Wi-Fi, BLE, ESP-NOW, SD, displays, touch/input, LoRa, and board-specific
-  expanders.
-- Add resource discovery, leasing, ownership, pin aliases, inversion/pulls,
-  frequency/resolution constraints, DMA/interrupt requirements, and safe-state
-  metadata.
-- Implement an allocate/configure/finalize transaction with schema and config
-  digests, inspired by Klipper’s small-MCU configuration pattern but written
-  independently.
-- Provide scheduled digital/PWM/ADC/serial/timer operations against a monotonic
-  device clock, with cancellation, deadlines, bounded batches, and maximum output
-  durations.
-- Generate interface node definitions from the same capability schema.
+- Define stable typed resource IDs and capabilities for GPIO, shifted I²S bits,
+  ADC, PWM/MCPWM/LEDC, timer, RMT, PCNT, I²C/SPI/UART, storage, radio/network,
+  board devices, safety inputs, axes, and process outputs. An integer “pin” may
+  be an alias, never the type system.
+- Implement transactional declare/validate/construct/commit configuration with
+  ownership, conflicts, frequency/resolution, clock, DMA/interrupt, safe-state,
+  maximum-duration, memory, and configuration-digest checks.
+- Store/report step angle, microstep choices/current, mechanics/gearing,
+  encoders, calibration and uncertainty, timer/event limits, PWM/ADC/current
+  sense, motor/power-stage, travel/dynamic/process, and safety facts required by
+  browser path planning.
+- Provide scheduled digital/PWM/sample/serial/timer operations on the MCU cycle
+  clock with cancellation, deadlines, fixed batches, and watchdogs.
+- Replace old interface device panels with generated capability forms. Add a
+  licensed annotated-photo view whose hotspots link connectors, pins, buses,
+  devices, and virtual resources to live value, owner, state, safety, and plots.
+- Separate a low-rate all-resource status overview from bounded triggered digital
+  edge capture and analog waveform acquisition. Direct output tests require a
+  diagnostic lease, timeout, safe range, and disarmed mode where appropriate.
 
 Exit gate:
 
-- The interface can configure and operate supported resources without board-
-  specific endpoint code.
-- Invalid aliases, conflicts, frequencies, clock domains, unsafe values, or
-  oversized queues are rejected atomically with structured diagnostics.
-- A simulator and hardware trace agree on scheduled event order and integer
-  timestamps.
+- One simulated schema generates configuration and diagnostic UI for GPIO,
+  TinyBee I²S, timers/PWM, ADC, serial, storage, safety, and an axis without
+  board-name branches.
+- Invalid electrical/timing/resource combinations reject atomically with a
+  hotspot-linked diagnostic.
+- Live TinyBee/T-Deck state overlays match measured pins/devices and stay bounded
+  under maximum overview and capture rates.
 
-### M5 — Real-time safety kernel and advanced stepper motion
+### M5 — Exact interface, Hypergraphics, and authoritative WASM CAM
 
 Work:
 
-- Implement explicit `Boot -> Safe -> Configured -> Armed -> Running -> Hold ->
-  Fault` states with latched faults and physically meaningful reset rules.
-- Build an N-axis path planner with forward/reverse lookahead, coordinated axes,
-  junction constraints, feed hold/resume, homing, probing, soft/hard limits, and
-  kinematics plug-ins.
-- Implement third-order jerk-limited S-curve profiles and short fixed-duration
-  execution segments with linearly changing velocity, taking design inspiration
-  from Synthetos/g2 behavior without copying licensed implementation code.
-- Use deterministic integer/fixed-point execution. Backends emit direct GPIO,
-  RMT/DMA, or I²S stream/static pulse data according to board capability.
-- Add step-direction timing contracts, enable sequencing, direction setup/hold,
-  pulse-width validation, and optional TMC UART/SPI configuration/telemetry.
-- Separate the planner, segment generator, and pulse engine so their timing and
-  correctness can be tested independently.
+- Move `alumina-interface` from CSGRS 0.20.1/legacy mesh/sketch APIs to the pinned
+  current CSGRS/Hyper set. Use `TriangleMesh`, `CurveRegion2`/Hypercurve paths,
+  exact `Real` transforms, Hyperpath, and Hypersolve.
+- Extend Hypergraphics (or one narrow adapter) to own exact mesh/curve scenes,
+  camera/projection, grids, axes, overlays, selection, picking, and checked GPU
+  conversion. Delete interface-owned vertex/normal/edge/camera rendering paths.
+- Implement a UI-only CNC G-code importer that parses supported decimal/modal
+  geometry exactly into Hypercurve/Hyperpath; unsupported semantics fail before
+  CAM. It is an optional importer, never canonical job or firmware input.
+- Model exact machine/process constraints from the connected capability/config
+  record. Compose Hyperpath length/feed/lookahead/jerk reports and Hypersolve
+  exact/certified solves; extend these crates or a thin CAM layer where machine
+  constraint projection is absent.
+- Allocate configurable error among curve reduction, motor/count lattice,
+  timing, calibration, and following/control budgets. Refine only to the
+  precision required to certify the policy.
+- Emit reproducible global manifests and canonical per-MCU integer/fixed-point
+  streams with source, compiler, capability, configuration, schedule, and error
+  evidence. Keep GPU floats structurally unable to enter CAM.
+- Run identical compiler fixtures in browser/WASM and native tests for
+  reproducibility, but the shipped browser/WASM application remains the
+  authoritative user workflow.
 
 Exit gate:
 
-- Logic-analyzer traces meet pulse-width, direction, synchronization, jitter,
-  and queue-underrun limits at maximum supported multi-axis rates.
-- Lookahead and feed-hold tests preserve velocity/acceleration/jerk constraints.
-- Any underrun, limit event, watchdog expiry, or invalid segment transitions to a
-  proven safe state.
+- Line/arc/Bezier/NURBS and pathological exact cases have conservative source →
+  reduced path → command lattice → timer error reports.
+- Identical source/config/policy produces byte-identical job bytes and digests.
+- No old CSGRS type, hand renderer, silent float tolerance, or renderer-to-CAM
+  path remains.
 
-### M6 — Exact CAD/CAM to machine-resolution execution
+### M6 — Safety kernel, clean-room stepper control, and first workflow
 
 Work:
 
-- Update the interface to current CSGRS and Hyper crates before building CAM.
-- Keep solids, curve regions, transformations, and CAM paths in exact `Real`
-  form on the browser/host side.
-- Define rational machine transforms and device lattices: steps per unit,
-  encoder counts per turn, timer frequency, permitted path error, and axis limits.
-- Use Hypercurve projection/subdivision with an explicit chord-error budget to
-  reduce exact curves to the machine’s spatial resolution. Couple geometry error
-  and timing error rather than selecting an arbitrary display tolerance.
-- Compile a canonical, versioned, hashed machine IR containing integer positions,
-  timer ticks, constraints, tool events, coordinate-frame/config digests, and an
-  error certificate. V1 may use certified small line segments; native exact
-  line/arc/Bezier forward-difference opcodes follow only when their integer
-  execution is independently verified.
-- Validate bounds, continuity, hashes, overflow, timing monotonicity, config
-  identity, and the error envelope again on firmware before arming.
-- Return commanded lattice position and measured encoder position so plots can
-  distinguish geometric, quantization, following, and control error.
+- Implement `Boot -> Safe -> Configured -> Armed -> Running -> Hold -> Fault`
+  with latched faults, local E-stop/endstop/probe, bounded reset, enable chains,
+  driver/process watchdogs, and configuration/job identity.
+- From clean-room requirements, implement the Synthetos-style behavior needed by
+  Alumina: N-axis constraint projection, forward/reverse lookahead validation,
+  junction limits, third-order jerk schedules, short linearly varying-velocity
+  segments, hold/resume, and deterministic terminal state. Reuse/extend exact
+  Hyperpath mathematics in the UI; do not copy g2 code.
+- Keep firmware's role bounded: validate/consume precomputed schedule segments,
+  interpolate integer events, generate pulses, report horizons, and calculate a
+  local safe hold/stop when an asynchronous safety event requires it.
+- Implement direct GPIO/RMT and TinyBee I²S stream/static backends as hardware
+  warrants, including pulse width, direction setup/hold, enable sequencing,
+  aggregate update rate, shared heater/fan image, and TMC UART/SPI support.
+- Execute the selected exact-contour → simulator → TinyBee SD → pen/air-cut
+  workflow and produce trace/certificate correlation in the UI.
 
 Exit gate:
 
-- Golden tests demonstrate a bounded maximum deviation from exact CAD curve to
-  commanded machine lattice, including pathological rational/Bezier cases.
-- Recompiling identical CAD, machine config, and tool policy yields byte-identical
-  machine IR.
-- No `f32` graphics buffer or camera transform can enter the CAM/motion API by
-  type construction.
+- Captured pulses meet board/machine timing and count requirements at the
+  declared maximum coordinated rates under Wi-Fi/web/SD load.
+- Lookahead, jerk, hold/resume, limits, probing, underrun, timer wrap, and fault
+  tests agree across exact reference, simulator, firmware trace, and logic
+  analyzer within declared integer timing bounds.
+- Any invalid job, stale config, underrun, limit/E-stop, or missed deadline takes
+  the documented local safe path.
 
-### M7 — SimpleFOC-style servo and field-oriented control
+### M7 — Wi-Fi multi-MCU clocks and cached synchronized jobs
 
 Work:
 
-- Define separate motor, power-stage, rotor-sensor, current-sense, PWM/ADC sync,
-  and control-law traits for BLDC, permanent-magnet synchronous, and two-phase
-  stepper servo arrangements.
-- Implement Clarke/Park transforms, space-vector or sine PWM, electrical angle
-  alignment, voltage/estimated-current/DC-current/FOC-current torque modes as
-  hardware allows, and cascaded torque/velocity/position loops.
-- Run the current/torque loop from a timer/PWM-synchronized real-time context;
-  run velocity and position loops at explicit lower rates. Budget every loop and
-  keep tuning/telemetry off the critical path.
-- Support encoder, Hall, magnetic SPI/I²C, analog/PWM, PCNT, and user-supplied
-  sensors incrementally. Require calibrated current sensing for current-mode FOC.
-- Add current, voltage, speed, temperature, following-error, and sensor-plausibility
-  shutdowns. Parameter updates use double-buffered validated snapshots.
-- Expose stepper and servo axes through a common trajectory contract while
-  preserving distinct hardware and safety capabilities.
+- Implement timestamped heartbeat responses with boot ID, receive/transmit cycle
+  samples, counter width/source, queue horizon, and quality flags.
+- In a browser worker, unwrap counters and robustly fit one affine UI↔MCU clock
+  map with drift and uncertainty per device. Reject stale, asymmetric, or
+  background-throttled samples.
+- Partition a global job into immutable per-MCU streams with shared epochs and
+  sync markers. Require every participant to upload, hash, locally validate, and
+  report its exact stored partition before prepare.
+- Implement nonce/digest-bound prepare, future local-cycle selection, commit,
+  acknowledgement, abort guard, arm lease, idempotent retries, and observed-start
+  reconciliation from `DISTRIBUTED-JOBS.md`.
+- Define attended versus cached-autonomous network-loss behavior. Exclude live
+  cross-MCU feedback and runtime repartitioning initially.
+- Qualify in simulation, then with harmless GPIO pulses on two physical
+  dual-core boards before distributed axes or process energy.
 
 Exit gate:
 
-- Start with a named supported inverter/servo development board; TinyBee
-  step-stick sockets are not treated as FOC hardware.
-- Processor-in-loop and dynamometer/bench traces meet loop rate, phase-current,
-  following-error, overcurrent, and shutdown-latency criteria.
-- A network or UI stall cannot affect the inner control loop.
+- Starts meet a published cross-MCU edge tolerance under nominal and saturated
+  Wi-Fi, with uncertainty predicted conservatively before commit.
+- Lost/reordered/duplicated messages, browser suspension, AP failure, MCU reboot,
+  wrong/full/corrupt SD, clock drift, and one participant fault prevent start or
+  produce the documented safe local outcome.
+- No distributed safety claim relies on Wi-Fi simultaneous stop; required
+  physical interlock topology is recorded in the machine configuration.
 
-### M8 — Hypergraphics interface and graphical control environment
+### M8 — Clean-room FOC and servo control on MKS ESP32 FOC V1.0
 
 Work:
 
-- Complete the migration in `INTERFACE-ROADMAP.md`: latest CSGRS/Hyper APIs,
-  exact scene adapters, Hypergraphics camera/projection, no hand-rolled mesh
-  renderer, capability-driven device controls, and streaming plots.
-- Split the present graph model into a pure exact CAD graph and a stateful timed
-  control/dataflow graph connected through typed bridge nodes.
-- Add units, structures/records, arrays/streams, events, state, sample clocks,
-  scheduling domains, bounded channels, backpressure, subgraphs, reusable
-  components, loops/state machines, probes, and versioned serialization.
-- Compile an audited deterministic subset to firmware graph IR. Dynamic editing,
-  visualization, and non-real-time nodes stay in the browser/service domain;
-  arbitrary code and allocation are forbidden in the real-time domain.
-- Generate peripheral/protocol nodes from capabilities rather than maintaining a
-  monolithic hard-coded palette.
+- Reconcile vendor branch, V1.0 schematic/manual, component values, PWM/enables,
+  current channels, dual AS5600 buses, faults, ratings, and safe startup against
+  the received board and bench measurements.
+- Define separate `MotorModel`, `PowerStage`, `RotorSensor`, `CurrentSense`,
+  `Modulator`, torque/motion controller, and safety traits for BLDC/PMSM and later
+  two-phase servo steppers.
+- Clean-room implement Clarke/Park transforms, sine/SVPWM, electrical alignment,
+  voltage/estimated-current/DC-current/dq-current torque modes, and cascaded
+  velocity/position control. Use published mathematics and independent tests,
+  not copied SimpleFOC implementation.
+- Synchronize MCPWM and ADC; run current/torque in an explicitly budgeted ISR or
+  interrupt executor, with slower velocity/position/telemetry domains. Validate
+  complete parameter snapshots before atomic RT swap.
+- Report the motor, encoder, current-sense, PWM/ADC, loop-rate, calibration,
+  uncertainty, and qualified limit contract so UI CAM can account for servo
+  resolution, acceleration, following, and torque limits.
+- Add overcurrent/voltage/temperature/speed/following/sensor faults and a
+  hardware-measured shutdown path. Qualify one motor at low voltage/current
+  before dual-motor operation.
 
 Exit gate:
 
-- A saved graph can be reopened without semantic loss and reports broken wires,
-  unit mismatch, unsupported device capabilities, and scheduling violations
-  before deployment.
-- A representative producer/consumer control graph runs deterministically on
-  hardware with bounded memory and reproduces in simulation/replay.
-- Plots can trigger, capture, decimate, export, and correlate commands with
-  telemetry without perturbing the real-time loop.
+- PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,
+  following error, and shutdown latency meet named conservative profiles.
+- Network, web, SD, telemetry, and UI stalls cannot perturb the inner loop.
+- Only measured modes are advertised; vendor current/power ratings are not
+  inherited as Alumina qualifications.
 
-### M9 — Additional boards and production hardening
+### M9 — General typed graphical control and instrumentation
 
 Work:
 
-- Add the user-selected FluidNC-compatible boards using the board-package
-  contract and configuration importer/conversion tooling where useful.
-- Add relay, industrial-I/O, and laboratory controller profiles only with their
-  voltage, isolation, startup, watchdog, and fail-safe characteristics modeled.
-- Run sustained network/motion/FOC stress, power-loss and brownout, thermal,
-  EMC-relevant recovery, fuzzing, dependency review, and update rollback tests.
-- Publish compatibility matrices, known timing limits, signed artifacts, SBOMs,
-  configuration schemas, and reproducible build instructions.
+- Replace the recursive ad hoc graph value model with versioned exact values,
+  units, records, arrays, options/results, events, bounded streams/waveforms,
+  resource/job handles, clocks, and explicit state.
+- Add typed nodes/wires, subgraphs, reusable components, front panels, cases,
+  loops/state machines, delay/feedback, bounded queues, rate transitions,
+  backpressure, fault flow, probes, and deterministic serialization/diffs.
+- Partition execution into `HostExact`, `Service`, and whitelisted `Realtime`
+  domains. Compile fixed memory, resource claims, rates, WCET, and safe failure
+  into audited graph IR; fixed firmware safety always has authority.
+- Generate peripheral/protocol nodes from the connected capability ledger,
+  eventually covering all implemented ESP32 resources without a hard-coded
+  palette or false support claims.
+- Extend the diagnostic UI into an integrated board explorer, logic analyzer,
+  oscilloscope, event/state plotter, XY/spectrum tools, triggers, cursors,
+  capture/replay, exact path correlation, experiment records, and export.
 
 Exit gate:
 
-- Each supported board has a maintained CI build, capability snapshot, hardware
-  smoke suite, safe-state test, and measured timing envelope.
-- Release claims distinguish compile support, bench-tested support, and
-  production-qualified support.
+- A saved multi-rate producer/consumer/PID/interlock graph simulates, validates,
+  deploys, captures, and replays with bounded memory and explicit clocks.
+- Unknown nodes round-trip, invalid units/resources/rates fail at their wire or
+  board hotspot, and no arbitrary code enters RT.
+- Plots remain bounded and preserve fault/trigger evidence under maximum
+  qualified telemetry load.
 
-## Parallel workstreams and dependencies
+### M10 — T-LoRa Pager stub, broader boards, and production hardening
 
-After M0, several workstreams can proceed concurrently, but the dependencies
-below are strict:
+Work:
 
-- Driver import and board metadata can proceed alongside interface API migration.
-- Web serving depends on the service executor and protocol framing, not on the
-  final motion planner.
-- Advanced stepper execution depends on the resource allocator, real-time clock,
-  safety state machine, and TinyBee I²S backend.
-- FOC depends on a selected power-stage board, synchronized PWM/ADC support, and
-  the safety kernel; it does not depend on TinyBee step output.
-- Exact machine IR depends on current Hyper/CSGRS interface types and a stable
-  firmware resource/config digest.
-- Firmware graph deployment depends on the resource model and timing domains;
-  its browser editor and serialization can begin earlier.
+- Add a compile-only metadata/resource/image stub for the current ESP32-S3
+  T-LoRa Pager, then inventory and implement its devices after first-target and
+  FOC evidence is stable.
+- Add selected dual-core FluidNC-associated PCBs as new physical board packages,
+  not configuration/protocol compatibility targets.
+- Add relay, industrial-I/O, and laboratory profiles only with electrical range,
+  isolation, startup, watchdog, calibration, uncertainty, and fail-safe behavior.
+- Expand peripheral/protocol implementations from actual hardware use cases;
+  CAN/Modbus/Ethernet/etc. do not become alternate Alumina sync transports
+  without a separately approved architecture change.
+- Run long-duration load, brownout/power-loss, thermal, storage wear/corruption,
+  fuzz, update rollback, security, clock drift, motion/FOC, and recovery suites.
+- Publish signed artifacts, SBOM, reproducible builds, board photos/hotspots,
+  schemas, capability snapshots, known limits, and qualification evidence.
 
-## Compatibility and migration policy
+Exit gate:
 
-- `alumina-firmware` remains the behavioral reference until M3 reaches endpoint
-  parity. It is not incrementally converted from ESP-IDF; `aluminafw` is a clean
-  Embassy workspace with explicit migration shims.
-- Legacy HTTP routes are read-only or narrowly translated at the service-core
-  boundary and are removed after one advertised compatibility window.
-- Existing board constants are treated as clues, not authoritative electrical
-  specifications. Every profile is reconciled with a schematic or vendor board
-  file before outputs are enabled.
-- FluidNC YAML is an import source, not the internal schema. Unsupported pin
-  modes, timing engines, or semantics produce explicit conversion errors.
-- CSGRS and Hyper migrations are completed as coherent dependency updates; the
-  interface does not carry parallel old/new geometry types.
+- Every supported board has a CI build, safe-state proof, capability snapshot,
+  HIL smoke suite, measured memory/timing envelope, and honest qualification.
+- Releases distinguish `described`, `compiles`, `bench`, `motion-qualified`, and
+  `production-qualified`; resemblance to an upstream board is never evidence.
+
+## Dependency and parallelization rules
+
+- M0 precedes source import. Driver import and interface dependency migration may
+  proceed in parallel after its license/toolchain gates.
+- M2 core ownership precedes live networking, storage prefetch, and any
+  real-time output. M3 simulator/protocol may begin against host fixtures earlier.
+- M4 capability/configuration facts precede authoritative machine precision and
+  M5 job compilation.
+- M5 and the core-1 queue/step backend may develop in parallel against the same
+  machine-IR fixtures; M6 is where both evidence chains meet.
+- M7 requires the M3 cache/clock protocol and M6 single-MCU safe execution.
+- M8 requires the M2 runtime, M4 resource/config model, M6 safety kernel, and a
+  physically reviewed MKS FOC board; it does not depend on distributed motion.
+- M9 editor/serialization/plot work may start earlier, but firmware graph
+  deployment depends on resource, safety, and clock semantics.
 
 ## Major risks and controls
 
 | Risk | Consequence | Planned control |
 | --- | --- | --- |
-| ESP flash/cache stalls both cores | Lost motion/FOC deadlines | Internal-RAM hot path, DMA engines, idle-only writes, stress measurement |
-| Wi-Fi or browser floods commands | Queue overflow or unsafe latency | Bounded admission, rate/size limits, backpressure, watchdogs |
-| “Pin” abstraction hides I²S/DMA limits | Invalid TinyBee behavior | Typed resources and capability validation; no magic integer pins |
-| Exact host values exceed MCU cost | Missed deadlines or code bloat | Exact host/CAM, certified integer machine IR, fixed-point firmware |
-| Servo hardware is assumed from GPIO | Electrical damage | Named power-stage profiles, sensing calibration, safe bring-up gates |
-| “All ESP32 peripherals” becomes unbounded | Never-ending first release | Capability families, generated nodes, staged board-driven support |
-| Reference-code license contamination | Distribution constraints | Clean-room implementation, provenance ledger, dependency/license CI |
-| Board variants silently conflict | Unsafe startup or dead buses | Exactly-one profile, generated allocation checks, schematic review/HIL |
-| Browser graph is nondeterministic | Unrepeatable control behavior | Explicit clocks/state/backpressure, validated firmware subset, replay |
-| Web assets or telemetry exhaust RAM | RT starvation | Fixed budgets, immutable compressed assets, decimation, separate pools |
+| ESP flash/cache stalls both cores | Lost step/FOC deadlines | IRAM/internal-DRAM hot path, hardware buffering, armed write prohibition, measured load tests |
+| Wi-Fi timing is mistaken for real time | Desynchronized or partial multi-MCU start | Cached streams, measured affine clocks/uncertainty, future hardware starts, abort guard, local safety |
+| Browser suspension or loss | Queue starvation or uncontrolled energy | Complete caches, worker clock-quality checks, attended/autonomous policy, local duration/interlocks |
+| SD latency/corruption | RT underrun or wrong job | Content hashes, atomic manifests, fixed prefetch credits, low-water safe stop, fault injection |
+| “Pin” hides I²S/PWM/ADC facts | Invalid TinyBee or FOC operation | Typed resources and board-specific engine/electrical constraints |
+| Exact computation becomes unbounded | UI hang or unusable compile | Configurable precision, explicit undecided result, budgets/cancellation, cached exact facts |
+| Approximate proposal becomes a decision | Geometry/motion correctness loss | Hypersolve/Hyperlimit exact or interval-certified replay gate |
+| Servo power is inferred from GPIO | Electrical damage | Named power-stage profile, schematic reconciliation, low-energy staged HIL |
+| Vendor ratings are treated as qualification | Thermal/current damage | Independent measurement and conservative published profile |
+| Browser graph is nondeterministic | Unrepeatable control | Explicit clocks/state/queues, fixed RT opcode set, static reports, trace replay |
+| Broad peripheral scope never converges | No usable release | Board-driven waves and generated `unimplemented`/qualification ledger |
+| Reference-code license contamination | Distribution restrictions | Clean-room process, provenance ledger, SPDX/license CI, independent tests |
+| Annotated photos become stale/misleading | Wiring/configuration mistakes | Revision/hash/provenance, normalized hotspots, board-HIL reconciliation |
 
-## Definition of done for every capability
+## Definition of done for any capability
 
-A peripheral, protocol, board, motor mode, graph node, or endpoint is not
-“supported” until it has:
+A board, peripheral, protocol, job opcode, motion/FOC mode, graph node, plot
+channel, or endpoint is supported only when it has:
 
-- a versioned capability/schema representation;
-- documented ownership, timing, memory, and safe-state behavior;
-- conflict and invalid-configuration tests;
-- simulator or host tests where possible;
-- a board CI build and hardware smoke evidence where hardware is involved;
-- observable health/fault telemetry;
-- bounded queues and failure behavior;
-- user-facing interface discovery and diagnostics;
-- migration and compatibility notes; and
-- license/provenance attribution.
+- a versioned schema/capability record and exact owner domain;
+- documented electrical, rate, resolution, memory, timing, queue, and safety
+  limits, including uncertainty where measured;
+- deterministic configuration, digest, and failure/recovery semantics;
+- simulator/host tests and malformed/boundary/property cases;
+- compile and HIL evidence on every claimed board/revision;
+- observable health, fault, timing, and high-water telemetry;
+- documentation and annotated physical mapping where relevant;
+- license/provenance/security review and SBOM coverage; and
+- a qualification label no stronger than its archived evidence.
