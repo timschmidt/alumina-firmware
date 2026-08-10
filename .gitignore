@@ -1,0 +1,11 @@
+/target/
+/.embuild/
+/.espup/
+/.env
+*.pem
+*.key
+*.bin
+*.elf
+*.map
+*.uf2
+web-assets/dist/
