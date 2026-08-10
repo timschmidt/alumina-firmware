@@ -4,6 +4,7 @@
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use alumina_machine_ir::ExecutionBlock;
 use alumina_protocol::{DeviceCycle, Digest, FrameHeader, FrameKind, HeaderError};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender, TryReceiveError, TrySendError};
@@ -16,6 +17,8 @@ pub const TELEMETRY_QUEUE_DEPTH: usize = 32;
 pub const COMMAND_PAYLOAD_BYTES: usize = 256;
 /// Fixed payload capacity of one cross-core telemetry sample.
 pub const TELEMETRY_PAYLOAD_BYTES: usize = 128;
+/// Initial number of canonical 512-byte work units owned by the RT horizon queue.
+pub const WORK_QUEUE_DEPTH: usize = 8;
 /// Default application-core stack size in 32-bit words.
 pub const APP_CORE_STACK_WORDS: usize = 8_192;
 
@@ -25,6 +28,7 @@ pub type DefaultBoundary = IntercoreBoundary<
     TELEMETRY_QUEUE_DEPTH,
     COMMAND_PAYLOAD_BYTES,
     TELEMETRY_PAYLOAD_BYTES,
+    WORK_QUEUE_DEPTH,
 >;
 /// Core-0 endpoint for the production-shaped boundary.
 pub type DefaultServiceEndpoint = ServiceEndpoint<
@@ -33,6 +37,7 @@ pub type DefaultServiceEndpoint = ServiceEndpoint<
     TELEMETRY_QUEUE_DEPTH,
     COMMAND_PAYLOAD_BYTES,
     TELEMETRY_PAYLOAD_BYTES,
+    WORK_QUEUE_DEPTH,
 >;
 /// Core-1 endpoint for the production-shaped boundary.
 pub type DefaultRealtimeEndpoint = RealtimeEndpoint<
@@ -41,6 +46,7 @@ pub type DefaultRealtimeEndpoint = RealtimeEndpoint<
     TELEMETRY_QUEUE_DEPTH,
     COMMAND_PAYLOAD_BYTES,
     TELEMETRY_PAYLOAD_BYTES,
+    WORK_QUEUE_DEPTH,
 >;
 
 /// A fixed-size frame whose unused bytes are always zeroed.
@@ -237,8 +243,10 @@ pub struct IntercoreBoundary<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
+    const WORK_BLOCKS: usize = WORK_QUEUE_DEPTH,
 > {
     commands: Channel<CriticalSectionRawMutex, IntercoreFrame<COMMAND_PAYLOAD>, COMMANDS>,
+    work: Channel<CriticalSectionRawMutex, ExecutionBlock, WORK_BLOCKS>,
     telemetry: Channel<CriticalSectionRawMutex, IntercoreFrame<TELEMETRY_PAYLOAD>, TELEMETRY>,
     urgent: LatestSignal,
     fault: LatestSignal,
@@ -249,12 +257,14 @@ impl<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
-> IntercoreBoundary<COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD>
+    const WORK_BLOCKS: usize,
+> IntercoreBoundary<COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD, WORK_BLOCKS>
 {
     /// Creates an empty statically allocatable boundary.
     pub const fn new() -> Self {
         Self {
             commands: Channel::new(),
+            work: Channel::new(),
             telemetry: Channel::new(),
             urgent: LatestSignal::new(),
             fault: LatestSignal::new(),
@@ -268,17 +278,33 @@ impl<
     pub fn split(
         &'static mut self,
     ) -> (
-        ServiceEndpoint<'static, COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD>,
-        RealtimeEndpoint<'static, COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD>,
+        ServiceEndpoint<
+            'static,
+            COMMANDS,
+            TELEMETRY,
+            COMMAND_PAYLOAD,
+            TELEMETRY_PAYLOAD,
+            WORK_BLOCKS,
+        >,
+        RealtimeEndpoint<
+            'static,
+            COMMANDS,
+            TELEMETRY,
+            COMMAND_PAYLOAD,
+            TELEMETRY_PAYLOAD,
+            WORK_BLOCKS,
+        >,
     ) {
         let service = ServiceEndpoint {
             command_tx: self.commands.sender(),
+            work_tx: self.work.sender(),
             telemetry_rx: self.telemetry.receiver(),
             urgent: &self.urgent,
             fault: &self.fault,
         };
         let realtime = RealtimeEndpoint {
             command_rx: self.commands.receiver(),
+            work_rx: self.work.receiver(),
             telemetry_tx: self.telemetry.sender(),
             urgent: &self.urgent,
             fault: &self.fault,
@@ -289,6 +315,7 @@ impl<
     /// Returns statically reserved bytes, excluding channel bookkeeping.
     pub const fn payload_storage_bytes() -> usize {
         COMMANDS * size_of::<IntercoreFrame<COMMAND_PAYLOAD>>()
+            + WORK_BLOCKS * size_of::<ExecutionBlock>()
             + TELEMETRY * size_of::<IntercoreFrame<TELEMETRY_PAYLOAD>>()
     }
 }
@@ -298,7 +325,9 @@ impl<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
-> Default for IntercoreBoundary<COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD>
+    const WORK_BLOCKS: usize,
+> Default
+    for IntercoreBoundary<COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD, WORK_BLOCKS>
 {
     fn default() -> Self {
         Self::new()
@@ -312,8 +341,10 @@ pub struct ServiceEndpoint<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
+    const WORK_BLOCKS: usize = WORK_QUEUE_DEPTH,
 > {
     command_tx: Sender<'a, CriticalSectionRawMutex, IntercoreFrame<COMMAND_PAYLOAD>, COMMANDS>,
+    work_tx: Sender<'a, CriticalSectionRawMutex, ExecutionBlock, WORK_BLOCKS>,
     telemetry_rx:
         Receiver<'a, CriticalSectionRawMutex, IntercoreFrame<TELEMETRY_PAYLOAD>, TELEMETRY>,
     urgent: &'a LatestSignal,
@@ -325,7 +356,8 @@ impl<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
-> ServiceEndpoint<'_, COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD>
+    const WORK_BLOCKS: usize,
+> ServiceEndpoint<'_, COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD, WORK_BLOCKS>
 {
     /// Waits for capacity in the ordered command queue.
     pub async fn send_command(&mut self, frame: IntercoreFrame<COMMAND_PAYLOAD>) {
@@ -338,6 +370,33 @@ impl<
         frame: IntercoreFrame<COMMAND_PAYLOAD>,
     ) -> Result<(), TrySendError<IntercoreFrame<COMMAND_PAYLOAD>>> {
         self.command_tx.try_send(frame)
+    }
+
+    /// Waits for one ownership credit, then transfers a complete work block.
+    pub async fn send_work(&mut self, block: ExecutionBlock) {
+        self.work_tx.send(block).await;
+    }
+
+    /// Transfers one work block only when a bounded ownership credit is free.
+    #[allow(
+        clippy::result_large_err,
+        reason = "a full queue must return the inline block so core 0 retains ownership without allocation"
+    )]
+    pub fn try_send_work(
+        &mut self,
+        block: ExecutionBlock,
+    ) -> Result<(), TrySendError<ExecutionBlock>> {
+        self.work_tx.try_send(block)
+    }
+
+    /// Current work-block credits available to the core-0 prefetch actor.
+    pub fn work_free_capacity(&self) -> usize {
+        self.work_tx.free_capacity()
+    }
+
+    /// Work blocks currently owned by the queue rather than either core task.
+    pub fn work_depth(&self) -> usize {
+        self.work_tx.len()
     }
 
     /// Publishes an urgent action independently of ordered queue pressure.
@@ -375,8 +434,10 @@ pub struct RealtimeEndpoint<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
+    const WORK_BLOCKS: usize = WORK_QUEUE_DEPTH,
 > {
     command_rx: Receiver<'a, CriticalSectionRawMutex, IntercoreFrame<COMMAND_PAYLOAD>, COMMANDS>,
+    work_rx: Receiver<'a, CriticalSectionRawMutex, ExecutionBlock, WORK_BLOCKS>,
     telemetry_tx: Sender<'a, CriticalSectionRawMutex, IntercoreFrame<TELEMETRY_PAYLOAD>, TELEMETRY>,
     urgent: &'a LatestSignal,
     fault: &'a LatestSignal,
@@ -387,13 +448,24 @@ impl<
     const TELEMETRY: usize,
     const COMMAND_PAYLOAD: usize,
     const TELEMETRY_PAYLOAD: usize,
-> RealtimeEndpoint<'_, COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD>
+    const WORK_BLOCKS: usize,
+> RealtimeEndpoint<'_, COMMANDS, TELEMETRY, COMMAND_PAYLOAD, TELEMETRY_PAYLOAD, WORK_BLOCKS>
 {
     /// Attempts to take the next validated ordered command without waiting.
     pub fn try_receive_command(
         &mut self,
     ) -> Result<IntercoreFrame<COMMAND_PAYLOAD>, TryReceiveError> {
         self.command_rx.try_receive()
+    }
+
+    /// Takes ownership of the next canonical work block without waiting.
+    pub fn try_receive_work(&mut self) -> Result<ExecutionBlock, TryReceiveError> {
+        self.work_rx.try_receive()
+    }
+
+    /// Work blocks waiting behind the core-1-local block currently executing.
+    pub fn work_depth(&self) -> usize {
+        self.work_rx.len()
     }
 
     /// Reads the latest urgent request independently of command queue pressure.
@@ -443,7 +515,26 @@ impl RuntimeBudget {
     >(
         &self,
     ) -> Result<usize, BudgetError> {
-        if COMMANDS == 0 || TELEMETRY == 0 {
+        self.validate_for_with_work::<
+            COMMANDS,
+            TELEMETRY,
+            COMMAND_PAYLOAD,
+            TELEMETRY_PAYLOAD,
+            WORK_QUEUE_DEPTH,
+        >()
+    }
+
+    /// Validates a budget against a boundary with an explicit work-block depth.
+    pub fn validate_for_with_work<
+        const COMMANDS: usize,
+        const TELEMETRY: usize,
+        const COMMAND_PAYLOAD: usize,
+        const TELEMETRY_PAYLOAD: usize,
+        const WORK_BLOCKS: usize,
+    >(
+        &self,
+    ) -> Result<usize, BudgetError> {
+        if COMMANDS == 0 || TELEMETRY == 0 || WORK_BLOCKS == 0 {
             return Err(BudgetError::ZeroDepth);
         }
         if COMMAND_PAYLOAD == 0 || TELEMETRY_PAYLOAD == 0 {
@@ -466,6 +557,7 @@ impl RuntimeBudget {
             TELEMETRY,
             COMMAND_PAYLOAD,
             TELEMETRY_PAYLOAD,
+            WORK_BLOCKS,
         >::payload_storage_bytes();
         let stack_bytes = self
             .app_core_stack_words
@@ -575,6 +667,9 @@ mod tests {
     use alloc::boxed::Box;
 
     use super::*;
+    use alumina_machine_ir::{
+        BlockExpectation, BlockValidationLimits, Segment, StreamId, ValidationLimits,
+    };
     use alumina_protocol::{FRAME_MAGIC, PROTOCOL_VERSION};
 
     fn frame<const N: usize>(kind: FrameKind, sequence: u32) -> IntercoreFrame<N> {
@@ -586,6 +681,44 @@ mod tests {
             &[1, 2, 3],
         )
         .unwrap()
+    }
+
+    fn work_block(sequence: u32, start: u64, previous_digest: Digest) -> ExecutionBlock {
+        ExecutionBlock::encode_motion(
+            StreamId::new([1; 16]).unwrap(),
+            Digest([2; 32]),
+            Digest([3; 32]),
+            sequence,
+            previous_digest,
+            &[Segment {
+                start_cycle: DeviceCycle(start),
+                end_cycle: DeviceCycle(start + 10),
+                delta_steps: [1, -1, 0],
+                flags: 0,
+            }],
+        )
+        .unwrap()
+    }
+
+    fn work_expectation(sequence: u32, start: u64, previous_digest: Digest) -> BlockExpectation {
+        BlockExpectation {
+            stream_id: StreamId([1; 16]),
+            capability_digest: Digest([2; 32]),
+            config_digest: Digest([3; 32]),
+            sequence,
+            start_cycle: DeviceCycle(start),
+            previous_digest,
+        }
+    }
+
+    fn work_limits() -> BlockValidationLimits {
+        BlockValidationLimits {
+            maximum_block_ticks: 100,
+            segment: ValidationLimits {
+                maximum_segment_ticks: 100,
+                maximum_steps_per_segment: 10,
+            },
+        }
     }
 
     #[test]
@@ -666,6 +799,45 @@ mod tests {
     }
 
     #[test]
+    fn work_queue_transfers_fixed_ownership_and_exposes_exact_credits() {
+        type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
+        let boundary = Box::leak(Box::new(Boundary::new()));
+        let (mut service, mut realtime) = boundary.split();
+        assert_eq!(service.work_free_capacity(), 2);
+        assert_eq!(service.work_depth(), 0);
+
+        let first = work_block(0, 100, Digest::ZERO);
+        let first_digest = first.header().block_digest;
+        service.try_send_work(first).unwrap();
+        service
+            .try_send_work(work_block(1, 110, first_digest))
+            .unwrap();
+        assert_eq!(service.work_free_capacity(), 0);
+        assert_eq!(service.work_depth(), 2);
+        assert!(matches!(
+            service.try_send_work(work_block(2, 120, Digest([9; 32]))),
+            Err(TrySendError::Full(_))
+        ));
+
+        let generation = service.publish_urgent(UrgentKind::EmergencyStop, 4);
+        assert_eq!(realtime.urgent_after(0).unwrap().generation, generation);
+        let first = realtime.try_receive_work().unwrap();
+        assert_eq!(service.work_free_capacity(), 1);
+        assert_eq!(realtime.work_depth(), 1);
+        first
+            .validate_motion::<3>(work_expectation(0, 100, Digest::ZERO), work_limits())
+            .unwrap();
+        let second = realtime.try_receive_work().unwrap();
+        second
+            .validate_motion::<3>(work_expectation(1, 110, first_digest), work_limits())
+            .unwrap();
+        assert!(matches!(
+            realtime.try_receive_work(),
+            Err(TryReceiveError::Empty)
+        ));
+    }
+
+    #[test]
     fn fault_signal_bypasses_full_telemetry_and_ordinary_samples_drop() {
         type Boundary = IntercoreBoundary<1, 1, 4, 4>;
         let boundary = Box::leak(Box::new(Boundary::new()));
@@ -709,7 +881,12 @@ mod tests {
                 TELEMETRY_PAYLOAD_BYTES,
             >()
             .unwrap();
-        assert!(required <= budget.internal_bytes);
+        assert_eq!(DefaultBoundary::payload_storage_bytes(), 12_480);
+        assert_eq!(required, 45_248);
+        assert_eq!(
+            required,
+            APP_CORE_STACK_WORDS * size_of::<u32>() + DefaultBoundary::payload_storage_bytes()
+        );
 
         let invalid = RuntimeBudget {
             minimum_realtime_horizon_cycles: 10_000,
@@ -721,6 +898,10 @@ mod tests {
                 horizon: 10_000,
                 stall: 10_000,
             })
+        );
+        assert_eq!(
+            budget.validate_for_with_work::<1, 1, 1, 1, 0>(),
+            Err(BudgetError::ZeroDepth)
         );
     }
 

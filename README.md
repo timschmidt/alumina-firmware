@@ -89,6 +89,17 @@ This is storage readback, not executable job admission: machine-IR decoding and
 the credited owned-buffer boundary to core 1 are next. See the
 [published-object reader evidence](docs/evidence/M3-PUBLISHED-OBJECT-READER.md).
 
+The next boundary is also concrete: `alumina-machine-ir` now defines canonical
+512-byte motion blocks for up to eight axes, with exact cycle intervals, integer
+lattice displacement, repeated stream/capability/configuration identities,
+zero padding, SHA-256 block identity, and a previous-block digest chain. An
+incremental assembler handles arbitrary storage chunk splits. Core 0 and core 1
+use separate stateful validators, and a dedicated inline work ring transfers
+non-cloneable owned blocks under exact credits. Host simulation exercises the
+real media reader through a deliberately unaligned 700-byte upload layout and
+rejects storage-valid/machine-invalid bytes before queue admission. See the
+[machine-block boundary evidence](docs/evidence/M3-MACHINE-BLOCK-BOUNDARY.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

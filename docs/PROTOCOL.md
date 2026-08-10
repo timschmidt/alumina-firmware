@@ -100,6 +100,48 @@ under a canonical SHA-256 confirmation. A stale request cannot silently reformat
 a later generation. The recovery flag is required only when Alumina locator
 bytes are recognizable but no valid prior generation can be trusted.
 
+## Machine execution blocks
+
+A V1 per-MCU machine partition is a nonempty concatenation of exact 512-byte
+blocks. The storage object's byte length determines the block count and its
+SHA-256 identity commits the complete concatenation, so the stream does not
+embed a circular copy of its own object digest. Storage upload chunks may split
+these bytes anywhere.
+
+Each block has this canonical layout:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMBLK01` |
+| 8 | 2 | exact machine-IR version (`1`) |
+| 10 | 1 | execution kind (`1` motion) |
+| 11 | 1 | axis count (`1..=8`) |
+| 12 | 4 | contiguous block sequence, beginning at zero |
+| 16 | 4 | nonzero motion-segment count |
+| 20 | 4 | exact initialized payload bytes |
+| 24 | 8 | inclusive local start cycle |
+| 32 | 8 | exclusive local end cycle |
+| 40 | 16 | nonzero prepared stream ID |
+| 56 | 32 | board-capability digest |
+| 88 | 32 | active-configuration digest |
+| 120 | 32 | previous block digest; zero only at sequence zero |
+| 152 | 8 | reserved zero |
+| 160 | 320 | records followed by zero padding |
+| 480 | 32 | SHA-256 over bytes `0..480` |
+
+One V1 motion record is `duration_ticks: u64`, zero flags `u32`, reserved zero
+`u32`, then one signed little-endian `i64` lattice displacement per axis. The
+payload length must equal `segment_count * (16 + 8 * axis_count)`. Thus one block
+holds exactly eight 3-axis records or four 8-axis records at maximum capacity.
+Durations must be nonzero and sum exactly to the block interval.
+
+Core 0 verifies the storage object, assembles blocks, checks this structure and
+the prepared machine limits, then moves the complete owned value through a
+fixed-credit channel. Core 1 hashes and validates the same bytes independently
+before extending its admitted horizon. Unknown kinds, flags, versions, padding,
+identity changes, skipped/duplicate/wrapped sequences, time gaps, digest-chain
+changes, limit violations, and cumulative position overflow fail closed.
+
 The 112-byte storage-status body is canonical little-endian:
 
 | Offset | Bytes | Meaning |

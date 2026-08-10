@@ -59,6 +59,7 @@ name = "alumina-machine-ir"
 version = "0.1.0"
 dependencies = [
  "alumina-protocol",
+ "sha2",
 ]
 
 [[package]]
@@ -77,6 +78,7 @@ version = "0.1.0"
 name = "alumina-runtime"
 version = "0.1.0"
 dependencies = [
+ "alumina-machine-ir",
  "alumina-protocol",
  "critical-section",
  "embassy-sync 0.7.2",
@@ -119,9 +121,13 @@ dependencies = [
 name = "alumina-sim"
 version = "0.1.0"
 dependencies = [
+ "alumina-machine-ir",
  "alumina-protocol",
+ "alumina-runtime",
  "alumina-storage",
+ "critical-section",
  "embassy-futures",
+ "embassy-sync 0.7.2",
 ]
 
 [[package]]

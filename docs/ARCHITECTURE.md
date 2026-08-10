@@ -167,11 +167,13 @@ durable storage.
 
 ### Cross-core messages
 
-Use three independent channels so telemetry pressure cannot delay a stop request:
+Use independent channels so telemetry or bulk-work pressure cannot delay a stop
+request:
 
 | Channel | Direction | Semantics |
 | --- | --- | --- |
-| `CommandQueue<N>` | service to RT | Ordered, bounded, sequence-numbered configuration and scheduled work |
+| `CommandQueue<N>` | service to RT | Ordered, bounded, sequence-numbered configuration and lifecycle control |
+| `WorkQueue<N>` | service to RT | Inline-owned canonical 512-byte machine blocks; fixed ring capacity is the producer credit count |
 | `UrgentMailbox` | service/safety ISR to RT | Latest-value stop/hold/reset request; never waits behind motion data |
 | `TelemetryQueue<N>` | RT to service | Loss-aware snapshots/events; may decimate non-fault samples, never fault edges |
 
@@ -179,9 +181,21 @@ Frames use explicit audited little-endian encoding; Rust `repr(C)` layout is
 never treated as wire bytes. A frame carries protocol version, kind, length,
 sequence, machine clock/deadline, active configuration digest, payload, and
 integrity check where appropriate.
-Variable-sized jobs live in fixed blocks from statically allocated pools, with
-explicit credits and ownership transfer. No frame contains a reference, pointer,
-`String`, `Vec`, trait object, or cross-core peripheral handle.
+Variable-sized jobs are a nonempty concatenation of canonical 512-byte execution
+blocks. The implemented work channel stores those blocks inline in a statically
+allocated ring and exposes its free slots as credits. Sending moves a non-`Copy`,
+non-`Clone` block into the ring; receiving moves it into core-1-local ownership.
+No frame contains a reference, pointer, `String`, `Vec`, trait object, SD address,
+or cross-core peripheral handle. The current depth of eight reserves 4,096
+payload bytes but is a compile-time foundation, not a qualified time horizon.
+
+Storage chunks and execution blocks are intentionally different boundaries. A
+core-0 `PartitionAssembler` accepts arbitrary verified storage slices and emits
+at most one complete work block per call. Both cores maintain independent stream
+validators over stream/capability/configuration identities, sequence, exact
+cycle continuity, previous-block digest, per-segment bounds, and cumulative
+lattice displacement. A storage-valid but machine-IR-invalid object never gains
+a work-queue credit.
 
 ### ESP32 flash/cache constraint
 

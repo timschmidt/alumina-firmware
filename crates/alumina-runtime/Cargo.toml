@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+alumina-machine-ir.workspace = true
 alumina-protocol.workspace = true
 embassy-sync.workspace = true
 
