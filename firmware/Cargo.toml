@@ -44,6 +44,7 @@ alumina-net.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-safety.workspace = true
+alumina-service.workspace = true
 alumina-storage.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }
 board-t-deck-pro = { workspace = true, optional = true }
@@ -51,6 +52,7 @@ defmt.workspace = true
 embassy-executor.workspace = true
 embassy-futures.workspace = true
 embassy-net.workspace = true
+embassy-sync.workspace = true
 embassy-time.workspace = true
 edge-dhcp.workspace = true
 edge-http.workspace = true
@@ -62,6 +64,7 @@ esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
 esp-radio.workspace = true
 esp-rtos.workspace = true
+heapless.workspace = true
 panic-rtt-target.workspace = true
 rtt-target.workspace = true
 static_cell.workspace = true

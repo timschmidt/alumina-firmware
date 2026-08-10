@@ -17,8 +17,11 @@ import.
 ## Licensing and clean-room policy
 
 - New Alumina code and planning material target `MIT OR Apache-2.0`.
-- A dependency licensed under either MIT or Apache-2.0 alone is acceptable when
-  its maintenance, security, footprint, and target support are suitable.
+- Permissive MIT/Apache-compatible dependencies are acceptable when their
+  license obligations, maintenance, security, footprint, and target support are
+  suitable. GPL-family implementation dependencies, copied code, and assets are
+  excluded; GPL projects may appear only as documented behavioral references
+  for clean-room work.
 - Every copied T-Deck driver remains Apache-2.0 with its copyright history,
   notice, source revision, and modification record intact.
 - Synthetos/g2 and SimpleFOC are functional and architectural references. The
@@ -117,6 +120,22 @@ describes the attached machine.
   and it is structurally non-production-armable. A build-provisioned password is
   also non-production-armable; production requires transactional, unique,
   device-stored credentials plus authenticated mutation routes.
+- Initial authenticated HTTP uses domain-separated HMAC-SHA-256 request and
+  response transcripts, a random boot nonce, nonzero counters with a 64-entry
+  replay window, and a global 32-burst/50-valid-request-per-second bucket. Strict
+  raw-header processing rejects duplicate security fields and transfer-coding
+  ambiguity. HMAC protects authenticity/integrity rather than confidentiality;
+  WPA2 plus the stated LAN/VPN boundary remains required.
+- The first HMAC key is the same provisioned secret used for the protected AP so
+  bench bring-up has one explicit credential. The UI must obtain it from the
+  user/provisioning flow because browsers cannot read a Wi-Fi passphrase. A
+  future unique device-stored API credential may be separated from the WLAN
+  credential transactionally; neither repository fallback nor build-provisioned
+  value is production-armable.
+- An authenticated endpoint must not acknowledge volatile bytes as durable SD
+  state. Until the physical backend implements blob write, journal/checkpoint,
+  sync, hash replay, and atomic manifest publication, storage mutation returns
+  native `Unsupported` and status reports `backend_available: false`.
 
 ## Interface and graphical programming
 

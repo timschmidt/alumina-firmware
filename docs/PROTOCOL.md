@@ -91,3 +91,47 @@ semantic rejection. Authentication, origin policy, rate limiting, credentials,
 HTTP/WebSocket routing, signed updates, and operation-specific authorization are
 separate mandatory M3 layers; their absence is not treated as an open network
 service. JSON remains limited to bounded human-facing discovery/configuration.
+
+## HTTP authentication transcript V1
+
+`GET /api/v1/auth` returns a fresh public 16-byte boot nonce as 32 lowercase hex
+characters. It is never reused intentionally and invalidates all request
+counters on reboot. Authenticated routes require exactly one canonical decimal
+`X-Alumina-Counter` and one 64-lowercase-hex
+`X-Alumina-Authorization` header. Counter zero, a leading zero, overflow,
+duplicate security header, any `Transfer-Encoding`, or an ambiguous/nonexact
+`Content-Length` is rejected. Native commands use exactly
+`application/vnd.alumina.frame`.
+
+The request tag is HMAC-SHA-256 keyed by the current device API secret over this
+exact byte sequence:
+
+| Field | Encoding |
+| --- | --- |
+| domain | ASCII `ALUMINA-HTTP-AUTH-V1` followed by one NUL |
+| boot nonce | 16 raw bytes |
+| request counter | `u64` little-endian |
+| method | GET `1`, POST `2`, PUT `3`, DELETE `4` |
+| path length and path | `u16` little-endian, then exact UTF-8 path bytes |
+| body length | `u32` little-endian |
+| body identity | raw SHA-256 of the exact HTTP body |
+
+Responses to authenticated requests echo the canonical decimal counter and put
+their tag in `X-Alumina-Response-Authorization`. That HMAC transcript is ASCII
+`ALUMINA-HTTP-RESPONSE-V1` plus NUL, boot nonce, counter `u64` LE, HTTP status
+`u16` LE, media byte (JSON `1`, native frame `2`), body length `u32` LE, and raw
+SHA-256 body identity. Request and response golden vectors are tested in
+`alumina-net` and independently reproducible with ordinary HMAC/SHA-256 tools.
+
+The firmware accepts each valid counter once in a 64-counter out-of-order window
+and applies a global 32-request burst/50-valid-request-per-second token bucket.
+Invalid HMACs do not consume counters or tokens; a valid rate-limited request
+does consume its counter. Authentication state and hashing execute only on the
+cooperative core-0 executor and do not hold a cross-core critical section.
+
+HMAC provides request/response authenticity and integrity, not confidentiality.
+The API secret is never sent over HTTP. The initial AP relies on WPA2 link
+protection and the local-LAN/VPN deployment boundary; production additionally
+requires a unique transactional device-stored secret. The development/build
+passphrase can drive bench authentication but can never satisfy the production
+arming credential gate.

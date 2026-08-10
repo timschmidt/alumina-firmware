@@ -137,6 +137,25 @@ link-layer workaround for clients which clear the DHCP broadcast flag before
 they have an IP address, because `embassy-net` cannot necessarily unicast to
 their not-yet-learned MAC address; physical-client qualification is mandatory.
 
+The next admission layer keeps authentication policy in portable `alumina-net`
+and native service dispatch in portable `alumina-service`. The HTTP task reads at
+most 1,148 exact body bytes, verifies a boot-nonce/counter HMAC and replay/rate
+policy, then copies one request into a single-slot same-executor bridge. The sole
+core-0 service task owns `StorageServiceState`, decodes the frame, and returns a
+correlated fixed response. One transaction mutex serializes the initial mutation
+surface; transaction IDs prevent a response produced after HTTP timeout
+cancellation from satisfying a later request. These same-executor locks do not
+mask interrupts on core 1.
+
+`GET /api/v1/storage` currently returns an authenticated, response-signed JSON
+status which explicitly says that no backend or mutation is available.
+`POST /api/v1/storage` accepts only a complete native frame and response-signs
+the native result. It checks outer/operation lengths, directions, storage-plan
+structure, chunk size, and chunk SHA-256. Valid begin/chunk/finalize requests
+return `Unsupported` until a physical async SD backend can reproduce journal,
+durability, and atomic-publication semantics; no in-RAM success acknowledgement
+is substituted for durable storage.
+
 ### Cross-core messages
 
 Use three independent channels so telemetry pressure cannot delay a stop request:

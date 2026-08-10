@@ -3,25 +3,34 @@
 extern crate alloc;
 
 use alloc::string::String;
+use core::cell::RefCell;
+use core::fmt::Write as _;
 use core::fmt::{Debug, Display};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use alumina_net::{
-    AccessPointProfile, CredentialSource, DHCP_RANGE_END, DHCP_RANGE_START, HttpMethod,
+    AUTH_COUNTER_HEADER, AUTH_NONCE_BYTES, AUTH_RESPONSE_HEADER, AUTH_TAG_HEX_BYTES,
+    AccessPointProfile, AuthError, AuthHeaderAccumulator, AuthRateLimit, AuthenticatedMedia,
+    AuthenticatedRequestMetadata, AuthenticationState, BootNonce, CredentialSource, DHCP_RANGE_END,
+    DHCP_RANGE_START, HttpAdmissionError, HttpMethod, MAX_AUTHENTICATED_BODY_BYTES,
     NetworkSupervisor, PROVISIONING_ADDRESS, PROVISIONING_PREFIX, Route, WebLimits, classify_route,
+    sign_response, write_lower_hex,
 };
+use alumina_service::{ResponseMedia, ServiceRequest, ServiceResponse};
 use defmt::{error, info, warn};
 use edge_dhcp::io::{DEFAULT_SERVER_PORT, server as dhcp_io};
 use edge_dhcp::server::{Server as DhcpServer, ServerOptions};
-use edge_http::Method;
 use edge_http::io::Error as HttpError;
 use edge_http::io::server::{Connection, Handler, Server as HttpServer};
+use edge_http::{Method, RequestHeaders};
 use edge_nal::{TcpBind, TcpSplit, UdpBind, WithTimeout};
 use edge_nal_embassy::{Tcp, TcpBuffers, Udp, UdpBuffers};
 use embassy_executor::Spawner;
 use embassy_net::{
     Config as NetworkConfig, Ipv4Address, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4,
 };
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_io_async_v06::{Read, Write};
 use esp_hal::peripherals::WIFI;
@@ -30,7 +39,10 @@ use esp_hal::system::Cpu;
 use esp_radio::wifi::{
     AccessPointConfig, AuthMethod, Config as RadioConfig, ModeConfig, WifiController, WifiDevice,
 };
+use heapless::String as FixedString;
 use static_cell::StaticCell;
+
+use crate::service::ServiceBridge;
 
 const AP_SSID: &str = concat!("Alumina-", env!("ALUMINA_BOARD_ID"));
 const DEVELOPMENT_PASSPHRASE: &str = "alumina-development";
@@ -72,6 +84,7 @@ const DHCP_LAST: Ipv4Addr = Ipv4Addr::new(
 );
 
 type ApRunner = Runner<'static, WifiDevice<'static>>;
+type AuthState = BlockingMutex<NoopRawMutex, RefCell<AuthenticationState>>;
 
 static RADIO: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
 static AP_STACK_RESOURCES: StaticCell<StackResources<STACK_SOCKETS>> = StaticCell::new();
@@ -82,6 +95,7 @@ static DHCP_UDP_BUFFERS: StaticCell<
     UdpBuffers<1, DHCP_PACKET_BYTES, DHCP_PACKET_BYTES, DHCP_METADATA_SLOTS>,
 > = StaticCell::new();
 static DHCP_WORK_BUFFER: StaticCell<[u8; DHCP_PACKET_BYTES]> = StaticCell::new();
+static AUTH_STATE: StaticCell<AuthState> = StaticCell::new();
 
 /// Controller state retained by the core-0 service task for later AP/STA changes.
 #[allow(
@@ -108,7 +122,11 @@ impl NetworkControl {
 }
 
 /// Initializes the radio on core 0 and starts all AP service tasks on its executor.
-pub async fn start(spawner: Spawner, wifi: WIFI<'static>) -> NetworkControl {
+pub async fn start(
+    spawner: Spawner,
+    wifi: WIFI<'static>,
+    service_bridge: &'static ServiceBridge,
+) -> NetworkControl {
     assert_service_core("network initialization");
 
     let profile = AccessPointProfile::new(AP_SSID, AP_PASSPHRASE, CREDENTIAL_SOURCE);
@@ -159,6 +177,18 @@ pub async fn start(spawner: Spawner, wifi: WIFI<'static>) -> NetworkControl {
         dns_servers: Default::default(),
     });
     let rng = Rng::new();
+    let mut nonce_bytes = [0_u8; AUTH_NONCE_BYTES];
+    for chunk in nonce_bytes.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&rng.random().to_le_bytes());
+    }
+    let auth_nonce = match BootNonce::new(nonce_bytes) {
+        Ok(nonce) => nonce,
+        Err(_) => panic!("hardware RNG returned an invalid authentication nonce"),
+    };
+    let auth_state = match AuthenticationState::new(auth_nonce, AuthRateLimit::INITIAL) {
+        Ok(state) => AUTH_STATE.init(BlockingMutex::new(RefCell::new(state))),
+        Err(_) => panic!("invalid request-authentication policy"),
+    };
     let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
     let (stack, runner) = embassy_net::new(
         interfaces.ap,
@@ -168,7 +198,13 @@ pub async fn start(spawner: Spawner, wifi: WIFI<'static>) -> NetworkControl {
     );
 
     spawner.must_spawn(ap_runner_task(runner));
-    spawner.must_spawn(http_task(stack, CREDENTIAL_SOURCE));
+    spawner.must_spawn(http_task(
+        stack,
+        CREDENTIAL_SOURCE,
+        auth_nonce,
+        auth_state,
+        service_bridge,
+    ));
     spawner.must_spawn(dhcp_task(stack));
     if supervisor.access_point_ready().is_err() {
         panic!("invalid AP supervision transition");
@@ -190,7 +226,13 @@ async fn ap_runner_task(mut runner: ApRunner) -> ! {
 }
 
 #[embassy_executor::task]
-async fn http_task(stack: Stack<'static>, credential_source: CredentialSource) -> ! {
+async fn http_task(
+    stack: Stack<'static>,
+    credential_source: CredentialSource,
+    auth_nonce: BootNonce,
+    auth_state: &'static AuthState,
+    service_bridge: &'static ServiceBridge,
+) -> ! {
     assert_service_core("HTTP service");
     stack.wait_config_up().await;
 
@@ -211,7 +253,12 @@ async fn http_task(stack: Stack<'static>, credential_source: CredentialSource) -
         let acceptor = WithTimeout::new(WebLimits::INITIAL.io_timeout_ms, acceptor);
         let handler = WithTimeout::new(
             WebLimits::INITIAL.request_timeout_ms,
-            AluminaHttpHandler { credential_source },
+            AluminaHttpHandler {
+                credential_source,
+                auth_nonce,
+                auth_state,
+                service_bridge,
+            },
         );
 
         if server
@@ -263,6 +310,9 @@ async fn dhcp_task(stack: Stack<'static>) -> ! {
 #[derive(Clone, Copy)]
 struct AluminaHttpHandler {
     credential_source: CredentialSource,
+    auth_nonce: BootNonce,
+    auth_state: &'static AuthState,
+    service_bridge: &'static ServiceBridge,
 }
 
 impl Handler for AluminaHttpHandler {
@@ -279,15 +329,76 @@ impl Handler for AluminaHttpHandler {
     where
         T: Read + Write + TcpSplit,
     {
-        let headers = connection.headers()?;
-        let method = match headers.method {
-            Method::Get => HttpMethod::Get,
-            Method::Post => HttpMethod::Post,
-            Method::Put => HttpMethod::Put,
-            _ => HttpMethod::Other,
+        let (method, route) = {
+            let headers = connection.headers()?;
+            let method = match headers.method {
+                Method::Get => HttpMethod::Get,
+                Method::Post => HttpMethod::Post,
+                Method::Put => HttpMethod::Put,
+                Method::Delete => HttpMethod::Delete,
+                _ => HttpMethod::Other,
+            };
+            (method, classify_route(method, headers.path))
         };
 
-        match classify_route(method, headers.path) {
+        if route.requires_authentication() {
+            let metadata = match authenticated_metadata(connection.headers()?, method, route) {
+                Ok(metadata) => metadata,
+                Err(rejection) => {
+                    reject_request(connection, rejection).await?;
+                    return Ok(());
+                }
+            };
+            let mut body = [0_u8; MAX_AUTHENTICATED_BODY_BYTES];
+            read_body_exact(connection, &mut body[..metadata.body_len]).await?;
+            let body = &body[..metadata.body_len];
+            let auth_result = self.auth_state.lock(|state| {
+                state.borrow_mut().authorize(
+                    AP_PASSPHRASE.as_bytes(),
+                    metadata.proof,
+                    metadata.method,
+                    metadata.route.canonical_path().unwrap_or(""),
+                    body,
+                    Instant::now().as_millis(),
+                )
+            });
+            if let Err(error) = auth_result {
+                reject_request(
+                    connection,
+                    if error == AuthError::RateLimited {
+                        RequestRejection::RateLimited
+                    } else {
+                        RequestRejection::Unauthorized
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+
+            let request = match route {
+                Route::StorageStatus => ServiceRequest::storage_status(),
+                Route::StorageCommand => match ServiceRequest::native(body) {
+                    Ok(request) => request,
+                    Err(_) => {
+                        reject_request(connection, RequestRejection::BodyTooLarge).await?;
+                        return Ok(());
+                    }
+                },
+                _ => unreachable!(),
+            };
+            let response = self.service_bridge.transact(request).await;
+            write_authenticated_response(
+                connection,
+                AP_PASSPHRASE.as_bytes(),
+                self.auth_nonce,
+                metadata.proof.counter,
+                &response,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        match route {
             Route::Bootstrap => {
                 connection
                     .initiate_response(
@@ -347,6 +458,27 @@ impl Handler for AluminaHttpHandler {
                     )
                     .await?;
             }
+            Route::Authentication => {
+                json_response(connection).await?;
+                let nonce = self.auth_nonce.as_bytes();
+                let mut encoded = [0_u8; AUTH_NONCE_BYTES * 2];
+                if write_lower_hex(&nonce, &mut encoded).is_err() {
+                    panic!("authentication nonce encoding failed");
+                }
+                connection
+                    .write_all(b"{\"scheme\":\"hmac-sha256-v1\",\"boot_nonce\":\"")
+                    .await?;
+                connection.write_all(&encoded).await?;
+                connection
+                    .write_all(
+                        b"\",\"counter_window\":64,\"rate_burst\":32,\
+                          \"rate_per_second\":50,\"request_proof_header\":\
+                          \"X-Alumina-Authorization\",\"response_proof_header\":\
+                          \"X-Alumina-Response-Authorization\"}",
+                    )
+                    .await?;
+            }
+            Route::StorageStatus | Route::StorageCommand => unreachable!(),
             Route::MethodNotAllowed => {
                 connection
                     .initiate_response(
@@ -374,6 +506,181 @@ impl Handler for AluminaHttpHandler {
 
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RequestRejection {
+    BadRequest,
+    Unauthorized,
+    BodyTooLarge,
+    UnsupportedMedia,
+    RateLimited,
+}
+
+fn authenticated_metadata<const N: usize>(
+    headers: &RequestHeaders<'_, N>,
+    method: HttpMethod,
+    route: Route,
+) -> Result<AuthenticatedRequestMetadata, RequestRejection> {
+    let mut accumulator = AuthHeaderAccumulator::new();
+    for (candidate, value) in headers.headers.iter_raw() {
+        accumulator
+            .observe(candidate.as_bytes(), value)
+            .map_err(map_http_admission_error)?;
+    }
+    accumulator
+        .finish(method, route)
+        .map_err(map_http_admission_error)
+}
+
+const fn map_http_admission_error(error: HttpAdmissionError) -> RequestRejection {
+    match error {
+        HttpAdmissionError::BodyTooLarge => RequestRejection::BodyTooLarge,
+        HttpAdmissionError::ContentType => RequestRejection::UnsupportedMedia,
+        HttpAdmissionError::Credentials => RequestRejection::Unauthorized,
+        HttpAdmissionError::DuplicateHeader
+        | HttpAdmissionError::TransferEncoding
+        | HttpAdmissionError::ContentLength
+        | HttpAdmissionError::BodyRequired
+        | HttpAdmissionError::Route => RequestRejection::BadRequest,
+    }
+}
+
+async fn read_body_exact<T, const N: usize>(
+    connection: &mut Connection<'_, T, N>,
+    body: &mut [u8],
+) -> Result<(), HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let mut read = 0;
+    while read < body.len() {
+        let received = connection.read(&mut body[read..]).await?;
+        if received == 0 {
+            return Err(HttpError::IncompleteBody);
+        }
+        read += received;
+    }
+    Ok(())
+}
+
+async fn reject_request<T, const N: usize>(
+    connection: &mut Connection<'_, T, N>,
+    rejection: RequestRejection,
+) -> Result<(), HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let (status, reason, body) = match rejection {
+        RequestRejection::BadRequest => (400, "Bad Request", b"bad request\n".as_slice()),
+        RequestRejection::Unauthorized => (401, "Unauthorized", b"unauthorized\n".as_slice()),
+        RequestRejection::BodyTooLarge => {
+            (413, "Content Too Large", b"body too large\n".as_slice())
+        }
+        RequestRejection::UnsupportedMedia => (
+            415,
+            "Unsupported Media Type",
+            b"unsupported media type\n".as_slice(),
+        ),
+        RequestRejection::RateLimited => (429, "Too Many Requests", b"rate limited\n".as_slice()),
+    };
+    if rejection == RequestRejection::Unauthorized {
+        connection
+            .initiate_response(
+                status,
+                Some(reason),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                    ("WWW-Authenticate", "Alumina-HMAC-SHA256"),
+                ],
+            )
+            .await?;
+    } else if rejection == RequestRejection::RateLimited {
+        connection
+            .initiate_response(
+                status,
+                Some(reason),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                    ("Retry-After", "1"),
+                ],
+            )
+            .await?;
+    } else {
+        connection
+            .initiate_response(
+                status,
+                Some(reason),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                ],
+            )
+            .await?;
+    }
+    connection.write_all(body).await
+}
+
+async fn write_authenticated_response<T, const N: usize>(
+    connection: &mut Connection<'_, T, N>,
+    secret: &[u8],
+    nonce: BootNonce,
+    counter: u64,
+    response: &ServiceResponse,
+) -> Result<(), HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let (media, content_type) = match response.media {
+        ResponseMedia::Json => (AuthenticatedMedia::Json, "application/json"),
+        ResponseMedia::NativeFrame => (
+            AuthenticatedMedia::NativeFrame,
+            "application/vnd.alumina.frame",
+        ),
+    };
+    let proof = match sign_response(
+        secret,
+        nonce,
+        counter,
+        response.http_status,
+        media,
+        response.bytes(),
+    ) {
+        Ok(proof) => proof,
+        Err(_) => panic!("authenticated response signing failed"),
+    };
+    let mut tag = [0_u8; AUTH_TAG_HEX_BYTES];
+    if write_lower_hex(&proof.tag, &mut tag).is_err() {
+        panic!("response proof encoding failed");
+    }
+    let tag = core::str::from_utf8(&tag).expect("lowercase hex is UTF-8");
+    let mut counter_text = FixedString::<20>::new();
+    write!(&mut counter_text, "{}", counter).expect("counter text capacity is exact");
+    let mut length_text = FixedString::<20>::new();
+    write!(&mut length_text, "{}", response.bytes().len())
+        .expect("content length text capacity is exact");
+    let reason = match response.http_status {
+        200 => "OK",
+        400 => "Bad Request",
+        _ => "Service Response",
+    };
+    connection
+        .initiate_response(
+            response.http_status,
+            Some(reason),
+            &[
+                ("Content-Type", content_type),
+                ("Content-Length", length_text.as_str()),
+                ("Cache-Control", "no-store"),
+                ("X-Content-Type-Options", "nosniff"),
+                (AUTH_COUNTER_HEADER, counter_text.as_str()),
+                (AUTH_RESPONSE_HEADER, tag),
+            ],
+        )
+        .await?;
+    connection.write_all(response.bytes()).await
 }
 
 async fn json_response<T, const N: usize>(

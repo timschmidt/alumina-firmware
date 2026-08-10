@@ -11,6 +11,16 @@ status = "dependency"
 notes = "Used without default std features for canonical protocol V1 SHA-256 content, manifest, configuration, and job identities; hardware acceleration is not yet integrated."
 
 [[source]]
+id = "rustcrypto-hmac"
+kind = "cargo-dependency"
+url = "https://github.com/RustCrypto/MACs"
+revision = "hmac 0.12.1"
+license = "MIT OR Apache-2.0"
+destination = "Cargo dependency; no source copied"
+status = "dependency"
+notes = "No-std HMAC-SHA-256 request/response authentication. Its subtle 2.6.1 constant-time dependency is BSD-3-Clause, compatible with project policy; no GPL-family code is introduced."
+
+[[source]]
 id = "edge-net"
 kind = "cargo-dependency"
 url = "https://github.com/ivmarkov/edge-net"

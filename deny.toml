@@ -7,8 +7,11 @@ wildcards = "deny"
 
 [licenses]
 allow = [
+    "0BSD",
     "Apache-2.0",
+    "BSD-3-Clause",
     "MIT",
+    "Unicode-3.0",
 ]
 confidence-threshold = 0.93
 

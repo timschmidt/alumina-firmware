@@ -9,6 +9,7 @@ members = [
     "crates/alumina-protocol",
     "crates/alumina-runtime",
     "crates/alumina-safety",
+    "crates/alumina-service",
     "crates/alumina-sim",
     "crates/alumina-storage",
     "drivers/embedded-bus-async",
@@ -33,6 +34,7 @@ default-members = [
     "crates/alumina-protocol",
     "crates/alumina-runtime",
     "crates/alumina-safety",
+    "crates/alumina-service",
     "crates/alumina-sim",
     "crates/alumina-storage",
     "drivers/embedded-bus-async",
@@ -54,6 +56,7 @@ alumina-net = { path = "crates/alumina-net" }
 alumina-protocol = { path = "crates/alumina-protocol" }
 alumina-runtime = { path = "crates/alumina-runtime" }
 alumina-safety = { path = "crates/alumina-safety" }
+alumina-service = { path = "crates/alumina-service" }
 alumina-sim = { path = "crates/alumina-sim" }
 alumina-storage = { path = "crates/alumina-storage" }
 board-mks-tinybee = { path = "boards/mks-tinybee" }
@@ -100,6 +103,7 @@ esp-rtos = { version = "0.2.0", features = [
     "embassy",
 ] }
 heapless = "0.8.0"
+hmac = { version = "0.12.1", default-features = false }
 log = "0.4.27"
 nmea = { version = "0.5.0", default-features = false, features = ["GGA", "RMC", "VTG", "GSA", "GSV", "GLL", "TXT"] }
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }

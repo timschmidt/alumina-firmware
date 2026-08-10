@@ -32,7 +32,7 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use hardware::selected;
-use service::StorageServiceState;
+use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
@@ -79,7 +79,8 @@ async fn main(spawner: Spawner) -> ! {
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
     esp_rtos::start(timer_group0.timer0);
 
-    let network = network::start(spawner, split.service.take_wifi()).await;
+    let service_bridge = init_service_bridge();
+    let network = network::start(spawner, split.service.take_wifi(), service_bridge).await;
 
     let boundary = BOUNDARY.init(DefaultBoundary::new());
     let (service_endpoint, realtime_endpoint) = boundary.split();
@@ -98,7 +99,12 @@ async fn main(spawner: Spawner) -> ! {
         },
     );
 
-    spawner.must_spawn(service_task(split.service, service_endpoint, network));
+    spawner.must_spawn(service_task(
+        split.service,
+        service_endpoint,
+        network,
+        service_bridge,
+    ));
     info!(
         "Alumina dual-core runtime started for {}",
         env!("ALUMINA_BOARD_ID")
@@ -114,6 +120,7 @@ async fn service_task(
     resources: selected::ServiceResources,
     mut endpoint: DefaultServiceEndpoint,
     network: network::NetworkControl,
+    service_bridge: &'static ServiceBridge,
 ) {
     if Cpu::current() != Cpu::ProCpu {
         panic!("service executor started on the wrong core");
@@ -121,7 +128,7 @@ async fn service_task(
 
     // This coordinator and every future filesystem/backend handle live only in
     // the core-0 task future. Core 1 receives verified owned blocks, never SD.
-    let storage = StorageServiceState::new();
+    let mut storage = StorageServiceState::new();
     let mut sequence = 0_u32;
     let mut last_fault_generation = 0_u16;
     loop {
@@ -144,6 +151,12 @@ async fn service_task(
         if let Some(fault) = endpoint.fault_after(last_fault_generation) {
             last_fault_generation = fault.generation;
             error!("RT fault code={} detail={}", fault.code, fault.detail);
+        }
+
+        while let Some(request) = service_bridge.try_receive() {
+            let response =
+                storage.dispatch(request.request(), DeviceCycle(Instant::now().as_ticks()));
+            service_bridge.respond(&request, response);
         }
 
         let _keep_service_state_core_local = (

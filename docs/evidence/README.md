@@ -20,3 +20,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-WIFI-WEB-FOUNDATION.md`](M3-WIFI-WEB-FOUNDATION.md) — core-0 radio/AP,
   static IPv4, bounded DHCP/HTTP bootstrap, credential policy, and linked-image
   evidence for both first boards.
+- [`M3-AUTHENTICATED-SERVICE.md`](M3-AUTHENTICATED-SERVICE.md) — canonical
+  request/response HMAC, replay/rate/header admission, cancellation-safe core-0
+  dispatch, and fail-closed native storage endpoints.

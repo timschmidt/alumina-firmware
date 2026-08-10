@@ -24,6 +24,7 @@ dependencies = [
  "alumina-protocol",
  "alumina-runtime",
  "alumina-safety",
+ "alumina-service",
  "alumina-storage",
  "board-mks-tinybee",
  "board-t-deck-pro",
@@ -35,6 +36,7 @@ dependencies = [
  "embassy-executor",
  "embassy-futures",
  "embassy-net",
+ "embassy-sync 0.7.2",
  "embassy-time 0.4.0",
  "embedded-io-async 0.6.1",
  "esp-alloc",
@@ -42,6 +44,7 @@ dependencies = [
  "esp-hal",
  "esp-radio",
  "esp-rtos",
+ "heapless 0.8.0",
  "panic-rtt-target",
  "rtt-target",
  "static_cell",
@@ -57,6 +60,10 @@ dependencies = [
 [[package]]
 name = "alumina-net"
 version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha2",
+]
 
 [[package]]
 name = "alumina-protocol"
@@ -74,6 +81,16 @@ dependencies = [
 [[package]]
 name = "alumina-safety"
 version = "0.1.0"
+
+[[package]]
+name = "alumina-service"
+version = "0.1.0"
+dependencies = [
+ "alumina-net",
+ "alumina-protocol",
+ "alumina-safety",
+ "alumina-storage",
+]
 
 [[package]]
 name = "alumina-sim"
@@ -424,6 +441,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -1473,6 +1491,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2183,6 +2210,12 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "subtle"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "svgbobdoc"

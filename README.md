@@ -32,6 +32,17 @@ development password exists for bench discovery, is reported as non-production,
 and can never make an image production-armable. See the
 [Wi-Fi/web compile evidence](docs/evidence/M3-WIFI-WEB-FOUNDATION.md).
 
+Authenticated storage admission is also wired end to end: the public auth route
+returns a fresh 128-bit boot challenge; browser/WASM requests and device
+responses carry exact HMAC-SHA-256 proofs bound to a nonzero counter, method,
+path, status/media, and SHA-256 body identity. Strict raw-header policy rejects
+duplicates, transfer coding, noncanonical lengths, wrong media, replays, and a
+global valid-request flood before the core-0 service owner decodes a native
+frame. The physical SD backend is not implemented yet, so status says so and
+every structurally valid mutation returns protocol `Unsupported` without
+changing upload state. See the
+[authenticated-service evidence](docs/evidence/M3-AUTHENTICATED-SERVICE.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:
@@ -94,8 +105,9 @@ firmware. Datasheets and upstream root metadata are retained under
 ## Committed direction
 
 - New code is dual-licensed `MIT OR Apache-2.0`; copied Apache-2.0 T-Deck drivers
-  retain their original notices and provenance. Either MIT or Apache-2.0
-  dependencies may be accepted after normal review.
+  retain their original notices and provenance. Permissive MIT/Apache-compatible
+  dependencies may be accepted after normal review; GPL-family implementation
+  dependencies are excluded.
 - Only dual-core ESP32 targets are in scope. MKS TinyBee and LILYGO T-Deck Pro
   are the first hardware targets; MKS ESP32 FOC V1.0 follows for servo control.
   The current T-LoRa Pager receives a late board stub before full support.
