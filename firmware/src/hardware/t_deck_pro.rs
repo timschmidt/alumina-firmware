@@ -1,10 +1,11 @@
 use alumina_board::BoardPackage;
+use alumina_safety::SafetyContractId;
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
 use alumina_service::CACHE_LIMITS;
 use alumina_storage::provisioning::ProvisionedCache;
 use defmt::{info, warn};
 use embassy_time::Delay;
-use esp_hal::gpio::{Level, Output, OutputConfig};
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::peripherals::{
     DMA_CH0, DMA_CH1, GPIO0, GPIO1, GPIO2, GPIO3, GPIO4, GPIO5, GPIO6, GPIO12, GPIO13, GPIO14,
     GPIO15, GPIO16, GPIO17, GPIO18, GPIO21, GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39,
@@ -20,6 +21,10 @@ use crate::storage::EspSdSpiBus;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
 pub type StorageBackend = ProvisionedCache<StorageCard>;
+
+/// Semantic identity of the current RT hazard contract: GPIO2 held high-Z.
+pub const SAFE_OUTPUT_CONTRACT: SafetyContractId =
+    SafetyContractId([b'T', b'D', b'S', b'C', 1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 
 /// Core-0 tokens for every currently imported T-Deck peripheral path.
 #[allow(dead_code, reason = "tokens are reserved for staged service actors")]
@@ -152,7 +157,7 @@ impl ServiceResources {
     }
 }
 
-/// T-Deck has no qualified hazardous output engine yet; core 1 owns its timer.
+/// T-Deck RT tokens before vibration GPIO high-impedance establishment.
 #[allow(
     dead_code,
     reason = "timer is reserved for the deadline probe and later RT I/O"
@@ -160,6 +165,27 @@ impl ServiceResources {
 pub struct RealtimeResources {
     timer_group1: TIMG1<'static>,
     vibration_motor: GPIO2<'static>,
+}
+
+/// T-Deck RT resources after explicitly disabling the GPIO2 output driver.
+#[allow(dead_code, reason = "tokens remain reserved for staged RT drivers")]
+pub struct EstablishedRealtimeResources {
+    timer_group1: TIMG1<'static>,
+    vibration_motor: Input<'static>,
+}
+
+/// Reserved for future fallible board-safe transactions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafeOutputError {}
+
+impl RealtimeResources {
+    /// Establishes the only RT-owned hazardous pin as a retained input/high-Z.
+    pub fn establish_safe_outputs(self) -> Result<EstablishedRealtimeResources, SafeOutputError> {
+        Ok(EstablishedRealtimeResources {
+            timer_group1: self.timer_group1,
+            vibration_motor: Input::new(self.vibration_motor, InputConfig::default()),
+        })
+    }
 }
 
 pub struct SplitResources {

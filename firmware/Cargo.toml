@@ -45,6 +45,7 @@ alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-safety.workspace = true
 alumina-sd-spi.workspace = true
+alumina-shift-register.workspace = true
 alumina-service.workspace = true
 alumina-storage.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }

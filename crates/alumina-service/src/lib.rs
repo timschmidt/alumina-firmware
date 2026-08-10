@@ -7,7 +7,9 @@ use alumina_net::MAX_AUTHENTICATED_BODY_BYTES;
 use alumina_protocol::{
     DeviceCycle, FrameHeader, FrameKind, MessageDirection, MessageHeader, Operation, StatusCode,
 };
-use alumina_safety::SafetyState;
+use alumina_safety::{
+    ObservationError, SafetyContractId, SafetyObservationPolicy, SafetyObserver, SafetyState,
+};
 use alumina_storage::media::{
     AsyncBlockDevice, CacheMedia, MediaAvailability, MediaError, MediaId, MediaRegion, MediaStatus,
 };
@@ -561,16 +563,20 @@ const fn storage_error_status(error: StorageError) -> StatusCode {
 
 /// Storage admission/safety state intentionally owned by the service-core task.
 pub struct StorageServiceState {
-    safety_state: SafetyState,
-    realtime_job_active: bool,
+    safety: SafetyObserver,
 }
 
 impl StorageServiceState {
     /// Starts in boot state, where every mutation is forbidden.
-    pub const fn new() -> Self {
+    pub const fn new(
+        safe_output_contract: SafetyContractId,
+        maximum_safety_age_cycles: u64,
+    ) -> Self {
         Self {
-            safety_state: SafetyState::Boot,
-            realtime_job_active: false,
+            safety: SafetyObserver::new(SafetyObservationPolicy {
+                expected_contract: safe_output_contract,
+                maximum_age_cycles: maximum_safety_age_cycles,
+            }),
         }
     }
 
@@ -582,21 +588,31 @@ impl StorageServiceState {
         now: DeviceCycle,
     ) -> ServiceResponse {
         match request.kind() {
-            ServiceRequestKind::StorageStatus => self.human_status(backend),
+            ServiceRequestKind::StorageStatus => self.human_status(backend, now),
             ServiceRequestKind::NativeFrame => {
                 self.dispatch_native(backend, request.bytes(), now).await
             }
         }
     }
 
-    /// Updates the last core-1-authoritative safety state observation.
-    pub fn observe_safety_state(&mut self, state: SafetyState) {
-        self.safety_state = state;
+    /// Validates one complete core-1 safety payload in the shared cycle domain.
+    ///
+    /// Any rejection revokes the previously accepted state, so callers cannot
+    /// accidentally continue mutating storage after malformed telemetry.
+    pub fn observe_safety_snapshot(
+        &mut self,
+        frame_sequence: u32,
+        produced_at: DeviceCycle,
+        observed_at: DeviceCycle,
+        encoded: &[u8],
+    ) -> Result<(), ObservationError> {
+        self.safety
+            .observe_encoded(frame_sequence, produced_at.0, observed_at.0, encoded)
     }
 
-    /// Updates whether deterministic execution/prefetch currently owns the cache.
-    pub fn observe_realtime_job_active(&mut self, active: bool) {
-        self.realtime_job_active = active;
+    /// Revokes service-side safety authority after the independent fault path fires.
+    pub fn invalidate_safety_observation(&mut self) {
+        self.safety.invalidate();
     }
 
     async fn dispatch_native<B: StorageBackend>(
@@ -639,14 +655,14 @@ impl StorageServiceState {
         let mut response_body = [0_u8; STORAGE_BACKEND_STATUS_WIRE_BYTES];
         let (status, response_len) = match message.operation {
             Operation::StorageStatus if body.is_empty() => {
-                let status = self.effective_status(backend);
+                let status = self.effective_status(backend, now);
                 response_body.copy_from_slice(&status.encode());
                 (StatusCode::Ok, STORAGE_BACKEND_STATUS_WIRE_BYTES)
             }
             Operation::StorageProvision => match CacheProvisionRequest::decode(body) {
-                Ok(request) => match backend.provision(request, self.mutation_context()).await {
+                Ok(request) => match backend.provision(request, self.mutation_context(now)).await {
                     Ok(()) => {
-                        let status = self.effective_status(backend);
+                        let status = self.effective_status(backend, now);
                         response_body.copy_from_slice(&status.encode());
                         (StatusCode::Ok, STORAGE_BACKEND_STATUS_WIRE_BYTES)
                     }
@@ -656,7 +672,7 @@ impl StorageServiceState {
                 Err(_) => (StatusCode::InvalidRequest, 0),
             },
             Operation::StorageBeginUpload => match UploadPlan::decode(body, CACHE_LIMITS) {
-                Ok(plan) => match backend.begin_upload(plan, self.mutation_context()).await {
+                Ok(plan) => match backend.begin_upload(plan, self.mutation_context(now)).await {
                     Ok(progress) => {
                         response_body[..UploadProgress::WIRE_LEN]
                             .copy_from_slice(&progress.encode());
@@ -669,7 +685,7 @@ impl StorageServiceState {
             Operation::StoragePutChunk => match validate_chunk_body(message.body_len, body) {
                 Ok((header, chunk)) => {
                     match backend
-                        .put_chunk(header, chunk, self.mutation_context())
+                        .put_chunk(header, chunk, self.mutation_context(now))
                         .await
                     {
                         Ok(progress) => {
@@ -685,7 +701,7 @@ impl StorageServiceState {
             },
             Operation::StorageFinalize => match FinalizeUploadRequest::decode(body) {
                 Ok(request) => match backend
-                    .finalize_upload(request, self.mutation_context())
+                    .finalize_upload(request, self.mutation_context(now))
                     .await
                 {
                     Ok(_) => (StatusCode::Ok, 0),
@@ -698,8 +714,8 @@ impl StorageServiceState {
         native_response(frame, message, now, status, &response_body[..response_len])
     }
 
-    fn human_status<B: StorageBackend>(&self, backend: &B) -> ServiceResponse {
-        let status = self.effective_status(backend);
+    fn human_status<B: StorageBackend>(&self, backend: &B, now: DeviceCycle) -> ServiceResponse {
+        let status = self.effective_status(backend, now);
         let mut json = FixedString::<MAX_SERVICE_RESPONSE_BYTES>::new();
         write!(
             &mut json,
@@ -738,30 +754,26 @@ impl StorageServiceState {
         ServiceResponse::from_bytes(200, ResponseMedia::Json, json.as_bytes())
     }
 
-    fn effective_status<B: StorageBackend>(&self, backend: &B) -> StorageBackendStatus {
+    fn effective_status<B: StorageBackend>(
+        &self,
+        backend: &B,
+        now: DeviceCycle,
+    ) -> StorageBackendStatus {
         let mut status = backend.status();
         status.mutation_available = status.availability == StorageBackendAvailability::Ready
-            && self.mutation_context().validate().is_ok();
+            && self.mutation_context(now).validate().is_ok();
         status.provision_available =
-            status.provision_available && self.mutation_context().validate().is_ok();
+            status.provision_available && self.mutation_context(now).validate().is_ok();
         status
     }
 
-    fn mutation_context(&self) -> MutationContext {
-        let safe_for_mutation = matches!(
-            self.safety_state,
-            SafetyState::Safe | SafetyState::Configured
-        );
+    fn mutation_context(&self, now: DeviceCycle) -> MutationContext {
+        let safety = self.safety.effective(now.0);
+        let safe_for_mutation = matches!(safety.state, SafetyState::Safe | SafetyState::Configured);
         MutationContext {
             armed_or_energized: !safe_for_mutation,
-            realtime_job_active: self.realtime_job_active,
+            realtime_job_active: safety.realtime_job_active,
         }
-    }
-}
-
-impl Default for StorageServiceState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -831,10 +843,48 @@ fn native_response(
 mod tests {
     use super::*;
     use alumina_protocol::{Digest, MessageDirection};
+    use alumina_safety::{
+        SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE, SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetySnapshot,
+    };
     use alumina_storage::{
         ContentId, DigestAlgorithm, ObjectKind, StoredObject, UploadId, UploadPhase,
     };
     use embassy_futures::block_on;
+
+    const TEST_CONTRACT: SafetyContractId = SafetyContractId(*b"service-safe-v01");
+
+    fn service() -> StorageServiceState {
+        StorageServiceState::new(TEST_CONTRACT, 100)
+    }
+
+    fn observe(
+        service: &mut StorageServiceState,
+        state: SafetyState,
+        frame_sequence: u32,
+        at: u64,
+        realtime_job_active: bool,
+    ) {
+        let mut flags = SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED;
+        if realtime_job_active {
+            flags |= SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE;
+        }
+        let snapshot = SafetySnapshot {
+            state,
+            fault: None,
+            flags,
+            transition_generation: frame_sequence,
+            safe_output_contract: TEST_CONTRACT,
+            maximum_lateness_cycles: 0,
+        };
+        service
+            .observe_safety_snapshot(
+                frame_sequence,
+                DeviceCycle(at),
+                DeviceCycle(at),
+                &snapshot.encode().unwrap(),
+            )
+            .unwrap();
+    }
 
     fn plan() -> UploadPlan {
         UploadPlan {
@@ -1115,7 +1165,7 @@ mod tests {
 
     #[test]
     fn status_is_bounded_and_does_not_claim_a_backend() {
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = UnavailableStorageBackend;
         let response = block_on(service.dispatch(
             &mut backend,
@@ -1132,8 +1182,8 @@ mod tests {
 
     #[test]
     fn human_status_fits_at_every_numeric_wire_maximum() {
-        let service = StorageServiceState::new();
-        let response = service.human_status(&MaximumStatusBackend);
+        let service = service();
+        let response = service.human_status(&MaximumStatusBackend, DeviceCycle(10));
         assert_eq!(response.http_status, 200);
         assert_eq!(response.media, ResponseMedia::Json);
         assert_eq!(response.bytes().len(), 355);
@@ -1142,8 +1192,8 @@ mod tests {
 
     #[test]
     fn identified_card_remains_detached_until_explicit_region_provisioning() {
-        let mut service = StorageServiceState::new();
-        service.observe_safety_state(SafetyState::Safe);
+        let mut service = service();
+        observe(&mut service, SafetyState::Safe, 1, 10, false);
         let mut backend = DetachedBackend(17);
         let response = block_on(service.dispatch(
             &mut backend,
@@ -1171,7 +1221,7 @@ mod tests {
 
     #[test]
     fn structurally_valid_upload_is_explicitly_unsupported_without_backend() {
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = UnavailableStorageBackend;
         let response = block_on(service.dispatch(
             &mut backend,
@@ -1183,7 +1233,7 @@ mod tests {
 
     #[test]
     fn invalid_storage_body_is_rejected_before_backend_dispatch() {
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = ReadyBackend::new();
         let response = block_on(service.dispatch(
             &mut backend,
@@ -1205,7 +1255,7 @@ mod tests {
         let mut body = [0_u8; ChunkUploadHeader::WIRE_LEN + 4];
         body[..ChunkUploadHeader::WIRE_LEN].copy_from_slice(&header.encode());
         body[ChunkUploadHeader::WIRE_LEN..].copy_from_slice(b"abcd");
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = ReadyBackend::new();
         let response = block_on(service.dispatch(
             &mut backend,
@@ -1220,7 +1270,7 @@ mod tests {
     fn wrong_frame_family_never_reaches_storage_dispatch() {
         let mut native = request(Operation::StorageStatus, &[]);
         native.bytes[6] = FrameKind::Health.wire_value();
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = ReadyBackend::new();
         let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(10)));
         assert_eq!(response.http_status, 400);
@@ -1230,13 +1280,13 @@ mod tests {
 
     #[test]
     fn backend_mutation_remains_fail_closed_until_safe_state_is_observed() {
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = ReadyBackend::new();
         let begin = request(Operation::StorageBeginUpload, &plan().encode());
         let response = block_on(service.dispatch(&mut backend, &begin, DeviceCycle(10)));
         assert_eq!(response_status(&response), StatusCode::ForbiddenState);
         assert_eq!(backend.calls, 1);
-        service.observe_safety_state(SafetyState::Safe);
+        observe(&mut service, SafetyState::Safe, 1, 11, false);
         let response = block_on(service.dispatch(&mut backend, &begin, DeviceCycle(11)));
         let (status, body) = response_parts(&response);
         assert_eq!(status, StatusCode::Ok);
@@ -1244,8 +1294,50 @@ mod tests {
     }
 
     #[test]
+    fn storage_mutation_expires_and_job_ownership_blocks_it() {
+        let begin = request(Operation::StorageBeginUpload, &plan().encode());
+
+        let mut stale_service = service();
+        let mut stale_backend = ReadyBackend::new();
+        observe(&mut stale_service, SafetyState::Safe, 1, 10, false);
+        let response =
+            block_on(stale_service.dispatch(&mut stale_backend, &begin, DeviceCycle(110)));
+        assert_eq!(response_status(&response), StatusCode::Ok);
+        let response =
+            block_on(stale_service.dispatch(&mut stale_backend, &begin, DeviceCycle(111)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+
+        let mut busy_service = service();
+        let mut busy_backend = ReadyBackend::new();
+        observe(&mut busy_service, SafetyState::Safe, 1, 10, true);
+        let response = block_on(busy_service.dispatch(&mut busy_backend, &begin, DeviceCycle(10)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+    }
+
+    #[test]
+    fn rejected_or_fault_signaled_snapshot_revokes_storage_authority() {
+        let mut service = service();
+        let mut backend = ReadyBackend::new();
+        let begin = request(Operation::StorageBeginUpload, &plan().encode());
+        observe(&mut service, SafetyState::Safe, 1, 10, false);
+
+        assert!(
+            service
+                .observe_safety_snapshot(2, DeviceCycle(11), DeviceCycle(11), &[0; 3])
+                .is_err()
+        );
+        let response = block_on(service.dispatch(&mut backend, &begin, DeviceCycle(11)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+
+        observe(&mut service, SafetyState::Safe, 3, 12, false);
+        service.invalidate_safety_observation();
+        let response = block_on(service.dispatch(&mut backend, &begin, DeviceCycle(12)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+    }
+
+    #[test]
     fn native_status_reports_exact_backend_and_effective_mutation_state() {
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = ReadyBackend::new();
         let response = block_on(service.dispatch(
             &mut backend,
@@ -1259,7 +1351,7 @@ mod tests {
         assert_eq!(body[1], 0);
         assert_eq!(u64::from_le_bytes(body[32..40].try_into().unwrap()), 900);
 
-        service.observe_safety_state(SafetyState::Configured);
+        observe(&mut service, SafetyState::Configured, 1, 11, false);
         let response = block_on(service.dispatch(
             &mut backend,
             &request(Operation::StorageStatus, &[]),
@@ -1283,13 +1375,13 @@ mod tests {
         )
         .unwrap();
         let native = request(Operation::StorageProvision, &provision.encode());
-        let mut service = StorageServiceState::new();
+        let mut service = service();
         let mut backend = ReadyBackend::new();
         let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(10)));
         assert_eq!(response_status(&response), StatusCode::ForbiddenState);
         assert_eq!(backend.provisioned, None);
 
-        service.observe_safety_state(SafetyState::Safe);
+        observe(&mut service, SafetyState::Safe, 1, 11, false);
         let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(11)));
         let (status, body) = response_parts(&response);
         assert_eq!(status, StatusCode::Ok);

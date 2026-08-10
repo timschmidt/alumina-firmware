@@ -60,10 +60,14 @@ labels represent bits in an I²S-driven output chain.
 The SPI SD route now has a clean-room async transport and board composition at
 `SupportLevel::Compiles`. Core 0 identifies capacity, reads only fixed locator
 blocks 2046–2047, and mounts a locator-selected region after identity/log replay.
-Explicit authenticated provisioning exists, but current firmware safety remains
-in `Boot`, so physical formatting is not admitted until safe-output bring-up.
-There is no bench claim or implicit format. GPIO34's TH2/SD-detect multiplex
-remains unresolved for HIL and is not crossed from the real-time domain.
+Core 1 now drives the complete schematic-derived 24-bit static safe image and
+retains GPIO2 in high impedance before core 0 initializes Wi-Fi. A fixed safety
+snapshot expires after 500 ms, so authenticated provisioning is admitted only
+while core 1 continues reporting the matching contract in `Safe` or
+`Configured`. This is compile-linked behavior, not a bench verification or
+armability claim; there is still no implicit format. GPIO34's TH2/SD-detect
+multiplex remains unresolved for HIL and is not crossed from the real-time
+domain.
 
 ### I²S output mapping
 
@@ -78,6 +82,7 @@ resource is `I2sOut(0, n)`.
 | 6, 7, 8 | IO134, IO135, IO136 | Z disable, step, direction |
 | 9, 10, 11 | IO137, IO138, IO139 | E0 disable, step, direction |
 | 12, 13, 14 | IO140, IO141, IO142 | E1 disable, step, direction |
+| 15 | IO143 | LCD MOSI (non-hazardous, still part of every complete image) |
 | 16, 17, 18 | IO144, IO145, IO146 | heated bed, heater 0, heater 1 |
 | 19, 20 | IO147, IO148 | fan 1, fan 2 |
 | 21 | IO149 | beeper |

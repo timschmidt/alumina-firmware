@@ -69,10 +69,14 @@ identity and complete log must replay. `StorageProvision` binds destructive
 formatting to the authenticated request's observed card size, old generation and
 media ID, exact new interval, fresh ID, and recovery intent. A 1 MiB front guard
 keeps the locators outside conventional primary partition metadata and their
-fixed placement avoids GPT's card-tail backup sectors. Current physical images
-remain in safety `Boot`, so the route is correctly `ForbiddenState` until core 1
-establishes and reports safe outputs;
-there is still no implicit format or HIL claim. See the
+fixed placement avoids GPT's card-tail backup sectors. Core 1 now establishes a
+board-specific hazardous-output contract before Wi-Fi: T-Deck Pro retains GPIO2
+as high impedance, while TinyBee first latches a complete 24-bit all-safe
+shift-register image and retains its GPIO2 as high impedance. Core 0 admits
+storage mutation only while 100 ms safety publications remain identity-matched
+and no more than 500 ms old. This makes explicit provisioning reachable in the
+compiled images without making a bench, armability, or implicit-format claim.
+See the [safe-boot evidence](docs/evidence/M3-SAFE-BOOT-OBSERVATION.md) and
 [cache-provisioning evidence](docs/evidence/M3-CACHE-PROVISIONING.md).
 
 ## Developer checks

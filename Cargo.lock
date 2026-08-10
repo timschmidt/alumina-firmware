@@ -26,6 +26,7 @@ dependencies = [
  "alumina-safety",
  "alumina-sd-spi",
  "alumina-service",
+ "alumina-shift-register",
  "alumina-storage",
  "board-mks-tinybee",
  "board-t-deck-pro",
@@ -105,6 +106,13 @@ dependencies = [
  "alumina-storage",
  "embassy-futures",
  "heapless 0.8.0",
+]
+
+[[package]]
+name = "alumina-shift-register"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
 ]
 
 [[package]]

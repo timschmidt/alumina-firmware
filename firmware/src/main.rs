@@ -21,6 +21,10 @@ use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
     DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
 };
+use alumina_safety::{
+    Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED,
+    SafetyMachine, SafetyObservationPolicy, SafetyObserver, SafetySnapshot, SafetyState,
+};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
@@ -38,6 +42,8 @@ use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+
+const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -80,11 +86,8 @@ async fn main(spawner: Spawner) -> ! {
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
     esp_rtos::start(timer_group0.timer0);
 
-    let service_bridge = init_service_bridge();
-    let network = network::start(spawner, split.service.take_wifi(), service_bridge).await;
-
     let boundary = BOUNDARY.init(DefaultBoundary::new());
-    let (service_endpoint, realtime_endpoint) = boundary.split();
+    let (mut service_endpoint, realtime_endpoint) = boundary.split();
     let app_stack = APP_CORE_STACK.init(Stack::new());
 
     esp_rtos::start_second_core(
@@ -99,6 +102,13 @@ async fn main(spawner: Spawner) -> ! {
             });
         },
     );
+
+    // Hazardous outputs are established by their sole core-1 owner. Wi-Fi is
+    // intentionally not initialized until a fresh contract-bound `Safe`
+    // snapshot crosses the owned inter-core boundary.
+    await_initial_safe_snapshot(&mut service_endpoint).await;
+    let service_bridge = init_service_bridge();
+    let network = network::start(spawner, split.service.take_wifi(), service_bridge).await;
 
     spawner.must_spawn(service_task(
         split.service,
@@ -116,6 +126,53 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
+async fn await_initial_safe_snapshot(endpoint: &mut DefaultServiceEndpoint) {
+    let mut observer = SafetyObserver::new(SafetyObservationPolicy {
+        expected_contract: selected::SAFE_OUTPUT_CONTRACT,
+        maximum_age_cycles: SAFETY_OBSERVATION_MAX_AGE_CYCLES,
+    });
+    loop {
+        let frame = endpoint.receive_telemetry().await;
+        let now = DeviceCycle(Instant::now().as_ticks());
+        if frame.validate(FrameKind::Telemetry).is_err() {
+            observer.invalidate();
+            endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
+            continue;
+        }
+        let payload = match frame.payload() {
+            Ok(payload) => payload,
+            Err(_) => {
+                observer.invalidate();
+                endpoint.publish_urgent(UrgentKind::EmergencyStop, 2);
+                continue;
+            }
+        };
+        if observer
+            .observe_encoded(
+                frame.header().sequence,
+                frame.header().cycle.0,
+                now.0,
+                payload,
+            )
+            .is_err()
+        {
+            endpoint.publish_urgent(UrgentKind::EmergencyStop, 3);
+            continue;
+        }
+        match observer.effective(now.0).state {
+            SafetyState::Safe => {
+                info!("core-1 safe-output contract established before Wi-Fi");
+                return;
+            }
+            SafetyState::Fault => {
+                error!("core-1 safe-output establishment faulted before Wi-Fi");
+                panic!("safe-output establishment failed");
+            }
+            _ => {}
+        }
+    }
+}
+
 #[embassy_executor::task]
 async fn service_task(
     mut resources: selected::ServiceResources,
@@ -129,7 +186,10 @@ async fn service_task(
 
     // Service admission and every future media/backend handle live only in the
     // core-0 task future. Core 1 receives verified owned blocks, never SD.
-    let mut storage = StorageServiceState::new();
+    let mut storage = StorageServiceState::new(
+        selected::SAFE_OUTPUT_CONTRACT,
+        SAFETY_OBSERVATION_MAX_AGE_CYCLES,
+    );
     let mut storage_backend = resources.initialize_storage().await;
     let mut sequence = 0_u32;
     let mut last_fault_generation = 0_u16;
@@ -146,12 +206,26 @@ async fn service_task(
         }
 
         while let Ok(frame) = endpoint.try_receive_telemetry() {
-            if frame.validate(FrameKind::Telemetry).is_err() {
+            let now = DeviceCycle(Instant::now().as_ticks());
+            let valid = frame.validate(FrameKind::Telemetry).is_ok()
+                && frame.payload().is_ok_and(|payload| {
+                    storage
+                        .observe_safety_snapshot(
+                            frame.header().sequence,
+                            frame.header().cycle,
+                            now,
+                            payload,
+                        )
+                        .is_ok()
+                });
+            if !valid {
+                storage.invalidate_safety_observation();
                 endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
             }
         }
         if let Some(fault) = endpoint.fault_after(last_fault_generation) {
             last_fault_generation = fault.generation;
+            storage.invalidate_safety_observation();
             error!("RT fault code={} detail={}", fault.code, fault.detail);
         }
 
@@ -187,12 +261,43 @@ async fn realtime_task(
         panic!("realtime executor started on the wrong core");
     }
 
+    let resources = match resources.establish_safe_outputs() {
+        Ok(resources) => resources,
+        Err(_) => {
+            hold_safe_output_fault(&mut endpoint, 0).await;
+        }
+    };
+    let mut safety = SafetyMachine::new();
+    if safety
+        .apply(
+            SafetyEvent::Initialize,
+            Conditions {
+                safe_outputs_established: true,
+                ..Conditions::default()
+            },
+        )
+        .is_err()
+    {
+        hold_safe_output_fault(&mut endpoint, 1).await;
+    }
+
     let period = Duration::from_millis(1);
     let mut expected = Instant::now() + period;
     let mut probe = DeadlineProbe::default();
     let mut telemetry_sequence = 0_u32;
+    let mut transition_generation = 1_u32;
     let mut divider = 0_u8;
     let mut urgent_generation = 0_u16;
+
+    publish_safety_snapshot(
+        &mut endpoint,
+        &mut telemetry_sequence,
+        Instant::now(),
+        safety,
+        transition_generation,
+        true,
+        0,
+    );
 
     loop {
         Timer::at(expected).await;
@@ -207,11 +312,21 @@ async fn realtime_task(
         if let Some(urgent) = endpoint.urgent_after(urgent_generation) {
             urgent_generation = urgent.generation;
             if urgent.code == UrgentKind::EmergencyStop as u8 {
+                let _ = safety.apply(
+                    SafetyEvent::Fault(FaultCode::EmergencyStop),
+                    Conditions::default(),
+                );
+                transition_generation = next_nonzero(transition_generation);
                 endpoint.publish_fault(2, urgent.detail);
             }
         }
         while let Ok(command) = endpoint.try_receive_command() {
             if command.validate(FrameKind::Command).is_err() {
+                let _ = safety.apply(
+                    SafetyEvent::Fault(FaultCode::Identity),
+                    Conditions::default(),
+                );
+                transition_generation = next_nonzero(transition_generation);
                 endpoint.publish_fault(3, 0);
             }
         }
@@ -219,19 +334,77 @@ async fn realtime_task(
         divider = divider.wrapping_add(1);
         if divider == 100 {
             divider = 0;
-            telemetry_sequence = telemetry_sequence.wrapping_add(1);
-            let maximum = probe.maximum_lateness_cycles().to_le_bytes();
-            if let Ok(frame) = IntercoreFrame::new(
-                FrameKind::Telemetry,
-                telemetry_sequence,
-                DeviceCycle(observed.as_ticks()),
-                Digest::ZERO,
-                &maximum,
-            ) {
-                let _ = endpoint.try_publish_telemetry(frame);
-            }
+            publish_safety_snapshot(
+                &mut endpoint,
+                &mut telemetry_sequence,
+                observed,
+                safety,
+                transition_generation,
+                true,
+                probe.maximum_lateness_cycles(),
+            );
         }
 
         let _keep_tokens_core_local = &resources;
     }
+}
+
+fn publish_safety_snapshot(
+    endpoint: &mut DefaultRealtimeEndpoint,
+    telemetry_sequence: &mut u32,
+    observed: Instant,
+    safety: SafetyMachine,
+    transition_generation: u32,
+    safe_outputs_established: bool,
+    maximum_lateness_cycles: u64,
+) {
+    let flags = if safe_outputs_established {
+        SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED
+    } else {
+        0
+    };
+    let snapshot = SafetySnapshot {
+        state: safety.state(),
+        fault: safety.fault(),
+        flags,
+        transition_generation,
+        safe_output_contract: selected::SAFE_OUTPUT_CONTRACT,
+        maximum_lateness_cycles,
+    };
+    let payload = match snapshot.encode() {
+        Ok(payload) => payload,
+        Err(_) => {
+            endpoint.publish_fault(FaultCode::Identity.wire_value(), 2);
+            return;
+        }
+    };
+    *telemetry_sequence = next_nonzero(*telemetry_sequence);
+    if let Ok(frame) = IntercoreFrame::new(
+        FrameKind::Telemetry,
+        *telemetry_sequence,
+        DeviceCycle(observed.as_ticks()),
+        Digest::ZERO,
+        &payload,
+    ) {
+        let _ = endpoint.try_publish_telemetry(frame);
+    }
+}
+
+async fn hold_safe_output_fault(endpoint: &mut DefaultRealtimeEndpoint, detail: u8) -> ! {
+    let mut safety = SafetyMachine::new();
+    let _ = safety.apply(
+        SafetyEvent::Fault(FaultCode::SafeOutput),
+        Conditions::default(),
+    );
+    let mut sequence = 0_u32;
+    endpoint.publish_fault(FaultCode::SafeOutput.wire_value(), detail);
+    loop {
+        publish_safety_snapshot(endpoint, &mut sequence, Instant::now(), safety, 1, false, 0);
+        Timer::after(Duration::from_millis(100)).await;
+    }
+}
+
+const fn next_nonzero(value: u32) -> u32 {
+    let next = value.wrapping_add(1);
+    if next == 0 { 1 } else { next }
 }

@@ -38,6 +38,12 @@ pub const E0_DIRECTION_BIT: u8 = 11;
 pub const E1_DISABLE_BIT: u8 = 12;
 pub const E1_STEP_BIT: u8 = 13;
 pub const E1_DIRECTION_BIT: u8 = 14;
+/// Non-hazardous LCD serial output occupying the formerly omitted chain bit.
+pub const LCD_MOSI_BIT: u8 = 15;
+/// Exact number of cascaded outputs shown by the vendor schematic.
+pub const SHIFT_CHAIN_WIDTH: u8 = 24;
+/// Every physical U1/U2/U3 output, including LCD and expansion outputs.
+pub const COMPLETE_SHIFT_MASK: u32 = 0x00ff_ffff;
 
 const fn resource(
     id: ResourceId,
@@ -174,6 +180,15 @@ pub static RESOURCES: &[ResourceDescriptor] = &[
         OwnerDomain::Realtime,
         SafeValue::EngineImage,
         true,
+    ),
+    resource(
+        ResourceId::I2sOut {
+            engine: 0,
+            bit: LCD_MOSI_BIT,
+        },
+        OwnerDomain::Realtime,
+        SafeValue::EngineImage,
+        false,
     ),
     resource(
         ResourceId::I2sOut { engine: 0, bit: 16 },
@@ -493,6 +508,13 @@ pub static ALIASES: &[AliasDescriptor<'static>] = &[
     AliasDescriptor {
         name: "io142",
         resource: ResourceId::I2sOut { engine: 0, bit: 14 },
+    },
+    AliasDescriptor {
+        name: "io143",
+        resource: ResourceId::I2sOut {
+            engine: 0,
+            bit: LCD_MOSI_BIT,
+        },
     },
     AliasDescriptor {
         name: "io144",
@@ -922,7 +944,7 @@ pub static HIL_REQUIREMENTS: &[HilRequirement<'static>] = &[
 
 pub static SAFE_IMAGES: &[SafeOutputImage] = &[SafeOutputImage {
     engine: 0,
-    defined_mask: 0x00ff_7fff,
+    defined_mask: COMPLETE_SHIFT_MASK,
     safe_bits: DESCRIBED_SAFE_I2S_IMAGE,
     bench_verified: false,
 }];
@@ -983,5 +1005,22 @@ mod tests {
             }
         );
         assert_ne!(io129.resource, ResourceId::Gpio(129));
+    }
+
+    #[test]
+    fn safe_image_defines_all_three_cascaded_registers() {
+        assert_eq!(SHIFT_CHAIN_WIDTH, 24);
+        assert_eq!(SAFE_IMAGES[0].defined_mask, (1 << SHIFT_CHAIN_WIDTH) - 1);
+        assert_eq!(
+            ALIASES
+                .iter()
+                .find(|alias| alias.name == "io143")
+                .unwrap()
+                .resource,
+            ResourceId::I2sOut {
+                engine: 0,
+                bit: LCD_MOSI_BIT,
+            }
+        );
     }
 }

@@ -32,3 +32,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-CACHE-PROVISIONING.md`](M3-CACHE-PROVISIONING.md) — explicit hashed
   region locators, canonical destructive authorization, boot mount/recovery,
   authenticated status/dispatch, and power-cut simulation.
+- [`M3-SAFE-BOOT-OBSERVATION.md`](M3-SAFE-BOOT-OBSERVATION.md) — complete
+  TinyBee static safe image, T-Deck high-impedance hazard state, pre-Wi-Fi boot
+  gate, and freshness-bound core-1 safety authority for storage admission.
