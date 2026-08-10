@@ -16,9 +16,9 @@ chrono = { workspace = true }
 embassy-executor = { workspace = true }
 embassy-time = { workspace = true }
 esp-alloc = { workspace = true }
-esp-hal = { workspace = true }
-esp-rtos = { workspace = true }
-esp-println = { workspace = true }
+esp-hal = { workspace = true, features = ["esp32s3"] }
+esp-rtos = { workspace = true, features = ["esp-alloc", "esp-radio", "esp32s3"] }
+esp-println = { workspace = true, features = ["esp32s3"] }
 heapless = { workspace = true }
 log = { workspace = true }
 nmea = { workspace = true }
@@ -33,9 +33,9 @@ embassy-net = { workspace = true }
 embedded-io = { workspace = true }
 embedded-io-async = { workspace = true }
 esp-alloc = { workspace = true }
-esp-bootloader-esp-idf = { workspace = true }
-esp-rtos = { workspace = true }
-esp-println = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true, features = ["esp32s3"] }
+esp-rtos = { workspace = true, features = ["esp-alloc", "esp-radio", "esp32s3"] }
+esp-println = { workspace = true, features = ["esp32s3"] }
 smoltcp = { workspace = true }
 static_cell = { workspace = true }
 

@@ -10,5 +10,14 @@ rustflags = [
     "link-arg=-Tdefmt.x",
 ]
 
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor --chip esp32"
+rustflags = [
+    "-C",
+    "link-arg=-nostartfiles",
+    "-C",
+    "link-arg=-Tdefmt.x",
+]
+
 [unstable]
 build-std = ["alloc", "core"]

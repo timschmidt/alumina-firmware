@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
+
+use alumina_board::{BoardPackage, BusKind, DeviceRoute, OwnerDomain, ResourceId, SafeValue};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Board {
@@ -13,9 +16,15 @@ struct Board {
     chip: String,
     target: String,
     cores: u8,
+    flash_bytes: usize,
+    psram_bytes: usize,
+    service_core: u8,
+    realtime_core: u8,
     qualification: String,
     implementation: String,
     hardware_available: bool,
+    firmware_feature: Option<String>,
+    armable: bool,
 }
 
 fn main() -> ExitCode {
@@ -60,6 +69,16 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             print_capabilities(find_board(&boards, id)?, true);
             Ok(())
         }
+        [command, flag, id] if (command == "check" || command == "build") && flag == "--board" => {
+            let board = find_board(&boards, id)?;
+            run_board_cargo(root, board, command, None)
+        }
+        [command, flag, id, profile_flag, profile]
+            if command == "build" && flag == "--board" && profile_flag == "--profile" =>
+        {
+            let board = find_board(&boards, id)?;
+            run_board_cargo(root, board, command, Some(profile))
+        }
         [] => {
             print_help();
             Ok(())
@@ -78,6 +97,8 @@ fn print_help() {
     println!("  cargo xtask board list");
     println!("  cargo xtask board check <board-id>");
     println!("  cargo xtask capabilities --board <board-id> [--json]");
+    println!("  cargo xtask check --board <board-id>");
+    println!("  cargo xtask build --board <board-id> [--profile <name>]");
 }
 
 fn repository_registry(root: &Path) -> PathBuf {
@@ -138,9 +159,15 @@ fn parse_board(path: &Path) -> Result<Board, String> {
         chip: required_string(&source, path, "chip")?,
         target: required_string(&source, path, "target")?,
         cores: required_integer(&source, path, "cores")?,
+        flash_bytes: required_usize(&source, path, "flash_bytes")?,
+        psram_bytes: required_usize(&source, path, "psram_bytes")?,
+        service_core: required_integer(&source, path, "service_core")?,
+        realtime_core: required_integer(&source, path, "realtime_core")?,
         qualification: required_string(&source, path, "qualification")?,
         implementation: required_string(&source, path, "implementation")?,
         hardware_available: required_bool(&source, path, "hardware_available")?,
+        firmware_feature: optional_string(&source, path, "firmware_feature")?,
+        armable: required_bool(&source, path, "armable")?,
     })
 }
 
@@ -162,7 +189,32 @@ fn required_string(source: &str, path: &Path, key: &str) -> Result<String, Strin
     parse_string(value, path, line)
 }
 
+fn optional_string(source: &str, path: &Path, key: &str) -> Result<Option<String>, String> {
+    match optional_value(source, key) {
+        Some((value, line)) => parse_string(value, path, line).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn optional_value<'a>(source: &'a str, key: &str) -> Option<(&'a str, usize)> {
+    source
+        .lines()
+        .enumerate()
+        .find_map(|(line_index, raw_line)| {
+            let line = without_comment(raw_line).trim();
+            let (found_key, value) = line.split_once('=')?;
+            (found_key.trim() == key).then_some((value.trim(), line_index + 1))
+        })
+}
+
 fn required_integer(source: &str, path: &Path, key: &str) -> Result<u8, String> {
+    let (value, line) = required_value(source, path, key)?;
+    value
+        .parse()
+        .map_err(|error| format!("{}:{line}: invalid `{key}`: {error}", path.display()))
+}
+
+fn required_usize(source: &str, path: &Path, key: &str) -> Result<usize, String> {
     let (value, line) = required_value(source, path, key)?;
     value
         .parse()
@@ -206,6 +258,18 @@ fn validate_board(board: &Board) -> Result<(), String> {
             board.cores
         ));
     }
+    if board.service_core == board.realtime_core
+        || board.service_core >= board.cores
+        || board.realtime_core >= board.cores
+    {
+        return Err(format!(
+            "{}: invalid service/realtime core assignment {}/{} for {} cores",
+            board.source.display(),
+            board.service_core,
+            board.realtime_core,
+            board.cores
+        ));
+    }
     let expected_target = match board.chip.as_str() {
         "esp32" => "xtensa-esp32-none-elf",
         "esp32s3" => "xtensa-esp32s3-none-elf",
@@ -244,17 +308,216 @@ fn validate_board(board: &Board) -> Result<(), String> {
             board.implementation
         ));
     }
+    if board.implementation == "implemented" && board.firmware_feature.is_none() {
+        return Err(format!(
+            "{}: implemented board lacks `firmware_feature`",
+            board.source.display()
+        ));
+    }
+    if let Some(feature) = &board.firmware_feature {
+        if !feature.starts_with("board-")
+            || !feature
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        {
+            return Err(format!(
+                "{}: invalid firmware feature `{feature}`",
+                board.source.display()
+            ));
+        }
+        let package = package_for(&board.id).ok_or_else(|| {
+            format!(
+                "{}: firmware-selected board lacks a Rust package",
+                board.source.display()
+            )
+        })?;
+        package
+            .validate()
+            .map_err(|error| format!("{}: package error: {error:?}", board.source.display()))?;
+        if package.board.id != board.id
+            || chip_name(package.board.chip) != board.chip
+            || package.board.application_cores != board.cores
+            || qualification_name(package.board.qualification) != board.qualification
+            || package.memory.flash_bytes != board.flash_bytes
+            || package.memory.psram_bytes != board.psram_bytes
+            || package.cores.service_core != board.service_core
+            || package.cores.realtime_core != board.realtime_core
+            || package.armable != board.armable
+        {
+            return Err(format!(
+                "{}: board.toml identity/memory/core facts differ from its Rust package",
+                board.source.display()
+            ));
+        }
+        let expected_feature = expected_feature_for(&board.id).ok_or_else(|| {
+            format!(
+                "{}: implemented board lacks a registered firmware feature",
+                board.source.display()
+            )
+        })?;
+        if feature != expected_feature {
+            return Err(format!(
+                "{}: expected firmware feature `{expected_feature}`, found `{feature}`",
+                board.source.display()
+            ));
+        }
+    }
     Ok(())
 }
 
+fn expected_feature_for(id: &str) -> Option<&'static str> {
+    match id {
+        board_mks_tinybee::BOARD_ID => Some("board-mks-tinybee"),
+        board_t_deck_pro::BOARD_ID => Some("board-t-deck-pro"),
+        _ => None,
+    }
+}
+
+fn package_for(id: &str) -> Option<&'static BoardPackage<'static>> {
+    match id {
+        board_mks_tinybee::BOARD_ID => Some(&board_mks_tinybee::PACKAGE),
+        board_t_deck_pro::BOARD_ID => Some(&board_t_deck_pro::PACKAGE),
+        _ => None,
+    }
+}
+
 fn find_board<'a>(boards: &'a [Board], id: &str) -> Result<&'a Board, String> {
+    let canonical = match id {
+        "mks-tinybee" => "mks-tinybee-v1",
+        other => other,
+    };
     boards
         .iter()
-        .find(|board| board.id == id)
+        .find(|board| board.id == canonical)
         .ok_or_else(|| format!("unknown board `{id}`"))
 }
 
+fn run_board_cargo(
+    root: &Path,
+    board: &Board,
+    action: &str,
+    profile: Option<&String>,
+) -> Result<(), String> {
+    validate_board(board)?;
+    let feature = board.firmware_feature.as_ref().ok_or_else(|| {
+        format!(
+            "board `{}` has no firmware composition root yet (status: {})",
+            board.id, board.implementation
+        )
+    })?;
+    let profile = profile.map_or(
+        if action == "build" { "release" } else { "dev" },
+        String::as_str,
+    );
+    if !profile
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(format!("invalid Cargo profile `{profile}`"));
+    }
+
+    println!(
+        "{} {} for {} ({}, feature {})",
+        if action == "build" {
+            "building"
+        } else {
+            "checking"
+        },
+        profile,
+        board.id,
+        board.target,
+        feature
+    );
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(root)
+        .arg("+esp")
+        .arg(action)
+        .args(["-p", "alumina-firmware", "--bin", "alumina-firmware"])
+        .arg("--no-default-features")
+        .args(["--features", feature])
+        .args(["--target", &board.target])
+        .arg("--locked");
+    if profile != "dev" {
+        command.args(["--profile", profile]);
+    }
+    if action == "build" {
+        configure_esp_linker_path(&mut command, board)?;
+    }
+    let status = command
+        .status()
+        .map_err(|error| format!("failed to start Cargo: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "Cargo {action} failed for board `{}` with {status}",
+            board.id
+        ));
+    }
+    Ok(())
+}
+
+fn configure_esp_linker_path(command: &mut Command, board: &Board) -> Result<(), String> {
+    let linker = match board.chip.as_str() {
+        "esp32" => "xtensa-esp32-elf-gcc",
+        "esp32s3" => "xtensa-esp32s3-elf-gcc",
+        _ => return Err(format!("unsupported ESP linker chip `{}`", board.chip)),
+    };
+    if command_succeeds(linker, "--version") {
+        return Ok(());
+    }
+
+    let rustc = Command::new("rustup")
+        .args(["which", "--toolchain", "esp", "rustc"])
+        .output()
+        .map_err(|error| format!("cannot locate the `esp` Rust toolchain: {error}"))?;
+    if !rustc.status.success() {
+        return Err(
+            "cannot locate the `esp` Rust toolchain; install it with espup before building"
+                .to_owned(),
+        );
+    }
+    let rustc = String::from_utf8(rustc.stdout)
+        .map_err(|_| "rustup returned a non-UTF-8 rustc path".to_owned())?;
+    let toolchain = Path::new(rustc.trim())
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "rustup returned an invalid esp rustc path".to_owned())?;
+    let compiler_root = toolchain.join("xtensa-esp-elf");
+    let mut candidates = fs::read_dir(&compiler_root)
+        .map_err(|error| {
+            format!(
+                "cannot find the espup GCC bundle at {}: {error}",
+                compiler_root.display()
+            )
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("xtensa-esp-elf/bin"))
+        .filter(|path| path.join(linker).is_file())
+        .collect::<Vec<_>>();
+    candidates.sort();
+    let bin = candidates.pop().ok_or_else(|| {
+        format!("the espup toolchain contains no `{linker}`; reinstall the Xtensa GCC bundle")
+    })?;
+
+    let inherited = env::var_os("PATH").unwrap_or_default();
+    let path = env::join_paths(
+        core::iter::once(bin.as_os_str().to_owned())
+            .chain(env::split_paths(&inherited).map(OsString::from)),
+    )
+    .map_err(|error| format!("cannot construct ESP linker PATH: {error}"))?;
+    command.env("PATH", path);
+    Ok(())
+}
+
+fn command_succeeds(program: &str, argument: &str) -> bool {
+    Command::new(program)
+        .arg(argument)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 fn print_capabilities(board: &Board, json: bool) {
+    let package = package_for(&board.id);
     if json {
         println!("{{");
         println!("  \"schema\": 1,");
@@ -267,19 +530,250 @@ fn print_capabilities(board: &Board, json: bool) {
         println!("  \"chip\": \"{}\",", board.chip);
         println!("  \"target\": \"{}\",", board.target);
         println!("  \"cores\": {},", board.cores);
+        println!("  \"service_core\": {},", board.service_core);
+        println!("  \"realtime_core\": {},", board.realtime_core);
+        println!("  \"flash_bytes\": {},", board.flash_bytes);
+        println!("  \"psram_bytes\": {},", board.psram_bytes);
         println!("  \"qualification\": \"{}\",", board.qualification);
         println!("  \"implementation\": \"{}\",", board.implementation);
-        println!("  \"hardware_available\": {}", board.hardware_available);
+        println!("  \"hardware_available\": {},", board.hardware_available);
+        println!(
+            "  \"firmware_feature\": {},",
+            board.firmware_feature.as_ref().map_or_else(
+                || "null".to_owned(),
+                |feature| format!("\"{}\"", json_escape(feature))
+            )
+        );
+        println!("  \"armable\": {},", board.armable);
+        println!("  \"resources\": [");
+        if let Some(package) = package {
+            for (index, resource) in package.board.resources.iter().enumerate() {
+                println!("    {{");
+                println!("      \"id\": {},", resource_id_json(resource.id));
+                println!("      \"owner\": \"{}\",", owner_name(resource.owner));
+                println!(
+                    "      \"safe_value\": \"{}\",",
+                    safe_value_name(resource.safe_value)
+                );
+                println!("      \"hazardous_output\": {}", resource.hazardous_output);
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.board.resources.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"aliases\": [");
+        if let Some(package) = package {
+            for (index, alias) in package.aliases.iter().enumerate() {
+                println!(
+                    "    {{\"name\": \"{}\", \"resource\": {}}}{}",
+                    json_escape(alias.name),
+                    resource_id_json(alias.resource),
+                    if index + 1 == package.aliases.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"buses\": [");
+        if let Some(package) = package {
+            for (index, bus) in package.buses.iter().enumerate() {
+                println!("    {{");
+                println!("      \"resource\": {},", resource_id_json(bus.resource));
+                println!("      \"kind\": \"{}\",", bus_kind_name(bus.kind));
+                println!("      \"owner\": \"{}\",", owner_name(bus.owner));
+                println!(
+                    "      \"maximum_frequency_hz\": {},",
+                    bus.maximum_frequency_hz
+                );
+                println!("      \"pins\": [");
+                for (pin_index, pin) in bus.pins.iter().enumerate() {
+                    println!(
+                        "        {}{}",
+                        resource_id_json(*pin),
+                        if pin_index + 1 == bus.pins.len() {
+                            ""
+                        } else {
+                            ","
+                        }
+                    );
+                }
+                println!("      ]");
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.buses.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"devices\": [");
+        if let Some(package) = package {
+            for (index, device) in package.devices.iter().enumerate() {
+                println!("    {{");
+                println!("      \"resource\": {},", resource_id_json(device.resource));
+                println!("      \"owner\": \"{}\",", owner_name(device.owner));
+                println!(
+                    "      \"bus\": {},",
+                    device
+                        .bus
+                        .map_or_else(|| "null".to_owned(), resource_id_json)
+                );
+                println!("      \"route\": {},", device_route_json(device.route));
+                println!("      \"support\": \"{}\"", support_name(device.support));
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.devices.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ]");
         println!("}}");
     } else {
         println!("board: {} ({})", board.display_name, board.id);
         println!("revision: {}", board.revision);
         println!("chip/target: {} / {}", board.chip, board.target);
         println!("application cores: {}", board.cores);
+        println!(
+            "core domains: service={} realtime={}",
+            board.service_core, board.realtime_core
+        );
+        println!(
+            "memory: flash={} internal={} psram={}",
+            board.flash_bytes,
+            package.map_or(0, |package| package.memory.internal_sram_bytes),
+            board.psram_bytes
+        );
         println!("qualification: {}", board.qualification);
         println!("implementation: {}", board.implementation);
         println!("hardware available: {}", board.hardware_available);
+        if let Some(package) = package {
+            println!("armable: {}", package.armable);
+            println!("typed resources: {}", package.board.resources.len());
+            println!(
+                "aliases/buses/devices: {}/{}/{}",
+                package.aliases.len(),
+                package.buses.len(),
+                package.devices.len()
+            );
+        }
     }
+}
+
+fn owner_name(owner: OwnerDomain) -> &'static str {
+    match owner {
+        OwnerDomain::Service => "service",
+        OwnerDomain::Realtime => "realtime",
+    }
+}
+
+fn chip_name(chip: alumina_board::Chip) -> &'static str {
+    match chip {
+        alumina_board::Chip::Esp32 => "esp32",
+        alumina_board::Chip::Esp32S3 => "esp32s3",
+    }
+}
+
+fn qualification_name(qualification: alumina_board::Qualification) -> &'static str {
+    match qualification {
+        alumina_board::Qualification::Described => "described",
+        alumina_board::Qualification::Compiles => "compiles",
+        alumina_board::Qualification::Bench => "bench",
+        alumina_board::Qualification::MotionQualified => "motion-qualified",
+        alumina_board::Qualification::ProductionQualified => "production-qualified",
+    }
+}
+
+fn safe_value_name(value: SafeValue) -> &'static str {
+    match value {
+        SafeValue::NotApplicable => "not-applicable",
+        SafeValue::HighImpedance => "high-impedance",
+        SafeValue::Low => "low",
+        SafeValue::High => "high",
+        SafeValue::EngineImage => "engine-image",
+    }
+}
+
+fn bus_kind_name(kind: BusKind) -> &'static str {
+    match kind {
+        BusKind::I2c => "i2c",
+        BusKind::Spi => "spi",
+        BusKind::Uart => "uart",
+    }
+}
+
+fn support_name(level: alumina_board::SupportLevel) -> &'static str {
+    match level {
+        alumina_board::SupportLevel::Described => "described",
+        alumina_board::SupportLevel::Compiles => "compiles",
+        alumina_board::SupportLevel::Bench => "bench",
+        alumina_board::SupportLevel::Qualified => "qualified",
+    }
+}
+
+fn device_route_json(route: DeviceRoute) -> String {
+    match route {
+        DeviceRoute::Dedicated => "{\"kind\":\"dedicated\"}".to_owned(),
+        DeviceRoute::I2cAddress(address) => {
+            format!("{{\"kind\":\"i2c-address\",\"address\":{address}}}")
+        }
+        DeviceRoute::SpiChipSelect(chip_select) => format!(
+            "{{\"kind\":\"spi-chip-select\",\"resource\":{}}}",
+            resource_id_json(chip_select)
+        ),
+        DeviceRoute::Uart => "{\"kind\":\"uart\"}".to_owned(),
+    }
+}
+
+fn resource_id_json(resource: ResourceId) -> String {
+    match resource {
+        ResourceId::Gpio(index) => tagged_index("gpio", index),
+        ResourceId::I2sOut { engine, bit } => {
+            format!("{{\"kind\":\"i2s-out\",\"engine\":{engine},\"bit\":{bit}}}")
+        }
+        ResourceId::Adc { unit, channel } => {
+            format!("{{\"kind\":\"adc\",\"unit\":{unit},\"channel\":{channel}}}")
+        }
+        ResourceId::Timer { group, index } => {
+            format!("{{\"kind\":\"timer\",\"group\":{group},\"index\":{index}}}")
+        }
+        ResourceId::I2s(index) => tagged_index("i2s", index),
+        ResourceId::Rmt(index) => tagged_index("rmt", index),
+        ResourceId::TimedOutput { engine, channel } => {
+            format!("{{\"kind\":\"timed-output\",\"engine\":{engine},\"channel\":{channel}}}")
+        }
+        ResourceId::I2c(index) => tagged_index("i2c", index),
+        ResourceId::Spi(index) => tagged_index("spi", index),
+        ResourceId::Uart(index) => tagged_index("uart", index),
+        ResourceId::Pcnt(index) => tagged_index("pcnt", index),
+        ResourceId::Dma(index) => tagged_index("dma", index),
+        ResourceId::Twai(index) => tagged_index("twai", index),
+        ResourceId::Storage(index) => tagged_index("storage", index),
+        ResourceId::Radio(index) => tagged_index("radio", index),
+        ResourceId::SafetyInput(index) => tagged_index("safety-input", index),
+        ResourceId::Device(index) => {
+            format!("{{\"kind\":\"device\",\"index\":{index}}}")
+        }
+    }
+}
+
+fn tagged_index(kind: &str, index: u8) -> String {
+    format!("{{\"kind\":\"{kind}\",\"index\":{index}}}")
 }
 
 fn json_escape(value: &str) -> String {
@@ -309,9 +803,15 @@ mod tests {
             chip: "esp32".to_owned(),
             target: "xtensa-esp32s3-none-elf".to_owned(),
             cores: 2,
+            flash_bytes: 0,
+            psram_bytes: 0,
+            service_core: 0,
+            realtime_core: 1,
             qualification: "described".to_owned(),
             implementation: "planned".to_owned(),
             hardware_available: true,
+            firmware_feature: None,
+            armable: false,
         };
         assert!(
             validate_board(&board)

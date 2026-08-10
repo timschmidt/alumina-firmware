@@ -25,10 +25,10 @@ name = "hello_test"
 test = false
 
 [dependencies]
-esp-hal = { workspace = true }
-esp-rtos = { workspace = true }
+esp-hal = { workspace = true, features = ["esp32s3"] }
+esp-rtos = { workspace = true, features = ["esp-alloc", "esp-radio", "esp32s3"] }
 defmt = { workspace = true }
-esp-bootloader-esp-idf = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true, features = ["esp32s3"] }
 embassy-net = { workspace = true }
 embedded-io = { workspace = true }
 embedded-io-async = { workspace = true }
@@ -40,7 +40,7 @@ bt-hci = { workspace = true }
 embassy-executor = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
-esp-radio = { workspace = true }
+esp-radio = { workspace = true, features = ["esp32s3"] }
 smoltcp = { workspace = true }
 trouble-host = { workspace = true }
 critical-section = { workspace = true }

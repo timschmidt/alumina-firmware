@@ -6,11 +6,14 @@ the async driver structure of `t-deck-async-drivers-rs` with the useful embedded
 web-serving behavior demonstrated by `alumina-firmware`, while putting all
 network and UI work on one ESP32 core and all real-time work on the other.
 
-Implementation is underway from the researched delivery plan. The first
-portable crates define exact protocol identities, integer machine-job
-validation, board-resource ownership, and a fail-closed safety state machine.
-There are no deployed clients and no compatibility requirement: the old Alumina
-firmware and interface are functional references, not APIs to preserve.
+Implementation is underway from the researched delivery plan. The portable
+crates now define exact protocol identities, integer machine-job validation,
+board-resource ownership, a fail-closed safety state machine, and bounded
+cross-core channels. TinyBee and T-Deck Pro have chip-specific composition roots
+that consume the HAL peripheral singleton once, partition owned tokens, and run
+one Embassy executor on each application core. There are no deployed clients
+and no compatibility requirement: the old Alumina firmware and interface are
+functional references, not APIs to preserve.
 
 ## Developer checks
 
@@ -23,6 +26,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo xtask board list
 cargo xtask board check mks-tinybee-v1
 cargo xtask board check t-deck-pro
+cargo xtask capabilities --board mks-tinybee --json
 ```
 
 The portable commands intentionally operate on the workspace's default members.
@@ -37,7 +41,24 @@ cargo +esp check --target xtensa-esp32s3-none-elf --locked --lib \
   -p t-deck-pro-lora-async -p t-deck-pro-touch-async
 cargo +esp check --target xtensa-esp32s3-none-elf --locked --bins \
   -p i2c-tester -p patina
+cargo +esp check --target xtensa-esp32s3-none-elf --locked --examples \
+  -p t-deck-pro-epd-async -p t-deck-pro-lora-async
 ```
+
+The board-aware commands select exactly one chip family and discover the espup
+Xtensa linker bundle when it is not already on `PATH`:
+
+```console
+cargo xtask check --board mks-tinybee
+cargo xtask check --board t-deck-pro
+cargo xtask build --board mks-tinybee --profile release
+cargo xtask build --board t-deck-pro --profile release
+```
+
+Both current packages remain intentionally non-armable. “Compiles” means the
+typed package and complete release image build for the declared chip; it is not
+bench, safe-state, peripheral-smoke, or timing qualification. See the
+[dual-core compile evidence](docs/evidence/M2-DUAL-CORE-RUNTIME.md).
 
 ## Imported T-Deck support
 

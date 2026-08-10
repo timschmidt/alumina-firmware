@@ -16,6 +16,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-firmware"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-protocol",
+ "alumina-runtime",
+ "board-mks-tinybee",
+ "board-t-deck-pro",
+ "defmt 1.1.1",
+ "embassy-executor",
+ "embassy-time 0.4.0",
+ "esp-bootloader-esp-idf",
+ "esp-hal",
+ "esp-rtos",
+ "panic-rtt-target",
+ "rtt-target",
+ "static_cell",
+]
+
+[[package]]
 name = "alumina-machine-ir"
 version = "0.1.0"
 dependencies = [
@@ -25,6 +45,15 @@ dependencies = [
 [[package]]
 name = "alumina-protocol"
 version = "0.1.0"
+
+[[package]]
+name = "alumina-runtime"
+version = "0.1.0"
+dependencies = [
+ "alumina-protocol",
+ "critical-section",
+ "embassy-sync 0.7.2",
+]
 
 [[package]]
 name = "alumina-safety"
@@ -111,6 +140,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
+name = "board-mks-tinybee"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-protocol",
+]
+
+[[package]]
+name = "board-t-deck-pro"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-protocol",
+]
+
+[[package]]
 name = "bt-hci"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -182,6 +236,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
 dependencies = [
  "unicode-segmentation",
+]
+
+[[package]]
+name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -327,6 +390,7 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
+ "block-buffer",
  "crypto-common",
 ]
 
@@ -538,10 +602,11 @@ dependencies = [
 name = "embedded-bus-async"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
+ "embassy-futures",
  "embassy-sync 0.7.2",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
- "esp-hal",
  "log",
 ]
 
@@ -832,6 +897,8 @@ dependencies = [
  "rand_core 0.6.4",
  "rand_core 0.9.5",
  "riscv",
+ "sha1",
+ "sha2",
  "strum",
  "ufmt-write",
  "xtensa-lx",
@@ -1867,6 +1934,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
+name = "sha2"
+version = "0.10.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2398,6 +2487,11 @@ dependencies = [
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "board-mks-tinybee",
+ "board-t-deck-pro",
+]
 
 [[package]]
 name = "xtensa-lx"

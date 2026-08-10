@@ -194,7 +194,8 @@ async fn main(spawner: Spawner) -> ! {
     .into_async();
 
     let spi_bus = Rc::new(RwLock::new(spi));
-    let spi_device = RwLockDevice::new(spi_bus, cs, Delay);
+    let spi_device =
+        RwLockDevice::new(spi_bus, cs, Delay).expect("failed to deassert EPD chip select");
 
     let display = EInkDisplay::new(epd_dc, epd_busy, Some(epd_rst), 240, 320, false);
 
@@ -522,7 +523,11 @@ async fn app_task(
 #[embassy_executor::task]
 async fn epd_task(
     mut display: EInkDisplay<'static>,
-    mut spi_dev: RwLockDevice<'static, esp_hal::spi::master::Spi<'static, esp_hal::Async>, Delay>,
+    mut spi_dev: RwLockDevice<
+        esp_hal::spi::master::Spi<'static, esp_hal::Async>,
+        Output<'static>,
+        Delay,
+    >,
     disp_rx: Receiver<'static, CriticalSectionRawMutex, DisplayCmd, 4>,
 ) {
     info!("EPD: initializing...");

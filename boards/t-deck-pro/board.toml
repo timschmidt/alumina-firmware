@@ -7,11 +7,13 @@ target = "xtensa-esp32s3-none-elf"
 cores = 2
 flash_bytes = 16777216
 psram_bytes = 8388608
-qualification = "described"
-implementation = "planned"
+qualification = "compiles"
+implementation = "implemented"
 hardware_available = true
 service_core = 0
 realtime_core = 1
+firmware_feature = "board-t-deck-pro"
+armable = false
 
 [provenance]
 primary = "https://github.com/Xinyuan-LilyGO/T-Deck-Pro"

@@ -1,0 +1,19 @@
+[package]
+name = "alumina-runtime"
+description = "Bounded dual-core runtime boundary and timing diagnostics for Alumina"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alumina-protocol.workspace = true
+embassy-sync.workspace = true
+
+[dev-dependencies]
+critical-section = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true

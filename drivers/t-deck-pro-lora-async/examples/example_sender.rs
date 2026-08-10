@@ -81,7 +81,8 @@ async fn main(_spawner: Spawner) {
     .into_async();
 
     let spi_bus = Rc::new(RwLock::new(spi));
-    let lora_spi = RwLockDevice::new(spi_bus, lora_cs, embassy_time::Delay);
+    let lora_spi = RwLockDevice::new(spi_bus, lora_cs, embassy_time::Delay)
+        .expect("failed to deassert LoRa chip select");
 
     let mut lora = LoraRadio::new(lora_spi, lora_rst, lora_int, lora_busy, lora_en);
 

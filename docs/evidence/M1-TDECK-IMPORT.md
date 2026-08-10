@@ -34,6 +34,12 @@ The root workspace registers all ten crates, carries the upstream dependency
 constraints, and makes the ESP32-S3 target settings available without changing
 the default host target.
 
+This section records the tree at the M1 import commit. Later M2 integration
+generalizes the SPI chip-select type, updates its four example call sites, and
+moves ESP32-S3 feature selection into the imported manifests so classic ESP32
+can share the workspace. Those subsequent files and reasons are enumerated in
+the machine-readable import record and rechecked in the M2 evidence.
+
 ## Reproduced checks
 
 Portable toolchain: Rust 1.88.0. ESP toolchain used for this evidence:

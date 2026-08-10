@@ -13,7 +13,7 @@ source = "embedded-bus-async"
 destination = "drivers/embedded-bus-async"
 tree = "40cf38517a3343ff10be89e496754fba7cfc37d3"
 license = "Apache-2.0"
-logic_modified = false
+logic_modified = true
 
 [[component]]
 source = "sx126x-async-rs"
@@ -34,7 +34,7 @@ source = "t-deck-pro-epd-async"
 destination = "drivers/t-deck-pro-epd-async"
 tree = "5d401691a0339eb502ba979cbd36a80dac233242"
 license = "Apache-2.0"
-logic_modified = false
+logic_modified = true
 
 [[component]]
 source = "t-deck-pro-gps-async"
@@ -55,7 +55,7 @@ source = "t-deck-pro-lora-async"
 destination = "drivers/t-deck-pro-lora-async"
 tree = "e66d51f4fb5dafc35b7968f4b26f37d1aa67a406"
 license = "Apache-2.0"
-logic_modified = false
+logic_modified = true
 
 [[component]]
 source = "t-deck-pro-touch-async"
@@ -76,7 +76,7 @@ source = "patina"
 destination = "examples/patina"
 tree = "d332d097b1907ce24b31649b71501723a699052e"
 license = "Apache-2.0"
-logic_modified = false
+logic_modified = true
 
 [[integration_change]]
 files = [
@@ -103,3 +103,29 @@ reason = "Remove one trailing blank line at EOF so the imported manifests satisf
 [[integration_change]]
 files = ["Cargo.toml", ".cargo/config.toml"]
 reason = "Register the imported crates and reproduce their pinned ESP32-S3 dependency and target settings without making ESP the host default target."
+
+[[integration_change]]
+files = [
+    "drivers/embedded-bus-async/Cargo.toml",
+    "drivers/embedded-bus-async/README.md",
+    "drivers/embedded-bus-async/src/spi.rs",
+    "drivers/t-deck-pro-epd-async/examples/simple_example.rs",
+    "drivers/t-deck-pro-lora-async/examples/example_receiver.rs",
+    "drivers/t-deck-pro-lora-async/examples/example_sender.rs",
+    "examples/patina/src/bin/main.rs",
+]
+reason = "Generalize the SPI device chip-select from esp-hal Output to embedded-hal OutputPin, propagate real CS errors, add host failure-path tests, and adapt the four call sites. Transaction ordering and bus behavior are unchanged."
+
+[[integration_change]]
+files = [
+    "Cargo.toml",
+    "drivers/t-deck-pro-battery-async/Cargo.toml",
+    "drivers/t-deck-pro-epd-async/Cargo.toml",
+    "drivers/t-deck-pro-gps-async/Cargo.toml",
+    "drivers/t-deck-pro-keyboard-async/Cargo.toml",
+    "drivers/t-deck-pro-lora-async/Cargo.toml",
+    "drivers/t-deck-pro-touch-async/Cargo.toml",
+    "examples/i2c-tester/Cargo.toml",
+    "examples/patina/Cargo.toml",
+]
+reason = "Move ESP32-S3 chip selection from shared workspace dependencies into each imported T-Deck crate so the same workspace can also build the classic ESP32 TinyBee target; dependency versions and S3 features remain unchanged for imported targets."

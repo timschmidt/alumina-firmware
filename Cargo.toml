@@ -1,9 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+    "boards/mks-tinybee",
+    "boards/t-deck-pro",
     "crates/alumina-board",
     "crates/alumina-machine-ir",
     "crates/alumina-protocol",
+    "crates/alumina-runtime",
     "crates/alumina-safety",
     "drivers/embedded-bus-async",
     "drivers/sx126x-async-rs",
@@ -15,13 +18,18 @@ members = [
     "drivers/t-deck-pro-touch-async",
     "examples/i2c-tester",
     "examples/patina",
+    "firmware",
     "xtask",
 ]
 default-members = [
+    "boards/mks-tinybee",
+    "boards/t-deck-pro",
     "crates/alumina-board",
     "crates/alumina-machine-ir",
     "crates/alumina-protocol",
+    "crates/alumina-runtime",
     "crates/alumina-safety",
+    "drivers/embedded-bus-async",
     "xtask",
 ]
 
@@ -37,7 +45,10 @@ publish = false
 alumina-board = { path = "crates/alumina-board" }
 alumina-machine-ir = { path = "crates/alumina-machine-ir" }
 alumina-protocol = { path = "crates/alumina-protocol" }
+alumina-runtime = { path = "crates/alumina-runtime" }
 alumina-safety = { path = "crates/alumina-safety" }
+board-mks-tinybee = { path = "boards/mks-tinybee" }
+board-t-deck-pro = { path = "boards/t-deck-pro" }
 bt-hci = "0.6.0"
 chrono = { version = "0.4.38", default-features = false, features = ["serde"] }
 critical-section = "1.2.0"
@@ -54,15 +65,14 @@ embedded-hal-async = "1.0.0-rc.3"
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
-esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "unstable"] }
-esp-println = { version = "0.15.0", features = ["log-04", "esp32s3", "defmt-espflash"] }
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt"] }
+esp-hal = { version = "~1.0", features = ["defmt", "unstable"] }
+esp-println = { version = "0.15.0", features = ["log-04", "defmt-espflash"] }
 esp-radio = { version = "0.17.0", features = [
     "ble",
     "coex",
     "defmt",
     "esp-alloc",
-    "esp32s3",
     "smoltcp",
     "unstable",
     "wifi",
@@ -70,9 +80,6 @@ esp-radio = { version = "0.17.0", features = [
 esp-rtos = { version = "0.2.0", features = [
     "defmt",
     "embassy",
-    "esp-alloc",
-    "esp-radio",
-    "esp32s3",
 ] }
 heapless = "0.8.0"
 log = "0.4.27"

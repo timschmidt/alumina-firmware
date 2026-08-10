@@ -14,5 +14,8 @@ repository = "https://github.com/timschmidt/t-deck-async-drivers-rs"
 embassy-sync = { workspace = true }
 embedded-hal = { workspace = true }
 embedded-hal-async = { workspace = true }
-esp-hal = { workspace = true }
 log = { workspace = true }
+
+[dev-dependencies]
+critical-section = { workspace = true, features = ["std"] }
+embassy-futures = { workspace = true }

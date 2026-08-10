@@ -12,6 +12,7 @@ implementation = "planned"
 hardware_available = false
 service_core = 0
 realtime_core = 1
+armable = false
 
 [provenance]
 primary = "https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0"

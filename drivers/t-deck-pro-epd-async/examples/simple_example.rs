@@ -78,7 +78,8 @@ async fn main(_spawner: Spawner) {
     .into_async();
 
     let spi_bus = Rc::new(RwLock::new(spi));
-    let mut spi_device = RwLockDevice::new(spi_bus, cs, Delay);
+    let mut spi_device =
+        RwLockDevice::new(spi_bus, cs, Delay).expect("failed to deassert EPD chip select");
 
     let mut display = EInkDisplay::new(epd_dc, epd_busy, Some(epd_rst), 240, 320, false);
 

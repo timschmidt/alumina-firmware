@@ -7,11 +7,13 @@ target = "xtensa-esp32-none-elf"
 cores = 2
 flash_bytes = 8388608
 psram_bytes = 0
-qualification = "described"
-implementation = "planned"
+qualification = "compiles"
+implementation = "implemented"
 hardware_available = true
 service_core = 0
 realtime_core = 1
+firmware_feature = "board-mks-tinybee"
+armable = false
 
 [provenance]
 primary = "https://github.com/makerbase-mks/MKS-TinyBee"
@@ -20,7 +22,10 @@ fluidnc_evidence = "https://github.com/bdring/fluidnc-config-files/blob/main/off
 [safe_state]
 motion_enabled = false
 process_energy_enabled = false
-i2s_image = 0
+# Inferred from FluidNC's active-high StepStick disable outputs. This value is
+# deliberately not an arming claim until polarity and reset behavior pass HIL.
+i2s_image = 4681
+bench_verified = false
 
 [i2s_output]
 engine = 0

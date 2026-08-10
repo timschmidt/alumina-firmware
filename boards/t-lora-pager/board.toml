@@ -12,6 +12,7 @@ implementation = "late-stub"
 hardware_available = false
 service_core = 0
 realtime_core = 1
+armable = false
 
 [provenance]
 primary = "https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/master/docs/hardware/lilygo-t-lora-pager.md"

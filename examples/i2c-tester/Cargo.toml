@@ -17,13 +17,13 @@ name = "i2c-tester"
 path = "./src/bin/main.rs"
 
 [dependencies]
-esp-bootloader-esp-idf = { workspace = true }
-esp-hal                = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true, features = ["esp32s3"] }
+esp-hal                = { workspace = true, features = ["esp32s3"] }
 esp-alloc              = { workspace = true }
-esp-println            = { workspace = true }
+esp-println            = { workspace = true, features = ["esp32s3"] }
 log                    = { workspace = true }
 embassy-executor       = { workspace = true }
 embassy-time           = { workspace = true }
-esp-rtos               = { workspace = true }
+esp-rtos               = { workspace = true, features = ["esp-alloc", "esp-radio", "esp32s3"] }
 smoltcp                = { workspace = true }
 static_cell            = { workspace = true }

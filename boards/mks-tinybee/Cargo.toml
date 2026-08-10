@@ -1,6 +1,6 @@
 [package]
-name = "xtask"
-description = "Repository-local board, build, schema, and verification commands"
+name = "board-mks-tinybee"
+description = "Typed compile-time MKS TinyBee V1.x board package"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,7 @@ publish.workspace = true
 
 [dependencies]
 alumina-board.workspace = true
-board-mks-tinybee.workspace = true
-board-t-deck-pro.workspace = true
+alumina-protocol.workspace = true
 
 [lints]
 workspace = true
