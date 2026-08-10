@@ -17,6 +17,13 @@ auxiliaries, licensed-photo overlays, and explicit HIL promotion gates. There ar
 no deployed clients and no compatibility requirement: the old Alumina firmware
 and interface are functional references, not APIs to preserve.
 
+The first M3 foundation adds an explicit little-endian native protocol, bounded
+storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
+publication checkpoints, and a deterministic reboot/cache/prefetch simulator.
+The cache coordinator is instantiated only inside the core-0 service task; core
+1 has no filesystem handle. See the
+[protocol/storage simulation evidence](docs/evidence/M3-PROTOCOL-STORAGE-SIM.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:
@@ -109,6 +116,8 @@ firmware. Datasheets and upstream root metadata are retained under
   network, and compatibility policy.
 - [Architecture](docs/ARCHITECTURE.md) — dual-core runtime, resources, protocol,
   safety, motion, FOC, and exact-to-integer execution boundary.
+- [Native protocol](docs/PROTOCOL.md) — exact frame/message bytes, operation
+  families, storage bodies, and hard version behavior.
 - [Hyper integration](docs/HYPER-INTEGRATION.md) — precise roles for Hyperpath,
   Hypersolve, CSGRS, Hypergraphics, and optional Hyper crates.
 - [Distributed jobs and storage](docs/DISTRIBUTED-JOBS.md) — Wi-Fi clock models,

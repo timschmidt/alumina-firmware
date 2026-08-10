@@ -8,6 +8,8 @@ members = [
     "crates/alumina-protocol",
     "crates/alumina-runtime",
     "crates/alumina-safety",
+    "crates/alumina-sim",
+    "crates/alumina-storage",
     "drivers/embedded-bus-async",
     "drivers/sx126x-async-rs",
     "drivers/t-deck-pro-battery-async",
@@ -29,6 +31,8 @@ default-members = [
     "crates/alumina-protocol",
     "crates/alumina-runtime",
     "crates/alumina-safety",
+    "crates/alumina-sim",
+    "crates/alumina-storage",
     "drivers/embedded-bus-async",
     "xtask",
 ]
@@ -47,6 +51,8 @@ alumina-machine-ir = { path = "crates/alumina-machine-ir" }
 alumina-protocol = { path = "crates/alumina-protocol" }
 alumina-runtime = { path = "crates/alumina-runtime" }
 alumina-safety = { path = "crates/alumina-safety" }
+alumina-sim = { path = "crates/alumina-sim" }
+alumina-storage = { path = "crates/alumina-storage" }
 board-mks-tinybee = { path = "boards/mks-tinybee" }
 board-t-deck-pro = { path = "boards/t-deck-pro" }
 bt-hci = "0.6.0"
@@ -86,6 +92,7 @@ log = "0.4.27"
 nmea = { version = "0.5.0", default-features = false, features = ["GGA", "RMC", "VTG", "GSA", "GSV", "GLL", "TXT"] }
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
 rtt-target = { version = "0.6.2", features = ["defmt"] }
+sha2 = { version = "0.10.9", default-features = false }
 smoltcp = { version = "0.12.0", default-features = false, features = [
     "defmt",
     "medium-ethernet",

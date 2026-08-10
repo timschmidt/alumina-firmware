@@ -87,6 +87,14 @@ describes the attached machine.
   transaction and supplies a future local start cycle to every MCU. Starts are
   accepted only when clock uncertainty and lead time meet the job's declared
   synchronization tolerance.
+- Protocol V1 canonical 256-bit identities use SHA-256. The algorithm is fixed by
+  the exact schema version rather than negotiated per connection; browser
+  WebCrypto interoperability and ESP acceleration/software availability are
+  preferred over introducing a custom browser hash implementation.
+- MCU uploads use fixed-size sequential content-addressed chunks with only the
+  final chunk shorter. Resume begins at the first missing durable index. This
+  bounds firmware RAM and journal state; out-of-order upload complexity is not
+  carried into the first implementation.
 - A cached job may continue semi-autonomously after Wi-Fi loss. Its outputs,
   duration, safety conditions, local interlocks, and fault behavior are therefore
   complete before start. Distributed emergency stopping depends on a physically

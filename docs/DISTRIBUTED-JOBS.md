@@ -77,11 +77,27 @@ Core 0 owns the filesystem and exposes authenticated APIs to:
 - read/export a cached package for audit; and
 - delete unreferenced jobs while disarmed and idle.
 
+Protocol V1 uses SHA-256 content identities and a canonical `ACMF` V1 manifest
+hash stream. The manifest commits the object kind, complete object digest and
+length, fixed chunk size/count, and every ordered `(index, length, digest)`
+entry. Chunks arrive sequentially; a retry resumes at the first index not present
+in the durable checkpoint. The last chunk alone may be shorter. This sacrifices
+out-of-order upload in exchange for bounded MCU RAM, a constant-size coordinator,
+and a journal that can be reconstructed by a linear SD scan.
+
 Configuration and job metadata use copy-on-write/rename or an equivalent
 power-loss-safe commit. Upload, deletion, repair, and filesystem mutation are
 forbidden while armed. Raw source files may be cached by the browser elsewhere,
 but firmware storage APIs accept only machine-job packages and explicitly typed
 opaque user blobs that cannot be executed.
+
+The portable transaction model separates verification from durability: hashing
+produces an unforgeable-in-safe-Rust verified-chunk token; the backend writes and
+syncs the content-addressed blob and ordered journal entry; only then does it
+advance the checkpoint. Complete object/manifest hashes enter `publish-pending`,
+an atomic rename makes the manifest visible, and the upload journal is cleared
+last. A reset at any boundary therefore leaves either resumable/unreferenced
+bytes or a complete visible manifest, never a partially visible runnable object.
 
 Core 1 never reads SD. Before and during a run, core 0 verifies blocks and fills
 fixed internal-SRAM buffers through a credit-based boundary. Core 1 validates

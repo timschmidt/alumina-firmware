@@ -12,6 +12,7 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 
 mod hardware;
+pub mod service;
 
 use alumina_protocol::{DeviceCycle, Digest, FrameKind};
 use alumina_runtime::{
@@ -29,6 +30,7 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use hardware::selected;
+use service::StorageServiceState;
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
@@ -107,6 +109,9 @@ async fn service_task(resources: selected::ServiceResources, mut endpoint: Defau
         panic!("service executor started on the wrong core");
     }
 
+    // This coordinator and every future filesystem/backend handle live only in
+    // the core-0 task future. Core 1 receives verified owned blocks, never SD.
+    let storage = StorageServiceState::new();
     let mut sequence = 0_u32;
     let mut last_fault_generation = 0_u16;
     loop {
@@ -131,7 +136,7 @@ async fn service_task(resources: selected::ServiceResources, mut endpoint: Defau
             error!("RT fault code={} detail={}", fault.code, fault.detail);
         }
 
-        let _keep_tokens_core_local = &resources;
+        let _keep_service_state_core_local = (&resources, &storage);
         Timer::after(Duration::from_millis(100)).await;
     }
 }

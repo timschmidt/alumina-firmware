@@ -22,6 +22,8 @@ dependencies = [
  "alumina-board",
  "alumina-protocol",
  "alumina-runtime",
+ "alumina-safety",
+ "alumina-storage",
  "board-mks-tinybee",
  "board-t-deck-pro",
  "defmt 1.1.1",
@@ -58,6 +60,22 @@ dependencies = [
 [[package]]
 name = "alumina-safety"
 version = "0.1.0"
+
+[[package]]
+name = "alumina-sim"
+version = "0.1.0"
+dependencies = [
+ "alumina-protocol",
+ "alumina-storage",
+]
+
+[[package]]
+name = "alumina-storage"
+version = "0.1.0"
+dependencies = [
+ "alumina-protocol",
+ "sha2",
+]
 
 [[package]]
 name = "anyhow"

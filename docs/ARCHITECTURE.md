@@ -122,9 +122,10 @@ Use three independent channels so telemetry pressure cannot delay a stop request
 | `UrgentMailbox` | service/safety ISR to RT | Latest-value stop/hold/reset request; never waits behind motion data |
 | `TelemetryQueue<N>` | RT to service | Loss-aware snapshots/events; may decimate non-fault samples, never fault edges |
 
-Frames are `repr(C)`-compatible or otherwise have a fixed audited encoding. A
-frame carries protocol version, kind, length, sequence, machine clock/deadline,
-active configuration digest, payload, and integrity check where appropriate.
+Frames use explicit audited little-endian encoding; Rust `repr(C)` layout is
+never treated as wire bytes. A frame carries protocol version, kind, length,
+sequence, machine clock/deadline, active configuration digest, payload, and
+integrity check where appropriate.
 Variable-sized jobs live in fixed blocks from statically allocated pools, with
 explicit credits and ownership transfer. No frame contains a reference, pointer,
 `String`, `Vec`, trait object, or cross-core peripheral handle.
@@ -187,6 +188,7 @@ aluminafw/
 │   ├── alumina-control-ir/      # deterministic deployed graph subset
 │   ├── alumina-net/             # embassy-net web/API implementation
 │   ├── alumina-storage/         # immutable SD cache and RT prefetch
+│   ├── alumina-sim/             # virtual cache, power loss, service/RT timing
 │   ├── alumina-machine-ir/      # certified integer toolpath format/validator
 │   └── alumina-sim/             # host simulation and trace/replay
 ├── drivers/                     # imported T-Deck and generic async drivers

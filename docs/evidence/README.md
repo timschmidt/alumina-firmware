@@ -14,3 +14,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M2-BOARD-METADATA.md`](M2-BOARD-METADATA.md) — expanded board capabilities,
   electrical/timing/visual/HIL contracts, corrected T-Deck reset routing, and
   renewed host/ESP compile evidence.
+- [`M3-PROTOCOL-STORAGE-SIM.md`](M3-PROTOCOL-STORAGE-SIM.md) — exact native wire
+  foundations, resumable content-addressed transaction model, rebootable cache,
+  and bounded service/RT prefetch simulation.

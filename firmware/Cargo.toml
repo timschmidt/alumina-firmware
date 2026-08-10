@@ -34,6 +34,8 @@ board-t-deck-pro = [
 alumina-board.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
+alumina-safety.workspace = true
+alumina-storage.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }
 board-t-deck-pro = { workspace = true, optional = true }
 defmt.workspace = true
