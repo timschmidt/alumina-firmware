@@ -1,0 +1,105 @@
+schema = 1
+source_url = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+revision = "497f77e012c6493fc4beadea1cd278dd8918c486"
+source_tree = "2d6ce517623938f8a4c7c1b069e74680d7eb3be6"
+source_commit_date = "2026-07-14"
+imported_on = "2026-08-10"
+upstream_root_metadata = "imports/t-deck-async-drivers-rs/upstream-root"
+
+# The component trees were byte-identical immediately after copying. The only
+# subsequent edits are the integration-only Cargo.toml changes enumerated below.
+[[component]]
+source = "embedded-bus-async"
+destination = "drivers/embedded-bus-async"
+tree = "40cf38517a3343ff10be89e496754fba7cfc37d3"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "sx126x-async-rs"
+destination = "drivers/sx126x-async-rs"
+tree = "b48ee5267e7fa1143f15945b9b8ab6694cd31f63"
+license = "MIT OR Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "t-deck-pro-battery-async"
+destination = "drivers/t-deck-pro-battery-async"
+tree = "e1b9845172bf8be4b43d6db4c539a6497267ded7"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "t-deck-pro-epd-async"
+destination = "drivers/t-deck-pro-epd-async"
+tree = "5d401691a0339eb502ba979cbd36a80dac233242"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "t-deck-pro-gps-async"
+destination = "drivers/t-deck-pro-gps-async"
+tree = "02c326ee9cfc83edc0bc51466798f461ab767116"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "t-deck-pro-keyboard-async"
+destination = "drivers/t-deck-pro-keyboard-async"
+tree = "eb10c9ce95f9ddfe33a67dd47f487ba82cd608a6"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "t-deck-pro-lora-async"
+destination = "drivers/t-deck-pro-lora-async"
+tree = "e66d51f4fb5dafc35b7968f4b26f37d1aa67a406"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "t-deck-pro-touch-async"
+destination = "drivers/t-deck-pro-touch-async"
+tree = "ce932a78b5e825a8b895b5107b4d5b4c34cea768"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "i2c-tester"
+destination = "examples/i2c-tester"
+tree = "4bad394fc4514e77d03f352475665dde431367f3"
+license = "Apache-2.0"
+logic_modified = false
+
+[[component]]
+source = "patina"
+destination = "examples/patina"
+tree = "d332d097b1907ce24b31649b71501723a699052e"
+license = "Apache-2.0"
+logic_modified = false
+
+[[integration_change]]
+files = [
+    "drivers/t-deck-pro-battery-async/Cargo.toml",
+    "drivers/t-deck-pro-gps-async/Cargo.toml",
+    "drivers/t-deck-pro-keyboard-async/Cargo.toml",
+    "drivers/t-deck-pro-touch-async/Cargo.toml",
+    "examples/i2c-tester/Cargo.toml",
+    "examples/patina/Cargo.toml",
+]
+reason = "Replace upstream workspace-inherited author/license fields with their exact upstream Apache-2.0 metadata after relocation into the dual-licensed workspace."
+
+[[integration_change]]
+files = ["examples/patina/Cargo.toml"]
+reason = "Retarget five sibling path dependencies from ../ to ../../drivers after relocation; package identities and source logic are unchanged."
+
+[[integration_change]]
+files = [
+    "drivers/t-deck-pro-epd-async/Cargo.toml",
+    "drivers/t-deck-pro-lora-async/Cargo.toml",
+]
+reason = "Remove one trailing blank line at EOF so the imported manifests satisfy the repository whitespace gate."
+
+[[integration_change]]
+files = ["Cargo.toml", ".cargo/config.toml"]
+reason = "Register the imported crates and reproduce their pinned ESP32-S3 dependency and target settings without making ESP the host default target."

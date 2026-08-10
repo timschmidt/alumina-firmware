@@ -1,0 +1,6 @@
+delayed bug: Encountered anon const with inference variable args but no error reported
+disabled backtrace
+
+
+rustc version: 1.88.0-nightly (2ab28d2e7 2025-06-24) (1.88.0.0)
+platform: aarch64-apple-darwin

@@ -1,0 +1,44 @@
+[package]
+edition      = "2024"
+name         = "t-deck-pro-epd-async"
+rust-version = "1.88"
+version      = "0.1.0"
+license      = "Apache-2.0"
+authors      = ["Gemini", "Marcell Kovacs"]
+categories   = ["embedded", "hardware-support", "no-std"]
+keywords     = ["esp32", "t-deck", "e-paper", "embedded-graphics"]
+description  = "Async no-std UC8253 e-paper display driver for T-Deck Pro"
+readme       = "README.md"
+repository   = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+
+[lib]
+name = "t_deck_pro_epd_async"
+path = "src/lib.rs"
+
+[[example]]
+name = "simple_example"
+path = "examples/simple_example.rs"
+
+[dependencies]
+embassy-sync = { workspace = true }
+embedded-bus-async = { path = "../embedded-bus-async" }
+log = { workspace = true }
+embassy-time = { workspace = true }
+embassy-futures = { workspace = true }
+embedded-graphics = { workspace = true }
+embedded-hal-async = { workspace = true }
+esp-hal = { workspace = true }
+
+[dev-dependencies]
+critical-section = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-net = { workspace = true }
+embedded-io = { workspace = true }
+embedded-io-async = { workspace = true }
+esp-alloc = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true }
+esp-rtos = { workspace = true }
+esp-println = { workspace = true }
+heapless = { workspace = true }
+smoltcp = { workspace = true }
+static_cell = { workspace = true }

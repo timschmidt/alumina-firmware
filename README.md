@@ -18,12 +18,36 @@ The repository pins Rust 1.88. Run the portable checks from its root:
 
 ```console
 cargo fmt --all -- --check
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
 cargo xtask board list
 cargo xtask board check mks-tinybee-v1
 cargo xtask board check t-deck-pro
 ```
+
+The portable commands intentionally operate on the workspace's default members.
+The imported ESP32-S3 crates require the Espressif Xtensa toolchain and an
+explicit target:
+
+```console
+cargo +esp check --target xtensa-esp32s3-none-elf --locked --lib \
+  -p embedded-bus-async -p sx126x_async \
+  -p t-deck-pro-battery-async -p t-deck-pro-epd-async \
+  -p t-deck-pro-gps-async -p t-deck-pro-keyboard-async \
+  -p t-deck-pro-lora-async -p t-deck-pro-touch-async
+cargo +esp check --target xtensa-esp32s3-none-elf --locked --bins \
+  -p i2c-tester -p patina
+```
+
+## Imported T-Deck support
+
+The complete audited T-Deck snapshot is registered as workspace members under
+`drivers/` and `examples/`: shared async I²C/SPI buses, SX126x, battery/charger,
+e-paper, GPS, keyboard, LoRa, touch, the I²C tester, and the Patina integration
+firmware. Datasheets and upstream root metadata are retained under
+`imports/t-deck-async-drivers-rs/upstream-root/`. See the
+[machine-readable import record](imports/t-deck-async-drivers-rs.toml) and
+[M1 evidence](docs/evidence/M1-TDECK-IMPORT.md).
 
 ## Committed direction
 

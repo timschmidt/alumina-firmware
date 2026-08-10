@@ -6,9 +6,9 @@ kind = "copied-source"
 url = "https://github.com/timschmidt/t-deck-async-drivers-rs"
 revision = "497f77e012c6493fc4beadea1cd278dd8918c486"
 license = "Apache-2.0"
-destination = "drivers/* and examples/{i2c-tester,patina}"
-status = "import-pending"
-notes = "Every driver, example, document, and source file is imported with original metadata; integration-only path changes are recorded in imports/t-deck-async-drivers-rs.toml."
+destination = "drivers/*, examples/{i2c-tester,patina}, and imports/t-deck-async-drivers-rs/upstream-root"
+status = "imported"
+notes = "Every tracked driver, example, document, source file, and upstream root metadata file is preserved; integration-only manifest changes are recorded in imports/t-deck-async-drivers-rs.toml."
 
 [[source]]
 id = "sx126x-async-rs"
@@ -17,7 +17,7 @@ url = "https://github.com/timschmidt/t-deck-async-drivers-rs/tree/497f77e012c649
 revision = "497f77e012c6493fc4beadea1cd278dd8918c486"
 license = "MIT OR Apache-2.0"
 destination = "drivers/sx126x-async-rs"
-status = "import-pending"
+status = "imported"
 notes = "Component manifest carries its dual license independently of the source workspace default."
 
 [[source]]

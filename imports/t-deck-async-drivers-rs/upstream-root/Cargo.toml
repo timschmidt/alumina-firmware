@@ -1,0 +1,96 @@
+[workspace.package]
+edition = "2021"
+rust-version = "1.88"
+version = "0.1.0"
+license = "Apache-2.0"
+authors = ["Gemini", "Marcell Kovacs"]
+categories = ["embedded", "no-std", "asynchronous"]
+keywords = ["esp32", "t-deck-pro", "e-paper", "embedded-graphics"]
+publish = false
+
+[workspace]
+resolver = "2"
+members = [
+    "embedded-bus-async",
+    "t-deck-pro-battery-async",
+    "t-deck-pro-epd-async",
+    "t-deck-pro-gps-async",
+    "t-deck-pro-keyboard-async",
+    "t-deck-pro-lora-async",
+    "t-deck-pro-touch-async",
+    "sx126x-async-rs",
+    "i2c-tester",
+    "patina",
+]
+
+[workspace.dependencies]
+chrono = { version = "0.4.38", default-features = false, features = ["serde"] }
+critical-section = "1.2.0"
+embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-futures = "0.1.1"
+embassy-net = { version = "0.7.1", features = ["defmt", "dhcpv4", "medium-ethernet", "tcp", "udp"] }
+embassy-sync = "0.7.2"
+embassy-time = { version = "0.4.0", features = ["defmt"] }
+embedded-graphics = "0.8.1"
+embedded-hal = "1.0.0-rc.3"
+embedded-hal-async = "1.0.0-rc.3"
+embedded-io = { version = "0.7.1", features = ["defmt"] }
+embedded-io-async = { version = "0.7.0", features = ["defmt"] }
+esp-alloc = { version = "0.9.0", features = ["defmt"] }
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
+esp-hal = { version = "~1.0", features = ["defmt", "esp32s3", "unstable"] }
+esp-println = { version = "0.15.0", features = ["log-04", "esp32s3", "defmt-espflash"] }
+esp-rtos = { version = "0.2.0", features = [
+  "defmt",
+  "embassy",
+  "esp-alloc",
+  "esp-radio",
+  "esp32s3",
+] }
+esp-radio = { version = "0.17.0", features = [
+  "ble",
+  "coex",
+  "defmt",
+  "esp-alloc",
+  "esp32s3",
+  "smoltcp",
+  "unstable",
+  "wifi",
+] }
+smoltcp = { version = "0.12.0", default-features = false, features = [
+  "defmt",
+  "medium-ethernet",
+  "multicast",
+  "proto-dhcpv4",
+  "proto-dns",
+  "proto-ipv4",
+  "socket-dns",
+  "socket-icmp",
+  "socket-raw",
+  "socket-tcp",
+  "socket-udp",
+] }
+trouble-host = { version = "0.5.0", features = ["gatt"] }
+panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
+rtt-target = { version = "0.6.2", features = ["defmt"] }
+bt-hci = "0.6.0"
+defmt = "1.0.1"
+heapless = "0.8.0"
+log = "0.4.27"
+nmea = { version = "0.5.0", default-features = false, features = ["GGA", "RMC", "VTG", "GSA", "GSV", "GLL", "TXT"] }
+static_cell = "2.1.0"
+sx126x_async = { path = "sx126x-async-rs" }
+t-deck-pro-keyboard-async = { path = "t-deck-pro-keyboard-async" }
+
+[profile.dev]
+# Keep iterative firmware usable while retaining debug information.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "s"
+overflow-checks = false

@@ -1,0 +1,47 @@
+[package]
+edition      = "2024"
+name         = "t-deck-pro-lora-async"
+rust-version = "1.88"
+version      = "0.1.0"
+license      = "Apache-2.0"
+authors      = ["Gemini", "Marcell Kovacs"]
+categories   = ["embedded", "hardware-support", "no-std"]
+keywords     = ["esp32", "t-deck", "lora", "sx1262"]
+description  = "Async no-std SX1262 LoRa wrapper for T-Deck Pro"
+readme       = "README.md"
+repository   = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+
+[lib]
+name = "t_deck_pro_lora_async"
+path = "src/lib.rs"
+
+[[example]]
+name = "example_receiver"
+path = "examples/example_receiver.rs"
+
+[[example]]
+name = "example_sender"
+path = "examples/example_sender.rs"
+
+[dependencies]
+esp-alloc = { workspace = true }
+embedded-bus-async = { path = "../embedded-bus-async" }
+sx126x_async = { workspace = true }
+log = { workspace = true }
+embassy-time = { workspace = true }
+embassy-sync = { workspace = true }
+embedded-hal-async = { workspace = true }
+esp-hal = { workspace = true }
+
+[dev-dependencies]
+critical-section = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-net = { workspace = true }
+embedded-io = { workspace = true }
+embedded-io-async = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true }
+esp-rtos = { workspace = true }
+esp-println = { workspace = true }
+heapless = { workspace = true }
+smoltcp = { workspace = true }
+static_cell = { workspace = true }

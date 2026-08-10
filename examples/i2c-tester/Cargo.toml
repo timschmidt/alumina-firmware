@@ -1,0 +1,29 @@
+[package]
+edition      = "2024"
+name         = "i2c-tester"
+rust-version = "1.88"
+version      = "0.1.0"
+license      = "Apache-2.0"
+authors      = ["Gemini", "Marcell Kovacs"]
+categories   = ["embedded", "hardware-support", "no-std"]
+keywords     = ["esp32", "t-deck", "i2c", "scanner"]
+description  = "T-Deck Pro asynchronous I2C bus scanner firmware"
+readme       = "README.md"
+repository   = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+publish      = false
+
+[[bin]]
+name = "i2c-tester"
+path = "./src/bin/main.rs"
+
+[dependencies]
+esp-bootloader-esp-idf = { workspace = true }
+esp-hal                = { workspace = true }
+esp-alloc              = { workspace = true }
+esp-println            = { workspace = true }
+log                    = { workspace = true }
+embassy-executor       = { workspace = true }
+embassy-time           = { workspace = true }
+esp-rtos               = { workspace = true }
+smoltcp                = { workspace = true }
+static_cell            = { workspace = true }

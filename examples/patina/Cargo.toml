@@ -1,0 +1,61 @@
+[package]
+name = "patina"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+authors = ["Gemini", "Marcell Kovacs"]
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["esp32", "t-deck", "firmware", "e-paper"]
+description = "Async integration firmware for the LILYGO T-Deck Pro"
+readme = "README.md"
+repository = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+publish = false
+
+[[bin]]
+name = "patina"
+path = "./src/bin/main.rs"
+test = false
+
+[[test]]
+harness = false
+name = "hello_test"
+
+[lib]
+test = false
+
+[dependencies]
+esp-hal = { workspace = true }
+esp-rtos = { workspace = true }
+defmt = { workspace = true }
+esp-bootloader-esp-idf = { workspace = true }
+embassy-net = { workspace = true }
+embedded-io = { workspace = true }
+embedded-io-async = { workspace = true }
+embedded-graphics = { workspace = true }
+esp-alloc = { workspace = true }
+panic-rtt-target = { workspace = true }
+rtt-target = { workspace = true }
+bt-hci = { workspace = true }
+embassy-executor = { workspace = true }
+embassy-sync = { workspace = true }
+embassy-time = { workspace = true }
+esp-radio = { workspace = true }
+smoltcp = { workspace = true }
+trouble-host = { workspace = true }
+critical-section = { workspace = true }
+static_cell = { workspace = true }
+heapless = { workspace = true }
+embedded-bus-async = { path = "../../drivers/embedded-bus-async" }
+t-deck-pro-touch-async = { path = "../../drivers/t-deck-pro-touch-async" }
+t-deck-pro-epd-async = { path = "../../drivers/t-deck-pro-epd-async" }
+t-deck-pro-keyboard-async = { path = "../../drivers/t-deck-pro-keyboard-async" }
+t-deck-pro-battery-async = { path = "../../drivers/t-deck-pro-battery-async" }
+
+[dev-dependencies]
+embedded-test = { version = "0.7.0", features = [
+  "defmt",
+  "embassy",
+  "external-executor",
+  "xtensa-semihosting",
+] }

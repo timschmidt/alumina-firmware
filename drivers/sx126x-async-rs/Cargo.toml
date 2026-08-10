@@ -1,0 +1,22 @@
+[package]
+name = "sx126x_async"
+version = "0.3.0"
+authors = ["Henk Oordt <hd@oordt.dev>", "Marcell Kovacs", "Gemini"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Asynchronous no-std driver for the Semtech SX126x LoRa transceivers"
+keywords = ["embedded", "lora", "sx126x", "lorawan", "async"]
+categories = ["embedded", "hardware-support", "no-std"]
+readme = "README.md"
+repository = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+exclude = [
+    "/.cargo",
+    "/target",
+    "/.gitignore",
+]
+
+[dependencies]
+embedded-hal = "1.0.0-rc.3"
+embedded-hal-async = "1.0.0-rc.3"
+critical-section = "^1"
+log = { version = "0.4.20" }

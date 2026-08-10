@@ -1,14 +1,14 @@
-[alias]
-xtask = "run --package xtask --"
-
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor --chip esp32s3"
+
+[env]
+
+[build]
 rustflags = [
-    "-C",
-    "link-arg=-nostartfiles",
-    "-C",
-    "link-arg=-Tdefmt.x",
+  "-C", "link-arg=-nostartfiles",
 ]
+
+target = "xtensa-esp32s3-none-elf"
 
 [unstable]
 build-std = ["alloc", "core"]
