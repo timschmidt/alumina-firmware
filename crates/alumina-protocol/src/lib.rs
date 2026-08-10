@@ -363,6 +363,8 @@ pub enum Operation {
     StorageDelete = 0x0907,
     /// Verify cache integrity and report orphan/corrupt records.
     StorageScrub = 0x0908,
+    /// Explicitly format and persist one exact raw cache region.
+    StorageProvision = 0x0909,
     /// Fetch bounded executor, queue, memory, temperature, and radio health.
     HealthSnapshot = 0x0a01,
     /// Device-originated latched fault record.
@@ -435,7 +437,8 @@ impl Operation {
             | Self::StorageFinalize
             | Self::StorageRead
             | Self::StorageDelete
-            | Self::StorageScrub => FrameKind::Storage,
+            | Self::StorageScrub
+            | Self::StorageProvision => FrameKind::Storage,
             Self::HealthSnapshot => FrameKind::Health,
             Self::FaultEvent | Self::FaultResetRequest | Self::FaultResetConfirm => {
                 FrameKind::Fault
@@ -490,6 +493,7 @@ impl Operation {
             0x0906 => Some(Self::StorageRead),
             0x0907 => Some(Self::StorageDelete),
             0x0908 => Some(Self::StorageScrub),
+            0x0909 => Some(Self::StorageProvision),
             0x0a01 => Some(Self::HealthSnapshot),
             0x0b01 => Some(Self::FaultEvent),
             0x0b02 => Some(Self::FaultResetRequest),
@@ -940,7 +944,11 @@ mod tests {
                 Some(operation)
             );
         }
-        assert_eq!(Operation::from_wire(0x0909), None);
+        assert_eq!(
+            Operation::from_wire(0x0909),
+            Some(Operation::StorageProvision)
+        );
+        assert_eq!(Operation::from_wire(0x090a), None);
     }
 
     #[test]

@@ -59,10 +59,21 @@ modern SD V2 card, enables command/data CRC, derives capacity from CSD, and
 provides bounded single-block read/write/sync at 10 MHz. TinyBee owns SPI2 on
 GPIO 18/23/19 with CS 5; T-Deck Pro owns GPIO 36/33/47 with CS 48 and keeps the
 shared EPD/LoRa devices inactive. Boot identifies a card on core 0 and reports
-`detached`, or `faulted` on failure. It still returns `Unsupported` for mutation
-because no stored configuration has selected a raw cache region, and it never
-formats implicitly. See the
+`detached`, or `faulted` on failure. See the historical
 [SD SPI transport evidence](docs/evidence/M3-SD-SPI-TRANSPORT.md).
+
+Cache placement is now explicit and persistent. Boot reads only fixed raw blocks
+2046–2047; foreign bytes mean unprovisioned, recognizable damaged Alumina bytes
+mean faulted, and a valid hashed locator selects one exact region whose anchor
+identity and complete log must replay. `StorageProvision` binds destructive
+formatting to the authenticated request's observed card size, old generation and
+media ID, exact new interval, fresh ID, and recovery intent. A 1 MiB front guard
+keeps the locators outside conventional primary partition metadata and their
+fixed placement avoids GPT's card-tail backup sectors. Current physical images
+remain in safety `Boot`, so the route is correctly `ForbiddenState` until core 1
+establishes and reports safe outputs;
+there is still no implicit format or HIL claim. See the
+[cache-provisioning evidence](docs/evidence/M3-CACHE-PROVISIONING.md).
 
 ## Developer checks
 

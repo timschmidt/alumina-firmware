@@ -29,3 +29,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-SD-SPI-TRANSPORT.md`](M3-SD-SPI-TRANSPORT.md) — clean-room bounded SD
   SPI protocol, CRC/address/capacity handling, real cache-media integration, and
   TinyBee/T-Deck Pro core-0 composition.
+- [`M3-CACHE-PROVISIONING.md`](M3-CACHE-PROVISIONING.md) — explicit hashed
+  region locators, canonical destructive authorization, boot mount/recovery,
+  authenticated status/dispatch, and power-cut simulation.

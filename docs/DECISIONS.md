@@ -135,9 +135,14 @@ describes the attached machine.
 - An authenticated endpoint must not acknowledge volatile bytes as durable SD
   state. The authoritative V1 cache is an explicitly provisioned raw SD region
   with alternating hashed anchors and synchronized hash-chained records, not a
-  FAT rename protocol. Until a physical board adapter mounts that backend,
-  storage mutation returns native `Unsupported` and status reports
-  `backend: "unavailable"` plus `mutation_available: false`.
+  FAT rename protocol. Two fixed alternating hashed locators at blocks
+  2046–2047 persist the exact region, card capacity, media identity, policy, and
+  generation outside conventional primary and GPT card-tail backup metadata
+  locations. Boot may mount that record but cannot choose or format a region.
+  Formatting requires the authenticated canonical `StorageProvision` request
+  and remains subject to core-1 safety/job admission; current board images
+  therefore discover/mount but do not format while their safety state remains
+  `Boot`.
 - A later human-readable exchange filesystem, if useful, is a separate
   non-authoritative partition. Its metadata can never make a job executable.
 

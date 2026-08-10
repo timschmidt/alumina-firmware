@@ -65,7 +65,7 @@ visible in generated metadata solely to explain `unsupported-core-count`.
 | TWAI/CAN | controller, bit timing, filters, alerts, timestamping, queue policy | Raw CAN frames in M4/M10; higher protocols are adapters |
 | USB | Serial/JTAG and USB OTG/device/host capabilities where fitted | Diagnostics first; class support staged per S3/S2/P4 board |
 | Ethernet | MAC/RMII and external SPI Ethernet device profiles | After first Wi-Fi release, driven by selected industrial board |
-| SD/storage | SPI SD, SDMMC where fitted, flash partitions, immutable assets/config/job caches | TinyBee and T-Deck SPI SD identify/CRC/block I/O compile; provisioning, HIL, resumable mutation, and verified prefetch remain |
+| SD/storage | SPI SD, SDMMC where fitted, flash partitions, immutable assets/config/job caches | TinyBee and T-Deck SPI SD identify/CRC/block I/O plus fixed-locator discovery/mount/provision compile; safe-output enablement, HIL, verified prefetch, list/read, and lifecycle operations remain |
 | LCD/camera/media | LCD/CAM/parallel interfaces, frame buffers, camera and display device profiles | T-Deck EPD via SPI first; camera/LCD boards are independent packages |
 | Crypto/security | RNG, AES, SHA, RSA/ECC/HMAC where fitted, eFuse, secure boot, flash encryption, signature verification | Use for platform security; expose safe services, not raw key/eFuse access |
 | Radio | Wi-Fi, BLE, ESP-NOW, low-level IEEE 802.15.4 where chip-supported | Wi-Fi first; BLE provisioning/ESP-NOW/802.15.4 staged by board and coexistence limits |

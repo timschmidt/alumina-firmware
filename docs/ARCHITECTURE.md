@@ -149,14 +149,21 @@ mask interrupts on core 1.
 
 `GET /api/v1/storage` returns an authenticated, response-signed JSON status. An
 identified but unprovisioned card is `detached`; failed identification is
-`faulted`; mutation remains false in either state.
+`faulted`. Status distinguishes physical blocks, selected raw-region blocks,
+locator generation/media ID, degraded locator/anchor recovery, and upload versus
+provision mutation availability.
 `POST /api/v1/storage` accepts only a complete native frame and response-signs
 the native result. It checks outer/operation lengths, directions, storage-plan
-structure, chunk size, and chunk SHA-256. Valid begin/chunk/finalize requests
-return `Unsupported` until stored configuration explicitly selects and mounts a
-valid raw cache region. Both first boards now compose the bounded async SD-SPI
-transport, but card identification never selects or formats media and no in-RAM
-success acknowledgement is substituted for durable storage.
+structure, chunk size, and chunk SHA-256. Boot reads the two fixed hashed
+provisioning locators at blocks 2046–2047 and mounts only the exact selected raw
+region after its media identity and complete committed log replay. Foreign
+locator bytes remain detached; damaged recognizable locators fail closed.
+`StorageProvision` is the only formatter: its 112-byte canonical request binds
+card capacity, expected generation/current ID, exact new interval, fresh ID, and
+explicit untrusted-locator recovery intent under SHA-256. The service safety
+gate still forbids every format/upload while booting, armed, energized, or
+serving real-time work, and no in-RAM success acknowledgement substitutes for
+durable storage.
 
 ### Cross-core messages
 
@@ -425,11 +432,13 @@ scheduled resource commands.
 Core 0 stores content-addressed job chunks and atomically published manifests in
 an explicitly provisioned raw SD cache region, then prefetches verified blocks
 into fixed internal-SRAM queues. The cache uses alternating hashed anchors and a
-hash-chained append log, not filesystem rename semantics. Core 1 never opens
-storage or trusts media metadata. Writes, compaction, and deletion are idle-only;
-reads during a run are bounded and qualified against motion load. A separate
-human-readable filesystem partition may be added later, but is not an executable
-job authority.
+hash-chained append log, not filesystem rename semantics. Alternating hashed
+locators in fixed blocks 2046–2047 persist the exact region independently of
+filesystem metadata; regions begin no earlier than block 2048. Core 1 never
+opens storage or trusts media metadata. Writes, compaction, and deletion are
+idle-only; reads during a run are bounded and qualified against motion load. A
+separate human-readable filesystem partition may be added later, but is not an
+executable job authority.
 
 For a distributed job, the UI maintains one measured affine mapping from its
 monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and

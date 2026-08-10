@@ -55,13 +55,13 @@ are device events; other V1 operations are correlated request/response pairs.
 | command `0x06xx` | scheduled batch, diagnostic lease/release |
 | telemetry `0x07xx` | subscribe, unsubscribe, event |
 | network `0x08xx` | status, scan, join, leave, recover protected AP |
-| storage `0x09xx` | status, list, begin, put chunk, finalize, read, delete, scrub |
+| storage `0x09xx` | status, list, begin, put chunk, finalize, read, delete, scrub, explicit provision |
 | health `0x0axx` | bounded health snapshot |
 | fault `0x0bxx` | fault event, reset request, physical/policy confirmation |
 | waveform `0x0cxx` | configure, arm, chunk, stop |
 | update `0x0dxx` | inspect, begin, put chunk, finalize, commit, rollback |
 
-The Rust enum assigns all 48 values explicitly and rejects every unassigned
+The Rust enum assigns all 49 values explicitly and rejects every unassigned
 number. Operation-specific bodies are added only with fixed budgets and golden
 browser/native/firmware fixtures.
 
@@ -72,10 +72,12 @@ algorithm negotiation. The current binary bodies are:
 
 | Operation body | Fixed bytes | Variable bytes |
 | --- | ---: | --- |
+| storage status response | 112 | none |
 | begin/resume upload plan | 96 | none |
 | put-chunk prefix | 52 | exact declared chunk bytes |
 | upload progress | 32 | none |
 | finalize request | 8 | none |
+| destructive cache provision | 112 | none |
 
 An upload plan commits a nonzero upload ID, typed object, complete content
 digest/length, canonical manifest digest, fixed chunk size, and exact derived
@@ -83,6 +85,44 @@ count. Chunks are sequential and independently hashed; the final chunk alone may
 be short. The canonical `ACMF` V1 manifest hash commits its schema, object facts,
 layout, and each ordered chunk descriptor. Mutation is rejected during every
 armed/energized state and while deterministic execution owns storage service.
+
+The provision body begins with `ALMPRV01`, requires an explicit destructive
+format flag, and binds the exact observed device block count, expected locator
+generation/current media ID, new raw region, fresh media ID, and recovery intent
+under a canonical SHA-256 confirmation. A stale request cannot silently reformat
+a later generation. The recovery flag is required only when Alumina locator
+bytes are recognizable but no valid prior generation can be trusted.
+
+The 112-byte storage-status body is canonical little-endian:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 1 | backend availability |
+| 1 | 1 | upload mutation currently admitted |
+| 2 | 1 | degraded cache anchor |
+| 3 | 1 | upload progress present |
+| 4 | 1 | degraded provisioning locator |
+| 5 | 1 | destructive provision currently admitted |
+| 6 | 1 | coarse provisioning/media fault |
+| 7 | 1 | bit 0 region present; bit 1 media ID present |
+| 8 | 8 | physical device blocks |
+| 16 | 8 | selected region start, zero-filled when absent |
+| 24 | 8 | selected region blocks |
+| 32 | 8 | free append blocks |
+| 40 | 8 | last cache-record sequence |
+| 48 | 8 | trusted locator generation |
+| 56 | 4 | published object count |
+| 60 | 4 | reserved zero |
+| 64 | 16 | logical media ID, zero-filled when absent |
+| 80 | 32 | upload progress, zero-filled when absent |
+
+The destructive provision request uses offsets 0/8/10/12 for eight-byte magic,
+version, flags, and reserved zero; 16/24 for expected device blocks/generation;
+32 for the expected 16-byte current ID (zero only at generation zero); 48/56
+for new region start/count; 64 for the fresh 16-byte ID; and 80 for SHA-256 over
+the preceding 80 bytes. Flag bit zero confirms destructive format and bit one
+confirms recovery of recognizable but untrusted locator bytes; no other flag is
+assigned.
 
 ## Encoding and security boundary
 

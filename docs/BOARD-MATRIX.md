@@ -58,10 +58,12 @@ labels represent bits in an I²S-driven output chain.
 | Servo/material input | real-time `Gpio(2)` hazardous output and `Gpio(35)` input |
 
 The SPI SD route now has a clean-room async transport and board composition at
-`SupportLevel::Compiles`. It identifies capacity on core 0 but remains detached
-until stored configuration provisions a raw cache region; no bench claim or
-implicit format is made. GPIO34's TH2/SD-detect multiplex remains unresolved for
-HIL and is not crossed from the real-time domain.
+`SupportLevel::Compiles`. Core 0 identifies capacity, reads only fixed locator
+blocks 2046–2047, and mounts a locator-selected region after identity/log replay.
+Explicit authenticated provisioning exists, but current firmware safety remains
+in `Boot`, so physical formatting is not admitted until safe-output bring-up.
+There is no bench claim or implicit format. GPIO34's TH2/SD-detect multiplex
+remains unresolved for HIL and is not crossed from the real-time domain.
 
 ### I²S output mapping
 
@@ -138,10 +140,11 @@ a driver or bench claim; exact fixture options remain an identity HIL gate.
 | vibration motor | real-time hazardous GPIO2 | safe state and polarity require HIL |
 
 The SD route now composes and identifies at `SupportLevel::Compiles`, while
-holding EPD and LoRa inactive on the shared SPI bus. It remains unprovisioned and
-unqualified. Audio, IMU/light, optional modem, vibration, and other
-fitted/optional functions become supported only through separate reviewed
-drivers and the revision-specific peripheral suite.
+holding EPD and LoRa inactive on the shared SPI bus. It discovers/mounts the same
+explicit card-resident locator schema and remains unqualified; current boot
+safety prevents destructive provisioning on-device. Audio, IMU/light, optional
+modem, vibration, and other fitted/optional functions become supported only
+through separate reviewed drivers and the revision-specific peripheral suite.
 
 ## MKS ESP32 FOC V1.0 model
 

@@ -5,6 +5,7 @@ use alumina_protocol::Digest;
 use sha2::{Digest as _, Sha256};
 
 pub mod media;
+pub mod provisioning;
 
 /// Magic identifying the canonical ordered chunk-manifest hash stream.
 pub const MANIFEST_MAGIC: [u8; 4] = *b"ACMF";

@@ -71,7 +71,7 @@ pub struct MediaRegion {
 }
 
 impl MediaRegion {
-    fn validate(self, device_blocks: u64) -> Result<(), MediaGeometryError> {
+    pub(crate) fn validate(self, device_blocks: u64) -> Result<(), MediaGeometryError> {
         if self.block_count < MINIMUM_REGION_BLOCKS {
             return Err(MediaGeometryError::RegionTooSmall);
         }
@@ -321,6 +321,16 @@ where
     /// Returns the owned device, including after a failed mount/write.
     pub fn into_device(self) -> D {
         self.device
+    }
+
+    /// Exact physical device capacity currently visible through the adapter.
+    pub fn device_block_count(&self) -> u64 {
+        self.device.block_count()
+    }
+
+    /// Exact configured raw-media interval.
+    pub const fn region(&self) -> MediaRegion {
+        self.region
     }
 
     /// Current state without performing I/O.

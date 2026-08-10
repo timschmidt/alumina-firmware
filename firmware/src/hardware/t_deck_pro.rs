@@ -1,6 +1,7 @@
 use alumina_board::BoardPackage;
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
-use alumina_service::UnprovisionedStorageBackend;
+use alumina_service::CACHE_LIMITS;
+use alumina_storage::provisioning::ProvisionedCache;
 use defmt::{info, warn};
 use embassy_time::Delay;
 use esp_hal::gpio::{Level, Output, OutputConfig};
@@ -18,7 +19,7 @@ use super::RuntimeResources;
 use crate::storage::EspSdSpiBus;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
-pub type StorageBackend = UnprovisionedStorageBackend<StorageCard>;
+pub type StorageBackend = ProvisionedCache<StorageCard>;
 
 /// Core-0 tokens for every currently imported T-Deck peripheral path.
 #[allow(dead_code, reason = "tokens are reserved for staged service actors")]
@@ -133,11 +134,19 @@ impl ServiceResources {
         match card.initialize().await {
             Ok(card_info) => {
                 info!("SD card identified: blocks={}", card_info.block_count);
-                UnprovisionedStorageBackend::identified(card, card_info.block_count)
+                let mut cache = ProvisionedCache::new(card, CACHE_LIMITS);
+                match cache.discover().await {
+                    Ok(status) => info!(
+                        "SD cache discovery complete: generation={}",
+                        status.locator_generation
+                    ),
+                    Err(_) => warn!("SD cache discovery failed closed"),
+                }
+                cache
             }
             Err(_) => {
                 warn!("SD card identification failed; cache remains faulted");
-                UnprovisionedStorageBackend::faulted(card)
+                ProvisionedCache::transport_faulted(card, CACHE_LIMITS)
             }
         }
     }

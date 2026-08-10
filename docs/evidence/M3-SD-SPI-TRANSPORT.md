@@ -122,3 +122,8 @@ cannot acknowledge uploads or execute cached data. HIL must then test real cards
 on both boards, cut power at every raw-media barrier, remove cards during every
 phase, measure concurrent Wi-Fi/SD load and core-1 latency, and retain the
 non-armable board qualification.
+
+This was the exact boundary at this checkpoint. The subsequent
+[`M3-CACHE-PROVISIONING.md`](M3-CACHE-PROVISIONING.md) milestone implements the
+portable locator/provision/mount path; it does not retroactively add HIL evidence
+to this transport checkpoint.

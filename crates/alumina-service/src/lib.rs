@@ -9,7 +9,11 @@ use alumina_protocol::{
 };
 use alumina_safety::SafetyState;
 use alumina_storage::media::{
-    AsyncBlockDevice, CacheMedia, MediaAvailability, MediaError, MediaStatus,
+    AsyncBlockDevice, CacheMedia, MediaAvailability, MediaError, MediaId, MediaRegion, MediaStatus,
+};
+use alumina_storage::provisioning::{
+    CacheProvisionRequest, CacheProvisionRequestError, ProvisionedCache,
+    ProvisionedCacheAvailability, ProvisionedCacheError, ProvisionedCacheStatus, ProvisioningFault,
 };
 use alumina_storage::{
     CacheLimits, ChunkUploadHeader, Error as StorageError, FinalizeUploadRequest, MutationContext,
@@ -25,9 +29,9 @@ pub const CACHE_LIMITS: CacheLimits = CacheLimits {
 };
 
 /// Largest service response, including a native frame or bounded JSON status.
-pub const MAX_SERVICE_RESPONSE_BYTES: usize = 192;
+pub const MAX_SERVICE_RESPONSE_BYTES: usize = 384;
 /// Exact native V1 storage-status body length.
-pub const STORAGE_BACKEND_STATUS_WIRE_BYTES: usize = 72;
+pub const STORAGE_BACKEND_STATUS_WIRE_BYTES: usize = 112;
 
 const MAX_NATIVE_PAYLOAD_BYTES: usize = MAX_AUTHENTICATED_BODY_BYTES - FrameHeader::WIRE_LEN;
 const INVALID_NATIVE_FRAME: &[u8] = b"{\"error\":\"invalid-native-frame\"}";
@@ -184,6 +188,18 @@ pub struct StorageBackendStatus {
     pub availability: StorageBackendAvailability,
     /// Service and safety state currently admit a durable mutation.
     pub mutation_available: bool,
+    /// Safety and backend state currently admit explicit destructive provisioning.
+    pub provision_available: bool,
+    /// Coarse reason the backend is faulted.
+    pub fault: ProvisioningFault,
+    /// Complete physical device capacity, independent of selected region.
+    pub device_blocks: u64,
+    /// Monotonic trusted locator generation, zero when no locator is trusted.
+    pub locator_generation: u64,
+    /// Exact raw region start when a locator/configuration is present.
+    pub region_start_block: Option<u64>,
+    /// Stable media identity when a locator or mounted anchor is present.
+    pub media_id: Option<MediaId>,
     /// Total blocks in the explicit cache region.
     pub total_blocks: u64,
     /// Append capacity remaining before compaction.
@@ -196,6 +212,8 @@ pub struct StorageBackendStatus {
     pub upload: Option<UploadProgress>,
     /// One anchor was torn and the prior complete anchor was selected.
     pub degraded_anchor: bool,
+    /// One expected fixed provisioning locator is absent or corrupt.
+    pub degraded_locator: bool,
 }
 
 impl StorageBackendStatus {
@@ -206,12 +224,25 @@ impl StorageBackendStatus {
         encoded[1] = u8::from(self.mutation_available);
         encoded[2] = u8::from(self.degraded_anchor);
         encoded[3] = u8::from(self.upload.is_some());
-        encoded[8..16].copy_from_slice(&self.total_blocks.to_le_bytes());
-        encoded[16..24].copy_from_slice(&self.free_blocks.to_le_bytes());
-        encoded[24..32].copy_from_slice(&self.last_sequence.to_le_bytes());
-        encoded[32..36].copy_from_slice(&self.published_objects.to_le_bytes());
+        encoded[4] = u8::from(self.degraded_locator);
+        encoded[5] = u8::from(self.provision_available);
+        encoded[6] = self.fault as u8;
+        encoded[7] =
+            u8::from(self.region_start_block.is_some()) | (u8::from(self.media_id.is_some()) << 1);
+        encoded[8..16].copy_from_slice(&self.device_blocks.to_le_bytes());
+        if let Some(region_start) = self.region_start_block {
+            encoded[16..24].copy_from_slice(&region_start.to_le_bytes());
+        }
+        encoded[24..32].copy_from_slice(&self.total_blocks.to_le_bytes());
+        encoded[32..40].copy_from_slice(&self.free_blocks.to_le_bytes());
+        encoded[40..48].copy_from_slice(&self.last_sequence.to_le_bytes());
+        encoded[48..56].copy_from_slice(&self.locator_generation.to_le_bytes());
+        encoded[56..60].copy_from_slice(&self.published_objects.to_le_bytes());
+        if let Some(media_id) = self.media_id {
+            encoded[64..80].copy_from_slice(&media_id.0);
+        }
         if let Some(progress) = self.upload {
-            encoded[40..72].copy_from_slice(&progress.encode());
+            encoded[80..112].copy_from_slice(&progress.encode());
         }
         encoded
     }
@@ -225,6 +256,15 @@ impl StorageBackendStatus {
 pub trait StorageBackend {
     /// Current media facts without performing I/O.
     fn status(&self) -> StorageBackendStatus;
+
+    /// Explicitly formats and persists one exact cache region.
+    async fn provision(
+        &mut self,
+        _request: CacheProvisionRequest,
+        _context: MutationContext,
+    ) -> Result<(), StatusCode> {
+        Err(StatusCode::Unsupported)
+    }
 
     /// Begins or idempotently resumes one durable declaration.
     async fn begin_upload(
@@ -258,94 +298,19 @@ impl StorageBackend for UnavailableStorageBackend {
         StorageBackendStatus {
             availability: StorageBackendAvailability::Unavailable,
             mutation_available: false,
+            provision_available: false,
+            fault: ProvisioningFault::None,
+            device_blocks: 0,
+            locator_generation: 0,
+            region_start_block: None,
+            media_id: None,
             total_blocks: 0,
             free_blocks: 0,
             last_sequence: 0,
             published_objects: 0,
             upload: None,
             degraded_anchor: false,
-        }
-    }
-
-    async fn begin_upload(
-        &mut self,
-        _plan: UploadPlan,
-        _context: MutationContext,
-    ) -> Result<UploadProgress, StatusCode> {
-        Err(StatusCode::Unsupported)
-    }
-
-    async fn put_chunk(
-        &mut self,
-        _header: ChunkUploadHeader,
-        _bytes: &[u8],
-        _context: MutationContext,
-    ) -> Result<UploadProgress, StatusCode> {
-        Err(StatusCode::Unsupported)
-    }
-
-    async fn finalize_upload(
-        &mut self,
-        _request: FinalizeUploadRequest,
-        _context: MutationContext,
-    ) -> Result<PublishedObject, StatusCode> {
-        Err(StatusCode::Unsupported)
-    }
-}
-
-/// Owns an identified or faulted physical device until a cache region is
-/// explicitly provisioned. Card detection alone never enables mutation.
-pub struct UnprovisionedStorageBackend<D> {
-    device: D,
-    availability: StorageBackendAvailability,
-    total_blocks: u64,
-}
-
-impl<D> UnprovisionedStorageBackend<D> {
-    /// Records an identified card without selecting or formatting a cache region.
-    pub fn identified(device: D, total_blocks: u64) -> Self {
-        Self {
-            device,
-            availability: if total_blocks == 0 {
-                StorageBackendAvailability::Faulted
-            } else {
-                StorageBackendAvailability::Detached
-            },
-            total_blocks,
-        }
-    }
-
-    /// Retains ownership after initialization failed, with no trusted capacity.
-    pub const fn faulted(device: D) -> Self {
-        Self {
-            device,
-            availability: StorageBackendAvailability::Faulted,
-            total_blocks: 0,
-        }
-    }
-
-    /// Returns the physical device for a later explicit provisioning flow.
-    pub fn into_device(self) -> D {
-        self.device
-    }
-
-    /// Gives the sole core-0 owner mutable access for card recovery/provisioning.
-    pub fn device_mut(&mut self) -> &mut D {
-        &mut self.device
-    }
-}
-
-impl<D> StorageBackend for UnprovisionedStorageBackend<D> {
-    fn status(&self) -> StorageBackendStatus {
-        StorageBackendStatus {
-            availability: self.availability,
-            mutation_available: false,
-            total_blocks: self.total_blocks,
-            free_blocks: 0,
-            last_sequence: 0,
-            published_objects: 0,
-            upload: None,
-            degraded_anchor: false,
+            degraded_locator: false,
         }
     }
 
@@ -380,7 +345,13 @@ where
     D: AsyncBlockDevice,
 {
     fn status(&self) -> StorageBackendStatus {
-        media_status(self.status())
+        media_status(
+            self.status(),
+            self.device_block_count(),
+            self.region(),
+            0,
+            false,
+        )
     }
 
     async fn begin_upload(
@@ -415,7 +386,64 @@ where
     }
 }
 
-fn media_status(status: MediaStatus) -> StorageBackendStatus {
+impl<D> StorageBackend for ProvisionedCache<D>
+where
+    D: AsyncBlockDevice,
+{
+    fn status(&self) -> StorageBackendStatus {
+        provisioned_cache_status(self.status())
+    }
+
+    async fn provision(
+        &mut self,
+        request: CacheProvisionRequest,
+        context: MutationContext,
+    ) -> Result<(), StatusCode> {
+        ProvisionedCache::provision(self, request, context)
+            .await
+            .map(|_| ())
+            .map_err(provisioned_cache_error_status)
+    }
+
+    async fn begin_upload(
+        &mut self,
+        plan: UploadPlan,
+        context: MutationContext,
+    ) -> Result<UploadProgress, StatusCode> {
+        ProvisionedCache::begin_upload(self, plan, context)
+            .await
+            .map_err(provisioned_cache_error_status)
+    }
+
+    async fn put_chunk(
+        &mut self,
+        header: ChunkUploadHeader,
+        bytes: &[u8],
+        context: MutationContext,
+    ) -> Result<UploadProgress, StatusCode> {
+        ProvisionedCache::put_chunk(self, header, bytes, context)
+            .await
+            .map_err(provisioned_cache_error_status)
+    }
+
+    async fn finalize_upload(
+        &mut self,
+        request: FinalizeUploadRequest,
+        context: MutationContext,
+    ) -> Result<PublishedObject, StatusCode> {
+        ProvisionedCache::finalize_upload(self, request, context)
+            .await
+            .map_err(provisioned_cache_error_status)
+    }
+}
+
+fn media_status(
+    status: MediaStatus,
+    device_blocks: u64,
+    region: MediaRegion,
+    locator_generation: u64,
+    degraded_locator: bool,
+) -> StorageBackendStatus {
     StorageBackendStatus {
         availability: match status.availability {
             MediaAvailability::Detached => StorageBackendAvailability::Detached,
@@ -423,12 +451,72 @@ fn media_status(status: MediaStatus) -> StorageBackendStatus {
             MediaAvailability::Faulted => StorageBackendAvailability::Faulted,
         },
         mutation_available: false,
+        provision_available: true,
+        fault: if status.availability == MediaAvailability::Faulted {
+            ProvisioningFault::Device
+        } else {
+            ProvisioningFault::None
+        },
+        device_blocks,
+        locator_generation,
+        region_start_block: Some(region.start_block),
+        media_id: status.media_id,
         total_blocks: status.total_blocks,
         free_blocks: status.free_blocks,
         last_sequence: status.last_sequence,
         published_objects: status.published_objects,
         upload: status.upload,
         degraded_anchor: status.degraded_anchor,
+        degraded_locator,
+    }
+}
+
+fn provisioned_cache_status(status: ProvisionedCacheStatus) -> StorageBackendStatus {
+    let region = status.region;
+    let media = status.media;
+    StorageBackendStatus {
+        availability: match status.availability {
+            ProvisionedCacheAvailability::Detached => StorageBackendAvailability::Detached,
+            ProvisionedCacheAvailability::Ready => StorageBackendAvailability::Ready,
+            ProvisionedCacheAvailability::Faulted => StorageBackendAvailability::Faulted,
+        },
+        mutation_available: false,
+        provision_available: status.fault != ProvisioningFault::Device
+            && status.fault != ProvisioningFault::Geometry
+            && status.fault != ProvisioningFault::Policy,
+        fault: status.fault,
+        device_blocks: status.device_blocks,
+        locator_generation: status.locator_generation,
+        region_start_block: region.map(|region| region.start_block),
+        media_id: status.media_id,
+        total_blocks: region.map_or(0, |region| region.block_count),
+        free_blocks: media.map_or(0, |media| media.free_blocks),
+        last_sequence: media.map_or(0, |media| media.last_sequence),
+        published_objects: media.map_or(0, |media| media.published_objects),
+        upload: media.and_then(|media| media.upload),
+        degraded_anchor: media.is_some_and(|media| media.degraded_anchor),
+        degraded_locator: status.degraded_locator,
+    }
+}
+
+fn provisioned_cache_error_status<E>(error: ProvisionedCacheError<E>) -> StatusCode {
+    match error {
+        ProvisionedCacheError::Device(_) | ProvisionedCacheError::DeviceStateUnavailable => {
+            StatusCode::Internal
+        }
+        ProvisionedCacheError::Locator(_) | ProvisionedCacheError::MediaIdentity => {
+            StatusCode::Integrity
+        }
+        ProvisionedCacheError::Geometry => StatusCode::InvalidRequest,
+        ProvisionedCacheError::Media(error) => media_error_status(error),
+        ProvisionedCacheError::NotDiscovered | ProvisionedCacheError::NotMounted => {
+            StatusCode::Unsupported
+        }
+        ProvisionedCacheError::Conflict | ProvisionedCacheError::RecoveryIntent => {
+            StatusCode::Conflict
+        }
+        ProvisionedCacheError::Mutation(error) => storage_error_status(error),
+        ProvisionedCacheError::Arithmetic => StatusCode::Capacity,
     }
 }
 
@@ -555,6 +643,18 @@ impl StorageServiceState {
                 response_body.copy_from_slice(&status.encode());
                 (StatusCode::Ok, STORAGE_BACKEND_STATUS_WIRE_BYTES)
             }
+            Operation::StorageProvision => match CacheProvisionRequest::decode(body) {
+                Ok(request) => match backend.provision(request, self.mutation_context()).await {
+                    Ok(()) => {
+                        let status = self.effective_status(backend);
+                        response_body.copy_from_slice(&status.encode());
+                        (StatusCode::Ok, STORAGE_BACKEND_STATUS_WIRE_BYTES)
+                    }
+                    Err(status) => (status, 0),
+                },
+                Err(CacheProvisionRequestError::Confirmation) => (StatusCode::Integrity, 0),
+                Err(_) => (StatusCode::InvalidRequest, 0),
+            },
             Operation::StorageBeginUpload => match UploadPlan::decode(body, CACHE_LIMITS) {
                 Ok(plan) => match backend.begin_upload(plan, self.mutation_context()).await {
                     Ok(progress) => {
@@ -603,13 +703,29 @@ impl StorageServiceState {
         let mut json = FixedString::<MAX_SERVICE_RESPONSE_BYTES>::new();
         write!(
             &mut json,
-            "{{\"backend\":\"{}\",\"mutation_available\":{},\"free_blocks\":{},\"published_objects\":{},\"upload_next_chunk\":",
+            "{{\"backend\":\"{}\",\"fault\":\"{}\",\"mutation_available\":{},\"provision_available\":{},\"device_blocks\":{},\"region_start\":",
             status.availability.label(),
+            status.fault.label(),
             status.mutation_available,
-            status.free_blocks,
-            status.published_objects,
+            status.provision_available,
+            status.device_blocks,
         )
         .expect("bounded storage status prefix fits response");
+        if let Some(region_start) = status.region_start_block {
+            write!(&mut json, "{region_start}").expect("bounded region start fits response");
+        } else {
+            json.push_str("null")
+                .expect("bounded absent region fits response");
+        }
+        write!(
+            &mut json,
+            ",\"region_blocks\":{},\"free_blocks\":{},\"locator_generation\":{},\"published_objects\":{},\"upload_next_chunk\":",
+            status.total_blocks,
+            status.free_blocks,
+            status.locator_generation,
+            status.published_objects,
+        )
+        .expect("bounded storage status facts fit response");
         if let Some(progress) = status.upload {
             write!(&mut json, "{}", progress.next_chunk)
                 .expect("bounded upload counter fits response");
@@ -626,6 +742,8 @@ impl StorageServiceState {
         let mut status = backend.status();
         status.mutation_available = status.availability == StorageBackendAvailability::Ready
             && self.mutation_context().validate().is_ok();
+        status.provision_available =
+            status.provision_available && self.mutation_context().validate().is_ok();
         status
     }
 
@@ -779,8 +897,119 @@ mod tests {
         response_parts(response).0
     }
 
+    struct DetachedBackend(u8);
+
+    impl DetachedBackend {
+        const fn into_device(self) -> u8 {
+            self.0
+        }
+    }
+
+    impl StorageBackend for DetachedBackend {
+        fn status(&self) -> StorageBackendStatus {
+            StorageBackendStatus {
+                availability: StorageBackendAvailability::Detached,
+                mutation_available: false,
+                provision_available: true,
+                fault: ProvisioningFault::None,
+                device_blocks: 4_096,
+                locator_generation: 0,
+                region_start_block: None,
+                media_id: None,
+                total_blocks: 0,
+                free_blocks: 0,
+                last_sequence: 0,
+                published_objects: 0,
+                upload: None,
+                degraded_anchor: false,
+                degraded_locator: false,
+            }
+        }
+
+        async fn begin_upload(
+            &mut self,
+            _plan: UploadPlan,
+            _context: MutationContext,
+        ) -> Result<UploadProgress, StatusCode> {
+            Err(StatusCode::Unsupported)
+        }
+
+        async fn put_chunk(
+            &mut self,
+            _header: ChunkUploadHeader,
+            _bytes: &[u8],
+            _context: MutationContext,
+        ) -> Result<UploadProgress, StatusCode> {
+            Err(StatusCode::Unsupported)
+        }
+
+        async fn finalize_upload(
+            &mut self,
+            _request: FinalizeUploadRequest,
+            _context: MutationContext,
+        ) -> Result<PublishedObject, StatusCode> {
+            Err(StatusCode::Unsupported)
+        }
+    }
+
+    struct MaximumStatusBackend;
+
+    impl StorageBackend for MaximumStatusBackend {
+        fn status(&self) -> StorageBackendStatus {
+            StorageBackendStatus {
+                availability: StorageBackendAvailability::Unavailable,
+                mutation_available: false,
+                provision_available: false,
+                fault: ProvisioningFault::MediaIntegrity,
+                device_blocks: u64::MAX,
+                locator_generation: u64::MAX,
+                region_start_block: Some(u64::MAX),
+                media_id: Some(MediaId([0xff; 16])),
+                total_blocks: u64::MAX,
+                free_blocks: u64::MAX,
+                last_sequence: u64::MAX,
+                published_objects: u32::MAX,
+                upload: Some(UploadProgress {
+                    upload_id: UploadId(u64::MAX),
+                    phase: UploadPhase::Receiving,
+                    next_chunk: u32::MAX,
+                    accepted_bytes: u64::MAX,
+                    total_bytes: u64::MAX,
+                }),
+                degraded_anchor: true,
+                degraded_locator: true,
+            }
+        }
+
+        async fn begin_upload(
+            &mut self,
+            _plan: UploadPlan,
+            _context: MutationContext,
+        ) -> Result<UploadProgress, StatusCode> {
+            Err(StatusCode::Unsupported)
+        }
+
+        async fn put_chunk(
+            &mut self,
+            _header: ChunkUploadHeader,
+            _bytes: &[u8],
+            _context: MutationContext,
+        ) -> Result<UploadProgress, StatusCode> {
+            Err(StatusCode::Unsupported)
+        }
+
+        async fn finalize_upload(
+            &mut self,
+            _request: FinalizeUploadRequest,
+            _context: MutationContext,
+        ) -> Result<PublishedObject, StatusCode> {
+            Err(StatusCode::Unsupported)
+        }
+    }
+
     struct ReadyBackend {
         upload: Option<UploadProgress>,
+        provisioned: Option<CacheProvisionRequest>,
         calls: u8,
     }
 
@@ -788,6 +1017,7 @@ mod tests {
         const fn new() -> Self {
             Self {
                 upload: None,
+                provisioned: None,
                 calls: 0,
             }
         }
@@ -798,13 +1028,31 @@ mod tests {
             StorageBackendStatus {
                 availability: StorageBackendAvailability::Ready,
                 mutation_available: false,
+                provision_available: true,
+                fault: ProvisioningFault::None,
+                device_blocks: 2_300,
+                locator_generation: 1,
+                region_start_block: Some(2_048),
+                media_id: Some(MediaId([0x5a; 16])),
                 total_blocks: 1_000,
                 free_blocks: 900,
                 last_sequence: 3,
                 published_objects: 2,
                 upload: self.upload,
                 degraded_anchor: false,
+                degraded_locator: false,
             }
+        }
+
+        async fn provision(
+            &mut self,
+            request: CacheProvisionRequest,
+            context: MutationContext,
+        ) -> Result<(), StatusCode> {
+            self.calls = self.calls.saturating_add(1);
+            context.validate().map_err(storage_error_status)?;
+            self.provisioned = Some(request);
+            Ok(())
         }
 
         async fn begin_upload(
@@ -878,15 +1126,25 @@ mod tests {
         assert_eq!(response.media, ResponseMedia::Json);
         assert_eq!(
             response.bytes(),
-            b"{\"backend\":\"unavailable\",\"mutation_available\":false,\"free_blocks\":0,\"published_objects\":0,\"upload_next_chunk\":null}"
+            b"{\"backend\":\"unavailable\",\"fault\":\"none\",\"mutation_available\":false,\"provision_available\":false,\"device_blocks\":0,\"region_start\":null,\"region_blocks\":0,\"free_blocks\":0,\"locator_generation\":0,\"published_objects\":0,\"upload_next_chunk\":null}"
         );
+    }
+
+    #[test]
+    fn human_status_fits_at_every_numeric_wire_maximum() {
+        let service = StorageServiceState::new();
+        let response = service.human_status(&MaximumStatusBackend);
+        assert_eq!(response.http_status, 200);
+        assert_eq!(response.media, ResponseMedia::Json);
+        assert_eq!(response.bytes().len(), 355);
+        assert!(response.bytes().ends_with(b"4294967295}"));
     }
 
     #[test]
     fn identified_card_remains_detached_until_explicit_region_provisioning() {
         let mut service = StorageServiceState::new();
         service.observe_safety_state(SafetyState::Safe);
-        let mut backend = UnprovisionedStorageBackend::identified(17_u8, 4_096);
+        let mut backend = DetachedBackend(17);
         let response = block_on(service.dispatch(
             &mut backend,
             &ServiceRequest::storage_status(),
@@ -894,7 +1152,7 @@ mod tests {
         ));
         assert_eq!(
             response.bytes(),
-            b"{\"backend\":\"detached\",\"mutation_available\":false,\"free_blocks\":0,\"published_objects\":0,\"upload_next_chunk\":null}"
+            b"{\"backend\":\"detached\",\"fault\":\"none\",\"mutation_available\":false,\"provision_available\":true,\"device_blocks\":4096,\"region_start\":null,\"region_blocks\":0,\"free_blocks\":0,\"locator_generation\":0,\"published_objects\":0,\"upload_next_chunk\":null}"
         );
         let response = block_on(service.dispatch(
             &mut backend,
@@ -905,7 +1163,9 @@ mod tests {
         assert_eq!(status, StatusCode::Ok);
         assert_eq!(body[0], StorageBackendAvailability::Detached as u8);
         assert_eq!(u64::from_le_bytes(body[8..16].try_into().unwrap()), 4_096);
+        assert_eq!(u64::from_le_bytes(body[24..32].try_into().unwrap()), 0);
         assert_eq!(body[1], 0);
+        assert_eq!(body[5], 1);
         assert_eq!(backend.into_device(), 17);
     }
 
@@ -997,7 +1257,7 @@ mod tests {
         assert_eq!(body.len(), STORAGE_BACKEND_STATUS_WIRE_BYTES);
         assert_eq!(body[0], StorageBackendAvailability::Ready as u8);
         assert_eq!(body[1], 0);
-        assert_eq!(u64::from_le_bytes(body[16..24].try_into().unwrap()), 900);
+        assert_eq!(u64::from_le_bytes(body[32..40].try_into().unwrap()), 900);
 
         service.observe_safety_state(SafetyState::Configured);
         let response = block_on(service.dispatch(
@@ -1006,5 +1266,45 @@ mod tests {
             DeviceCycle(11),
         ));
         assert_eq!(response_parts(&response).1[1], 1);
+    }
+
+    #[test]
+    fn destructive_provision_requires_canonical_body_and_safe_state() {
+        let provision = CacheProvisionRequest::new(
+            2_300,
+            1,
+            Some(MediaId([0x5a; 16])),
+            MediaRegion {
+                start_block: 2_048,
+                block_count: 200,
+            },
+            MediaId([0xa5; 16]),
+            false,
+        )
+        .unwrap();
+        let native = request(Operation::StorageProvision, &provision.encode());
+        let mut service = StorageServiceState::new();
+        let mut backend = ReadyBackend::new();
+        let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(10)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+        assert_eq!(backend.provisioned, None);
+
+        service.observe_safety_state(SafetyState::Safe);
+        let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(11)));
+        let (status, body) = response_parts(&response);
+        assert_eq!(status, StatusCode::Ok);
+        assert_eq!(body.len(), STORAGE_BACKEND_STATUS_WIRE_BYTES);
+        assert_eq!(backend.provisioned, Some(provision));
+
+        let mut tampered = provision.encode();
+        tampered[56] ^= 1;
+        let calls = backend.calls;
+        let response = block_on(service.dispatch(
+            &mut backend,
+            &request(Operation::StorageProvision, &tampered),
+            DeviceCycle(12),
+        ));
+        assert_eq!(response_status(&response), StatusCode::Integrity);
+        assert_eq!(backend.calls, calls);
     }
 }

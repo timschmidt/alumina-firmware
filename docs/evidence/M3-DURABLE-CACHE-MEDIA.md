@@ -121,3 +121,9 @@ explicit provisioned region, and keep firmware non-armable on absent,
 unformatted, changed, or corrupt media. HIL must then cut power at every barrier,
 exercise removal/busy/CRC/timeout faults, measure concurrent Wi-Fi and prefetch
 load, and confirm core-1 deadline isolation before cached execution is admitted.
+
+This was the exact boundary at this checkpoint. The subsequent
+[`M3-SD-SPI-TRANSPORT.md`](M3-SD-SPI-TRANSPORT.md) and
+[`M3-CACHE-PROVISIONING.md`](M3-CACHE-PROVISIONING.md) milestones add the
+portable physical transport and explicit locator/provision/mount path without
+retroactively adding HIL evidence here.
