@@ -1,21 +1,33 @@
 use alumina_board::BoardPackage;
+use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
+use alumina_service::UnprovisionedStorageBackend;
+use defmt::{info, warn};
+use embassy_time::Delay;
+use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::peripherals::{
     ADC1, DMA_I2S0, GPIO0, GPIO1, GPIO2, GPIO3, GPIO4, GPIO5, GPIO12, GPIO13, GPIO14, GPIO15,
     GPIO16, GPIO17, GPIO18, GPIO19, GPIO21, GPIO22, GPIO23, GPIO25, GPIO26, GPIO27, GPIO32, GPIO33,
     GPIO34, GPIO35, GPIO36, GPIO39, I2S0, Peripherals, SPI2, TIMG1, UART0, UART2, WIFI,
 };
+use esp_hal::spi::Mode;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::time::Rate;
 
 use super::RuntimeResources;
+use crate::storage::EspSdSpiBus;
+
+pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
+pub type StorageBackend = UnprovisionedStorageBackend<StorageCard>;
 
 /// Core-0 tokens. They cannot be constructed again or moved from this owner.
 #[allow(dead_code, reason = "tokens are reserved for staged service drivers")]
 pub struct ServiceResources {
     wifi: Option<WIFI<'static>>,
-    spi2: SPI2<'static>,
-    spi_miso: GPIO19<'static>,
-    spi_mosi: GPIO23<'static>,
-    spi_clock: GPIO18<'static>,
-    sd_chip_select: GPIO5<'static>,
+    spi2: Option<SPI2<'static>>,
+    spi_miso: Option<GPIO19<'static>>,
+    spi_mosi: Option<GPIO23<'static>>,
+    spi_clock: Option<GPIO18<'static>>,
+    sd_chip_select: Option<GPIO5<'static>>,
     uart0: UART0<'static>,
     uart0_tx: GPIO1<'static>,
     uart0_rx: GPIO3<'static>,
@@ -35,6 +47,54 @@ impl ServiceResources {
     /// Moves the singleton radio token into core-0 network initialization once.
     pub fn take_wifi(&mut self) -> WIFI<'static> {
         self.wifi.take().expect("Wi-Fi token already consumed")
+    }
+
+    /// Identifies the fitted card but leaves cache-region selection to an
+    /// explicit later provisioning transaction.
+    pub async fn initialize_storage(&mut self) -> StorageBackend {
+        let chip_select = Output::new(
+            self.sd_chip_select
+                .take()
+                .expect("SD chip-select token already consumed"),
+            Level::High,
+            OutputConfig::default(),
+        );
+        let spi = Spi::new(
+            self.spi2.take().expect("SPI2 token already consumed"),
+            SpiConfig::default()
+                .with_frequency(Rate::from_khz(400))
+                .with_mode(Mode::_0),
+        )
+        .unwrap_or_else(|_| panic!("invalid fixed TinyBee SD SPI configuration"))
+        .with_sck(
+            self.spi_clock
+                .take()
+                .expect("SPI clock token already consumed"),
+        )
+        .with_mosi(
+            self.spi_mosi
+                .take()
+                .expect("SPI MOSI token already consumed"),
+        )
+        .with_miso(
+            self.spi_miso
+                .take()
+                .expect("SPI MISO token already consumed"),
+        )
+        .into_async();
+        let bus = EspSdSpiBus::new(spi, [None, None, None]);
+        let mut card = SdSpiCard::new(bus, chip_select, Delay, SdConfig::DEFAULT)
+            .unwrap_or_else(|_| panic!("invalid fixed TinyBee SD transport policy"));
+        match card.initialize().await {
+            Ok(card_info) => {
+                info!("SD card identified: blocks={}", card_info.block_count);
+                UnprovisionedStorageBackend::identified(card, card_info.block_count)
+            }
+            Err(_) => {
+                warn!("SD card identification failed; cache remains faulted");
+                UnprovisionedStorageBackend::faulted(card)
+            }
+        }
     }
 }
 
@@ -120,11 +180,11 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
         },
         service: ServiceResources {
             wifi: Some(wifi),
-            spi2,
-            spi_miso,
-            spi_mosi,
-            spi_clock,
-            sd_chip_select,
+            spi2: Some(spi2),
+            spi_miso: Some(spi_miso),
+            spi_mosi: Some(spi_mosi),
+            spi_clock: Some(spi_clock),
+            sd_chip_select: Some(sd_chip_select),
             uart0,
             uart0_tx,
             uart0_rx,

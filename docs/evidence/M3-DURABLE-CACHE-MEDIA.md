@@ -6,6 +6,11 @@ Status: host-tested and ESP release-linked media/service foundation. This does
 not claim a physical SD-SPI transport, card initialization, executable readback,
 compaction, AP+STA operation, browser interoperability, or HIL durability.
 
+This records the raw-media milestone at its commit. The later
+[`M3-SD-SPI-TRANSPORT.md`](M3-SD-SPI-TRANSPORT.md) adds physical card protocol
+and board composition and supersedes the adapter/status and current image/test
+totals below.
+
 ## Implemented claim
 
 - `alumina-storage::media` is a bounded `no_std` asynchronous 512-byte block

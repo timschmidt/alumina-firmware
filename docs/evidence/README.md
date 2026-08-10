@@ -26,3 +26,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-DURABLE-CACHE-MEDIA.md`](M3-DURABLE-CACHE-MEDIA.md) — asynchronous raw
   cache media, alternating anchors, hash-chained durable records, authenticated
   backend dispatch, and deterministic torn-write simulation.
+- [`M3-SD-SPI-TRANSPORT.md`](M3-SD-SPI-TRANSPORT.md) — clean-room bounded SD
+  SPI protocol, CRC/address/capacity handling, real cache-media integration, and
+  TinyBee/T-Deck Pro core-0 composition.

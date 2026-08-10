@@ -713,7 +713,7 @@ pub static DEVICES: &[DeviceDescriptor<'static>] = &[DeviceDescriptor {
     bus: Some(ResourceId::Spi(2)),
     route: DeviceRoute::SpiChipSelect(ResourceId::Gpio(5)),
     auxiliary_resources: SD_AUXILIARY,
-    support: SupportLevel::Described,
+    support: SupportLevel::Compiles,
 }];
 
 pub static CLOCKS: &[ClockDescriptor<'static>] = &[

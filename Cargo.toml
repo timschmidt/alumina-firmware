@@ -13,6 +13,7 @@ members = [
     "crates/alumina-sim",
     "crates/alumina-storage",
     "drivers/embedded-bus-async",
+    "drivers/alumina-sd-spi",
     "drivers/sx126x-async-rs",
     "drivers/t-deck-pro-battery-async",
     "drivers/t-deck-pro-epd-async",
@@ -38,6 +39,7 @@ default-members = [
     "crates/alumina-sim",
     "crates/alumina-storage",
     "drivers/embedded-bus-async",
+    "drivers/alumina-sd-spi",
     "xtask",
 ]
 
@@ -59,6 +61,7 @@ alumina-safety = { path = "crates/alumina-safety" }
 alumina-service = { path = "crates/alumina-service" }
 alumina-sim = { path = "crates/alumina-sim" }
 alumina-storage = { path = "crates/alumina-storage" }
+alumina-sd-spi = { path = "drivers/alumina-sd-spi" }
 board-mks-tinybee = { path = "boards/mks-tinybee" }
 board-t-deck-pro = { path = "boards/t-deck-pro" }
 bt-hci = "0.6.0"

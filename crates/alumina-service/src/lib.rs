@@ -162,7 +162,7 @@ pub enum StorageBackendAvailability {
     Detached = 1,
     /// Complete committed media state was replayed successfully.
     Ready = 2,
-    /// A write/sync failure requires remount before more work.
+    /// Identification, write, sync, or replay failed and requires recovery.
     Faulted = 3,
 }
 
@@ -259,6 +259,88 @@ impl StorageBackend for UnavailableStorageBackend {
             availability: StorageBackendAvailability::Unavailable,
             mutation_available: false,
             total_blocks: 0,
+            free_blocks: 0,
+            last_sequence: 0,
+            published_objects: 0,
+            upload: None,
+            degraded_anchor: false,
+        }
+    }
+
+    async fn begin_upload(
+        &mut self,
+        _plan: UploadPlan,
+        _context: MutationContext,
+    ) -> Result<UploadProgress, StatusCode> {
+        Err(StatusCode::Unsupported)
+    }
+
+    async fn put_chunk(
+        &mut self,
+        _header: ChunkUploadHeader,
+        _bytes: &[u8],
+        _context: MutationContext,
+    ) -> Result<UploadProgress, StatusCode> {
+        Err(StatusCode::Unsupported)
+    }
+
+    async fn finalize_upload(
+        &mut self,
+        _request: FinalizeUploadRequest,
+        _context: MutationContext,
+    ) -> Result<PublishedObject, StatusCode> {
+        Err(StatusCode::Unsupported)
+    }
+}
+
+/// Owns an identified or faulted physical device until a cache region is
+/// explicitly provisioned. Card detection alone never enables mutation.
+pub struct UnprovisionedStorageBackend<D> {
+    device: D,
+    availability: StorageBackendAvailability,
+    total_blocks: u64,
+}
+
+impl<D> UnprovisionedStorageBackend<D> {
+    /// Records an identified card without selecting or formatting a cache region.
+    pub fn identified(device: D, total_blocks: u64) -> Self {
+        Self {
+            device,
+            availability: if total_blocks == 0 {
+                StorageBackendAvailability::Faulted
+            } else {
+                StorageBackendAvailability::Detached
+            },
+            total_blocks,
+        }
+    }
+
+    /// Retains ownership after initialization failed, with no trusted capacity.
+    pub const fn faulted(device: D) -> Self {
+        Self {
+            device,
+            availability: StorageBackendAvailability::Faulted,
+            total_blocks: 0,
+        }
+    }
+
+    /// Returns the physical device for a later explicit provisioning flow.
+    pub fn into_device(self) -> D {
+        self.device
+    }
+
+    /// Gives the sole core-0 owner mutable access for card recovery/provisioning.
+    pub fn device_mut(&mut self) -> &mut D {
+        &mut self.device
+    }
+}
+
+impl<D> StorageBackend for UnprovisionedStorageBackend<D> {
+    fn status(&self) -> StorageBackendStatus {
+        StorageBackendStatus {
+            availability: self.availability,
+            mutation_available: false,
+            total_blocks: self.total_blocks,
             free_blocks: 0,
             last_sequence: 0,
             published_objects: 0,
@@ -798,6 +880,33 @@ mod tests {
             response.bytes(),
             b"{\"backend\":\"unavailable\",\"mutation_available\":false,\"free_blocks\":0,\"published_objects\":0,\"upload_next_chunk\":null}"
         );
+    }
+
+    #[test]
+    fn identified_card_remains_detached_until_explicit_region_provisioning() {
+        let mut service = StorageServiceState::new();
+        service.observe_safety_state(SafetyState::Safe);
+        let mut backend = UnprovisionedStorageBackend::identified(17_u8, 4_096);
+        let response = block_on(service.dispatch(
+            &mut backend,
+            &ServiceRequest::storage_status(),
+            DeviceCycle(10),
+        ));
+        assert_eq!(
+            response.bytes(),
+            b"{\"backend\":\"detached\",\"mutation_available\":false,\"free_blocks\":0,\"published_objects\":0,\"upload_next_chunk\":null}"
+        );
+        let response = block_on(service.dispatch(
+            &mut backend,
+            &request(Operation::StorageStatus, &[]),
+            DeviceCycle(11),
+        ));
+        let (status, body) = response_parts(&response);
+        assert_eq!(status, StatusCode::Ok);
+        assert_eq!(body[0], StorageBackendAvailability::Detached as u8);
+        assert_eq!(u64::from_le_bytes(body[8..16].try_into().unwrap()), 4_096);
+        assert_eq!(body[1], 0);
+        assert_eq!(backend.into_device(), 17);
     }
 
     #[test]

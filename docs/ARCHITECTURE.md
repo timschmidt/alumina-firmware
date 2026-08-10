@@ -147,14 +147,16 @@ surface; transaction IDs prevent a response produced after HTTP timeout
 cancellation from satisfying a later request. These same-executor locks do not
 mask interrupts on core 1.
 
-`GET /api/v1/storage` currently returns an authenticated, response-signed JSON
-status which explicitly says that the board adapter and mutation are unavailable.
+`GET /api/v1/storage` returns an authenticated, response-signed JSON status. An
+identified but unprovisioned card is `detached`; failed identification is
+`faulted`; mutation remains false in either state.
 `POST /api/v1/storage` accepts only a complete native frame and response-signs
 the native result. It checks outer/operation lengths, directions, storage-plan
 structure, chunk size, and chunk SHA-256. Valid begin/chunk/finalize requests
-return `Unsupported` until the physical async SD-SPI adapter is connected to the
-implemented raw cache-media backend; no in-RAM success acknowledgement is
-substituted for durable storage.
+return `Unsupported` until stored configuration explicitly selects and mounts a
+valid raw cache region. Both first boards now compose the bounded async SD-SPI
+transport, but card identification never selects or formats media and no in-RAM
+success acknowledgement is substituted for durable storage.
 
 ### Cross-core messages
 

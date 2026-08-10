@@ -155,6 +155,21 @@ compatibility.
 These IDF documents describe the underlying ESP32 hardware/cache behavior even
 though aluminafw will not use ESP-IDF services.
 
+## SD memory transport
+
+- [SD Association simplified specifications](https://www.sdcard.org/downloads/pls/)
+  and its public Physical Layer Simplified Specification — functional reference
+  for SPI-mode entry, CMD8/ACMD41 initialization, OCR/CSD interpretation,
+  response/data tokens, CRC, and block programming status. Alumina's driver is
+  independently authored and copies no third-party implementation code. The
+  specification site's access/use terms and possible product-license notices
+  remain distinct from the repository's `MIT OR Apache-2.0` source license.
+
+The first implementation intentionally supports conservative default-speed
+single-block SD V2 operation only. Legacy-card initialization, SDUC, UHS,
+multi-block transfer, erase, and vendor extensions require separate scope and
+qualification.
+
 ## Motion and motor-control references
 
 - [Synthetos](https://synthetos.com/) and

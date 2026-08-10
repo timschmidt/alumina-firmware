@@ -14,6 +14,7 @@ compile_error!("multiple board features selected; Alumina images contain exactly
 mod hardware;
 mod network;
 pub mod service;
+mod storage;
 
 use alumina_protocol::{DeviceCycle, Digest, FrameKind};
 use alumina_runtime::{
@@ -32,7 +33,7 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use hardware::selected;
-use service::{ServiceBridge, StorageServiceState, UnavailableStorageBackend, init_service_bridge};
+use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
@@ -117,7 +118,7 @@ async fn main(spawner: Spawner) -> ! {
 
 #[embassy_executor::task]
 async fn service_task(
-    resources: selected::ServiceResources,
+    mut resources: selected::ServiceResources,
     mut endpoint: DefaultServiceEndpoint,
     network: network::NetworkControl,
     service_bridge: &'static ServiceBridge,
@@ -129,7 +130,7 @@ async fn service_task(
     // Service admission and every future media/backend handle live only in the
     // core-0 task future. Core 1 receives verified owned blocks, never SD.
     let mut storage = StorageServiceState::new();
-    let mut storage_backend = UnavailableStorageBackend;
+    let mut storage_backend = resources.initialize_storage().await;
     let mut sequence = 0_u32;
     let mut last_fault_generation = 0_u16;
     loop {

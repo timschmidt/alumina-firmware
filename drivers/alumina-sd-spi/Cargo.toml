@@ -1,0 +1,20 @@
+[package]
+name = "alumina-sd-spi"
+description = "Bounded asynchronous SD memory card SPI-mode block transport for Alumina"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alumina-storage.workspace = true
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embassy-futures.workspace = true
+
+[lints]
+workspace = true

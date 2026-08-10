@@ -518,7 +518,7 @@ pub static DEVICES: &[DeviceDescriptor<'static>] = &[
         bus: Some(ResourceId::Spi(2)),
         route: DeviceRoute::SpiChipSelect(ResourceId::Gpio(48)),
         auxiliary_resources: &[],
-        support: SupportLevel::Described,
+        support: SupportLevel::Compiles,
     },
     DeviceDescriptor {
         resource: ResourceId::Device(device::FUEL_GAUGE),

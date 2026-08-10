@@ -1,12 +1,24 @@
 use alumina_board::BoardPackage;
+use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
+use alumina_service::UnprovisionedStorageBackend;
+use defmt::{info, warn};
+use embassy_time::Delay;
+use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::peripherals::{
     DMA_CH0, DMA_CH1, GPIO0, GPIO1, GPIO2, GPIO3, GPIO4, GPIO5, GPIO6, GPIO12, GPIO13, GPIO14,
     GPIO15, GPIO16, GPIO17, GPIO18, GPIO21, GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39,
     GPIO42, GPIO43, GPIO44, GPIO45, GPIO46, GPIO47, GPIO48, I2C0, I2S0, Peripherals, SPI2, TIMG1,
     UART1, WIFI,
 };
+use esp_hal::spi::Mode;
+use esp_hal::spi::master::{Config as SpiConfig, Spi};
+use esp_hal::time::Rate;
 
 use super::RuntimeResources;
+use crate::storage::EspSdSpiBus;
+
+pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
+pub type StorageBackend = UnprovisionedStorageBackend<StorageCard>;
 
 /// Core-0 tokens for every currently imported T-Deck peripheral path.
 #[allow(dead_code, reason = "tokens are reserved for staged service actors")]
@@ -22,20 +34,20 @@ pub struct ServiceResources {
     ambient_light_interrupt: GPIO16<'static>,
     imu_interrupt: GPIO21<'static>,
     sensor_1v8_enable: GPIO38<'static>,
-    spi2: SPI2<'static>,
+    spi2: Option<SPI2<'static>>,
     spi_dma: DMA_CH0<'static>,
-    spi_clock: GPIO36<'static>,
-    spi_mosi: GPIO33<'static>,
-    spi_miso: GPIO47<'static>,
-    epd_chip_select: GPIO34<'static>,
+    spi_clock: Option<GPIO36<'static>>,
+    spi_mosi: Option<GPIO33<'static>>,
+    spi_miso: Option<GPIO47<'static>>,
+    epd_chip_select: Option<GPIO34<'static>>,
     epd_data_command: GPIO35<'static>,
     epd_busy: GPIO37<'static>,
-    lora_chip_select: GPIO3<'static>,
+    lora_chip_select: Option<GPIO3<'static>>,
     lora_busy: GPIO6<'static>,
     lora_reset: GPIO4<'static>,
     lora_dio1: GPIO5<'static>,
-    lora_power: GPIO46<'static>,
-    sd_chip_select: GPIO48<'static>,
+    lora_power: Option<GPIO46<'static>>,
+    sd_chip_select: Option<GPIO48<'static>>,
     gps_uart: UART1<'static>,
     gps_rx: GPIO44<'static>,
     gps_tx: GPIO43<'static>,
@@ -52,6 +64,82 @@ impl ServiceResources {
     /// Moves the singleton radio token into core-0 network initialization once.
     pub fn take_wifi(&mut self) -> WIFI<'static> {
         self.wifi.take().expect("Wi-Fi token already consumed")
+    }
+
+    /// Identifies SD while retaining inactive EPD/LoRa selects on the shared
+    /// bus. No cache region is selected or formatted implicitly.
+    pub async fn initialize_storage(&mut self) -> StorageBackend {
+        let sd_chip_select = Output::new(
+            self.sd_chip_select
+                .take()
+                .expect("SD chip-select token already consumed"),
+            Level::High,
+            OutputConfig::default(),
+        );
+        let epd_chip_select = Output::new(
+            self.epd_chip_select
+                .take()
+                .expect("EPD chip-select token already consumed"),
+            Level::High,
+            OutputConfig::default(),
+        );
+        let lora_chip_select = Output::new(
+            self.lora_chip_select
+                .take()
+                .expect("LoRa chip-select token already consumed"),
+            Level::High,
+            OutputConfig::default(),
+        );
+        let lora_power = Output::new(
+            self.lora_power
+                .take()
+                .expect("LoRa power token already consumed"),
+            Level::Low,
+            OutputConfig::default(),
+        );
+        let spi = Spi::new(
+            self.spi2.take().expect("SPI2 token already consumed"),
+            SpiConfig::default()
+                .with_frequency(Rate::from_khz(400))
+                .with_mode(Mode::_0),
+        )
+        .unwrap_or_else(|_| panic!("invalid fixed T-Deck SD SPI configuration"))
+        .with_sck(
+            self.spi_clock
+                .take()
+                .expect("SPI clock token already consumed"),
+        )
+        .with_mosi(
+            self.spi_mosi
+                .take()
+                .expect("SPI MOSI token already consumed"),
+        )
+        .with_miso(
+            self.spi_miso
+                .take()
+                .expect("SPI MISO token already consumed"),
+        )
+        .into_async();
+        let bus = EspSdSpiBus::new(
+            spi,
+            [
+                Some(epd_chip_select),
+                Some(lora_chip_select),
+                Some(lora_power),
+            ],
+        );
+        let mut card = SdSpiCard::new(bus, sd_chip_select, Delay, SdConfig::DEFAULT)
+            .unwrap_or_else(|_| panic!("invalid fixed T-Deck SD transport policy"));
+        match card.initialize().await {
+            Ok(card_info) => {
+                info!("SD card identified: blocks={}", card_info.block_count);
+                UnprovisionedStorageBackend::identified(card, card_info.block_count)
+            }
+            Err(_) => {
+                warn!("SD card identification failed; cache remains faulted");
+                UnprovisionedStorageBackend::faulted(card)
+            }
+        }
     }
 }
 
@@ -137,20 +225,20 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
             ambient_light_interrupt,
             imu_interrupt,
             sensor_1v8_enable,
-            spi2,
+            spi2: Some(spi2),
             spi_dma,
-            spi_clock,
-            spi_mosi,
-            spi_miso,
-            epd_chip_select,
+            spi_clock: Some(spi_clock),
+            spi_mosi: Some(spi_mosi),
+            spi_miso: Some(spi_miso),
+            epd_chip_select: Some(epd_chip_select),
             epd_data_command,
             epd_busy,
-            lora_chip_select,
+            lora_chip_select: Some(lora_chip_select),
             lora_busy,
             lora_reset,
             lora_dio1,
-            lora_power,
-            sd_chip_select,
+            lora_power: Some(lora_power),
+            sd_chip_select: Some(sd_chip_select),
             gps_uart,
             gps_rx,
             gps_tx,

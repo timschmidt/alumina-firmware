@@ -44,6 +44,7 @@ alumina-net.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-safety.workspace = true
+alumina-sd-spi.workspace = true
 alumina-service.workspace = true
 alumina-storage.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }
@@ -59,6 +60,8 @@ edge-http.workspace = true
 edge-nal.workspace = true
 edge-nal-embassy.workspace = true
 embedded-io-async-v06.workspace = true
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true
 esp-alloc.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true

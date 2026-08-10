@@ -57,6 +57,12 @@ labels represent bits in an I²S-driven output chain.
 | USB bridge / auxiliary serial | `Uart(0)` on `Gpio(1/3)` and `Uart(2)` on multiplexed `Gpio(17/16)` |
 | Servo/material input | real-time `Gpio(2)` hazardous output and `Gpio(35)` input |
 
+The SPI SD route now has a clean-room async transport and board composition at
+`SupportLevel::Compiles`. It identifies capacity on core 0 but remains detached
+until stored configuration provisions a raw cache region; no bench claim or
+implicit format is made. GPIO34's TH2/SD-detect multiplex remains unresolved for
+HIL and is not crossed from the real-time domain.
+
 ### I²S output mapping
 
 The official FluidNC TinyBee profile and vendor numbering agree on this logical
@@ -131,9 +137,11 @@ a driver or bench claim; exact fixture options remain an identity HIL gate.
 | microphone | service I²S0/DMA1, data GPIO17, clock GPIO18 | metadata only |
 | vibration motor | real-time hazardous GPIO2 | safe state and polarity require HIL |
 
-Audio, SD, IMU/light, optional modem, vibration, and other fitted/optional
-functions become supported only through separate reviewed drivers and the
-revision-specific peripheral suite.
+The SD route now composes and identifies at `SupportLevel::Compiles`, while
+holding EPD and LoRa inactive on the shared SPI bus. It remains unprovisioned and
+unqualified. Audio, IMU/light, optional modem, vibration, and other
+fitted/optional functions become supported only through separate reviewed
+drivers and the revision-specific peripheral suite.
 
 ## MKS ESP32 FOC V1.0 model
 

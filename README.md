@@ -38,9 +38,8 @@ responses carry exact HMAC-SHA-256 proofs bound to a nonzero counter, method,
 path, status/media, and SHA-256 body identity. Strict raw-header policy rejects
 duplicates, transfer coding, noncanonical lengths, wrong media, replays, and a
 global valid-request flood before the core-0 service owner decodes a native
-frame. The physical SD backend is not implemented yet, so status says so and
-every structurally valid mutation returns protocol `Unsupported` without
-changing upload state. See the
+frame. That admission milestone deliberately used an unavailable backend, so it
+could not acknowledge volatile bytes as durable. See the historical
 [authenticated-service evidence](docs/evidence/M3-AUTHENTICATED-SERVICE.md).
 
 The cache backend itself is now concrete: `alumina-storage` implements a bounded
@@ -50,9 +49,20 @@ Begin, chunk, abort, and publication are acknowledged only after ordered sync
 barriers; reboot replay reconstructs exact upload state without trusting a
 filesystem. The authenticated service dispatch is generic over that backend,
 and `alumina-sim` exposes snapshots, torn writes, power cuts, and corruption for
-the same implementation. Board firmware remains explicitly `unavailable` until
-the physical SD-SPI adapter is implemented and qualified. See the
+the same implementation. That milestone kept board firmware explicitly
+`unavailable` until a physical SD-SPI adapter could exist. See the historical
 [durable-cache evidence](docs/evidence/M3-DURABLE-CACHE-MEDIA.md).
+
+The first physical transport is now composed on both boards. A clean-room,
+allocation-free SD SPI driver enters identification at 400 kHz, negotiates a
+modern SD V2 card, enables command/data CRC, derives capacity from CSD, and
+provides bounded single-block read/write/sync at 10 MHz. TinyBee owns SPI2 on
+GPIO 18/23/19 with CS 5; T-Deck Pro owns GPIO 36/33/47 with CS 48 and keeps the
+shared EPD/LoRa devices inactive. Boot identifies a card on core 0 and reports
+`detached`, or `faulted` on failure. It still returns `Unsupported` for mutation
+because no stored configuration has selected a raw cache region, and it never
+formats implicitly. See the
+[SD SPI transport evidence](docs/evidence/M3-SD-SPI-TRANSPORT.md).
 
 ## Developer checks
 

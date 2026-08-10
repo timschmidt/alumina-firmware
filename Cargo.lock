@@ -24,6 +24,7 @@ dependencies = [
  "alumina-protocol",
  "alumina-runtime",
  "alumina-safety",
+ "alumina-sd-spi",
  "alumina-service",
  "alumina-storage",
  "board-mks-tinybee",
@@ -38,6 +39,8 @@ dependencies = [
  "embassy-net",
  "embassy-sync 0.7.2",
  "embassy-time 0.4.0",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-io-async 0.6.1",
  "esp-alloc",
  "esp-bootloader-esp-idf",
@@ -81,6 +84,16 @@ dependencies = [
 [[package]]
 name = "alumina-safety"
 version = "0.1.0"
+
+[[package]]
+name = "alumina-sd-spi"
+version = "0.1.0"
+dependencies = [
+ "alumina-storage",
+ "embassy-futures",
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
 
 [[package]]
 name = "alumina-service"
