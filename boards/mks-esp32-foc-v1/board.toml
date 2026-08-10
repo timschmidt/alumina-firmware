@@ -1,0 +1,22 @@
+schema = 1
+id = "mks-esp32-foc-v1"
+display_name = "MKS ESP32 FOC V1.0"
+revision = "V1.0; physical reconciliation pending"
+chip = "esp32"
+target = "xtensa-esp32-none-elf"
+cores = 2
+flash_bytes = 0
+psram_bytes = 0
+qualification = "described"
+implementation = "planned"
+hardware_available = false
+service_core = 0
+realtime_core = 1
+
+[provenance]
+primary = "https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0"
+
+[safe_state]
+motor_0_enable = false
+motor_1_enable = false
+phase_pwm = 0

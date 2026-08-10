@@ -1,0 +1,13 @@
+schema = 1
+
+[[board]]
+path = "mks-tinybee"
+
+[[board]]
+path = "t-deck-pro"
+
+[[board]]
+path = "mks-esp32-foc-v1"
+
+[[board]]
+path = "t-lora-pager"

@@ -1,0 +1,59 @@
+schema = 1
+
+[[source]]
+id = "t-deck-async-drivers-rs"
+kind = "copied-source"
+url = "https://github.com/timschmidt/t-deck-async-drivers-rs"
+revision = "497f77e012c6493fc4beadea1cd278dd8918c486"
+license = "Apache-2.0"
+destination = "drivers/* and examples/{i2c-tester,patina}"
+status = "import-pending"
+notes = "Every driver, example, document, and source file is imported with original metadata; integration-only path changes are recorded in imports/t-deck-async-drivers-rs.toml."
+
+[[source]]
+id = "sx126x-async-rs"
+kind = "copied-source"
+url = "https://github.com/timschmidt/t-deck-async-drivers-rs/tree/497f77e012c6493fc4beadea1cd278dd8918c486/sx126x-async-rs"
+revision = "497f77e012c6493fc4beadea1cd278dd8918c486"
+license = "MIT OR Apache-2.0"
+destination = "drivers/sx126x-async-rs"
+status = "import-pending"
+notes = "Component manifest carries its dual license independently of the source workspace default."
+
+[[source]]
+id = "synthetos-g2"
+kind = "behavioral-reference-only"
+url = "https://github.com/synthetos/g2"
+revision = "unselected"
+license = "GPL-2.0 with component-specific exceptions"
+destination = "none"
+status = "clean-room"
+notes = "No implementation source may be copied. Requirements and black-box fixtures must be independently authored from public functional descriptions and mathematics."
+
+[[source]]
+id = "simplefoc"
+kind = "behavioral-reference-only"
+url = "https://github.com/simplefoc/Arduino-FOC"
+revision = "unselected"
+license = "MIT"
+destination = "none"
+status = "clean-room"
+notes = "Project policy requires an independent implementation despite the permissive source license."
+
+[[source]]
+id = "mks-tinybee"
+kind = "hardware-reference-only"
+url = "https://github.com/makerbase-mks/MKS-TinyBee"
+revision = "unselected"
+license = "not established for copying"
+destination = "boards/mks-tinybee/board.toml facts only"
+status = "reference-only"
+
+[[source]]
+id = "mks-esp32-foc-v1"
+kind = "hardware-and-behavior-reference-only"
+url = "https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0"
+revision = "unselected"
+license = "not established for copying"
+destination = "boards/mks-esp32-foc-v1/board.toml facts only"
+status = "reference-only"

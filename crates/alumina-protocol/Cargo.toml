@@ -1,0 +1,12 @@
+[package]
+name = "alumina-protocol"
+description = "Bounded no-std wire identities and frame headers for Alumina devices"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

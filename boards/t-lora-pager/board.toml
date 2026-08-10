@@ -1,0 +1,21 @@
+schema = 1
+id = "t-lora-pager-current"
+display_name = "LILYGO T-LoRa Pager (current)"
+revision = "current LilyGoLib hardware definition; pin before implementation"
+chip = "esp32s3"
+target = "xtensa-esp32s3-none-elf"
+cores = 2
+flash_bytes = 16777216
+psram_bytes = 8388608
+qualification = "described"
+implementation = "late-stub"
+hardware_available = false
+service_core = 0
+realtime_core = 1
+
+[provenance]
+primary = "https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/master/docs/hardware/lilygo-t-lora-pager.md"
+
+[safe_state]
+motion_enabled = false
+process_energy_enabled = false

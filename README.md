@@ -6,9 +6,24 @@ the async driver structure of `t-deck-async-drivers-rs` with the useful embedded
 web-serving behavior demonstrated by `alumina-firmware`, while putting all
 network and UI work on one ESP32 core and all real-time work on the other.
 
-This repository currently contains the researched implementation plan. There are
-no deployed clients and no compatibility requirement: the old Alumina firmware
-and interface are functional references, not APIs to preserve.
+Implementation is underway from the researched delivery plan. The first
+portable crates define exact protocol identities, integer machine-job
+validation, board-resource ownership, and a fail-closed safety state machine.
+There are no deployed clients and no compatibility requirement: the old Alumina
+firmware and interface are functional references, not APIs to preserve.
+
+## Developer checks
+
+The repository pins Rust 1.88. Run the portable checks from its root:
+
+```console
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets -- -D warnings
+cargo xtask board list
+cargo xtask board check mks-tinybee-v1
+cargo xtask board check t-deck-pro
+```
 
 ## Committed direction
 
