@@ -12,6 +12,7 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 
 mod hardware;
+mod network;
 pub mod service;
 
 use alumina_protocol::{DeviceCycle, Digest, FrameKind};
@@ -24,6 +25,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::clock::CpuClock;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
+use esp_hal::ram;
 use esp_hal::system::{Cpu, Stack};
 use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
@@ -69,11 +71,15 @@ async fn main(spawner: Spawner) -> ! {
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    let split = selected::split(peripherals);
+    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
+    esp_alloc::heap_allocator!(size: 36 * 1_024);
+    let mut split = selected::split(peripherals);
 
     let timer_group0 = TimerGroup::new(split.runtime.timer_group0);
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
     esp_rtos::start(timer_group0.timer0);
+
+    let network = network::start(spawner, split.service.take_wifi()).await;
 
     let boundary = BOUNDARY.init(DefaultBoundary::new());
     let (service_endpoint, realtime_endpoint) = boundary.split();
@@ -92,7 +98,7 @@ async fn main(spawner: Spawner) -> ! {
         },
     );
 
-    spawner.must_spawn(service_task(split.service, service_endpoint));
+    spawner.must_spawn(service_task(split.service, service_endpoint, network));
     info!(
         "Alumina dual-core runtime started for {}",
         env!("ALUMINA_BOARD_ID")
@@ -104,7 +110,11 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 #[embassy_executor::task]
-async fn service_task(resources: selected::ServiceResources, mut endpoint: DefaultServiceEndpoint) {
+async fn service_task(
+    resources: selected::ServiceResources,
+    mut endpoint: DefaultServiceEndpoint,
+    network: network::NetworkControl,
+) {
     if Cpu::current() != Cpu::ProCpu {
         panic!("service executor started on the wrong core");
     }
@@ -136,7 +146,12 @@ async fn service_task(resources: selected::ServiceResources, mut endpoint: Defau
             error!("RT fault code={} detail={}", fault.code, fault.detail);
         }
 
-        let _keep_service_state_core_local = (&resources, &storage);
+        let _keep_service_state_core_local = (
+            &resources,
+            &storage,
+            network.supervisor(),
+            network.credential_source(),
+        );
         Timer::after(Duration::from_millis(100)).await;
     }
 }

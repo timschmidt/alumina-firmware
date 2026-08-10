@@ -10,7 +10,7 @@ use super::RuntimeResources;
 /// Core-0 tokens. They cannot be constructed again or moved from this owner.
 #[allow(dead_code, reason = "tokens are reserved for staged service drivers")]
 pub struct ServiceResources {
-    wifi: WIFI<'static>,
+    wifi: Option<WIFI<'static>>,
     spi2: SPI2<'static>,
     spi_miso: GPIO19<'static>,
     spi_mosi: GPIO23<'static>,
@@ -29,6 +29,13 @@ pub struct ServiceResources {
     encoder_a: GPIO14<'static>,
     lcd_d6: GPIO15<'static>,
     lcd_enable: GPIO21<'static>,
+}
+
+impl ServiceResources {
+    /// Moves the singleton radio token into core-0 network initialization once.
+    pub fn take_wifi(&mut self) -> WIFI<'static> {
+        self.wifi.take().expect("Wi-Fi token already consumed")
+    }
 }
 
 /// Core-1 tokens. The hazardous I²S engine remains unconfigured/non-armable.
@@ -112,7 +119,7 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
             software_interrupt,
         },
         service: ServiceResources {
-            wifi,
+            wifi: Some(wifi),
             spi2,
             spi_miso,
             spi_mosi,

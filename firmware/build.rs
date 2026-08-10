@@ -21,6 +21,7 @@ const BOARDS: &[BoardSelection] = &[
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=ALUMINA_AP_PASSWORD");
     for board in BOARDS {
         println!("cargo:rerun-if-env-changed={}", board.feature_env);
     }
@@ -48,4 +49,8 @@ fn main() {
         );
     }
     println!("cargo:rustc-env=ALUMINA_BOARD_ID={}", board.id);
+
+    // Keep the ESP-HAL aggregate linker script last so its section definitions
+    // compose correctly with target-wide scripts such as defmt.x.
+    println!("cargo:rustc-link-arg=-Tlinkall.x");
 }

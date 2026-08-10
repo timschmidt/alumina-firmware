@@ -40,7 +40,7 @@ bt-hci = { workspace = true }
 embassy-executor = { workspace = true }
 embassy-sync = { workspace = true }
 embassy-time = { workspace = true }
-esp-radio = { workspace = true, features = ["esp32s3"] }
+esp-radio = { workspace = true, features = ["ble", "coex", "esp32s3"] }
 smoltcp = { workspace = true }
 trouble-host = { workspace = true }
 critical-section = { workspace = true }

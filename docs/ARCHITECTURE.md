@@ -112,6 +112,31 @@ handlers for the innermost pulse/current loops, while retaining Embassy tasks fo
 slower real-time coordination. “Embassy-based” does not mean every sample is an
 ordinary cooperative task: the hardware-timed ISR/DMA layer remains explicit.
 
+### Implemented M3 network foundation
+
+The initial adapter initializes the radio and its scheduler-backed allocation on
+core 0 before starting core 1. It keeps the Wi-Fi controller, AP device, station
+device, `embassy-net` stack, DHCP server, HTTP server, and all socket buffers on
+the service side. Firmware reserves a 64 KiB reclaimed-memory heap plus a 36 KiB
+ordinary heap for the vendor radio/runtime; the real-time core still performs no
+general allocation after arming.
+
+The recovery AP is `192.168.4.1/24`, admits at most four clients, and offers only
+`.100` through `.103`. HTTP starts with two handlers, exact route matching,
+fixed headers/socket buffers, per-I/O and per-request timeouts, no-store
+responses, and a restrictive bootstrap-page CSP. The first linked image exposes
+only `/`, `/api/v1/identity`, `/api/v1/health`, and `/api/v1/network` as read-only
+bootstrap endpoints. Unknown routes are 404 and mutation methods are 405; there
+are no legacy aliases.
+
+This foundation deliberately does not yet claim AP+STA coexistence, scanning,
+association, authentication, WebSocket streaming, asset bundles, storage
+mutation, or request-rate admission. The controller and station device stay
+owned by core 0 for those additions. The selected DHCP adapter may need a
+link-layer workaround for clients which clear the DHCP broadcast flag before
+they have an IP address, because `embassy-net` cannot necessarily unicast to
+their not-yet-learned MAC address; physical-client qualification is mandatory.
+
 ### Cross-core messages
 
 Use three independent channels so telemetry pressure cannot delay a stop request:

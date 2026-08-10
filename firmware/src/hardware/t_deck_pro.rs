@@ -11,7 +11,7 @@ use super::RuntimeResources;
 /// Core-0 tokens for every currently imported T-Deck peripheral path.
 #[allow(dead_code, reason = "tokens are reserved for staged service actors")]
 pub struct ServiceResources {
-    wifi: WIFI<'static>,
+    wifi: Option<WIFI<'static>>,
     i2c0: I2C0<'static>,
     i2c_scl: GPIO14<'static>,
     i2c_sda: GPIO13<'static>,
@@ -46,6 +46,13 @@ pub struct ServiceResources {
     microphone_data: GPIO17<'static>,
     microphone_clock: GPIO18<'static>,
     boot_button: GPIO0<'static>,
+}
+
+impl ServiceResources {
+    /// Moves the singleton radio token into core-0 network initialization once.
+    pub fn take_wifi(&mut self) -> WIFI<'static> {
+        self.wifi.take().expect("Wi-Fi token already consumed")
+    }
 }
 
 /// T-Deck has no qualified hazardous output engine yet; core 1 owns its timer.
@@ -119,7 +126,7 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
             software_interrupt,
         },
         service: ServiceResources {
-            wifi,
+            wifi: Some(wifi),
             i2c0,
             i2c_scl,
             i2c_sda,

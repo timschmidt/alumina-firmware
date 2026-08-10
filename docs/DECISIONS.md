@@ -102,6 +102,21 @@ describes the attached machine.
 - Firmware and embedded UI update together. Signed bundles, recoverable updates,
   external signing-key ownership, and per-device credentials are accepted
   defaults. No compatibility negotiation layer is built.
+- The first network implementation uses the mutually compatible no-std
+  `edge-dhcp` 0.6, `edge-http` 0.6, `edge-nal` 0.5, and
+  `edge-nal-embassy` 0.6 line over `embassy-net` 0.7. The edge crates provide
+  bounded protocol/socket machinery; Alumina owns route policy, authentication,
+  authorization, rate limits, job admission, and recovery semantics.
+- Initial firmware reserves exactly two HTTP connections, 1,024 header bytes and
+  12 headers per connection, 2,048 TCP bytes per direction per connection, one
+  1,500-byte DHCP RX/TX pair, and four DHCP leases. These are reviewed starting
+  limits, not performance claims, and may change only with renewed release/HIL
+  evidence.
+- A compile-time development AP password exists solely to make first hardware
+  bring-up possible. Its provenance is disclosed without returning the secret,
+  and it is structurally non-production-armable. A build-provisioned password is
+  also non-production-armable; production requires transactional, unique,
+  device-stored credentials plus authenticated mutation routes.
 
 ## Interface and graphical programming
 

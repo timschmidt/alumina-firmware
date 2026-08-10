@@ -20,6 +20,7 @@ name = "alumina-firmware"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
+ "alumina-net",
  "alumina-protocol",
  "alumina-runtime",
  "alumina-safety",
@@ -27,10 +28,19 @@ dependencies = [
  "board-mks-tinybee",
  "board-t-deck-pro",
  "defmt 1.1.1",
+ "edge-dhcp",
+ "edge-http",
+ "edge-nal",
+ "edge-nal-embassy",
  "embassy-executor",
+ "embassy-futures",
+ "embassy-net",
  "embassy-time 0.4.0",
+ "embedded-io-async 0.6.1",
+ "esp-alloc",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-radio",
  "esp-rtos",
  "panic-rtt-target",
  "rtt-target",
@@ -43,6 +53,10 @@ version = "0.1.0"
 dependencies = [
  "alumina-protocol",
 ]
+
+[[package]]
+name = "alumina-net"
+version = "0.1.0"
 
 [[package]]
 name = "alumina-protocol"
@@ -422,6 +436,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "edge-dhcp"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2ccd3a181a33c710e07c3f04623d7a11e9969b1e44a7276ead7873b049720cb"
+dependencies = [
+ "defmt 0.3.100",
+ "edge-nal",
+ "edge-raw",
+ "embassy-futures",
+ "embassy-time 0.4.0",
+ "heapless 0.8.0",
+ "num_enum",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "edge-http"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f9b24aa48b6e43e6316a02bed8291f8a856cb6d4e63a2f533d35d74d04141d"
+dependencies = [
+ "base64",
+ "defmt 0.3.100",
+ "edge-nal",
+ "embassy-futures",
+ "embassy-sync 0.7.2",
+ "embassy-time 0.4.0",
+ "embedded-io-async 0.6.1",
+ "embedded-svc",
+ "heapless 0.8.0",
+ "httparse",
+ "sha1_smol",
+]
+
+[[package]]
+name = "edge-nal"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac19c3edcdad839c71cb919cd09a632d9915d630760b37f0b74290188c08f248"
+dependencies = [
+ "embassy-time 0.4.0",
+ "embedded-io-async 0.6.1",
+]
+
+[[package]]
+name = "edge-nal-embassy"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "252f89adf4f0016631977bec3ba50d768263a3a9fa9f023b4087088a619568ce"
+dependencies = [
+ "defmt 0.3.100",
+ "edge-nal",
+ "embassy-futures",
+ "embassy-net",
+ "embedded-io-async 0.6.1",
+ "heapless 0.8.0",
+]
+
+[[package]]
+name = "edge-raw"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6207c84e9bc8df8ef3c155196df290f2a51f010bd60c2e78366e51979988bdb5"
+
+[[package]]
 name = "embassy-embedded-hal"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -755,6 +834,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1763775e2323b7d5f0aa6090657f5e21cfa02ede71f5dc40eead06d64dcd15cc"
 dependencies = [
  "embedded-storage",
+]
+
+[[package]]
+name = "embedded-svc"
+version = "0.28.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7770e30ab55cfbf954c00019522490d6ce26a3334bede05a732ba61010e98e0"
+dependencies = [
+ "defmt 0.3.100",
+ "embedded-io 0.6.1",
+ "embedded-io-async 0.6.1",
+ "enumset",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -1381,6 +1473,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "httparse"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
 name = "i2c-tester"
 version = "0.1.0"
 dependencies = [
@@ -1607,6 +1705,27 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "num_enum"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d0bca838442ec211fa11de3a8b0e0e8f3a4522575b5c4c06ed722e005036f26"
+dependencies = [
+ "num_enum_derive",
+ "rustversion",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "680998035259dcfcafe653688bf2aa6d3e2dc05e98be6ab46afb089dc84f1df8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -1961,6 +2080,12 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"

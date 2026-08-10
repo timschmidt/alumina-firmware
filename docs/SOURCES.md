@@ -126,6 +126,13 @@ compatibility.
 - [Picoserve](https://github.com/sammhicks/picoserve) — async `no_std`, no-heap
   HTTP server with JSON, SSE, and WebSocket support; its own README notes pre-1.0
   changes and limited stress testing, hence the explicit review gate.
+- [`edge-net`](https://github.com/ivmarkov/edge-net) — selected bounded `no_std`
+  HTTP/DHCP and network-abstraction implementation. The M3 foundation pins
+  `edge-dhcp` 0.6.0, `edge-http` 0.6.1, `edge-nal` 0.5.0, and
+  `edge-nal-embassy` 0.6.0 because that adapter line targets `embassy-net` 0.7.
+- [`esp-radio` 0.17 Wi-Fi documentation](https://docs.espressif.com/projects/rust/esp-radio/0.17.0/esp32/esp_radio/wifi/index.html)
+  — allocator/scheduler requirements, radio initialization, controller/device
+  ownership, and async AP/STA interfaces used by the first firmware adapter.
 - [`esp-hal` ESP32 peripheral documentation](https://docs.espressif.com/projects/rust/esp-hal/1.1.0/esp32/esp_hal/index.html)
   — current HAL modules and chip-specific availability for GPIO, DMA, I²C, I²S,
   LEDC, MCPWM, PCNT, RMT, SPI, timers, TWAI, UART, and related resources.

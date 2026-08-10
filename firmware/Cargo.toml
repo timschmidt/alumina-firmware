@@ -19,19 +19,28 @@ bench = false
 default = []
 board-mks-tinybee = [
     "dep:board-mks-tinybee",
+    "esp-alloc/esp32",
     "esp-bootloader-esp-idf/esp32",
     "esp-hal/esp32",
+    "esp-radio/esp32",
+    "esp-rtos/esp-alloc",
     "esp-rtos/esp32",
+    "esp-rtos/esp-radio",
 ]
 board-t-deck-pro = [
     "dep:board-t-deck-pro",
+    "esp-alloc/esp32s3",
     "esp-bootloader-esp-idf/esp32s3",
     "esp-hal/esp32s3",
+    "esp-radio/esp32s3",
+    "esp-rtos/esp-alloc",
     "esp-rtos/esp32s3",
+    "esp-rtos/esp-radio",
 ]
 
 [dependencies]
 alumina-board.workspace = true
+alumina-net.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-safety.workspace = true
@@ -40,9 +49,18 @@ board-mks-tinybee = { workspace = true, optional = true }
 board-t-deck-pro = { workspace = true, optional = true }
 defmt.workspace = true
 embassy-executor.workspace = true
+embassy-futures.workspace = true
+embassy-net.workspace = true
 embassy-time.workspace = true
+edge-dhcp.workspace = true
+edge-http.workspace = true
+edge-nal.workspace = true
+edge-nal-embassy.workspace = true
+embedded-io-async-v06.workspace = true
+esp-alloc.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
+esp-radio.workspace = true
 esp-rtos.workspace = true
 panic-rtt-target.workspace = true
 rtt-target.workspace = true

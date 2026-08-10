@@ -5,6 +5,7 @@ members = [
     "boards/t-deck-pro",
     "crates/alumina-board",
     "crates/alumina-machine-ir",
+    "crates/alumina-net",
     "crates/alumina-protocol",
     "crates/alumina-runtime",
     "crates/alumina-safety",
@@ -28,6 +29,7 @@ default-members = [
     "boards/t-deck-pro",
     "crates/alumina-board",
     "crates/alumina-machine-ir",
+    "crates/alumina-net",
     "crates/alumina-protocol",
     "crates/alumina-runtime",
     "crates/alumina-safety",
@@ -48,6 +50,7 @@ publish = false
 [workspace.dependencies]
 alumina-board = { path = "crates/alumina-board" }
 alumina-machine-ir = { path = "crates/alumina-machine-ir" }
+alumina-net = { path = "crates/alumina-net" }
 alumina-protocol = { path = "crates/alumina-protocol" }
 alumina-runtime = { path = "crates/alumina-runtime" }
 alumina-safety = { path = "crates/alumina-safety" }
@@ -64,19 +67,28 @@ embassy-futures = "0.1.1"
 embassy-net = { version = "0.7.1", features = ["defmt", "dhcpv4", "medium-ethernet", "tcp", "udp"] }
 embassy-sync = "0.7.2"
 embassy-time = { version = "0.4.0", features = ["defmt"] }
+edge-dhcp = { version = "0.6.0", default-features = false, features = ["defmt", "io"] }
+edge-http = { version = "0.6.0", default-features = false, features = ["defmt", "io"] }
+edge-nal = { version = "0.5.0", default-features = false }
+edge-nal-embassy = { version = "0.6.0", default-features = false, features = [
+    "defmt",
+    "medium-ethernet",
+    "proto-ipv4",
+    "tcp",
+    "udp",
+] }
 embedded-bus-async = { path = "drivers/embedded-bus-async" }
 embedded-graphics = "0.8.1"
 embedded-hal = "1.0.0-rc.3"
 embedded-hal-async = "1.0.0-rc.3"
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
+embedded-io-async-v06 = { package = "embedded-io-async", version = "0.6.1", default-features = false }
 esp-alloc = { version = "0.9.0", features = ["defmt"] }
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt"] }
 esp-hal = { version = "~1.0", features = ["defmt", "unstable"] }
 esp-println = { version = "0.15.0", features = ["log-04", "defmt-espflash"] }
 esp-radio = { version = "0.17.0", features = [
-    "ble",
-    "coex",
     "defmt",
     "esp-alloc",
     "smoltcp",

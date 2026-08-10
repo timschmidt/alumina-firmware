@@ -24,6 +24,14 @@ The cache coordinator is instantiated only inside the core-0 service task; core
 1 has no filesystem handle. See the
 [protocol/storage simulation evidence](docs/evidence/M3-PROTOCOL-STORAGE-SIM.md).
 
+The first live-network foundation now initializes `esp-radio` on core 0 before
+the real-time core starts, runs a protected WPA2 device AP, a fixed four-lease
+DHCP service, and a two-connection bounded HTTP bootstrap on that same service
+executor. Only exact greenfield read-only routes are admitted. A repository
+development password exists for bench discovery, is reported as non-production,
+and can never make an image production-armable. See the
+[Wi-Fi/web compile evidence](docs/evidence/M3-WIFI-WEB-FOUNDATION.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:
@@ -68,7 +76,10 @@ Both current packages remain intentionally non-armable. “Compiles” means the
 typed package and complete release image build for the declared chip; it is not
 bench, safe-state, peripheral-smoke, or timing qualification. See the
 [dual-core compile evidence](docs/evidence/M2-DUAL-CORE-RUNTIME.md) and the
-[expanded board-metadata evidence](docs/evidence/M2-BOARD-METADATA.md).
+[expanded board-metadata evidence](docs/evidence/M2-BOARD-METADATA.md). The
+network foundation can be built with `ALUMINA_AP_PASSWORD` supplied outside the
+repository, but build-provisioned credentials still do not satisfy the planned
+unique device-stored production credential gate.
 
 ## Imported T-Deck support
 

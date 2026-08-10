@@ -1,0 +1,12 @@
+[package]
+name = "alumina-net"
+description = "Bounded Wi-Fi provisioning and web-service policy for Alumina firmware"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -11,6 +11,16 @@ status = "dependency"
 notes = "Used without default std features for canonical protocol V1 SHA-256 content, manifest, configuration, and job identities; hardware acceleration is not yet integrated."
 
 [[source]]
+id = "edge-net"
+kind = "cargo-dependency"
+url = "https://github.com/ivmarkov/edge-net"
+revision = "edge-dhcp 0.6.0; edge-http 0.6.1; edge-nal 0.5.0; edge-nal-embassy 0.6.0"
+license = "MIT OR Apache-2.0"
+destination = "Cargo dependencies; no source copied"
+status = "dependency"
+notes = "Selected no_std, bounded adapters for DHCP, HTTP, timeout-capable network traits, and Embassy 0.7 TCP/UDP sockets. Authentication, WebSocket, and application admission remain Alumina responsibilities."
+
+[[source]]
 id = "t-deck-async-drivers-rs"
 kind = "copied-source"
 url = "https://github.com/timschmidt/t-deck-async-drivers-rs"

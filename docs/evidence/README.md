@@ -17,3 +17,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-PROTOCOL-STORAGE-SIM.md`](M3-PROTOCOL-STORAGE-SIM.md) — exact native wire
   foundations, resumable content-addressed transaction model, rebootable cache,
   and bounded service/RT prefetch simulation.
+- [`M3-WIFI-WEB-FOUNDATION.md`](M3-WIFI-WEB-FOUNDATION.md) — core-0 radio/AP,
+  static IPv4, bounded DHCP/HTTP bootstrap, credential policy, and linked-image
+  evidence for both first boards.
