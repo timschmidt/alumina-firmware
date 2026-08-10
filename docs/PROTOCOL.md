@@ -86,6 +86,13 @@ be short. The canonical `ACMF` V1 manifest hash commits its schema, object facts
 layout, and each ordered chunk descriptor. Mutation is rejected during every
 armed/energized state and while deterministic execution owns storage service.
 
+The implemented internal readback API identifies a publication by the exact
+typed stored object and canonical manifest. It linearly revalidates the committed
+record chain and returns sequential, independently hashed chunks into a fixed
+1,024-byte caller buffer; the final chunk additionally requires aggregate object
+and manifest verification. `StorageRead` remains unexposed by the HTTP service
+at this checkpoint, and raw block addresses are not part of the native API.
+
 The provision body begins with `ALMPRV01`, requires an explicit destructive
 format flag, and binds the exact observed device block count, expected locator
 generation/current media ID, new raw region, fresh media ID, and recovery intent

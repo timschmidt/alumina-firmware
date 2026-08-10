@@ -10,7 +10,7 @@ use alumina_protocol::Digest;
 use crate::{
     CacheLimits, ChunkUploadHeader, ContentHasher, Error as StorageError, FinalizeUploadRequest,
     ManifestHasher, MutationContext, PublishedObject, UploadCoordinator, UploadId, UploadPlan,
-    UploadProgress,
+    UploadProgress, sha256,
 };
 
 /// Sector size required by the V1 cache-media schema and SD block adapter.
@@ -147,6 +147,71 @@ pub struct MediaStatus {
     pub degraded_anchor: bool,
 }
 
+/// Metadata for one independently verified chunk copied into a caller buffer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublishedChunk {
+    /// Sequential chunk index from the canonical publication manifest.
+    pub index: u32,
+    /// Exact initialized prefix length in the caller's chunk buffer.
+    pub byte_len: u32,
+    /// SHA-256 identity verified over exactly those initialized bytes.
+    pub content: crate::ContentId,
+}
+
+/// Linear, allocation-free cursor over one exact immutable publication.
+///
+/// Fields are private so callers cannot skip records, substitute media, or
+/// claim aggregate verification before the publication record is reached.
+pub struct PublishedReader {
+    plan: UploadPlan,
+    media_id: MediaId,
+    region: MediaRegion,
+    opened_generation: u64,
+    opened_tail: u64,
+    begin_block: u64,
+    publish_block: u64,
+    publish_header: RecordHeader,
+    publish_digest: Digest,
+    next_record_block: u64,
+    next_sequence: u64,
+    previous_digest: Digest,
+    next_chunk: u32,
+    accepted_bytes: u64,
+    object: ContentHasher,
+    manifest: ManifestHasher,
+    complete: bool,
+}
+
+impl PublishedReader {
+    /// Exact declaration recovered from the selected publication record.
+    pub const fn plan(&self) -> UploadPlan {
+        self.plan
+    }
+
+    /// Typed immutable identity selected when this cursor was opened.
+    pub const fn published(&self) -> PublishedObject {
+        PublishedObject {
+            object: self.plan.object,
+            manifest: self.plan.manifest,
+        }
+    }
+
+    /// Next chunk index that has not yet passed record and content verification.
+    pub const fn next_chunk(&self) -> u32 {
+        self.next_chunk
+    }
+
+    /// Exact number of object bytes already released to the caller.
+    pub const fn accepted_bytes(&self) -> u64 {
+        self.accepted_bytes
+    }
+
+    /// True only after the final chunk and its bound publication record passed.
+    pub const fn is_complete(&self) -> bool {
+        self.complete
+    }
+}
+
 /// Geometry/configuration rejection before any log record is trusted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MediaGeometryError {
@@ -185,6 +250,8 @@ pub enum MediaCorruption {
     Replay,
     /// Selected anchor did not match the exact replayed tail.
     Tail,
+    /// A published-object cursor diverged from its bound media or record stream.
+    PublishedReader,
 }
 
 /// Cache backend failure, preserving the concrete device error without boxing.
@@ -209,6 +276,8 @@ pub enum MediaError<E> {
         /// Blocks following the committed tail.
         available: u64,
     },
+    /// No committed publication exactly matched the requested typed identity.
+    PublishedNotFound,
     /// Existing upload/safety/content invariant rejected the operation.
     Storage(StorageError),
     /// Sequence, generation, or publication counter overflowed.
@@ -239,7 +308,7 @@ struct Anchor {
     last_record_digest: Digest,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RecordHeader {
     kind: RecordKind,
     sequence: u64,
@@ -284,6 +353,15 @@ struct ReadyState {
     hashes: Option<ActiveHashes>,
     published_objects: u32,
     degraded_anchor: bool,
+}
+
+#[derive(Clone, Copy)]
+struct PublishedLocation {
+    plan: UploadPlan,
+    begin_block: u64,
+    publish_block: u64,
+    publish_header: RecordHeader,
+    publish_digest: Digest,
 }
 
 #[allow(
@@ -480,6 +558,347 @@ where
             degraded_anchor,
         });
         Ok(self.status())
+    }
+
+    /// Locates the newest publication with this exact typed object and manifest.
+    ///
+    /// Lookup revalidates the complete committed chain without allocating a
+    /// directory. A miss is benign. Device or integrity failures latch this
+    /// media instance faulted so no later operation can consume uncertain data.
+    pub async fn open_published(
+        &mut self,
+        expected: PublishedObject,
+    ) -> Result<PublishedReader, MediaError<D::Error>> {
+        let result = self.open_published_inner(expected).await;
+        if matches!(&result, Err(MediaError::Device(_) | MediaError::Corrupt(_))) {
+            self.state = MountState::Faulted;
+        }
+        result
+    }
+
+    /// Copies and verifies the next chunk of a publication into fixed caller RAM.
+    ///
+    /// Only `chunk.byte_len` bytes are object data. The remainder is zeroed on
+    /// success. The final chunk is not released until the aggregate object hash,
+    /// canonical manifest, and original publication record all match.
+    pub async fn read_next_published(
+        &mut self,
+        reader: &mut PublishedReader,
+        output: &mut [u8; MAX_MEDIA_CHUNK_BYTES],
+    ) -> Result<Option<PublishedChunk>, MediaError<D::Error>> {
+        let result = self.read_next_published_inner(reader, output).await;
+        if matches!(&result, Err(MediaError::Device(_) | MediaError::Corrupt(_))) {
+            self.state = MountState::Faulted;
+        }
+        result
+    }
+
+    async fn open_published_inner(
+        &mut self,
+        expected: PublishedObject,
+    ) -> Result<PublishedReader, MediaError<D::Error>> {
+        let anchor = self.ready()?.anchor;
+        let mut replay = ReplayState::new();
+        let mut selected = None;
+        let mut cursor = MEDIA_ANCHOR_BLOCKS;
+        let mut expected_sequence = 1_u64;
+        let mut previous_digest = Digest::ZERO;
+        let mut header_block = [0_u8; MEDIA_BLOCK_BYTES];
+        let mut payload = [0_u8; MAX_MEDIA_RECORD_PAYLOAD_BYTES];
+
+        while cursor < anchor.committed_tail {
+            self.read_relative(cursor, &mut header_block).await?;
+            let header = decode_record_header(&header_block).map_err(MediaError::Corrupt)?;
+            if header.sequence != expected_sequence
+                || header.previous_digest != previous_digest
+                || header
+                    .record_blocks
+                    .checked_add(cursor)
+                    .is_none_or(|end| end > anchor.committed_tail)
+            {
+                return Err(MediaError::Corrupt(MediaCorruption::RecordChain));
+            }
+            payload.fill(0);
+            let digest = self
+                .read_and_verify_record(cursor, &header_block, header, &mut payload)
+                .await?;
+            replay
+                .apply(header, cursor, &payload[..header.payload_len], self.limits)
+                .map_err(MediaError::Corrupt)?;
+            if header.kind == RecordKind::Publish {
+                let (plan, begin_block) =
+                    decode_publication(&payload[..header.payload_len], self.limits)
+                        .map_err(MediaError::Corrupt)?;
+                if plan.object == expected.object && plan.manifest == expected.manifest {
+                    selected = Some(PublishedLocation {
+                        plan,
+                        begin_block,
+                        publish_block: cursor,
+                        publish_header: header,
+                        publish_digest: digest,
+                    });
+                }
+            }
+            cursor = cursor
+                .checked_add(header.record_blocks)
+                .ok_or(MediaError::Corrupt(MediaCorruption::RecordChain))?;
+            expected_sequence = expected_sequence
+                .checked_add(1)
+                .ok_or(MediaError::Corrupt(MediaCorruption::RecordChain))?;
+            previous_digest = digest;
+        }
+        if cursor != anchor.committed_tail
+            || expected_sequence.wrapping_sub(1) != anchor.last_sequence
+            || previous_digest != anchor.last_record_digest
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::Tail));
+        }
+
+        let selected = selected.ok_or(MediaError::PublishedNotFound)?;
+        if selected.begin_block < MEDIA_ANCHOR_BLOCKS
+            || selected.begin_block >= selected.publish_block
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+        self.read_relative(selected.begin_block, &mut header_block)
+            .await?;
+        let begin_header = decode_record_header(&header_block).map_err(MediaError::Corrupt)?;
+        if begin_header.kind != RecordKind::Begin
+            || begin_header.upload_id != selected.plan.upload_id
+            || begin_header
+                .record_blocks
+                .checked_add(selected.begin_block)
+                .is_none_or(|end| end > selected.publish_block)
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+        payload.fill(0);
+        let begin_digest = self
+            .read_and_verify_record(
+                selected.begin_block,
+                &header_block,
+                begin_header,
+                &mut payload,
+            )
+            .await?;
+        let begin_plan = UploadPlan::decode(&payload[..begin_header.payload_len], self.limits)
+            .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        if begin_plan != selected.plan {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+        let next_record_block = selected
+            .begin_block
+            .checked_add(begin_header.record_blocks)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let next_sequence = begin_header
+            .sequence
+            .checked_add(1)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let manifest = ManifestHasher::new(
+            selected.plan.object,
+            selected.plan.chunk_bytes,
+            selected.plan.chunk_count,
+            self.limits,
+        )
+        .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        Ok(PublishedReader {
+            plan: selected.plan,
+            media_id: anchor.media_id,
+            region: self.region,
+            opened_generation: anchor.generation,
+            opened_tail: anchor.committed_tail,
+            begin_block: selected.begin_block,
+            publish_block: selected.publish_block,
+            publish_header: selected.publish_header,
+            publish_digest: selected.publish_digest,
+            next_record_block,
+            next_sequence,
+            previous_digest: begin_digest,
+            next_chunk: 0,
+            accepted_bytes: 0,
+            object: ContentHasher::new(),
+            manifest,
+            complete: false,
+        })
+    }
+
+    async fn read_next_published_inner(
+        &mut self,
+        reader: &mut PublishedReader,
+        output: &mut [u8; MAX_MEDIA_CHUNK_BYTES],
+    ) -> Result<Option<PublishedChunk>, MediaError<D::Error>> {
+        let anchor = self.ready()?.anchor;
+        if anchor.media_id != reader.media_id
+            || self.region != reader.region
+            || anchor.generation < reader.opened_generation
+            || anchor.committed_tail < reader.opened_tail
+            || reader.next_chunk > reader.plan.chunk_count
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+        if reader.complete {
+            return Ok(None);
+        }
+        if reader.next_chunk >= reader.plan.chunk_count
+            || reader.next_record_block >= reader.publish_block
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+
+        let mut header_block = [0_u8; MEDIA_BLOCK_BYTES];
+        self.read_relative(reader.next_record_block, &mut header_block)
+            .await?;
+        let header = decode_record_header(&header_block).map_err(MediaError::Corrupt)?;
+        if header.kind != RecordKind::Chunk
+            || header.upload_id != reader.plan.upload_id
+            || header.sequence != reader.next_sequence
+            || header.previous_digest != reader.previous_digest
+            || header
+                .record_blocks
+                .checked_add(reader.next_record_block)
+                .is_none_or(|end| end > reader.publish_block)
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+        let mut payload = [0_u8; MAX_MEDIA_RECORD_PAYLOAD_BYTES];
+        let digest = self
+            .read_and_verify_record(
+                reader.next_record_block,
+                &header_block,
+                header,
+                &mut payload,
+            )
+            .await?;
+        let prefix = payload
+            .get(..ChunkUploadHeader::WIRE_LEN)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let chunk = ChunkUploadHeader::decode(prefix)
+            .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        chunk
+            .validate_body_len(
+                u32::try_from(header.payload_len)
+                    .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?,
+            )
+            .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let bytes = &payload[ChunkUploadHeader::WIRE_LEN..header.payload_len];
+        let expected_len = reader
+            .plan
+            .expected_chunk_len(reader.next_chunk)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let byte_len = u32::try_from(bytes.len())
+            .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        if chunk.upload_id != reader.plan.upload_id
+            || chunk.index != reader.next_chunk
+            || chunk.byte_len != expected_len
+            || byte_len != expected_len
+            || sha256(bytes) != chunk.content
+        {
+            return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+        }
+
+        let mut object = reader.object.clone();
+        object.update(bytes);
+        let mut manifest = reader.manifest.clone();
+        manifest
+            .push(chunk.index, chunk.content, chunk.byte_len)
+            .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let next_record_block = reader
+            .next_record_block
+            .checked_add(header.record_blocks)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let next_sequence = reader
+            .next_sequence
+            .checked_add(1)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let next_chunk = reader
+            .next_chunk
+            .checked_add(1)
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let accepted_bytes = reader
+            .accepted_bytes
+            .checked_add(u64::from(chunk.byte_len))
+            .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?;
+        let final_chunk = next_chunk == reader.plan.chunk_count;
+
+        let (committed_record_block, committed_sequence, committed_digest) = if final_chunk {
+            if next_record_block != reader.publish_block {
+                return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+            }
+            self.read_relative(reader.publish_block, &mut header_block)
+                .await?;
+            let publish_header =
+                decode_record_header(&header_block).map_err(MediaError::Corrupt)?;
+            if publish_header != reader.publish_header
+                || publish_header.kind != RecordKind::Publish
+                || publish_header.upload_id != reader.plan.upload_id
+                || publish_header.sequence != next_sequence
+                || publish_header.previous_digest != digest
+                || publish_header
+                    .record_blocks
+                    .checked_add(reader.publish_block)
+                    .is_none_or(|end| end > reader.opened_tail)
+            {
+                return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+            }
+            let mut publication_payload = [0_u8; MAX_MEDIA_RECORD_PAYLOAD_BYTES];
+            let publish_digest = self
+                .read_and_verify_record(
+                    reader.publish_block,
+                    &header_block,
+                    publish_header,
+                    &mut publication_payload,
+                )
+                .await?;
+            let (published_plan, begin_block) = decode_publication(
+                &publication_payload[..publish_header.payload_len],
+                self.limits,
+            )
+            .map_err(MediaError::Corrupt)?;
+            if publish_digest != reader.publish_digest
+                || published_plan != reader.plan
+                || begin_block != reader.begin_block
+                || object.clone().finalize() != reader.plan.object.content
+                || manifest
+                    .clone()
+                    .finalize()
+                    .map_err(|_| MediaError::Corrupt(MediaCorruption::PublishedReader))?
+                    != reader.plan.manifest
+                || accepted_bytes != reader.plan.object.byte_len
+            {
+                return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+            }
+            (
+                reader
+                    .publish_block
+                    .checked_add(publish_header.record_blocks)
+                    .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?,
+                next_sequence
+                    .checked_add(1)
+                    .ok_or(MediaError::Corrupt(MediaCorruption::PublishedReader))?,
+                publish_digest,
+            )
+        } else {
+            if next_record_block >= reader.publish_block {
+                return Err(MediaError::Corrupt(MediaCorruption::PublishedReader));
+            }
+            (next_record_block, next_sequence, digest)
+        };
+
+        output.fill(0);
+        output[..bytes.len()].copy_from_slice(bytes);
+        reader.next_record_block = committed_record_block;
+        reader.next_sequence = committed_sequence;
+        reader.previous_digest = committed_digest;
+        reader.next_chunk = next_chunk;
+        reader.accepted_bytes = accepted_bytes;
+        reader.object = object;
+        reader.manifest = manifest;
+        reader.complete = final_chunk;
+        Ok(Some(PublishedChunk {
+            index: chunk.index,
+            byte_len: chunk.byte_len,
+            content: chunk.content,
+        }))
     }
 
     /// Begins or resumes one declaration only after its begin record is durable.
@@ -969,6 +1388,18 @@ impl ReplayState {
     }
 }
 
+fn decode_publication(
+    payload: &[u8],
+    limits: CacheLimits,
+) -> Result<(UploadPlan, u64), MediaCorruption> {
+    if payload.len() != PUBLICATION_WIRE_LEN {
+        return Err(MediaCorruption::PublishedReader);
+    }
+    let plan = UploadPlan::decode(&payload[..UploadPlan::WIRE_LEN], limits)
+        .map_err(|_| MediaCorruption::PublishedReader)?;
+    Ok((plan, read_u64(payload, UploadPlan::WIRE_LEN)))
+}
+
 fn checkpoint_progress(checkpoint: crate::UploadCheckpoint) -> UploadProgress {
     UploadProgress {
         upload_id: checkpoint.plan.upload_id,
@@ -1259,6 +1690,7 @@ mod tests {
 
     #[derive(Clone)]
     struct DeviceControl {
+        blocks: Rc<RefCell<Vec<MediaBlock>>>,
         cut_at: Rc<Cell<Option<usize>>>,
         operations: Rc<Cell<usize>>,
     }
@@ -1272,6 +1704,11 @@ mod tests {
         fn disarm(&self) {
             self.cut_at.set(None);
         }
+
+        fn flip(&self, block: u64, byte: usize) {
+            let block = usize::try_from(block).unwrap();
+            self.blocks.borrow_mut()[block][byte] ^= 0x80;
+        }
     }
 
     struct RamBlockDevice {
@@ -1281,13 +1718,15 @@ mod tests {
 
     impl RamBlockDevice {
         fn erased(blocks: usize) -> (Self, DeviceControl) {
+            let blocks = Rc::new(RefCell::new(vec![[0xff; MEDIA_BLOCK_BYTES]; blocks]));
             let control = DeviceControl {
+                blocks: blocks.clone(),
                 cut_at: Rc::new(Cell::new(None)),
                 operations: Rc::new(Cell::new(0)),
             };
             (
                 Self {
-                    blocks: Rc::new(RefCell::new(vec![[0xff; MEDIA_BLOCK_BYTES]; blocks])),
+                    blocks,
                     control: control.clone(),
                 },
                 control,
@@ -1304,13 +1743,15 @@ mod tests {
         }
 
         fn from_snapshot(blocks: Vec<MediaBlock>) -> (Self, DeviceControl) {
+            let blocks = Rc::new(RefCell::new(blocks));
             let control = DeviceControl {
+                blocks: blocks.clone(),
                 cut_at: Rc::new(Cell::new(None)),
                 operations: Rc::new(Cell::new(0)),
             };
             (
                 Self {
-                    blocks: Rc::new(RefCell::new(blocks)),
+                    blocks,
                     control: control.clone(),
                 },
                 control,
@@ -1417,6 +1858,54 @@ mod tests {
         (media, control)
     }
 
+    fn publish(
+        media: &mut CacheMedia<RamBlockDevice>,
+        bytes: &[u8],
+        chunk_bytes: usize,
+    ) -> (UploadPlan, PublishedObject) {
+        let plan = plan(bytes, chunk_bytes);
+        block_on(media.begin_upload(plan, MutationContext::DISARMED_IDLE)).unwrap();
+        for (index, chunk) in bytes.chunks(chunk_bytes).enumerate() {
+            block_on(media.put_chunk(
+                chunk_header(plan, u32::try_from(index).unwrap(), chunk),
+                chunk,
+                MutationContext::DISARMED_IDLE,
+            ))
+            .unwrap();
+        }
+        let published = block_on(media.finalize_upload(
+            FinalizeUploadRequest {
+                upload_id: plan.upload_id,
+            },
+            MutationContext::DISARMED_IDLE,
+        ))
+        .unwrap();
+        (plan, published)
+    }
+
+    fn collect_published(
+        media: &mut CacheMedia<RamBlockDevice>,
+        published: PublishedObject,
+    ) -> Vec<u8> {
+        let mut reader = block_on(media.open_published(published)).unwrap();
+        assert_eq!(reader.published(), published);
+        let mut collected = Vec::new();
+        let mut output = [0xa5; MAX_MEDIA_CHUNK_BYTES];
+        while let Some(chunk) =
+            block_on(media.read_next_published(&mut reader, &mut output)).unwrap()
+        {
+            let byte_len = usize::try_from(chunk.byte_len).unwrap();
+            assert_eq!(chunk.content, sha256(&output[..byte_len]));
+            assert!(output[byte_len..].iter().all(|byte| *byte == 0));
+            collected.extend_from_slice(&output[..byte_len]);
+            output.fill(0xa5);
+        }
+        assert!(reader.is_complete());
+        assert_eq!(reader.next_chunk(), reader.plan().chunk_count);
+        assert_eq!(reader.accepted_bytes(), reader.plan().object.byte_len);
+        collected
+    }
+
     #[test]
     fn explicit_format_and_mount_preserve_region_boundaries() {
         let (device, _) = RamBlockDevice::erased(160);
@@ -1514,6 +2003,93 @@ mod tests {
         assert_eq!(mounted.published_objects, 1);
         assert_eq!(mounted.upload, None);
         assert_eq!(mounted.last_sequence, u64::from(plan.chunk_count) + 2);
+    }
+
+    #[test]
+    fn published_reader_streams_exact_bytes_before_and_after_remount() {
+        let bytes = b"a bounded exact machine stream crossing several records";
+        let (mut media, _) = formatted();
+        let (plan, published) = publish(&mut media, bytes, 9);
+
+        let mut reader = block_on(media.open_published(published)).unwrap();
+        assert_eq!(reader.plan(), plan);
+        assert_eq!(reader.next_chunk(), 0);
+        assert_eq!(reader.accepted_bytes(), 0);
+        assert!(!reader.is_complete());
+        let mut output = [0_u8; MAX_MEDIA_CHUNK_BYTES];
+        let first = block_on(media.read_next_published(&mut reader, &mut output))
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.index, 0);
+        assert_eq!(
+            &output[..usize::try_from(first.byte_len).unwrap()],
+            &bytes[..9]
+        );
+
+        let mut collected = bytes[..9].to_vec();
+        while let Some(chunk) =
+            block_on(media.read_next_published(&mut reader, &mut output)).unwrap()
+        {
+            collected.extend_from_slice(&output[..usize::try_from(chunk.byte_len).unwrap()]);
+        }
+        assert_eq!(collected, bytes);
+        assert!(reader.is_complete());
+        assert!(
+            block_on(media.read_next_published(&mut reader, &mut output))
+                .unwrap()
+                .is_none()
+        );
+
+        let device = media.into_device();
+        let mut remounted = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(remounted.mount()).unwrap();
+        assert_eq!(collect_published(&mut remounted, published), bytes);
+    }
+
+    #[test]
+    fn published_lookup_is_typed_and_a_miss_does_not_fault_media() {
+        let bytes = b"typed immutable work";
+        let (mut media, _) = formatted();
+        let (_, published) = publish(&mut media, bytes, 7);
+        let wrong_kind = PublishedObject {
+            object: StoredObject {
+                kind: ObjectKind::OpaqueData,
+                ..published.object
+            },
+            manifest: published.manifest,
+        };
+        assert!(matches!(
+            block_on(media.open_published(wrong_kind)),
+            Err(MediaError::PublishedNotFound)
+        ));
+        assert_eq!(media.status().availability, MediaAvailability::Ready);
+        assert_eq!(collect_published(&mut media, published), bytes);
+    }
+
+    #[test]
+    fn reader_allows_later_appends_but_faults_on_post_open_corruption() {
+        let bytes = b"abcdefgh";
+        let (mut media, control) = formatted();
+        let (_, published) = publish(&mut media, bytes, 4);
+        let mut reader = block_on(media.open_published(published)).unwrap();
+
+        let later = plan(b"later", 5);
+        block_on(media.begin_upload(later, MutationContext::DISARMED_IDLE)).unwrap();
+        let mut output = [0_u8; MAX_MEDIA_CHUNK_BYTES];
+        let chunk = block_on(media.read_next_published(&mut reader, &mut output))
+            .unwrap()
+            .unwrap();
+        assert_eq!(chunk.index, 0);
+        assert_eq!(&output[..4], b"abcd");
+
+        // Begin is 2..5 and chunk zero is 5..8; chunk one's payload is block 9.
+        control.flip(REGION.start_block + 9, ChunkUploadHeader::WIRE_LEN + 1);
+        assert!(matches!(
+            block_on(media.read_next_published(&mut reader, &mut output)),
+            Err(MediaError::Corrupt(MediaCorruption::RecordCommit))
+                | Err(MediaError::Corrupt(MediaCorruption::PublishedReader))
+        ));
+        assert_eq!(media.status().availability, MediaAvailability::Faulted);
     }
 
     #[test]

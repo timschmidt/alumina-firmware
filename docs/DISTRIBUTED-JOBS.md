@@ -111,6 +111,14 @@ ownership. Low-water telemetry requests prefetch; an unrecoverable starvation
 condition performs the job's certified constrained stop or faults before an
 unsafe underrun. SD and Wi-Fi load are qualified together on TinyBee.
 
+The implemented storage cursor opens only an exact typed object plus manifest,
+replays the full committed log without allocation, and emits at most 1,024
+verified bytes per call. It permits later append-only commits but rejects media
+identity, region, generation, tail, record-chain, or aggregate divergence. This
+is deliberately below the execution boundary: storage chunks may split any
+machine-IR field and must be incrementally decoded on core 0 into separately
+owned, fixed execution envelopes before a credit is transferred to core 1.
+
 ## Deterministic prepare/commit start
 
 The UI orchestrates a bounded two-phase procedure:

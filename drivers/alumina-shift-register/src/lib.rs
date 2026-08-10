@@ -281,16 +281,16 @@ mod tests {
         trace: Arc<Mutex<Vec<Event>>>,
     }
 
+    type FakeTransport = StaticShiftRegister<FakePin, FakePin, FakePin, FakeDelay>;
+    type Trace = Arc<Mutex<Vec<Event>>>;
+
     impl DelayNs for FakeDelay {
         fn delay_ns(&mut self, ns: u32) {
             self.trace.lock().unwrap().push(Event::Delay(ns));
         }
     }
 
-    fn transport() -> (
-        StaticShiftRegister<FakePin, FakePin, FakePin, FakeDelay>,
-        Arc<Mutex<Vec<Event>>>,
-    ) {
+    fn transport() -> (FakeTransport, Trace) {
         let trace = Arc::new(Mutex::new(Vec::new()));
         let pin = |line| FakePin {
             line,

@@ -527,6 +527,7 @@ fn media_error_status<E>(error: MediaError<E>) -> StatusCode {
         MediaError::Unformatted | MediaError::NotMounted => StatusCode::Unsupported,
         MediaError::Faulted | MediaError::Device(_) => StatusCode::Internal,
         MediaError::Corrupt(_) => StatusCode::Integrity,
+        MediaError::PublishedNotFound => StatusCode::NotFound,
         MediaError::Full { .. } | MediaError::Arithmetic => StatusCode::Capacity,
         MediaError::Geometry(_) => StatusCode::InvalidRequest,
         MediaError::Storage(error) => storage_error_status(error),

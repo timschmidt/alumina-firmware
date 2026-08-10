@@ -9,8 +9,8 @@
 //! observed device size, generation, and media ID.
 
 use crate::media::{
-    AsyncBlockDevice, CacheMedia, MEDIA_BLOCK_BYTES, MediaAvailability, MediaError, MediaId,
-    MediaRegion, MediaStatus,
+    AsyncBlockDevice, CacheMedia, MAX_MEDIA_CHUNK_BYTES, MEDIA_BLOCK_BYTES, MediaAvailability,
+    MediaError, MediaId, MediaRegion, MediaStatus, PublishedChunk, PublishedReader,
 };
 use crate::{
     CacheLimits, ChunkUploadHeader, Error as StorageError, FinalizeUploadRequest, MutationContext,
@@ -542,6 +542,7 @@ where
         let device_blocks = self.device_block_count();
         let media = self.media.as_ref().map(CacheMedia::status);
         let (availability, fault) = match (self.state, media) {
+            (ManagerState::Faulted(fault), _) => (ProvisionedCacheAvailability::Faulted, fault),
             (_, Some(status)) if status.availability == MediaAvailability::Faulted => (
                 ProvisionedCacheAvailability::Faulted,
                 ProvisioningFault::Device,
@@ -553,7 +554,6 @@ where
             (ManagerState::Ready, _) => {
                 (ProvisionedCacheAvailability::Ready, ProvisioningFault::None)
             }
-            (ManagerState::Faulted(fault), _) => (ProvisionedCacheAvailability::Faulted, fault),
         };
         ProvisionedCacheStatus {
             availability,
@@ -608,6 +608,41 @@ where
             .finalize_upload(request, context)
             .await
             .map_err(ProvisionedCacheError::Media)
+    }
+
+    /// Opens the newest exact typed publication through the mounted cache log.
+    pub async fn open_published(
+        &mut self,
+        expected: PublishedObject,
+    ) -> Result<PublishedReader, ProvisionedCacheError<D::Error>> {
+        let result = self
+            .media
+            .as_mut()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .open_published(expected)
+            .await;
+        if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
+            self.state = ManagerState::Faulted(fault_from_media_error(error));
+        }
+        result.map_err(ProvisionedCacheError::Media)
+    }
+
+    /// Reads one verified immutable chunk into fixed caller-owned memory.
+    pub async fn read_next_published(
+        &mut self,
+        reader: &mut PublishedReader,
+        output: &mut [u8; MAX_MEDIA_CHUNK_BYTES],
+    ) -> Result<Option<PublishedChunk>, ProvisionedCacheError<D::Error>> {
+        let result = self
+            .media
+            .as_mut()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .read_next_published(reader, output)
+            .await;
+        if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
+            self.state = ManagerState::Faulted(fault_from_media_error(error));
+        }
+        result.map_err(ProvisionedCacheError::Media)
     }
 
     /// Returns the retained physical adapter, including after any failure.
@@ -852,6 +887,7 @@ fn fault_from_media_error<E>(error: &MediaError<E>) -> ProvisioningFault {
         }
         MediaError::Unformatted | MediaError::NotMounted => ProvisioningFault::Unformatted,
         MediaError::Corrupt(_) => ProvisioningFault::MediaIntegrity,
+        MediaError::PublishedNotFound => ProvisioningFault::Policy,
         MediaError::Storage(_) => ProvisioningFault::Policy,
     }
 }
@@ -914,6 +950,7 @@ mod tests {
     use embassy_futures::select::{Either, select};
 
     use super::*;
+    use crate::{ManifestHasher, ObjectKind, StoredObject};
 
     const DEVICE_BLOCKS: usize = 2_300;
     const REGION: MediaRegion = MediaRegion {
@@ -1089,6 +1126,67 @@ mod tests {
         .unwrap()
     }
 
+    fn plan(bytes: &[u8], chunk_bytes: usize) -> UploadPlan {
+        let object = StoredObject {
+            kind: ObjectKind::MachineJobPartition,
+            content: sha256(bytes),
+            byte_len: u64::try_from(bytes.len()).unwrap(),
+        };
+        let chunk_count = bytes.len().div_ceil(chunk_bytes);
+        let mut manifest = ManifestHasher::new(
+            object,
+            u32::try_from(chunk_bytes).unwrap(),
+            u32::try_from(chunk_count).unwrap(),
+            LIMITS,
+        )
+        .unwrap();
+        for (index, chunk) in bytes.chunks(chunk_bytes).enumerate() {
+            manifest
+                .push(
+                    u32::try_from(index).unwrap(),
+                    sha256(chunk),
+                    u32::try_from(chunk.len()).unwrap(),
+                )
+                .unwrap();
+        }
+        UploadPlan {
+            upload_id: crate::UploadId(0x1234_5678_9abc_def0),
+            object,
+            manifest: manifest.finalize().unwrap(),
+            chunk_bytes: u32::try_from(chunk_bytes).unwrap(),
+            chunk_count: u32::try_from(chunk_count).unwrap(),
+        }
+    }
+
+    fn upload(
+        cache: &mut ProvisionedCache<RamBlockDevice>,
+        bytes: &[u8],
+        chunk_bytes: usize,
+    ) -> PublishedObject {
+        let plan = plan(bytes, chunk_bytes);
+        block_on(cache.begin_upload(plan, MutationContext::DISARMED_IDLE)).unwrap();
+        for (index, chunk) in bytes.chunks(chunk_bytes).enumerate() {
+            block_on(cache.put_chunk(
+                ChunkUploadHeader {
+                    upload_id: plan.upload_id,
+                    index: u32::try_from(index).unwrap(),
+                    byte_len: u32::try_from(chunk.len()).unwrap(),
+                    content: sha256(chunk),
+                },
+                chunk,
+                MutationContext::DISARMED_IDLE,
+            ))
+            .unwrap();
+        }
+        block_on(cache.finalize_upload(
+            FinalizeUploadRequest {
+                upload_id: plan.upload_id,
+            },
+            MutationContext::DISARMED_IDLE,
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn canonical_request_binds_every_destructive_field() {
         let request = initial_request(media_id(0x5a), false);
@@ -1177,6 +1275,63 @@ mod tests {
         assert_eq!(status.locator_generation, 2);
         assert!(!status.degraded_locator);
         assert_eq!(status.media.unwrap().media_id, Some(media_id(0x5a)));
+    }
+
+    #[test]
+    fn provisioned_reader_survives_reboot_and_latches_integrity_faults() {
+        let bytes = b"exact cached partition bytes";
+        let (device, control) = RamBlockDevice::erased();
+        let mut cache = ProvisionedCache::new(device, LIMITS);
+        block_on(cache.discover()).unwrap();
+        block_on(cache.provision(
+            initial_request(media_id(0x5a), false),
+            MutationContext::DISARMED_IDLE,
+        ))
+        .unwrap();
+        let published = upload(&mut cache, bytes, 8);
+
+        let device = cache.into_device();
+        let mut rebooted = ProvisionedCache::new(device, LIMITS);
+        block_on(rebooted.discover()).unwrap();
+        let wrong_kind = PublishedObject {
+            object: StoredObject {
+                kind: ObjectKind::OpaqueData,
+                ..published.object
+            },
+            manifest: published.manifest,
+        };
+        assert!(matches!(
+            block_on(rebooted.open_published(wrong_kind)),
+            Err(ProvisionedCacheError::Media(MediaError::PublishedNotFound))
+        ));
+        assert_eq!(
+            rebooted.status().availability,
+            ProvisionedCacheAvailability::Ready
+        );
+
+        let mut reader = block_on(rebooted.open_published(published)).unwrap();
+        let mut output = [0_u8; MAX_MEDIA_CHUNK_BYTES];
+        let mut collected = Vec::new();
+        while let Some(chunk) =
+            block_on(rebooted.read_next_published(&mut reader, &mut output)).unwrap()
+        {
+            collected.extend_from_slice(&output[..usize::try_from(chunk.byte_len).unwrap()]);
+        }
+        assert_eq!(collected, bytes);
+
+        let mut corrupted = block_on(rebooted.open_published(published)).unwrap();
+        // Begin occupies relative 2..5; first chunk data begins at relative 6.
+        control.flip(
+            usize::try_from(REGION.start_block + 6).unwrap(),
+            ChunkUploadHeader::WIRE_LEN + 1,
+        );
+        assert!(matches!(
+            block_on(rebooted.read_next_published(&mut corrupted, &mut output)),
+            Err(ProvisionedCacheError::Media(MediaError::Corrupt(_)))
+        ));
+        let status = rebooted.status();
+        assert_eq!(status.availability, ProvisionedCacheAvailability::Faulted);
+        assert_eq!(status.fault, ProvisioningFault::MediaIntegrity);
     }
 
     #[test]

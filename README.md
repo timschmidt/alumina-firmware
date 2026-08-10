@@ -79,6 +79,16 @@ compiled images without making a bench, armability, or implicit-format claim.
 See the [safe-boot evidence](docs/evidence/M3-SAFE-BOOT-OBSERVATION.md) and
 [cache-provisioning evidence](docs/evidence/M3-CACHE-PROVISIONING.md).
 
+Published cache objects can now be reopened without a heap-backed directory.
+The core-0 reader linearly revalidates the committed log, binds an opaque cursor
+to one exact typed object and manifest, verifies every sequential chunk before
+copying it into fixed caller memory, and withholds the last chunk until the
+aggregate object, manifest, and publication record all agree. Lookup misses are
+benign; media divergence or post-open corruption latches an integrity fault.
+This is storage readback, not executable job admission: machine-IR decoding and
+the credited owned-buffer boundary to core 1 are next. See the
+[published-object reader evidence](docs/evidence/M3-PUBLISHED-OBJECT-READER.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:
