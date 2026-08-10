@@ -128,14 +128,6 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Boot: Embassy initialized");
 
-    // Reset every GPIO45 consumer before transferring ownership to the EPD.
-    let mut shared_rst = Output::new(peripherals.GPIO45, Level::High, OutputConfig::default());
-    shared_rst.set_low();
-    Timer::after(Duration::from_millis(20)).await;
-    shared_rst.set_high();
-    Timer::after(Duration::from_millis(300)).await;
-    info!("Shared reset pulse complete");
-
     // Battery, keyboard, and touch share I2C0 on GPIO14/GPIO13.
     let i2c_scl = peripherals.GPIO14;
     let i2c_sda = peripherals.GPIO13;
@@ -167,16 +159,16 @@ async fn main(spawner: Spawner) -> ! {
 
     // The CST328 asserts its active-low interrupt on GPIO12.
     let touch_int = Input::new(peripherals.GPIO12, InputConfig::default());
-    let mut touch_controller = TouchController::new(touch_i2c, touch_int, None);
+    let touch_rst = Output::new(peripherals.GPIO45, Level::High, OutputConfig::default());
+    let mut touch_controller = TouchController::new(touch_i2c, touch_int, Some(touch_rst));
     match touch_controller.init().await {
         Ok(_) => info!("Touch initialized"),
         Err(_) => warn!("Touch init failed"),
     };
 
-    // EPD wiring: SCLK=36, MOSI=33, CS=34, DC=35, BUSY=37, RST=45.
+    // EPD wiring: SCLK=36, MOSI=33, CS=34, DC=35, BUSY=37; reset is unconnected.
     let epd_dc = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
     let epd_busy = Input::new(peripherals.GPIO37, InputConfig::default());
-    let epd_rst = shared_rst;
 
     let sclk = peripherals.GPIO36;
     let mosi = peripherals.GPIO33;
@@ -197,7 +189,7 @@ async fn main(spawner: Spawner) -> ! {
     let spi_device =
         RwLockDevice::new(spi_bus, cs, Delay).expect("failed to deassert EPD chip select");
 
-    let display = EInkDisplay::new(epd_dc, epd_busy, Some(epd_rst), 240, 320, false);
+    let display = EInkDisplay::new(epd_dc, epd_busy, None, 240, 320, false);
 
     let ev_tx = EVENT_CH.sender();
     let ev_rx = EVENT_CH.receiver();

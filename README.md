@@ -11,9 +11,11 @@ crates now define exact protocol identities, integer machine-job validation,
 board-resource ownership, a fail-closed safety state machine, and bounded
 cross-core channels. TinyBee and T-Deck Pro have chip-specific composition roots
 that consume the HAL peripheral singleton once, partition owned tokens, and run
-one Embassy executor on each application core. There are no deployed clients
-and no compatibility requirement: the old Alumina firmware and interface are
-functional references, not APIs to preserve.
+one Embassy executor on each application core. Their exported packages now also
+carry clocks, electrical constraints, interrupts, safe images, fitted-device
+auxiliaries, licensed-photo overlays, and explicit HIL promotion gates. There are
+no deployed clients and no compatibility requirement: the old Alumina firmware
+and interface are functional references, not APIs to preserve.
 
 ## Developer checks
 
@@ -58,7 +60,8 @@ cargo xtask build --board t-deck-pro --profile release
 Both current packages remain intentionally non-armable. “Compiles” means the
 typed package and complete release image build for the declared chip; it is not
 bench, safe-state, peripheral-smoke, or timing qualification. See the
-[dual-core compile evidence](docs/evidence/M2-DUAL-CORE-RUNTIME.md).
+[dual-core compile evidence](docs/evidence/M2-DUAL-CORE-RUNTIME.md) and the
+[expanded board-metadata evidence](docs/evidence/M2-BOARD-METADATA.md).
 
 ## Imported T-Deck support
 

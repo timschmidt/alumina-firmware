@@ -1,8 +1,9 @@
 use alumina_board::BoardPackage;
 use esp_hal::peripherals::{
-    DMA_CH0, GPIO1, GPIO3, GPIO4, GPIO5, GPIO6, GPIO12, GPIO13, GPIO14, GPIO15, GPIO33, GPIO34,
-    GPIO35, GPIO36, GPIO37, GPIO39, GPIO43, GPIO44, GPIO45, GPIO46, GPIO47, GPIO48, I2C0,
-    Peripherals, SPI2, TIMG1, UART1, WIFI,
+    DMA_CH0, DMA_CH1, GPIO0, GPIO1, GPIO2, GPIO3, GPIO4, GPIO5, GPIO6, GPIO12, GPIO13, GPIO14,
+    GPIO15, GPIO16, GPIO17, GPIO18, GPIO21, GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39,
+    GPIO42, GPIO43, GPIO44, GPIO45, GPIO46, GPIO47, GPIO48, I2C0, I2S0, Peripherals, SPI2, TIMG1,
+    UART1, WIFI,
 };
 
 use super::RuntimeResources;
@@ -16,7 +17,11 @@ pub struct ServiceResources {
     i2c_sda: GPIO13<'static>,
     touch_interrupt: GPIO12<'static>,
     keyboard_interrupt: GPIO15<'static>,
-    shared_reset: GPIO45<'static>,
+    keyboard_led: GPIO42<'static>,
+    touch_reset: GPIO45<'static>,
+    ambient_light_interrupt: GPIO16<'static>,
+    imu_interrupt: GPIO21<'static>,
+    sensor_1v8_enable: GPIO38<'static>,
     spi2: SPI2<'static>,
     spi_dma: DMA_CH0<'static>,
     spi_clock: GPIO36<'static>,
@@ -36,6 +41,11 @@ pub struct ServiceResources {
     gps_tx: GPIO43<'static>,
     gps_enable: GPIO39<'static>,
     gps_pps: GPIO1<'static>,
+    microphone_i2s: I2S0<'static>,
+    microphone_dma: DMA_CH1<'static>,
+    microphone_data: GPIO17<'static>,
+    microphone_clock: GPIO18<'static>,
+    boot_button: GPIO0<'static>,
 }
 
 /// T-Deck has no qualified hazardous output engine yet; core 1 owns its timer.
@@ -45,6 +55,7 @@ pub struct ServiceResources {
 )]
 pub struct RealtimeResources {
     timer_group1: TIMG1<'static>,
+    vibration_motor: GPIO2<'static>,
 }
 
 pub struct SplitResources {
@@ -68,7 +79,11 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
         GPIO13: i2c_sda,
         GPIO12: touch_interrupt,
         GPIO15: keyboard_interrupt,
-        GPIO45: shared_reset,
+        GPIO42: keyboard_led,
+        GPIO45: touch_reset,
+        GPIO16: ambient_light_interrupt,
+        GPIO21: imu_interrupt,
+        GPIO38: sensor_1v8_enable,
         SPI2: spi2,
         DMA_CH0: spi_dma,
         GPIO36: spi_clock,
@@ -88,6 +103,12 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
         GPIO43: gps_tx,
         GPIO39: gps_enable,
         GPIO1: gps_pps,
+        I2S0: microphone_i2s,
+        DMA_CH1: microphone_dma,
+        GPIO17: microphone_data,
+        GPIO18: microphone_clock,
+        GPIO0: boot_button,
+        GPIO2: vibration_motor,
         ..
     } = peripherals;
 
@@ -104,7 +125,11 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
             i2c_sda,
             touch_interrupt,
             keyboard_interrupt,
-            shared_reset,
+            keyboard_led,
+            touch_reset,
+            ambient_light_interrupt,
+            imu_interrupt,
+            sensor_1v8_enable,
             spi2,
             spi_dma,
             spi_clock,
@@ -124,7 +149,15 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
             gps_tx,
             gps_enable,
             gps_pps,
+            microphone_i2s,
+            microphone_dma,
+            microphone_data,
+            microphone_clock,
+            boot_button,
         },
-        realtime: RealtimeResources { timer_group1 },
+        realtime: RealtimeResources {
+            timer_group1,
+            vibration_motor,
+        },
     }
 }

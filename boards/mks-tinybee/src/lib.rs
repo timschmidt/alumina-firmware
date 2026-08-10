@@ -2,8 +2,10 @@
 #![doc = "Compile-time facts for the dual-core MKS TinyBee V1.x package."]
 
 use alumina_board::{
-    AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, CoreAssignment,
-    DeviceDescriptor, DeviceRoute, MemoryDescriptor, OwnerDomain, Qualification,
+    AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
+    ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
+    ElectricalConstraintDescriptor, ElectricalConstraintKind, HilKind, HilRequirement,
+    InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain, Qualification,
     ResourceDescriptor, ResourceId, SafeOutputImage, SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
@@ -258,6 +260,84 @@ pub static RESOURCES: &[ResourceDescriptor] = &[
         false,
     ),
     resource(
+        ResourceId::Uart(0),
+        OwnerDomain::Service,
+        SafeValue::NotApplicable,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(1),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(3),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Uart(2),
+        OwnerDomain::Service,
+        SafeValue::NotApplicable,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(17),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(16),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(0),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(4),
+        OwnerDomain::Service,
+        SafeValue::Low,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(12),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(13),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(14),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(15),
+        OwnerDomain::Service,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(21),
+        OwnerDomain::Service,
+        SafeValue::Low,
+        false,
+    ),
+    resource(
         ResourceId::Gpio(33),
         OwnerDomain::Realtime,
         SafeValue::HighImpedance,
@@ -271,6 +351,36 @@ pub static RESOURCES: &[ResourceDescriptor] = &[
     ),
     resource(
         ResourceId::Gpio(22),
+        OwnerDomain::Realtime,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(2),
+        OwnerDomain::Realtime,
+        SafeValue::HighImpedance,
+        true,
+    ),
+    resource(
+        ResourceId::Gpio(34),
+        OwnerDomain::Realtime,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(35),
+        OwnerDomain::Realtime,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(36),
+        OwnerDomain::Realtime,
+        SafeValue::HighImpedance,
+        false,
+    ),
+    resource(
+        ResourceId::Gpio(39),
         OwnerDomain::Realtime,
         SafeValue::HighImpedance,
         false,
@@ -487,6 +597,79 @@ pub static ALIASES: &[AliasDescriptor<'static>] = &[
         name: "storage.sd",
         resource: ResourceId::Storage(0),
     },
+    AliasDescriptor {
+        name: "heater.bed",
+        resource: ResourceId::I2sOut { engine: 0, bit: 16 },
+    },
+    AliasDescriptor {
+        name: "heater.e0",
+        resource: ResourceId::I2sOut { engine: 0, bit: 17 },
+    },
+    AliasDescriptor {
+        name: "heater.e1",
+        resource: ResourceId::I2sOut { engine: 0, bit: 18 },
+    },
+    AliasDescriptor {
+        name: "fan.1",
+        resource: ResourceId::I2sOut { engine: 0, bit: 19 },
+    },
+    AliasDescriptor {
+        name: "fan.2",
+        resource: ResourceId::I2sOut { engine: 0, bit: 20 },
+    },
+    AliasDescriptor {
+        name: "ui.beeper",
+        resource: ResourceId::I2sOut { engine: 0, bit: 21 },
+    },
+    AliasDescriptor {
+        name: "probe.servo",
+        resource: ResourceId::Gpio(2),
+    },
+    AliasDescriptor {
+        name: "material.detect",
+        resource: ResourceId::Gpio(35),
+    },
+    AliasDescriptor {
+        name: "temperature.tool0",
+        resource: ResourceId::Adc {
+            unit: 1,
+            channel: 0,
+        },
+    },
+    AliasDescriptor {
+        name: "temperature.tool1",
+        resource: ResourceId::Adc {
+            unit: 1,
+            channel: 6,
+        },
+    },
+    AliasDescriptor {
+        name: "temperature.bed",
+        resource: ResourceId::Adc {
+            unit: 1,
+            channel: 3,
+        },
+    },
+    AliasDescriptor {
+        name: "serial.usb",
+        resource: ResourceId::Uart(0),
+    },
+    AliasDescriptor {
+        name: "serial.aux",
+        resource: ResourceId::Uart(2),
+    },
+    AliasDescriptor {
+        name: "ui.encoder.press",
+        resource: ResourceId::Gpio(13),
+    },
+    AliasDescriptor {
+        name: "ui.encoder.a",
+        resource: ResourceId::Gpio(14),
+    },
+    AliasDescriptor {
+        name: "ui.encoder.b",
+        resource: ResourceId::Gpio(12),
+    },
 ];
 
 static SPI_PINS: &[ResourceId] = &[
@@ -495,21 +678,247 @@ static SPI_PINS: &[ResourceId] = &[
     ResourceId::Gpio(18),
 ];
 
-pub static BUSES: &[BusDescriptor<'static>] = &[BusDescriptor {
-    resource: ResourceId::Spi(2),
-    kind: BusKind::Spi,
-    owner: OwnerDomain::Service,
-    pins: SPI_PINS,
-    maximum_frequency_hz: 20_000_000,
-}];
+static UART0_PINS: &[ResourceId] = &[ResourceId::Gpio(1), ResourceId::Gpio(3)];
+static UART2_PINS: &[ResourceId] = &[ResourceId::Gpio(17), ResourceId::Gpio(16)];
 
-pub static DEVICES: &[DeviceDescriptor] = &[DeviceDescriptor {
+pub static BUSES: &[BusDescriptor<'static>] = &[
+    BusDescriptor {
+        resource: ResourceId::Spi(2),
+        kind: BusKind::Spi,
+        owner: OwnerDomain::Service,
+        pins: SPI_PINS,
+        maximum_frequency_hz: 20_000_000,
+    },
+    BusDescriptor {
+        resource: ResourceId::Uart(0),
+        kind: BusKind::Uart,
+        owner: OwnerDomain::Service,
+        pins: UART0_PINS,
+        maximum_frequency_hz: 921_600,
+    },
+    BusDescriptor {
+        resource: ResourceId::Uart(2),
+        kind: BusKind::Uart,
+        owner: OwnerDomain::Service,
+        pins: UART2_PINS,
+        maximum_frequency_hz: 921_600,
+    },
+];
+
+static SD_AUXILIARY: &[ResourceId] = &[ResourceId::Gpio(34)];
+
+pub static DEVICES: &[DeviceDescriptor<'static>] = &[DeviceDescriptor {
     resource: ResourceId::Storage(0),
     owner: OwnerDomain::Service,
     bus: Some(ResourceId::Spi(2)),
     route: DeviceRoute::SpiChipSelect(ResourceId::Gpio(5)),
+    auxiliary_resources: SD_AUXILIARY,
     support: SupportLevel::Described,
 }];
+
+pub static CLOCKS: &[ClockDescriptor<'static>] = &[
+    ClockDescriptor {
+        name: "xtal",
+        source: ClockSource::Crystal,
+        nominal_hz: 40_000_000,
+        maximum_error_ppm: None,
+        domain: ClockDomain::Chip,
+        support: SupportLevel::Described,
+    },
+    ClockDescriptor {
+        name: "cpu",
+        source: ClockSource::Pll,
+        nominal_hz: 240_000_000,
+        maximum_error_ppm: None,
+        domain: ClockDomain::Chip,
+        support: SupportLevel::Compiles,
+    },
+];
+
+static INPUT_ONLY_PINS: &[ResourceId] = &[
+    ResourceId::Gpio(34),
+    ResourceId::Gpio(35),
+    ResourceId::Gpio(36),
+    ResourceId::Gpio(39),
+];
+static BOOT_STRAP_PINS: &[ResourceId] = &[
+    ResourceId::Gpio(0),
+    ResourceId::Gpio(2),
+    ResourceId::Gpio(5),
+    ResourceId::Gpio(12),
+    ResourceId::Gpio(15),
+];
+static I2S_ENGINE: &[ResourceId] = &[ResourceId::I2s(0)];
+static MULTIPLEXED_ADC_SD: &[ResourceId] = &[ResourceId::Gpio(34)];
+static MULTIPLEXED_LCD_UART: &[ResourceId] = &[ResourceId::Gpio(16), ResourceId::Gpio(17)];
+static STEPPER_DISABLE_LINES: &[ResourceId] = &[
+    ResourceId::I2sOut { engine: 0, bit: 0 },
+    ResourceId::I2sOut { engine: 0, bit: 3 },
+    ResourceId::I2sOut { engine: 0, bit: 6 },
+    ResourceId::I2sOut { engine: 0, bit: 9 },
+    ResourceId::I2sOut { engine: 0, bit: 12 },
+];
+
+pub static ELECTRICAL_CONSTRAINTS: &[ElectricalConstraintDescriptor<'static>] = &[
+    ElectricalConstraintDescriptor {
+        id: "esp32.input-only",
+        kind: ElectricalConstraintKind::InputOnly,
+        resources: INPUT_ONLY_PINS,
+        note: "ESP32 input-only routes; GPIO34 also has a board-level jumper/multiplex role",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "esp32.boot-straps",
+        kind: ElectricalConstraintKind::BootStrap,
+        resources: BOOT_STRAP_PINS,
+        note: "external loads and pulls must preserve the ESP32 reset/boot strap levels",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.shifted-output-only",
+        kind: ElectricalConstraintKind::OutputOnly,
+        resources: I2S_ENGINE,
+        note: "IO128 and above are shift-register outputs, never native GPIO inputs",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.shifted-no-independent-pwm",
+        kind: ElectricalConstraintKind::NotPwm,
+        resources: I2S_ENGINE,
+        note: "modulation requires a qualified whole-engine update schedule, not a native PWM channel",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.gpio34-jumper-multiplex",
+        kind: ElectricalConstraintKind::SharedRoute,
+        resources: MULTIPLEXED_ADC_SD,
+        note: "GPIO34 is documented for TH2 with jumper selection and as the default SD-detect route",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.gpio16-17-multiplex",
+        kind: ElectricalConstraintKind::SharedRoute,
+        resources: MULTIPLEXED_LCD_UART,
+        note: "GPIO16/17 are shared between the parallel LCD connector and USART2",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.stepper-disable-active-high",
+        kind: ElectricalConstraintKind::ActiveHigh,
+        resources: STEPPER_DISABLE_LINES,
+        note: "polarity inferred from the official FluidNC plain disable-pin mapping; HIL required",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.logic-level",
+        kind: ElectricalConstraintKind::Logic3v3,
+        resources: I2S_ENGINE,
+        note: "MCU/shift-control logic is 3.3 V; connector conditioning must be checked per schematic",
+        support: SupportLevel::Described,
+    },
+    ElectricalConstraintDescriptor {
+        id: "tinybee.reset-state-unverified",
+        kind: ElectricalConstraintKind::ResetStateUnverified,
+        resources: I2S_ENGINE,
+        note: "shift-register output state before the realtime driver takes control is not bench verified",
+        support: SupportLevel::Described,
+    },
+];
+
+pub static INTERRUPTS: &[InterruptDescriptor] = &[
+    InterruptDescriptor {
+        source: ResourceId::Gpio(33),
+        owner: OwnerDomain::Realtime,
+        trigger: InterruptTrigger::Configurable,
+        maximum_latency_cycles: None,
+        support: SupportLevel::Described,
+    },
+    InterruptDescriptor {
+        source: ResourceId::Gpio(32),
+        owner: OwnerDomain::Realtime,
+        trigger: InterruptTrigger::Configurable,
+        maximum_latency_cycles: None,
+        support: SupportLevel::Described,
+    },
+    InterruptDescriptor {
+        source: ResourceId::Gpio(22),
+        owner: OwnerDomain::Realtime,
+        trigger: InterruptTrigger::Configurable,
+        maximum_latency_cycles: None,
+        support: SupportLevel::Described,
+    },
+    InterruptDescriptor {
+        source: ResourceId::Gpio(35),
+        owner: OwnerDomain::Realtime,
+        trigger: InterruptTrigger::Configurable,
+        maximum_latency_cycles: None,
+        support: SupportLevel::Described,
+    },
+];
+
+static SAFE_STATE_HIL_RESOURCES: &[ResourceId] = &[ResourceId::I2s(0), ResourceId::Gpio(2)];
+static SHIFT_OUTPUT_HIL_RESOURCES: &[ResourceId] = &[ResourceId::I2s(0)];
+static LIMIT_HIL_RESOURCES: &[ResourceId] = &[
+    ResourceId::Gpio(33),
+    ResourceId::Gpio(32),
+    ResourceId::Gpio(22),
+];
+static CORE_HIL_RESOURCES: &[ResourceId] = &[
+    ResourceId::Timer { group: 0, index: 0 },
+    ResourceId::Timer { group: 1, index: 0 },
+];
+static SD_HIL_RESOURCES: &[ResourceId] = &[ResourceId::Storage(0)];
+
+pub static HIL_REQUIREMENTS: &[HilRequirement<'static>] = &[
+    HilRequirement {
+        id: "identity.revision",
+        kind: HilKind::BoardIdentity,
+        resources: &[],
+        required_for: Qualification::Bench,
+    },
+    HilRequirement {
+        id: "safe.i2s-reset-fault-watchdog",
+        kind: HilKind::SafeState,
+        resources: SAFE_STATE_HIL_RESOURCES,
+        required_for: Qualification::Bench,
+    },
+    HilRequirement {
+        id: "routing.i2s-all-bits",
+        kind: HilKind::PeripheralSmoke,
+        resources: SHIFT_OUTPUT_HIL_RESOURCES,
+        required_for: Qualification::Bench,
+    },
+    HilRequirement {
+        id: "input.xyz-limits",
+        kind: HilKind::FaultInjection,
+        resources: LIMIT_HIL_RESOURCES,
+        required_for: Qualification::Bench,
+    },
+    HilRequirement {
+        id: "storage.sd-shared-spi",
+        kind: HilKind::PeripheralSmoke,
+        resources: SD_HIL_RESOURCES,
+        required_for: Qualification::Bench,
+    },
+    HilRequirement {
+        id: "timing.core0-saturation",
+        kind: HilKind::CoreIsolation,
+        resources: CORE_HIL_RESOURCES,
+        required_for: Qualification::MotionQualified,
+    },
+    HilRequirement {
+        id: "timing.realtime-envelope",
+        kind: HilKind::Timing,
+        resources: CORE_HIL_RESOURCES,
+        required_for: Qualification::MotionQualified,
+    },
+    HilRequirement {
+        id: "visual.top-hotspots",
+        kind: HilKind::VisualReconciliation,
+        resources: &[],
+        required_for: Qualification::Bench,
+    },
+];
 
 pub static SAFE_IMAGES: &[SafeOutputImage] = &[SafeOutputImage {
     engine: 0,
@@ -542,7 +951,13 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
     aliases: ALIASES,
     buses: BUSES,
     devices: DEVICES,
+    flash_regions: &[],
+    clocks: CLOCKS,
+    electrical_constraints: ELECTRICAL_CONSTRAINTS,
+    interrupts: INTERRUPTS,
     safe_output_images: SAFE_IMAGES,
+    visuals: &[],
+    hil_requirements: HIL_REQUIREMENTS,
     armable: false,
 };
 

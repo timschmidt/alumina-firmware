@@ -58,8 +58,6 @@ async fn main(_spawner: Spawner) {
     esp_rtos::start(timer0.alarm0);
     let epd_dc = Output::new(peripherals.GPIO35, Level::Low, OutputConfig::default());
     let epd_busy = Input::new(peripherals.GPIO37, InputConfig::default());
-    let epd_rst = Output::new(peripherals.GPIO45, Level::High, OutputConfig::default());
-
     let sclk = peripherals.GPIO36;
     let mosi = peripherals.GPIO33;
     let cs = Output::new(peripherals.GPIO34, Level::High, OutputConfig::default());
@@ -81,7 +79,8 @@ async fn main(_spawner: Spawner) {
     let mut spi_device =
         RwLockDevice::new(spi_bus, cs, Delay).expect("failed to deassert EPD chip select");
 
-    let mut display = EInkDisplay::new(epd_dc, epd_busy, Some(epd_rst), 240, 320, false);
+    // The T-Deck Pro V1.x EPD reset line is not physically connected.
+    let mut display = EInkDisplay::new(epd_dc, epd_busy, None, 240, 320, false);
 
     display
         .init(&mut spi_device)

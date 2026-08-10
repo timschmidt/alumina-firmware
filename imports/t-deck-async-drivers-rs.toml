@@ -6,8 +6,9 @@ source_commit_date = "2026-07-14"
 imported_on = "2026-08-10"
 upstream_root_metadata = "imports/t-deck-async-drivers-rs/upstream-root"
 
-# The component trees were byte-identical immediately after copying. The only
-# subsequent edits are the integration-only Cargo.toml changes enumerated below.
+# The component trees were byte-identical immediately after copying. Every
+# subsequent integration edit, including the small reviewed logic corrections,
+# is enumerated below and reflected by `logic_modified`.
 [[component]]
 source = "embedded-bus-async"
 destination = "drivers/embedded-bus-async"
@@ -129,3 +130,10 @@ files = [
     "examples/patina/Cargo.toml",
 ]
 reason = "Move ESP32-S3 chip selection from shared workspace dependencies into each imported T-Deck crate so the same workspace can also build the classic ESP32 TinyBee target; dependency versions and S3 features remain unchanged for imported targets."
+
+[[integration_change]]
+files = [
+    "drivers/t-deck-pro-epd-async/examples/simple_example.rs",
+    "examples/patina/src/bin/main.rs",
+]
+reason = "Correct the T-Deck Pro V1.x reset routing from official hardware facts: GPIO45 resets the CST328 touch controller, while the EPD reset signal is unconnected."

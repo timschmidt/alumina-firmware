@@ -8,3 +8,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
   protocol, job, board, safety, schema, and repository foundations.
 - [`M1-TDECK-IMPORT.md`](M1-TDECK-IMPORT.md) — exact T-Deck source import,
   integration delta, and ESP32-S3 compile evidence.
+- [`M2-DUAL-CORE-RUNTIME.md`](M2-DUAL-CORE-RUNTIME.md) — chip-specific
+  peripheral ownership, two Embassy executors, bounded cross-core paths, and
+  linked-image evidence.
+- [`M2-BOARD-METADATA.md`](M2-BOARD-METADATA.md) — expanded board capabilities,
+  electrical/timing/visual/HIL contracts, corrected T-Deck reset routing, and
+  renewed host/ESP compile evidence.

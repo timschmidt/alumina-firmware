@@ -188,7 +188,7 @@ pub enum SupportLevel {
 
 /// One fitted board device and its bus relationship.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DeviceDescriptor {
+pub struct DeviceDescriptor<'a> {
     /// Must be a `ResourceId::Device` or `ResourceId::Storage` in `resources`.
     pub resource: ResourceId,
     /// Exclusive executor domain.
@@ -197,8 +197,236 @@ pub struct DeviceDescriptor {
     pub bus: Option<ResourceId>,
     /// Address or chip-select routing within the bus.
     pub route: DeviceRoute,
+    /// Dedicated interrupt, reset, enable, data/clock, or other routed signals.
+    /// Each retains its own domain; a service bus may observe an RT-owned input
+    /// through the cross-core boundary.
+    pub auxiliary_resources: &'a [ResourceId],
     /// Current compile/bench evidence.
     pub support: SupportLevel,
+}
+
+/// Intended use of one immutable flash interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FlashRegionKind {
+    /// Second-stage bootloader image.
+    Bootloader,
+    /// ESP partition table.
+    PartitionTable,
+    /// Executable firmware slot.
+    Application,
+    /// Transactional device and machine configuration.
+    Configuration,
+    /// Exact web/WASM bundle served by the device.
+    WebBundle,
+    /// Firmware update candidate or rollback slot.
+    UpdateSlot,
+    /// Bounded crash/fault record storage.
+    CrashLog,
+}
+
+/// One non-overlapping region in the board image's selected flash layout.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FlashRegionDescriptor<'a> {
+    /// Stable partition/region name.
+    pub name: &'a str,
+    /// Byte offset from the beginning of flash.
+    pub offset: u32,
+    /// Region length in bytes.
+    pub length: u32,
+    /// Intended contents.
+    pub kind: FlashRegionKind,
+    /// Must be false for every region in an armable image.
+    pub writable_while_armed: bool,
+    /// Evidence for this exact layout rather than a vendor/example layout.
+    pub support: SupportLevel,
+}
+
+/// Executor relationship of one clock domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClockDomain {
+    /// Shared chip/module clock or source.
+    Chip,
+    /// Clock used only by service-core work.
+    Service,
+    /// Clock used for deterministic scheduling or I/O.
+    Realtime,
+}
+
+/// Physical or derived source of a clock.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClockSource {
+    /// Board/module crystal oscillator.
+    Crystal,
+    /// Internal phase-locked loop.
+    Pll,
+    /// APB/peripheral clock tree.
+    PeripheralBus,
+    /// RTC slow/fast clock tree.
+    Rtc,
+    /// Externally supplied clock or reference.
+    External,
+}
+
+/// Board clock fact exposed to timing admission and the UI compiler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClockDescriptor<'a> {
+    /// Stable clock-domain name.
+    pub name: &'a str,
+    /// Source family.
+    pub source: ClockSource,
+    /// Nominal integer frequency.
+    pub nominal_hz: u64,
+    /// `None` until a datasheet bound or measurement is admitted.
+    pub maximum_error_ppm: Option<u32>,
+    /// Core-domain relationship.
+    pub domain: ClockDomain,
+    /// Evidence for the frequency and error bound.
+    pub support: SupportLevel,
+}
+
+/// Electrical or routing rule that cannot be inferred from a numeric pin.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ElectricalConstraintKind {
+    /// Silicon or board route cannot drive this signal.
+    InputOnly,
+    /// Shifted or dedicated output cannot be sampled as an input.
+    OutputOnly,
+    /// Boot value affects reset/boot mode and must be preserved.
+    BootStrap,
+    /// One physical route has mutually exclusive named functions.
+    SharedRoute,
+    /// Active state is high.
+    ActiveHigh,
+    /// Active state is low.
+    ActiveLow,
+    /// Route cannot provide hardware PWM semantics.
+    NotPwm,
+    /// Route is limited to 3.3 V logic unless external conditioning is declared.
+    Logic3v3,
+    /// Safe reset behavior is not yet established physically.
+    ResetStateUnverified,
+}
+
+/// Evidence-backed electrical constraint over one or more resources.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ElectricalConstraintDescriptor<'a> {
+    /// Stable rule ID used by diagnostics.
+    pub id: &'a str,
+    /// Machine-checkable family.
+    pub kind: ElectricalConstraintKind,
+    /// Resources governed by the rule.
+    pub resources: &'a [ResourceId],
+    /// Concise human context; not parsed for admission.
+    pub note: &'a str,
+    /// Evidence for this exact PCB revision.
+    pub support: SupportLevel,
+}
+
+/// Hardware interrupt assertion behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InterruptTrigger {
+    /// Rising edge.
+    Rising,
+    /// Falling edge.
+    Falling,
+    /// Either edge, typically chosen by stored configuration.
+    AnyEdge,
+    /// Active-low level.
+    LowLevel,
+    /// Active-high level.
+    HighLevel,
+    /// Polarity/edge is selected by machine configuration.
+    Configurable,
+}
+
+/// One interrupt-capable route and its fixed core ownership.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InterruptDescriptor {
+    /// GPIO or controller resource that asserts the interrupt.
+    pub source: ResourceId,
+    /// Executor/interrupt domain that handles it.
+    pub owner: OwnerDomain,
+    /// Electrical trigger behavior.
+    pub trigger: InterruptTrigger,
+    /// Qualified worst-case response in device cycles, once measured.
+    pub maximum_latency_cycles: Option<u64>,
+    /// Current evidence level.
+    pub support: SupportLevel,
+}
+
+/// Integer point in normalized 0–10,000 image coordinates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NormalizedPoint {
+    /// Horizontal coordinate, left to right.
+    pub x: u16,
+    /// Vertical coordinate, top to bottom.
+    pub y: u16,
+}
+
+/// Polygon linking a visible region to one typed resource.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HotspotDescriptor<'a> {
+    /// Stable hotspot ID.
+    pub id: &'a str,
+    /// Typed resource shown by this polygon.
+    pub resource: ResourceId,
+    /// Three or more normalized polygon vertices.
+    pub polygon: &'a [NormalizedPoint],
+}
+
+/// Independently licensed board photograph and its resource overlay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoardVisualDescriptor<'a> {
+    /// Stable view ID such as `top` or `connector-side`.
+    pub id: &'a str,
+    /// Repository-relative raster asset path.
+    pub asset_path: &'a str,
+    /// MIME type of the raster asset.
+    pub media_type: &'a str,
+    /// Exact pixel dimensions used when the hotspot map was reviewed.
+    pub pixel_width: u32,
+    /// Exact pixel dimensions used when the hotspot map was reviewed.
+    pub pixel_height: u32,
+    /// Content digest of the asset bytes.
+    pub asset_digest: Digest,
+    /// SPDX expression applying to the asset.
+    pub license: &'a str,
+    /// Required human-readable attribution/source.
+    pub attribution: &'a str,
+    /// Resource polygons in normalized coordinates.
+    pub hotspots: &'a [HotspotDescriptor<'a>],
+}
+
+/// Hardware-in-the-loop evidence family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HilKind {
+    /// Revision and physical-route reconciliation.
+    BoardIdentity,
+    /// Boot, unconfigured, fault, and watchdog output image.
+    SafeState,
+    /// One fitted device or bus smoke path.
+    PeripheralSmoke,
+    /// Core ownership and service-load isolation.
+    CoreIsolation,
+    /// Interrupt or executor deadline envelope.
+    Timing,
+    /// Limit, E-stop, malformed data, watchdog, or reset injection.
+    FaultInjection,
+    /// Photograph and hotspot reconciliation against the fixture.
+    VisualReconciliation,
+}
+
+/// Required evidence item; results live in immutable evidence records.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HilRequirement<'a> {
+    /// Stable test ID.
+    pub id: &'a str,
+    /// Test family.
+    pub kind: HilKind,
+    /// Resources explicitly exercised, or empty for a whole-board test.
+    pub resources: &'a [ResourceId],
+    /// Qualification that cannot be claimed without this passing result.
+    pub required_for: Qualification,
 }
 
 /// Complete safe image for one serialized output engine.
@@ -228,9 +456,21 @@ pub struct BoardPackage<'a> {
     /// Routed controller/pin groups.
     pub buses: &'a [BusDescriptor<'a>],
     /// Fitted device topology.
-    pub devices: &'a [DeviceDescriptor],
+    pub devices: &'a [DeviceDescriptor<'a>],
+    /// Selected internal-flash layout; empty until a layout is established.
+    pub flash_regions: &'a [FlashRegionDescriptor<'a>],
+    /// Clock facts and admitted error bounds.
+    pub clocks: &'a [ClockDescriptor<'a>],
+    /// Electrical, multiplexing, and boot-strap constraints.
+    pub electrical_constraints: &'a [ElectricalConstraintDescriptor<'a>],
+    /// Interrupt-capable routes and fixed executor ownership.
+    pub interrupts: &'a [InterruptDescriptor],
     /// Serialized-engine boot/fault images.
     pub safe_output_images: &'a [SafeOutputImage],
+    /// Independently licensed board photos and resource polygons.
+    pub visuals: &'a [BoardVisualDescriptor<'a>],
+    /// HIL suite required to promote this exact revision.
+    pub hil_requirements: &'a [HilRequirement<'a>],
     /// False prevents arming even when metadata validation succeeds.
     pub armable: bool,
 }
@@ -388,6 +628,14 @@ impl BoardPackage<'_> {
                     resource: device.resource,
                 });
             }
+            for auxiliary in device.auxiliary_resources {
+                let _ = self
+                    .resource(*auxiliary)
+                    .ok_or(BoardError::DeviceMissingResource {
+                        index,
+                        resource: *auxiliary,
+                    })?;
+            }
             match (device.bus, device.route) {
                 (None, DeviceRoute::Dedicated) => {}
                 (Some(bus), route) => {
@@ -421,6 +669,112 @@ impl BoardPackage<'_> {
                         bus: device.bus.unwrap_or(device.resource),
                     });
                 }
+            }
+        }
+
+        for (index, region) in self.flash_regions.iter().enumerate() {
+            if region.name.is_empty() || region.length == 0 {
+                return Err(BoardError::IncompleteFlashRegion { index });
+            }
+            let end = region
+                .offset
+                .checked_add(region.length)
+                .ok_or(BoardError::FlashRegionOutsideDevice { index })?;
+            let flash_bytes = u32::try_from(self.memory.flash_bytes)
+                .map_err(|_| BoardError::FlashRegionOutsideDevice { index })?;
+            if end > flash_bytes {
+                return Err(BoardError::FlashRegionOutsideDevice { index });
+            }
+            if self.armable && region.writable_while_armed {
+                return Err(BoardError::ArmableWritableFlashRegion { index });
+            }
+            for (other_index, other) in self.flash_regions[..index].iter().enumerate() {
+                if region.name == other.name {
+                    return Err(BoardError::DuplicateFlashRegionName {
+                        first: other_index,
+                        second: index,
+                    });
+                }
+                let other_end = other
+                    .offset
+                    .checked_add(other.length)
+                    .ok_or(BoardError::FlashRegionOutsideDevice { index: other_index })?;
+                if region.offset < other_end && other.offset < end {
+                    return Err(BoardError::OverlappingFlashRegions {
+                        first: other_index,
+                        second: index,
+                    });
+                }
+            }
+        }
+
+        for (index, clock) in self.clocks.iter().enumerate() {
+            if clock.name.is_empty() || clock.nominal_hz == 0 {
+                return Err(BoardError::IncompleteClock { index });
+            }
+            if let Some(error) = clock.maximum_error_ppm
+                && error == 0
+                && clock.support < SupportLevel::Bench
+            {
+                return Err(BoardError::UnsubstantiatedExactClock { index });
+            }
+            for (other_index, other) in self.clocks[..index].iter().enumerate() {
+                if clock.name == other.name {
+                    return Err(BoardError::DuplicateClock {
+                        first: other_index,
+                        second: index,
+                    });
+                }
+            }
+        }
+
+        for (index, constraint) in self.electrical_constraints.iter().enumerate() {
+            if constraint.id.is_empty()
+                || constraint.note.is_empty()
+                || constraint.resources.is_empty()
+            {
+                return Err(BoardError::IncompleteElectricalConstraint { index });
+            }
+            for resource in constraint.resources {
+                if self.resource(*resource).is_none() {
+                    return Err(BoardError::ConstraintMissingResource {
+                        index,
+                        resource: *resource,
+                    });
+                }
+            }
+            for (other_index, other) in self.electrical_constraints[..index].iter().enumerate() {
+                if constraint.id == other.id {
+                    return Err(BoardError::DuplicateElectricalConstraint {
+                        first: other_index,
+                        second: index,
+                    });
+                }
+            }
+        }
+
+        for (index, interrupt) in self.interrupts.iter().enumerate() {
+            let source =
+                self.resource(interrupt.source)
+                    .ok_or(BoardError::InterruptMissingResource {
+                        index,
+                        resource: interrupt.source,
+                    })?;
+            if source.owner != interrupt.owner {
+                return Err(BoardError::OwnershipMismatch {
+                    resource: interrupt.source,
+                });
+            }
+            if interrupt.maximum_latency_cycles == Some(0) {
+                return Err(BoardError::InvalidInterruptLatency { index });
+            }
+            if self.interrupts[..index]
+                .iter()
+                .any(|other| other.source == interrupt.source)
+            {
+                return Err(BoardError::DuplicateInterrupt {
+                    resource: interrupt.source,
+                });
             }
         }
 
@@ -471,6 +825,87 @@ impl BoardPackage<'_> {
                 .is_some_and(|image| image.defined_mask & (1_u32 << bit) != 0);
             if !covered {
                 return Err(BoardError::SafeImageMissingBit { engine, bit });
+            }
+        }
+
+        for (visual_index, visual) in self.visuals.iter().enumerate() {
+            if visual.id.is_empty()
+                || visual.asset_path.is_empty()
+                || visual.media_type.is_empty()
+                || visual.pixel_width == 0
+                || visual.pixel_height == 0
+                || visual.asset_digest.is_zero()
+                || visual.license.is_empty()
+                || visual.attribution.is_empty()
+                || visual.hotspots.is_empty()
+            {
+                return Err(BoardError::IncompleteVisual {
+                    visual: visual_index,
+                });
+            }
+            for (other_index, other) in self.visuals[..visual_index].iter().enumerate() {
+                if visual.id == other.id {
+                    return Err(BoardError::DuplicateVisual {
+                        first: other_index,
+                        second: visual_index,
+                    });
+                }
+            }
+            for (hotspot_index, hotspot) in visual.hotspots.iter().enumerate() {
+                if hotspot.id.is_empty() || hotspot.polygon.len() < 3 {
+                    return Err(BoardError::IncompleteHotspot {
+                        visual: visual_index,
+                        hotspot: hotspot_index,
+                    });
+                }
+                if self.resource(hotspot.resource).is_none() {
+                    return Err(BoardError::HotspotMissingResource {
+                        visual: visual_index,
+                        hotspot: hotspot_index,
+                        resource: hotspot.resource,
+                    });
+                }
+                if hotspot
+                    .polygon
+                    .iter()
+                    .any(|point| point.x > 10_000 || point.y > 10_000)
+                {
+                    return Err(BoardError::HotspotOutsideImage {
+                        visual: visual_index,
+                        hotspot: hotspot_index,
+                    });
+                }
+                for (other_index, other) in visual.hotspots[..hotspot_index].iter().enumerate() {
+                    if hotspot.id == other.id {
+                        return Err(BoardError::DuplicateHotspot {
+                            visual: visual_index,
+                            first: other_index,
+                            second: hotspot_index,
+                        });
+                    }
+                }
+            }
+        }
+
+        for (index, requirement) in self.hil_requirements.iter().enumerate() {
+            if requirement.id.is_empty() {
+                return Err(BoardError::IncompleteHilRequirement { index });
+            }
+            for resource in requirement.resources {
+                if self.resource(*resource).is_none() {
+                    return Err(BoardError::HilMissingResource {
+                        index,
+                        resource: *resource,
+                    });
+                }
+            }
+            for (other_index, other) in self.hil_requirements[..index].iter().enumerate() {
+                if requirement.id == other.id {
+                    return Err(BoardError::DuplicateHilRequirement {
+                        first: other_index,
+                        second: index,
+                    });
+                }
             }
         }
 
@@ -618,6 +1053,88 @@ pub enum BoardError {
         /// Associated or expected bus.
         bus: ResourceId,
     },
+    /// Flash region lacked a name or nonzero length.
+    IncompleteFlashRegion {
+        /// Region table index.
+        index: usize,
+    },
+    /// Flash offset/length overflowed or exceeded fitted flash.
+    FlashRegionOutsideDevice {
+        /// Region table index.
+        index: usize,
+    },
+    /// Two flash regions used the same stable name.
+    DuplicateFlashRegionName {
+        /// Earlier table index.
+        first: usize,
+        /// Conflicting table index.
+        second: usize,
+    },
+    /// Two flash intervals overlap.
+    OverlappingFlashRegions {
+        /// Earlier table index.
+        first: usize,
+        /// Conflicting table index.
+        second: usize,
+    },
+    /// An armable image allowed a flash write during motion/torque.
+    ArmableWritableFlashRegion {
+        /// Region table index.
+        index: usize,
+    },
+    /// Clock lacked a name or nonzero nominal frequency.
+    IncompleteClock {
+        /// Clock table index.
+        index: usize,
+    },
+    /// Two clock facts used the same stable name.
+    DuplicateClock {
+        /// Earlier table index.
+        first: usize,
+        /// Conflicting table index.
+        second: usize,
+    },
+    /// A zero-error clock claim lacked bench-or-better evidence.
+    UnsubstantiatedExactClock {
+        /// Clock table index.
+        index: usize,
+    },
+    /// Electrical rule lacked an ID, note, or governed resource.
+    IncompleteElectricalConstraint {
+        /// Constraint table index.
+        index: usize,
+    },
+    /// Electrical rule referenced an absent resource.
+    ConstraintMissingResource {
+        /// Constraint table index.
+        index: usize,
+        /// Missing resource.
+        resource: ResourceId,
+    },
+    /// Two electrical rules used the same stable ID.
+    DuplicateElectricalConstraint {
+        /// Earlier table index.
+        first: usize,
+        /// Conflicting table index.
+        second: usize,
+    },
+    /// Interrupt source was absent from the board package.
+    InterruptMissingResource {
+        /// Interrupt table index.
+        index: usize,
+        /// Missing source.
+        resource: ResourceId,
+    },
+    /// One physical source was registered as two interrupt routes.
+    DuplicateInterrupt {
+        /// Duplicate source.
+        resource: ResourceId,
+    },
+    /// A present qualified latency must be greater than zero.
+    InvalidInterruptLatency {
+        /// Interrupt table index.
+        index: usize,
+    },
     /// Safe image contains values outside its declared routed mask.
     SafeImageOutsideMask {
         /// Shift engine.
@@ -644,6 +1161,69 @@ pub enum BoardError {
     UnverifiedSafeImage {
         /// Unverified shift engine.
         engine: u8,
+    },
+    /// Photograph record lacked content, dimensions, license, digest, or hotspots.
+    IncompleteVisual {
+        /// Visual table index.
+        visual: usize,
+    },
+    /// Two visual records used the same stable view ID.
+    DuplicateVisual {
+        /// Earlier table index.
+        first: usize,
+        /// Conflicting table index.
+        second: usize,
+    },
+    /// Hotspot lacked an ID or at least three polygon vertices.
+    IncompleteHotspot {
+        /// Visual table index.
+        visual: usize,
+        /// Hotspot table index.
+        hotspot: usize,
+    },
+    /// Hotspot references a resource absent from the package.
+    HotspotMissingResource {
+        /// Visual table index.
+        visual: usize,
+        /// Hotspot table index.
+        hotspot: usize,
+        /// Missing resource.
+        resource: ResourceId,
+    },
+    /// Normalized hotspot point exceeded the 0–10,000 image plane.
+    HotspotOutsideImage {
+        /// Visual table index.
+        visual: usize,
+        /// Hotspot table index.
+        hotspot: usize,
+    },
+    /// Two hotspots in one view used the same ID.
+    DuplicateHotspot {
+        /// Visual table index.
+        visual: usize,
+        /// Earlier hotspot index.
+        first: usize,
+        /// Conflicting hotspot index.
+        second: usize,
+    },
+    /// HIL requirement lacked a stable ID.
+    IncompleteHilRequirement {
+        /// Requirement table index.
+        index: usize,
+    },
+    /// HIL requirement references an absent resource.
+    HilMissingResource {
+        /// Requirement table index.
+        index: usize,
+        /// Missing resource.
+        resource: ResourceId,
+    },
+    /// Two HIL requirements used the same stable ID.
+    DuplicateHilRequirement {
+        /// Earlier table index.
+        first: usize,
+        /// Conflicting table index.
+        second: usize,
     },
     /// Armable packages require a canonical nonzero capability digest.
     ArmableWithoutCapabilityDigest,
@@ -723,7 +1303,7 @@ mod tests {
         resources: &'a [ResourceDescriptor],
         aliases: &'a [AliasDescriptor<'a>],
         buses: &'a [BusDescriptor<'a>],
-        devices: &'a [DeviceDescriptor],
+        devices: &'a [DeviceDescriptor<'a>],
         safe_output_images: &'a [SafeOutputImage],
     ) -> BoardPackage<'a> {
         BoardPackage {
@@ -741,7 +1321,13 @@ mod tests {
             aliases,
             buses,
             devices,
+            flash_regions: &[],
+            clocks: &[],
+            electrical_constraints: &[],
+            interrupts: &[],
             safe_output_images,
+            visuals: &[],
+            hil_requirements: &[],
             armable: false,
         }
     }
@@ -798,6 +1384,7 @@ mod tests {
             owner: OwnerDomain::Service,
             bus: Some(ResourceId::Spi(2)),
             route: DeviceRoute::SpiChipSelect(ResourceId::Gpio(5)),
+            auxiliary_resources: &[],
             support: SupportLevel::Described,
         }];
         let images = [SafeOutputImage {
@@ -890,6 +1477,7 @@ mod tests {
             owner: OwnerDomain::Realtime,
             bus: Some(ResourceId::I2c(0)),
             route: DeviceRoute::I2cAddress(0x34),
+            auxiliary_resources: &[],
             support: SupportLevel::Compiles,
         }];
         assert_eq!(
@@ -897,6 +1485,189 @@ mod tests {
             Err(BoardError::DeviceRouteMismatch {
                 index: 0,
                 bus: ResourceId::I2c(0),
+            })
+        );
+    }
+
+    #[test]
+    fn device_auxiliary_and_flash_layout_are_validated() {
+        let resources = [ResourceDescriptor {
+            id: ResourceId::Device(0),
+            owner: OwnerDomain::Service,
+            safe_value: SafeValue::NotApplicable,
+            hazardous_output: false,
+        }];
+        let auxiliary = [ResourceId::Gpio(4)];
+        let devices = [DeviceDescriptor {
+            resource: ResourceId::Device(0),
+            owner: OwnerDomain::Service,
+            bus: None,
+            route: DeviceRoute::Dedicated,
+            auxiliary_resources: &auxiliary,
+            support: SupportLevel::Described,
+        }];
+        assert_eq!(
+            package(&resources, &[], &[], &devices, &[]).validate(),
+            Err(BoardError::DeviceMissingResource {
+                index: 0,
+                resource: ResourceId::Gpio(4),
+            })
+        );
+
+        let regions = [
+            FlashRegionDescriptor {
+                name: "application",
+                offset: 0x10_000,
+                length: 0x20_000,
+                kind: FlashRegionKind::Application,
+                writable_while_armed: false,
+                support: SupportLevel::Described,
+            },
+            FlashRegionDescriptor {
+                name: "configuration",
+                offset: 0x20_000,
+                length: 0x10_000,
+                kind: FlashRegionKind::Configuration,
+                writable_while_armed: false,
+                support: SupportLevel::Described,
+            },
+        ];
+        let mut overlapping = package(&[], &[], &[], &[], &[]);
+        overlapping.flash_regions = &regions;
+        assert_eq!(
+            overlapping.validate(),
+            Err(BoardError::OverlappingFlashRegions {
+                first: 0,
+                second: 1,
+            })
+        );
+
+        let writable = [FlashRegionDescriptor {
+            name: "configuration",
+            offset: 0x10_000,
+            length: 0x10_000,
+            kind: FlashRegionKind::Configuration,
+            writable_while_armed: true,
+            support: SupportLevel::Described,
+        }];
+        let mut armable = package(&[], &[], &[], &[], &[]);
+        armable.flash_regions = &writable;
+        armable.armable = true;
+        assert_eq!(
+            armable.validate(),
+            Err(BoardError::ArmableWritableFlashRegion { index: 0 })
+        );
+    }
+
+    #[test]
+    fn clocks_constraints_and_interrupts_require_admitted_facts() {
+        let exact_clock = [ClockDescriptor {
+            name: "cpu",
+            source: ClockSource::Pll,
+            nominal_hz: 240_000_000,
+            maximum_error_ppm: Some(0),
+            domain: ClockDomain::Chip,
+            support: SupportLevel::Compiles,
+        }];
+        let mut clock_package = package(&[], &[], &[], &[], &[]);
+        clock_package.clocks = &exact_clock;
+        assert_eq!(
+            clock_package.validate(),
+            Err(BoardError::UnsubstantiatedExactClock { index: 0 })
+        );
+
+        let resources = [ResourceDescriptor {
+            id: ResourceId::Gpio(4),
+            owner: OwnerDomain::Service,
+            safe_value: SafeValue::HighImpedance,
+            hazardous_output: false,
+        }];
+        let governed = [ResourceId::Gpio(5)];
+        let constraints = [ElectricalConstraintDescriptor {
+            id: "logic-level",
+            kind: ElectricalConstraintKind::Logic3v3,
+            resources: &governed,
+            note: "fixture logic is limited to 3.3 V",
+            support: SupportLevel::Described,
+        }];
+        let mut constraint_package = package(&resources, &[], &[], &[], &[]);
+        constraint_package.electrical_constraints = &constraints;
+        assert_eq!(
+            constraint_package.validate(),
+            Err(BoardError::ConstraintMissingResource {
+                index: 0,
+                resource: ResourceId::Gpio(5),
+            })
+        );
+
+        let interrupts = [InterruptDescriptor {
+            source: ResourceId::Gpio(4),
+            owner: OwnerDomain::Service,
+            trigger: InterruptTrigger::Rising,
+            maximum_latency_cycles: Some(0),
+            support: SupportLevel::Described,
+        }];
+        let mut interrupt_package = package(&resources, &[], &[], &[], &[]);
+        interrupt_package.interrupts = &interrupts;
+        assert_eq!(
+            interrupt_package.validate(),
+            Err(BoardError::InvalidInterruptLatency { index: 0 })
+        );
+    }
+
+    #[test]
+    fn visual_hotspots_and_hil_references_are_bounded() {
+        let resources = [ResourceDescriptor {
+            id: ResourceId::Gpio(4),
+            owner: OwnerDomain::Service,
+            safe_value: SafeValue::HighImpedance,
+            hazardous_output: false,
+        }];
+        let polygon = [
+            NormalizedPoint { x: 0, y: 0 },
+            NormalizedPoint { x: 10_001, y: 0 },
+            NormalizedPoint { x: 0, y: 1 },
+        ];
+        let hotspots = [HotspotDescriptor {
+            id: "gpio4",
+            resource: ResourceId::Gpio(4),
+            polygon: &polygon,
+        }];
+        let visuals = [BoardVisualDescriptor {
+            id: "top",
+            asset_path: "assets/fixture.webp",
+            media_type: "image/webp",
+            pixel_width: 640,
+            pixel_height: 480,
+            asset_digest: Digest([1; 32]),
+            license: "CC-BY-4.0",
+            attribution: "fixture photographer",
+            hotspots: &hotspots,
+        }];
+        let mut visual_package = package(&resources, &[], &[], &[], &[]);
+        visual_package.visuals = &visuals;
+        assert_eq!(
+            visual_package.validate(),
+            Err(BoardError::HotspotOutsideImage {
+                visual: 0,
+                hotspot: 0,
+            })
+        );
+
+        let missing = [ResourceId::Gpio(5)];
+        let requirements = [HilRequirement {
+            id: "fixture-identity",
+            kind: HilKind::BoardIdentity,
+            resources: &missing,
+            required_for: Qualification::Bench,
+        }];
+        let mut hil_package = package(&resources, &[], &[], &[], &[]);
+        hil_package.hil_requirements = &requirements;
+        assert_eq!(
+            hil_package.validate(),
+            Err(BoardError::HilMissingResource {
+                index: 0,
+                resource: ResourceId::Gpio(5),
             })
         );
     }

@@ -15,7 +15,10 @@
     "service_core",
     "realtime_core",
     "flash_bytes",
+    "internal_sram_bytes",
     "psram_bytes",
+    "realtime_psram_allowed",
+    "capability_digest",
     "qualification",
     "implementation",
     "hardware_available",
@@ -24,7 +27,14 @@
     "resources",
     "aliases",
     "buses",
-    "devices"
+    "devices",
+    "flash_regions",
+    "clocks",
+    "electrical_constraints",
+    "interrupts",
+    "safe_output_images",
+    "visuals",
+    "hil_requirements"
   ],
   "properties": {
     "schema": { "const": 1 },
@@ -39,7 +49,13 @@
     "service_core": { "type": "integer", "minimum": 0 },
     "realtime_core": { "type": "integer", "minimum": 0 },
     "flash_bytes": { "type": "integer", "minimum": 0 },
+    "internal_sram_bytes": { "type": "integer", "minimum": 0 },
     "psram_bytes": { "type": "integer", "minimum": 0 },
+    "realtime_psram_allowed": { "const": false },
+    "capability_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "qualification": {
       "enum": [
         "described",
@@ -113,7 +129,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["resource", "owner", "bus", "route", "support"],
+        "required": [
+          "resource",
+          "owner",
+          "bus",
+          "route",
+          "auxiliary_resources",
+          "support"
+        ],
         "properties": {
           "resource": { "$ref": "#/$defs/resourceId" },
           "owner": { "enum": ["service", "realtime"] },
@@ -124,12 +147,249 @@
             ]
           },
           "route": { "$ref": "#/$defs/deviceRoute" },
+          "auxiliary_resources": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/resourceId" }
+          },
           "support": { "enum": ["described", "compiles", "bench", "qualified"] }
+        }
+      }
+    },
+    "flash_regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "offset",
+          "length",
+          "kind",
+          "writable_while_armed",
+          "support"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "offset": { "type": "integer", "minimum": 0 },
+          "length": { "type": "integer", "minimum": 1 },
+          "kind": {
+            "enum": [
+              "bootloader",
+              "partition-table",
+              "application",
+              "configuration",
+              "web-bundle",
+              "update-slot",
+              "crash-log"
+            ]
+          },
+          "writable_while_armed": { "type": "boolean" },
+          "support": { "$ref": "#/$defs/support" }
+        }
+      }
+    },
+    "clocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "source",
+          "nominal_hz",
+          "maximum_error_ppm",
+          "domain",
+          "support"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "source": {
+            "enum": ["crystal", "pll", "peripheral-bus", "rtc", "external"]
+          },
+          "nominal_hz": { "type": "integer", "minimum": 1 },
+          "maximum_error_ppm": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "domain": { "enum": ["chip", "service", "realtime"] },
+          "support": { "$ref": "#/$defs/support" }
+        }
+      }
+    },
+    "electrical_constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "resources", "note", "support"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": {
+            "enum": [
+              "input-only",
+              "output-only",
+              "boot-strap",
+              "shared-route",
+              "active-high",
+              "active-low",
+              "not-pwm",
+              "logic-3v3",
+              "reset-state-unverified"
+            ]
+          },
+          "resources": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/resourceId" }
+          },
+          "note": { "type": "string", "minLength": 1 },
+          "support": { "$ref": "#/$defs/support" }
+        }
+      }
+    },
+    "interrupts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "owner",
+          "trigger",
+          "maximum_latency_cycles",
+          "support"
+        ],
+        "properties": {
+          "source": { "$ref": "#/$defs/resourceId" },
+          "owner": { "enum": ["service", "realtime"] },
+          "trigger": {
+            "enum": [
+              "rising",
+              "falling",
+              "any-edge",
+              "low-level",
+              "high-level",
+              "configurable"
+            ]
+          },
+          "maximum_latency_cycles": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "support": { "$ref": "#/$defs/support" }
+        }
+      }
+    },
+    "safe_output_images": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["engine", "defined_mask", "safe_bits", "bench_verified"],
+        "properties": {
+          "engine": { "type": "integer", "minimum": 0, "maximum": 255 },
+          "defined_mask": { "type": "integer", "minimum": 1 },
+          "safe_bits": { "type": "integer", "minimum": 0 },
+          "bench_verified": { "type": "boolean" }
+        }
+      }
+    },
+    "visuals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "asset_path",
+          "media_type",
+          "pixel_width",
+          "pixel_height",
+          "asset_digest",
+          "license",
+          "attribution",
+          "hotspots"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "asset_path": { "type": "string", "minLength": 1 },
+          "media_type": { "enum": ["image/jpeg", "image/png", "image/webp"] },
+          "pixel_width": { "type": "integer", "minimum": 1 },
+          "pixel_height": { "type": "integer", "minimum": 1 },
+          "asset_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "license": { "type": "string", "minLength": 1 },
+          "attribution": { "type": "string", "minLength": 1 },
+          "hotspots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "resource", "polygon"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "resource": { "$ref": "#/$defs/resourceId" },
+                "polygon": {
+                  "type": "array",
+                  "minItems": 3,
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      { "type": "integer", "minimum": 0, "maximum": 10000 },
+                      { "type": "integer", "minimum": 0, "maximum": 10000 }
+                    ],
+                    "items": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "hil_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "resources", "required_for"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": {
+            "enum": [
+              "board-identity",
+              "safe-state",
+              "peripheral-smoke",
+              "core-isolation",
+              "timing",
+              "fault-injection",
+              "visual-reconciliation"
+            ]
+          },
+          "resources": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/resourceId" }
+          },
+          "required_for": { "$ref": "#/$defs/qualification" }
         }
       }
     }
   },
   "$defs": {
+    "support": {
+      "enum": ["described", "compiles", "bench", "qualified"]
+    },
+    "qualification": {
+      "enum": [
+        "described",
+        "compiles",
+        "bench",
+        "motion-qualified",
+        "production-qualified"
+      ]
+    },
     "resourceId": {
       "oneOf": [
         { "$ref": "#/$defs/indexedResource" },

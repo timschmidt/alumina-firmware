@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use alumina_board::{BoardPackage, BusKind, DeviceRoute, OwnerDomain, ResourceId, SafeValue};
@@ -60,13 +60,17 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         [command, flag, id] if command == "capabilities" && flag == "--board" => {
-            print_capabilities(find_board(&boards, id)?, false);
+            let board = find_board(&boards, id)?;
+            validate_board(board)?;
+            print_capabilities(board, false);
             Ok(())
         }
         [command, flag, id, json]
             if command == "capabilities" && flag == "--board" && json == "--json" =>
         {
-            print_capabilities(find_board(&boards, id)?, true);
+            let board = find_board(&boards, id)?;
+            validate_board(board)?;
+            print_capabilities(board, true);
             Ok(())
         }
         [command, flag, id] if (command == "check" || command == "build") && flag == "--board" => {
@@ -334,6 +338,7 @@ fn validate_board(board: &Board) -> Result<(), String> {
         package
             .validate()
             .map_err(|error| format!("{}: package error: {error:?}", board.source.display()))?;
+        validate_visual_assets(board, package)?;
         if package.board.id != board.id
             || chip_name(package.board.chip) != board.chip
             || package.board.application_cores != board.cores
@@ -359,6 +364,45 @@ fn validate_board(board: &Board) -> Result<(), String> {
             return Err(format!(
                 "{}: expected firmware feature `{expected_feature}`, found `{feature}`",
                 board.source.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_visual_assets(board: &Board, package: &BoardPackage<'_>) -> Result<(), String> {
+    let repository_root = board
+        .source
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or_else(|| {
+            format!(
+                "{}: cannot determine repository root",
+                board.source.display()
+            )
+        })?;
+    for visual in package.visuals {
+        let relative = Path::new(visual.asset_path);
+        if relative.is_absolute()
+            || !relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(format!(
+                "{}: visual `{}` has unsafe repository-relative path `{}`",
+                board.source.display(),
+                visual.id,
+                visual.asset_path
+            ));
+        }
+        let asset = repository_root.join(relative);
+        if !asset.is_file() {
+            return Err(format!(
+                "{}: visual `{}` asset does not exist at {}",
+                board.source.display(),
+                visual.id,
+                asset.display()
             ));
         }
     }
@@ -533,7 +577,22 @@ fn print_capabilities(board: &Board, json: bool) {
         println!("  \"service_core\": {},", board.service_core);
         println!("  \"realtime_core\": {},", board.realtime_core);
         println!("  \"flash_bytes\": {},", board.flash_bytes);
+        println!(
+            "  \"internal_sram_bytes\": {},",
+            package.map_or(0, |package| package.memory.internal_sram_bytes)
+        );
         println!("  \"psram_bytes\": {},", board.psram_bytes);
+        println!(
+            "  \"realtime_psram_allowed\": {},",
+            package.is_some_and(|package| package.memory.realtime_psram_allowed)
+        );
+        println!(
+            "  \"capability_digest\": \"{}\",",
+            package.map_or_else(
+                || "00".repeat(32),
+                |package| bytes_hex(&package.board.capability_digest.0)
+            )
+        );
         println!("  \"qualification\": \"{}\",", board.qualification);
         println!("  \"implementation\": \"{}\",", board.implementation);
         println!("  \"hardware_available\": {},", board.hardware_available);
@@ -631,10 +690,259 @@ fn print_capabilities(board: &Board, json: bool) {
                         .map_or_else(|| "null".to_owned(), resource_id_json)
                 );
                 println!("      \"route\": {},", device_route_json(device.route));
+                println!("      \"auxiliary_resources\": [");
+                for (auxiliary_index, auxiliary) in device.auxiliary_resources.iter().enumerate() {
+                    println!(
+                        "        {}{}",
+                        resource_id_json(*auxiliary),
+                        if auxiliary_index + 1 == device.auxiliary_resources.len() {
+                            ""
+                        } else {
+                            ","
+                        }
+                    );
+                }
+                println!("      ],");
                 println!("      \"support\": \"{}\"", support_name(device.support));
                 println!(
                     "    }}{}",
                     if index + 1 == package.devices.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"flash_regions\": [");
+        if let Some(package) = package {
+            for (index, region) in package.flash_regions.iter().enumerate() {
+                println!("    {{");
+                println!("      \"name\": \"{}\",", json_escape(region.name));
+                println!("      \"offset\": {},", region.offset);
+                println!("      \"length\": {},", region.length);
+                println!("      \"kind\": \"{}\",", flash_kind_name(region.kind));
+                println!(
+                    "      \"writable_while_armed\": {},",
+                    region.writable_while_armed
+                );
+                println!("      \"support\": \"{}\"", support_name(region.support));
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.flash_regions.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"clocks\": [");
+        if let Some(package) = package {
+            for (index, clock) in package.clocks.iter().enumerate() {
+                println!("    {{");
+                println!("      \"name\": \"{}\",", json_escape(clock.name));
+                println!("      \"source\": \"{}\",", clock_source_name(clock.source));
+                println!("      \"nominal_hz\": {},", clock.nominal_hz);
+                println!(
+                    "      \"maximum_error_ppm\": {},",
+                    clock
+                        .maximum_error_ppm
+                        .map_or_else(|| "null".to_owned(), |error| error.to_string())
+                );
+                println!("      \"domain\": \"{}\",", clock_domain_name(clock.domain));
+                println!("      \"support\": \"{}\"", support_name(clock.support));
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.clocks.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"electrical_constraints\": [");
+        if let Some(package) = package {
+            for (index, constraint) in package.electrical_constraints.iter().enumerate() {
+                println!("    {{");
+                println!("      \"id\": \"{}\",", json_escape(constraint.id));
+                println!(
+                    "      \"kind\": \"{}\",",
+                    electrical_constraint_name(constraint.kind)
+                );
+                println!("      \"resources\": [");
+                for (resource_index, resource) in constraint.resources.iter().enumerate() {
+                    println!(
+                        "        {}{}",
+                        resource_id_json(*resource),
+                        if resource_index + 1 == constraint.resources.len() {
+                            ""
+                        } else {
+                            ","
+                        }
+                    );
+                }
+                println!("      ],");
+                println!("      \"note\": \"{}\",", json_escape(constraint.note));
+                println!(
+                    "      \"support\": \"{}\"",
+                    support_name(constraint.support)
+                );
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.electrical_constraints.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"interrupts\": [");
+        if let Some(package) = package {
+            for (index, interrupt) in package.interrupts.iter().enumerate() {
+                println!("    {{");
+                println!("      \"source\": {},", resource_id_json(interrupt.source));
+                println!("      \"owner\": \"{}\",", owner_name(interrupt.owner));
+                println!(
+                    "      \"trigger\": \"{}\",",
+                    interrupt_trigger_name(interrupt.trigger)
+                );
+                println!(
+                    "      \"maximum_latency_cycles\": {},",
+                    interrupt
+                        .maximum_latency_cycles
+                        .map_or_else(|| "null".to_owned(), |latency| latency.to_string())
+                );
+                println!("      \"support\": \"{}\"", support_name(interrupt.support));
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.interrupts.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"safe_output_images\": [");
+        if let Some(package) = package {
+            for (index, safe_image) in package.safe_output_images.iter().enumerate() {
+                println!("    {{");
+                println!("      \"engine\": {},", safe_image.engine);
+                println!("      \"defined_mask\": {},", safe_image.defined_mask);
+                println!("      \"safe_bits\": {},", safe_image.safe_bits);
+                println!("      \"bench_verified\": {}", safe_image.bench_verified);
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.safe_output_images.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"visuals\": [");
+        if let Some(package) = package {
+            for (index, visual) in package.visuals.iter().enumerate() {
+                println!("    {{");
+                println!("      \"id\": \"{}\",", json_escape(visual.id));
+                println!(
+                    "      \"asset_path\": \"{}\",",
+                    json_escape(visual.asset_path)
+                );
+                println!(
+                    "      \"media_type\": \"{}\",",
+                    json_escape(visual.media_type)
+                );
+                println!("      \"pixel_width\": {},", visual.pixel_width);
+                println!("      \"pixel_height\": {},", visual.pixel_height);
+                println!(
+                    "      \"asset_digest\": \"{}\",",
+                    bytes_hex(&visual.asset_digest.0)
+                );
+                println!("      \"license\": \"{}\",", json_escape(visual.license));
+                println!(
+                    "      \"attribution\": \"{}\",",
+                    json_escape(visual.attribution)
+                );
+                println!("      \"hotspots\": [");
+                for (hotspot_index, hotspot) in visual.hotspots.iter().enumerate() {
+                    println!("        {{");
+                    println!("          \"id\": \"{}\",", json_escape(hotspot.id));
+                    println!(
+                        "          \"resource\": {},",
+                        resource_id_json(hotspot.resource)
+                    );
+                    println!("          \"polygon\": [");
+                    for (point_index, point) in hotspot.polygon.iter().enumerate() {
+                        println!(
+                            "            [{}, {}]{}",
+                            point.x,
+                            point.y,
+                            if point_index + 1 == hotspot.polygon.len() {
+                                ""
+                            } else {
+                                ","
+                            }
+                        );
+                    }
+                    println!("          ]");
+                    println!(
+                        "        }}{}",
+                        if hotspot_index + 1 == visual.hotspots.len() {
+                            ""
+                        } else {
+                            ","
+                        }
+                    );
+                }
+                println!("      ]");
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.visuals.len() {
+                        ""
+                    } else {
+                        ","
+                    }
+                );
+            }
+        }
+        println!("  ],");
+        println!("  \"hil_requirements\": [");
+        if let Some(package) = package {
+            for (index, requirement) in package.hil_requirements.iter().enumerate() {
+                println!("    {{");
+                println!("      \"id\": \"{}\",", json_escape(requirement.id));
+                println!("      \"kind\": \"{}\",", hil_kind_name(requirement.kind));
+                println!("      \"resources\": [");
+                for (resource_index, resource) in requirement.resources.iter().enumerate() {
+                    println!(
+                        "        {}{}",
+                        resource_id_json(*resource),
+                        if resource_index + 1 == requirement.resources.len() {
+                            ""
+                        } else {
+                            ","
+                        }
+                    );
+                }
+                println!("      ],");
+                println!(
+                    "      \"required_for\": \"{}\"",
+                    qualification_name(requirement.required_for)
+                );
+                println!(
+                    "    }}{}",
+                    if index + 1 == package.hil_requirements.len() {
                         ""
                     } else {
                         ","
@@ -670,6 +978,19 @@ fn print_capabilities(board: &Board, json: bool) {
                 package.aliases.len(),
                 package.buses.len(),
                 package.devices.len()
+            );
+            println!(
+                "flash/clocks/constraints/interrupts: {}/{}/{}/{}",
+                package.flash_regions.len(),
+                package.clocks.len(),
+                package.electrical_constraints.len(),
+                package.interrupts.len()
+            );
+            println!(
+                "safe-images/visuals/HIL: {}/{}/{}",
+                package.safe_output_images.len(),
+                package.visuals.len(),
+                package.hil_requirements.len()
             );
         }
     }
@@ -707,6 +1028,83 @@ fn safe_value_name(value: SafeValue) -> &'static str {
         SafeValue::High => "high",
         SafeValue::EngineImage => "engine-image",
     }
+}
+
+fn flash_kind_name(kind: alumina_board::FlashRegionKind) -> &'static str {
+    match kind {
+        alumina_board::FlashRegionKind::Bootloader => "bootloader",
+        alumina_board::FlashRegionKind::PartitionTable => "partition-table",
+        alumina_board::FlashRegionKind::Application => "application",
+        alumina_board::FlashRegionKind::Configuration => "configuration",
+        alumina_board::FlashRegionKind::WebBundle => "web-bundle",
+        alumina_board::FlashRegionKind::UpdateSlot => "update-slot",
+        alumina_board::FlashRegionKind::CrashLog => "crash-log",
+    }
+}
+
+fn clock_source_name(source: alumina_board::ClockSource) -> &'static str {
+    match source {
+        alumina_board::ClockSource::Crystal => "crystal",
+        alumina_board::ClockSource::Pll => "pll",
+        alumina_board::ClockSource::PeripheralBus => "peripheral-bus",
+        alumina_board::ClockSource::Rtc => "rtc",
+        alumina_board::ClockSource::External => "external",
+    }
+}
+
+fn clock_domain_name(domain: alumina_board::ClockDomain) -> &'static str {
+    match domain {
+        alumina_board::ClockDomain::Chip => "chip",
+        alumina_board::ClockDomain::Service => "service",
+        alumina_board::ClockDomain::Realtime => "realtime",
+    }
+}
+
+fn electrical_constraint_name(kind: alumina_board::ElectricalConstraintKind) -> &'static str {
+    match kind {
+        alumina_board::ElectricalConstraintKind::InputOnly => "input-only",
+        alumina_board::ElectricalConstraintKind::OutputOnly => "output-only",
+        alumina_board::ElectricalConstraintKind::BootStrap => "boot-strap",
+        alumina_board::ElectricalConstraintKind::SharedRoute => "shared-route",
+        alumina_board::ElectricalConstraintKind::ActiveHigh => "active-high",
+        alumina_board::ElectricalConstraintKind::ActiveLow => "active-low",
+        alumina_board::ElectricalConstraintKind::NotPwm => "not-pwm",
+        alumina_board::ElectricalConstraintKind::Logic3v3 => "logic-3v3",
+        alumina_board::ElectricalConstraintKind::ResetStateUnverified => "reset-state-unverified",
+    }
+}
+
+fn interrupt_trigger_name(trigger: alumina_board::InterruptTrigger) -> &'static str {
+    match trigger {
+        alumina_board::InterruptTrigger::Rising => "rising",
+        alumina_board::InterruptTrigger::Falling => "falling",
+        alumina_board::InterruptTrigger::AnyEdge => "any-edge",
+        alumina_board::InterruptTrigger::LowLevel => "low-level",
+        alumina_board::InterruptTrigger::HighLevel => "high-level",
+        alumina_board::InterruptTrigger::Configurable => "configurable",
+    }
+}
+
+fn hil_kind_name(kind: alumina_board::HilKind) -> &'static str {
+    match kind {
+        alumina_board::HilKind::BoardIdentity => "board-identity",
+        alumina_board::HilKind::SafeState => "safe-state",
+        alumina_board::HilKind::PeripheralSmoke => "peripheral-smoke",
+        alumina_board::HilKind::CoreIsolation => "core-isolation",
+        alumina_board::HilKind::Timing => "timing",
+        alumina_board::HilKind::FaultInjection => "fault-injection",
+        alumina_board::HilKind::VisualReconciliation => "visual-reconciliation",
+    }
+}
+
+fn bytes_hex(bytes: &[u8]) -> String {
+    use core::fmt::Write as _;
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
 }
 
 fn bus_kind_name(kind: BusKind) -> &'static str {

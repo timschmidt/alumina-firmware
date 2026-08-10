@@ -54,6 +54,8 @@ labels represent bits in an I²S-driven output chain.
 | SD chip select | `Gpio(5)` as an SPI device claim |
 | X/Y/Z negative limits | `Gpio(33)`, `Gpio(32)`, `Gpio(22)` |
 | Thermistor inputs noted by official profile | `Gpio(36)`, `Gpio(34)`, `Gpio(39)` as ADC-capable inputs after board/schematic validation |
+| USB bridge / auxiliary serial | `Uart(0)` on `Gpio(1/3)` and `Uart(2)` on multiplexed `Gpio(17/16)` |
+| Servo/material input | real-time `Gpio(2)` hazardous output and `Gpio(35)` input |
 
 ### I²S output mapping
 
@@ -111,14 +113,27 @@ This mapping has consequences:
 | SX1262 LoRa | service-core shared SPI + DIO/busy/reset | `t-deck-pro-lora-async` + `sx126x-async-rs` |
 
 The existing application uses a shared I²C bus on GPIO14/GPIO13 and a shared SPI
-topology using GPIO36/GPIO33/GPIO47. The final board package must reconcile every
-chip select, interrupt, reset, power-control, and shared peripheral with the
-board documentation already stored in the source repository.
+topology using GPIO36/GPIO33/GPIO47. The current package reconciles every
+imported device's chip select, interrupt, reset, power-control, and shared
+peripheral. In particular, GPIO45 is CST328 touch reset; the V1.x EPD reset route
+is unconnected. This corrects the imported EPD and Patina examples, which
+continue to compile for ESP32-S3.
 
-Drivers not present in the requested source repository are not invented during
-the import. Audio, storage, IMU/light sensors, modem, vibration, and other fitted
-or optional T-Deck functions should be inventoried against the exact hardware
-revision and added as separate, tested drivers.
+Drivers not present in the requested source repository were not invented during
+the import. The package describes the common fitted routes below without making
+a driver or bench claim; exact fixture options remain an identity HIL gate.
+
+| Described function | Current typed route | Evidence boundary |
+| --- | --- | --- |
+| BQ27220 fuel gauge | shared I²C, address `0x55` | metadata only |
+| ambient-light sensor | shared I²C, address `0x23`, interrupt GPIO16 | metadata only |
+| IMU | shared I²C, address `0x28`, interrupt GPIO21, 1.8 V enable GPIO38 | metadata only |
+| microphone | service I²S0/DMA1, data GPIO17, clock GPIO18 | metadata only |
+| vibration motor | real-time hazardous GPIO2 | safe state and polarity require HIL |
+
+Audio, SD, IMU/light, optional modem, vibration, and other fitted/optional
+functions become supported only through separate reviewed drivers and the
+revision-specific peripheral suite.
 
 ## MKS ESP32 FOC V1.0 model
 
