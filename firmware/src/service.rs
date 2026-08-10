@@ -2,8 +2,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-pub use alumina_service::StorageServiceState;
 use alumina_service::{ServiceRequest, ServiceResponse};
+pub use alumina_service::{StorageServiceState, UnavailableStorageBackend};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;

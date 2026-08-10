@@ -32,7 +32,7 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use hardware::selected;
-use service::{ServiceBridge, StorageServiceState, init_service_bridge};
+use service::{ServiceBridge, StorageServiceState, UnavailableStorageBackend, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
@@ -126,9 +126,10 @@ async fn service_task(
         panic!("service executor started on the wrong core");
     }
 
-    // This coordinator and every future filesystem/backend handle live only in
-    // the core-0 task future. Core 1 receives verified owned blocks, never SD.
+    // Service admission and every future media/backend handle live only in the
+    // core-0 task future. Core 1 receives verified owned blocks, never SD.
     let mut storage = StorageServiceState::new();
+    let mut storage_backend = UnavailableStorageBackend;
     let mut sequence = 0_u32;
     let mut last_fault_generation = 0_u16;
     loop {
@@ -154,14 +155,20 @@ async fn service_task(
         }
 
         while let Some(request) = service_bridge.try_receive() {
-            let response =
-                storage.dispatch(request.request(), DeviceCycle(Instant::now().as_ticks()));
+            let response = storage
+                .dispatch(
+                    &mut storage_backend,
+                    request.request(),
+                    DeviceCycle(Instant::now().as_ticks()),
+                )
+                .await;
             service_bridge.respond(&request, response);
         }
 
         let _keep_service_state_core_local = (
             &resources,
             &storage,
+            &storage_backend,
             network.supervisor(),
             network.credential_source(),
         );

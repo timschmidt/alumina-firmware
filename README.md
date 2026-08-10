@@ -20,8 +20,8 @@ and interface are functional references, not APIs to preserve.
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
 publication checkpoints, and a deterministic reboot/cache/prefetch simulator.
-The cache coordinator is instantiated only inside the core-0 service task; core
-1 has no filesystem handle. See the
+The durable coordinator remains encapsulated by a core-0-owned backend; core 1
+has no media handle. See the
 [protocol/storage simulation evidence](docs/evidence/M3-PROTOCOL-STORAGE-SIM.md).
 
 The first live-network foundation now initializes `esp-radio` on core 0 before
@@ -42,6 +42,17 @@ frame. The physical SD backend is not implemented yet, so status says so and
 every structurally valid mutation returns protocol `Unsupported` without
 changing upload state. See the
 [authenticated-service evidence](docs/evidence/M3-AUTHENTICATED-SERVICE.md).
+
+The cache backend itself is now concrete: `alumina-storage` implements a bounded
+asynchronous 512-byte block-device contract, an explicitly provisioned raw SD
+region, alternating SHA-256 anchors, and a hash-chained append-only record log.
+Begin, chunk, abort, and publication are acknowledged only after ordered sync
+barriers; reboot replay reconstructs exact upload state without trusting a
+filesystem. The authenticated service dispatch is generic over that backend,
+and `alumina-sim` exposes snapshots, torn writes, power cuts, and corruption for
+the same implementation. Board firmware remains explicitly `unavailable` until
+the physical SD-SPI adapter is implemented and qualified. See the
+[durable-cache evidence](docs/evidence/M3-DURABLE-CACHE-MEDIA.md).
 
 ## Developer checks
 
@@ -111,7 +122,7 @@ firmware. Datasheets and upstream root metadata are retained under
 - Only dual-core ESP32 targets are in scope. MKS TinyBee and LILYGO T-Deck Pro
   are the first hardware targets; MKS ESP32 FOC V1.0 follows for servo control.
   The current T-LoRa Pager receives a late board stub before full support.
-- Core 0 owns Wi-Fi, the web server, SD/file service, T-Deck peripherals,
+- Core 0 owns Wi-Fi, the web server, SD/cache service, T-Deck peripherals,
   telemetry presentation, and idle work. Core 1 owns safety, motion, FOC,
   deterministic I/O, and hardware-timed queues.
 - Every board starts as its own Wi-Fi AP and serves the matching UI. The UI can

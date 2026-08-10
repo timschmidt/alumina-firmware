@@ -68,7 +68,7 @@ or another MCU's executable work.
 
 ## SD cache service
 
-Core 0 owns the filesystem and exposes authenticated APIs to:
+Core 0 owns an explicit raw SD cache region and exposes authenticated APIs to:
 
 - query capacity/health and list manifests/blobs;
 - create a resumable upload session;
@@ -85,19 +85,24 @@ in the durable checkpoint. The last chunk alone may be shorter. This sacrifices
 out-of-order upload in exchange for bounded MCU RAM, a constant-size coordinator,
 and a journal that can be reconstructed by a linear SD scan.
 
-Configuration and job metadata use copy-on-write/rename or an equivalent
-power-loss-safe commit. Upload, deletion, repair, and filesystem mutation are
-forbidden while armed. Raw source files may be cached by the browser elsewhere,
-but firmware storage APIs accept only machine-job packages and explicitly typed
-opaque user blobs that cannot be executed.
+The V1 cache is not FAT or another general filesystem. Two fixed SHA-256 anchors
+alternate generations over an append-only, hash-chained sequence of begin,
+chunk, abort, and publication records. Each record writes padded data, crosses a
+device synchronization barrier, writes a bound commit sector, crosses another
+barrier, then replaces the older anchor and synchronizes again. Mount chooses a
+structurally valid generation and replays its exact committed tail. Formatting
+is an explicit destructive provisioning operation and never occurs implicitly
+at boot. Upload, compaction, repair, and other media mutation are forbidden while
+armed. Raw source files may be cached by the browser elsewhere; firmware storage
+accepts only machine-job packages and explicitly typed opaque user blobs that
+cannot be executed. A separate non-authoritative exchange filesystem may be
+added later if it remains useful and passes dependency/license review.
 
-The portable transaction model separates verification from durability: hashing
-produces an unforgeable-in-safe-Rust verified-chunk token; the backend writes and
-syncs the content-addressed blob and ordered journal entry; only then does it
-advance the checkpoint. Complete object/manifest hashes enter `publish-pending`,
-an atomic rename makes the manifest visible, and the upload journal is cleared
-last. A reset at any boundary therefore leaves either resumable/unreferenced
-bytes or a complete visible manifest, never a partially visible runnable object.
+The portable transaction model separates verification from durability. Chunk
+identity and aggregate object/manifest hashes are checked before a publication
+record is admitted; only a synchronized replacement anchor advances externally
+visible progress. A reset at any boundary therefore leaves the old committed
+tail or the complete new tail, never a partially visible runnable object.
 
 Core 1 never reads SD. Before and during a run, core 0 verifies blocks and fills
 fixed internal-SRAM buffers through a credit-based boundary. Core 1 validates

@@ -23,3 +23,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-AUTHENTICATED-SERVICE.md`](M3-AUTHENTICATED-SERVICE.md) — canonical
   request/response HMAC, replay/rate/header admission, cancellation-safe core-0
   dispatch, and fail-closed native storage endpoints.
+- [`M3-DURABLE-CACHE-MEDIA.md`](M3-DURABLE-CACHE-MEDIA.md) — asynchronous raw
+  cache media, alternating anchors, hash-chained durable records, authenticated
+  backend dispatch, and deterministic torn-write simulation.

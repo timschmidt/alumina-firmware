@@ -13,6 +13,10 @@ alumina-net.workspace = true
 alumina-protocol.workspace = true
 alumina-safety.workspace = true
 alumina-storage.workspace = true
+heapless.workspace = true
+
+[dev-dependencies]
+embassy-futures.workspace = true
 
 [lints]
 workspace = true

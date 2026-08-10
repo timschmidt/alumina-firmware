@@ -279,7 +279,8 @@ action, telemetry event, reset requirements, and tested boards. Minimum catalog:
 - lost network, clock uncertainty, service task failure;
 - participant prepare/commit/abort loss, boot-ID change, or start disagreement;
 - bus timeout/stuck line and external-device reset;
-- filesystem full/corrupt and update/config persistence interruption; and
+- cache-media full/corrupt/torn-anchor, optional filesystem faults, and
+  update/config persistence interruption; and
 - watchdog expiry in each state.
 
 ## Release artifact and evidence set

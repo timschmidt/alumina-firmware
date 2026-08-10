@@ -12,5 +12,8 @@ publish.workspace = true
 alumina-protocol.workspace = true
 sha2.workspace = true
 
+[dev-dependencies]
+embassy-futures.workspace = true
+
 [lints]
 workspace = true

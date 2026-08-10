@@ -4,6 +4,8 @@
 use alumina_protocol::Digest;
 use sha2::{Digest as _, Sha256};
 
+pub mod media;
+
 /// Magic identifying the canonical ordered chunk-manifest hash stream.
 pub const MANIFEST_MAGIC: [u8; 4] = *b"ACMF";
 
@@ -59,6 +61,7 @@ pub fn sha256(bytes: &[u8]) -> ContentId {
 }
 
 /// Incremental SHA-256 verifier used while streaming files from an SD backend.
+#[derive(Clone)]
 pub struct ContentHasher(Sha256);
 
 impl ContentHasher {
@@ -310,6 +313,7 @@ impl CacheLimits {
 }
 
 /// Streaming encoder/hasher for the canonical V1 ordered chunk manifest.
+#[derive(Clone)]
 pub struct ManifestHasher {
     object: StoredObject,
     chunk_bytes: u32,

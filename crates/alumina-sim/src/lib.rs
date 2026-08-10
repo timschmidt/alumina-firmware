@@ -1,12 +1,206 @@
 #![doc = "Deterministic host models for Alumina storage and service/RT boundaries."]
 
+use core::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::rc::Rc;
 
+use alumina_storage::media::{AsyncBlockDevice, MEDIA_BLOCK_BYTES, MediaBlock};
 use alumina_storage::{
     CacheLimits, ContentHasher, ContentId, ManifestHasher, MutationContext, PublishedObject,
     StoredObject, UploadCheckpoint, UploadCoordinator, UploadId, UploadPhase, UploadPlan,
     UploadProgress, sha256,
 };
+
+/// Deterministic failure from the shared in-memory block-device model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockDeviceError {
+    /// A read or write addressed a block outside the image.
+    OutsideDevice,
+    /// The simulated device remains unpowered after an injected cut.
+    PoweredOff,
+    /// Power was removed during this numbered write or synchronization operation.
+    InjectedPowerLoss {
+        /// Zero-based persistent-operation counter.
+        operation: u64,
+    },
+}
+
+#[derive(Debug)]
+struct SimBlockState {
+    blocks: Vec<MediaBlock>,
+}
+
+/// Cloneable control plane for fault injection and inspection while a media
+/// backend owns the corresponding [`SimBlockDevice`].
+#[derive(Clone, Debug)]
+pub struct SimBlockControl {
+    state: Rc<RefCell<SimBlockState>>,
+    powered: Rc<Cell<bool>>,
+    operations: Rc<Cell<u64>>,
+    cut_at: Rc<Cell<Option<u64>>>,
+    torn_write_bytes: Rc<Cell<usize>>,
+}
+
+impl SimBlockControl {
+    /// Arms a one-shot power cut relative to the next write or sync operation.
+    ///
+    /// A value of zero cuts the next persistent operation. If that operation
+    /// is a write, exactly `torn_write_bytes` leading bytes reach the image
+    /// before power disappears. The prefix is clamped to one complete block.
+    pub fn arm_power_cut(&self, operations_from_now: u64, torn_write_bytes: usize) {
+        self.cut_at.set(Some(
+            self.operations.get().saturating_add(operations_from_now),
+        ));
+        self.torn_write_bytes
+            .set(torn_write_bytes.min(MEDIA_BLOCK_BYTES));
+    }
+
+    /// Cancels an armed cut without changing power state or operation count.
+    pub fn disarm_power_cut(&self) {
+        self.cut_at.set(None);
+    }
+
+    /// Restores power after a cut and cancels any still-armed fault.
+    pub fn restore_power(&self) {
+        self.powered.set(true);
+        self.cut_at.set(None);
+    }
+
+    /// Whether the simulated block device currently has power.
+    pub fn is_powered(&self) -> bool {
+        self.powered.get()
+    }
+
+    /// Number of write and sync operations attempted since image creation.
+    pub fn operation_count(&self) -> u64 {
+        self.operations.get()
+    }
+
+    /// Copies the exact persistent image for deterministic reboot branching.
+    pub fn snapshot(&self) -> Vec<MediaBlock> {
+        self.state.borrow().blocks.clone()
+    }
+
+    /// Corrupts one persistent byte without changing any neighboring state.
+    pub fn flip_byte(&self, block: u64, byte: usize) -> Result<(), BlockDeviceError> {
+        let block = usize::try_from(block).map_err(|_| BlockDeviceError::OutsideDevice)?;
+        let mut state = self.state.borrow_mut();
+        let target = state
+            .blocks
+            .get_mut(block)
+            .and_then(|sector| sector.get_mut(byte))
+            .ok_or(BlockDeviceError::OutsideDevice)?;
+        *target ^= 0x80;
+        Ok(())
+    }
+}
+
+/// Shared, byte-exact 512-byte block device for host simulation.
+///
+/// Successful writes update the persistent image immediately. This is one
+/// conservative behavior permitted before `sync`; an injected sync failure may
+/// therefore leave every prior write present. An injected write failure can
+/// instead leave a configurable torn prefix. Together these modes exercise the
+/// cache format's old-or-new recovery contract without simulating a filesystem.
+#[derive(Debug)]
+pub struct SimBlockDevice {
+    control: SimBlockControl,
+}
+
+impl SimBlockDevice {
+    /// Creates an erased image and an independent cloneable control plane.
+    pub fn erased(block_count: usize) -> (Self, SimBlockControl) {
+        Self::from_snapshot(vec![[0xff; MEDIA_BLOCK_BYTES]; block_count])
+    }
+
+    /// Boots a new device instance over an exact persistent image snapshot.
+    pub fn from_snapshot(blocks: Vec<MediaBlock>) -> (Self, SimBlockControl) {
+        let control = SimBlockControl {
+            state: Rc::new(RefCell::new(SimBlockState { blocks })),
+            powered: Rc::new(Cell::new(true)),
+            operations: Rc::new(Cell::new(0)),
+            cut_at: Rc::new(Cell::new(None)),
+            torn_write_bytes: Rc::new(Cell::new(0)),
+        };
+        (
+            Self {
+                control: control.clone(),
+            },
+            control,
+        )
+    }
+
+    fn require_power(&self) -> Result<(), BlockDeviceError> {
+        if self.control.powered.get() {
+            Ok(())
+        } else {
+            Err(BlockDeviceError::PoweredOff)
+        }
+    }
+
+    fn begin_persistent_operation(&self) -> Result<u64, BlockDeviceError> {
+        self.require_power()?;
+        let operation = self.control.operations.get();
+        self.control.operations.set(operation.saturating_add(1));
+        if self.control.cut_at.get() == Some(operation) {
+            self.control.cut_at.set(None);
+            self.control.powered.set(false);
+            Err(BlockDeviceError::InjectedPowerLoss { operation })
+        } else {
+            Ok(operation)
+        }
+    }
+}
+
+impl AsyncBlockDevice for SimBlockDevice {
+    type Error = BlockDeviceError;
+
+    fn block_count(&self) -> u64 {
+        u64::try_from(self.control.state.borrow().blocks.len()).unwrap_or(u64::MAX)
+    }
+
+    async fn read_block(&mut self, block: u64, output: &mut MediaBlock) -> Result<(), Self::Error> {
+        self.require_power()?;
+        let block = usize::try_from(block).map_err(|_| BlockDeviceError::OutsideDevice)?;
+        let state = self.control.state.borrow();
+        let source = state
+            .blocks
+            .get(block)
+            .ok_or(BlockDeviceError::OutsideDevice)?;
+        output.copy_from_slice(source);
+        Ok(())
+    }
+
+    async fn write_block(&mut self, block: u64, data: &MediaBlock) -> Result<(), Self::Error> {
+        let block = usize::try_from(block).map_err(|_| BlockDeviceError::OutsideDevice)?;
+        if block >= self.control.state.borrow().blocks.len() {
+            return Err(BlockDeviceError::OutsideDevice);
+        }
+        if let Err(error) = self.begin_persistent_operation() {
+            if matches!(error, BlockDeviceError::InjectedPowerLoss { .. }) {
+                let prefix = self.control.torn_write_bytes.get();
+                let mut state = self.control.state.borrow_mut();
+                let target = state
+                    .blocks
+                    .get_mut(block)
+                    .ok_or(BlockDeviceError::OutsideDevice)?;
+                target[..prefix].copy_from_slice(&data[..prefix]);
+            }
+            return Err(error);
+        }
+        let mut state = self.control.state.borrow_mut();
+        let target = state
+            .blocks
+            .get_mut(block)
+            .ok_or(BlockDeviceError::OutsideDevice)?;
+        target.copy_from_slice(data);
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> Result<(), Self::Error> {
+        self.begin_persistent_operation().map(|_| ())
+    }
+}
 
 /// One immutable ordered chunk journal record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -654,12 +848,18 @@ fn finish_service_work(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alumina_storage::{ObjectKind, UploadId};
+    use alumina_storage::media::{CacheMedia, MediaAvailability, MediaId, MediaRegion};
+    use alumina_storage::{ChunkUploadHeader, ObjectKind, UploadId};
+    use embassy_futures::block_on;
 
     const LIMITS: CacheLimits = CacheLimits {
         maximum_object_bytes: 64 * 1_024,
-        maximum_chunk_bytes: 64,
+        maximum_chunk_bytes: 1_024,
         maximum_chunks: 4_096,
+    };
+    const MEDIA_REGION: MediaRegion = MediaRegion {
+        start_block: 8,
+        block_count: 120,
     };
 
     fn plan_for(bytes: &[u8], chunk_bytes: u32, upload_id: u64) -> (UploadPlan, Vec<&[u8]>) {
@@ -721,6 +921,46 @@ mod tests {
         service
             .finalize_upload(plan.upload_id, MutationContext::DISARMED_IDLE, None)
             .unwrap()
+    }
+
+    #[test]
+    fn public_block_simulator_recovers_every_torn_chunk_append() {
+        let bytes = vec![0xa5; 1_024];
+        let (plan, chunks) = plan_for(&bytes, 1_024, 11);
+        let (device, control) = SimBlockDevice::erased(160);
+        let mut media = CacheMedia::new(device, MEDIA_REGION, LIMITS);
+        block_on(media.format(MediaId::new([0x5a; 16]).unwrap())).unwrap();
+        block_on(media.begin_upload(plan, MutationContext::DISARMED_IDLE)).unwrap();
+        let baseline = control.snapshot();
+
+        // Nine persistent operations cover header, three payload blocks,
+        // barriers, commit, and anchor; the tenth iteration proves success.
+        for operation_from_now in 0..=9 {
+            let (device, control) = SimBlockDevice::from_snapshot(baseline.clone());
+            let mut media = CacheMedia::new(device, MEDIA_REGION, LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_power_cut(operation_from_now, 137);
+            let chunk = chunks[0];
+            let result = block_on(media.put_chunk(
+                ChunkUploadHeader {
+                    upload_id: plan.upload_id,
+                    index: 0,
+                    byte_len: u32::try_from(chunk.len()).unwrap(),
+                    content: sha256(chunk),
+                },
+                chunk,
+                MutationContext::DISARMED_IDLE,
+            ));
+            control.restore_power();
+
+            let status = block_on(media.mount()).unwrap();
+            assert_eq!(status.availability, MediaAvailability::Ready);
+            let next_chunk = status.upload.unwrap().next_chunk;
+            assert!(next_chunk == 0 || next_chunk == 1);
+            if result.is_ok() {
+                assert_eq!(next_chunk, 1);
+            }
+        }
     }
 
     #[test]

@@ -122,7 +122,7 @@ when a real-time deadline requires it.
 | Radio local | BLE provisioning/GATT, ESP-NOW datagrams | After Wi-Fi baseline and coexistence tests |
 | 802.15.4 | raw MAC/PHY first; Thread/Zigbee only with an audited compatible stack | Chip/board driven; dual-core eligibility and radio-coexistence policy apply |
 | T-Deck | SX1262/LoRa packets and GPS data via imported drivers | M1–M3 |
-| Storage | Selected embedded/FAT-like SD filesystem, content-addressed per-MCU jobs, config packages | M3; mutation idle-only, execution uses bounded prefetch |
+| Storage | Raw append-only SD cache region for authoritative content-addressed per-MCU jobs; optional separate exchange filesystem | M3; mutation idle-only, execution uses bounded prefetch |
 | Automation gateways | Modbus TCP, OPC UA/MQTT gateways, or custom protocols | Service-domain plugins selected by real deployments |
 
 TLS, mTLS, MQTT, CANopen, Thread, Zigbee, OPC UA, EtherNet/IP, and other substantial

@@ -43,9 +43,9 @@ flowchart LR
     MACHINE[Validated runtime machine config] --> VAL
 ```
 
-The service core is the only network-facing and filesystem-facing trust
+The service core is the only network-facing and persistent-media-facing trust
 boundary. The real-time core does not parse HTTP, JSON, YAML, user strings,
-filesystem data, G-code, source geometry, or graph files. It receives only
+storage data, G-code, source geometry, or graph files. It receives only
 already validated, bounded binary frames whose exact schema version,
 configuration digest, sequence, and time range are known. A schema mismatch is
 an update error, not a request to enter a compatibility mode.
@@ -148,13 +148,13 @@ cancellation from satisfying a later request. These same-executor locks do not
 mask interrupts on core 1.
 
 `GET /api/v1/storage` currently returns an authenticated, response-signed JSON
-status which explicitly says that no backend or mutation is available.
+status which explicitly says that the board adapter and mutation are unavailable.
 `POST /api/v1/storage` accepts only a complete native frame and response-signs
 the native result. It checks outer/operation lengths, directions, storage-plan
 structure, chunk size, and chunk SHA-256. Valid begin/chunk/finalize requests
-return `Unsupported` until a physical async SD backend can reproduce journal,
-durability, and atomic-publication semantics; no in-RAM success acknowledgement
-is substituted for durable storage.
+return `Unsupported` until the physical async SD-SPI adapter is connected to the
+implemented raw cache-media backend; no in-RAM success acknowledgement is
+substituted for durable storage.
 
 ### Cross-core messages
 
@@ -420,10 +420,14 @@ scheduled resource commands.
 
 ### SD jobs and multiple MCUs
 
-Core 0 stores content-addressed job chunks and atomically published manifests on
-SD, then prefetches verified blocks into fixed internal-SRAM queues. Core 1 never
-opens a file or trusts filesystem metadata. Writes and deletion are idle-only;
-reads during a run are bounded and qualified against motion load.
+Core 0 stores content-addressed job chunks and atomically published manifests in
+an explicitly provisioned raw SD cache region, then prefetches verified blocks
+into fixed internal-SRAM queues. The cache uses alternating hashed anchors and a
+hash-chained append log, not filesystem rename semantics. Core 1 never opens
+storage or trusts media metadata. Writes, compaction, and deletion are idle-only;
+reads during a run are bounded and qualified against motion load. A separate
+human-readable filesystem partition may be added later, but is not an executable
+job authority.
 
 For a distributed job, the UI maintains one measured affine mapping from its
 monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and

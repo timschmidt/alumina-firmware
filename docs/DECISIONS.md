@@ -133,9 +133,13 @@ describes the attached machine.
   credential transactionally; neither repository fallback nor build-provisioned
   value is production-armable.
 - An authenticated endpoint must not acknowledge volatile bytes as durable SD
-  state. Until the physical backend implements blob write, journal/checkpoint,
-  sync, hash replay, and atomic manifest publication, storage mutation returns
-  native `Unsupported` and status reports `backend_available: false`.
+  state. The authoritative V1 cache is an explicitly provisioned raw SD region
+  with alternating hashed anchors and synchronized hash-chained records, not a
+  FAT rename protocol. Until a physical board adapter mounts that backend,
+  storage mutation returns native `Unsupported` and status reports
+  `backend: "unavailable"` plus `mutation_available: false`.
+- A later human-readable exchange filesystem, if useful, is a separate
+  non-authoritative partition. Its metadata can never make a job executable.
 
 ## Interface and graphical programming
 

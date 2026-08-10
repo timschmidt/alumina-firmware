@@ -90,6 +90,8 @@ dependencies = [
  "alumina-protocol",
  "alumina-safety",
  "alumina-storage",
+ "embassy-futures",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -98,6 +100,7 @@ version = "0.1.0"
 dependencies = [
  "alumina-protocol",
  "alumina-storage",
+ "embassy-futures",
 ]
 
 [[package]]
@@ -105,6 +108,7 @@ name = "alumina-storage"
 version = "0.1.0"
 dependencies = [
  "alumina-protocol",
+ "embassy-futures",
  "sha2",
 ]
 

@@ -6,6 +6,10 @@ Status: host-tested/release-linked admission foundation. This evidence does not
 claim secret provisioning, TLS/confidentiality, physical SD durability, AP+STA,
 browser integration, live HTTP interoperability, flood timing, or HIL.
 
+This records the authentication milestone at its commit. The later
+[`M3-DURABLE-CACHE-MEDIA.md`](M3-DURABLE-CACHE-MEDIA.md) supersedes its status
+body and test/image totals while preserving the admission claims below.
+
 ## Implemented claim
 
 - `alumina-net` implements domain-separated HMAC-SHA-256 for exact request and

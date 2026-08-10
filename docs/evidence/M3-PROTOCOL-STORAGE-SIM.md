@@ -5,6 +5,10 @@ Date: 2026-08-10
 Status: host/compile foundation only. This does not close M3 Wi-Fi, web, physical
 SD, authentication, update, flood, or hardware-isolation gates.
 
+This records the first semantic storage model at its commit. The later
+[`M3-DURABLE-CACHE-MEDIA.md`](M3-DURABLE-CACHE-MEDIA.md) adds the concrete raw
+block format and supersedes the claim boundary and current test/image totals.
+
 ## Implemented claim
 
 - `alumina-protocol` manually encodes/decodes a 56-byte little-endian frame

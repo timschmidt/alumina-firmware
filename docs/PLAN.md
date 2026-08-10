@@ -182,7 +182,10 @@ Work:
   frames for command, job-block, clock, waveform, and telemetry streams.
 - Implement authenticated content-addressed SD chunks, resumable uploads,
   atomic manifests, integrity scans, capacity/health, audit export, and idle-only
-  mutation. Core 0 prefetches verified blocks; core 1 never reads the filesystem.
+  mutation. Use an explicitly provisioned raw cache region with alternating
+  anchors and synchronized append records; any optional exchange filesystem is
+  separate and non-authoritative. Core 0 prefetches verified blocks; core 1 never
+  reads storage.
 - Build `alumina-sim` with virtual time, resource engines, I²S images, safety
   state, queue/storage/network faults, trace/replay, and recorded board fixtures.
 - Add signed/recoverable firmware+UI update packaging, per-device credentials,
