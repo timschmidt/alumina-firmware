@@ -221,6 +221,38 @@ impl StreamId {
     }
 }
 
+/// Stream-relative tick offset in the target device clock's declared units.
+///
+/// A later deterministic commit supplies the absolute [`DeviceCycle`] epoch.
+/// Keeping the types distinct prevents cached bytes from arming themselves.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct StreamTick(pub u64);
+
+impl StreamTick {
+    /// Adds this relative tick to a committed absolute device epoch.
+    pub fn at_epoch(self, epoch: DeviceCycle) -> Result<DeviceCycle, BlockError> {
+        epoch
+            .0
+            .checked_add(self.0)
+            .map(DeviceCycle)
+            .ok_or(BlockError::EpochOverflow)
+    }
+}
+
+/// One exact cached motion segment in stream-relative clock units.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecutionSegment<const AXES: usize> {
+    /// Inclusive stream-relative start tick.
+    pub start_tick: StreamTick,
+    /// Exclusive stream-relative end tick.
+    pub end_tick: StreamTick,
+    /// Signed commanded lattice displacement for each axis.
+    pub delta_steps: [i64; AXES],
+    /// Reserved V1 flags; must be zero.
+    pub flags: u32,
+}
+
 /// Exact execution payload family admitted by machine-block schema V1.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -251,10 +283,10 @@ pub struct ExecutionBlockHeader {
     pub segment_count: u32,
     /// Exact initialized bytes in the padded record area.
     pub payload_len: u32,
-    /// Inclusive block execution cycle.
-    pub start_cycle: DeviceCycle,
-    /// Exclusive block execution cycle.
-    pub end_cycle: DeviceCycle,
+    /// Inclusive stream-relative execution tick.
+    pub start_tick: StreamTick,
+    /// Exclusive stream-relative execution tick.
+    pub end_tick: StreamTick,
     /// Per-partition identity installed during job preparation.
     pub stream_id: StreamId,
     /// Board capability set against which the stream was compiled.
@@ -278,8 +310,8 @@ pub struct BlockExpectation {
     pub config_digest: Digest,
     /// Next required stream sequence.
     pub sequence: u32,
-    /// Required contiguous local start cycle.
-    pub start_cycle: DeviceCycle,
+    /// Required contiguous stream-relative start tick.
+    pub start_tick: StreamTick,
     /// Previously admitted block digest, zero for the first block.
     pub previous_digest: Digest,
 }
@@ -298,8 +330,8 @@ pub struct BlockValidationLimits {
 pub struct ExecutionBlockSummary<const AXES: usize> {
     /// Validated block sequence.
     pub sequence: u32,
-    /// Exclusive terminal cycle.
-    pub end_cycle: DeviceCycle,
+    /// Exclusive terminal stream-relative tick.
+    pub end_tick: StreamTick,
     /// Relative displacement accumulated within this block.
     pub final_steps: [i64; AXES],
     /// Exact digest required in the following block.
@@ -324,7 +356,7 @@ impl<const AXES: usize> ExecutionBlockSummary<AXES> {
                 .sequence
                 .checked_add(1)
                 .ok_or(BlockError::SequenceOverflow)?,
-            start_cycle: self.end_cycle,
+            start_tick: self.end_tick,
             previous_digest: self.block_digest,
         })
     }
@@ -406,7 +438,7 @@ impl<const AXES: usize> MotionStreamValidator<AXES> {
         Ok(MotionStreamProgress {
             accepted_blocks,
             expected_blocks: self.expected_blocks,
-            end_cycle: summary.end_cycle,
+            end_tick: summary.end_tick,
             position,
             block_digest: summary.block_digest,
             complete: accepted_blocks == self.expected_blocks,
@@ -424,7 +456,7 @@ impl<const AXES: usize> MotionStreamValidator<AXES> {
         Ok(MotionStreamProgress {
             accepted_blocks: self.accepted_blocks,
             expected_blocks: self.expected_blocks,
-            end_cycle: self.expectation.start_cycle,
+            end_tick: self.expectation.start_tick,
             position: self.position,
             block_digest: self.expectation.previous_digest,
             complete: true,
@@ -444,8 +476,8 @@ pub struct MotionStreamProgress<const AXES: usize> {
     pub accepted_blocks: u32,
     /// Exact block count derived from immutable object length.
     pub expected_blocks: u32,
-    /// Exclusive end cycle of the accepted horizon.
-    pub end_cycle: DeviceCycle,
+    /// Exclusive stream-relative end tick of the accepted horizon.
+    pub end_tick: StreamTick,
     /// Cumulative relative lattice displacement.
     pub position: [i64; AXES],
     /// Digest required by the next block, or terminal chain digest.
@@ -468,7 +500,7 @@ impl ExecutionBlock {
         config_digest: Digest,
         sequence: u32,
         previous_digest: Digest,
-        segments: &[Segment<AXES>],
+        segments: &[ExecutionSegment<AXES>],
     ) -> Result<Self, BlockError> {
         validate_axis_count::<AXES>()?;
         if !stream_id.is_valid() {
@@ -496,7 +528,7 @@ impl ExecutionBlock {
         let payload_len_wire = u32::try_from(payload_len).map_err(|_| BlockError::PayloadLength)?;
         let first = segments.first().ok_or(BlockError::SegmentCount)?;
         let last = segments.last().ok_or(BlockError::SegmentCount)?;
-        if first.end_cycle.0 <= first.start_cycle.0 {
+        if first.end_tick.0 <= first.start_tick.0 {
             return Err(BlockError::SegmentTime { index: 0 });
         }
 
@@ -511,14 +543,14 @@ impl ExecutionBlock {
         bytes[12..16].copy_from_slice(&sequence.to_le_bytes());
         bytes[16..20].copy_from_slice(&segment_count.to_le_bytes());
         bytes[20..24].copy_from_slice(&payload_len_wire.to_le_bytes());
-        bytes[24..32].copy_from_slice(&first.start_cycle.0.to_le_bytes());
-        bytes[32..40].copy_from_slice(&last.end_cycle.0.to_le_bytes());
+        bytes[24..32].copy_from_slice(&first.start_tick.0.to_le_bytes());
+        bytes[32..40].copy_from_slice(&last.end_tick.0.to_le_bytes());
         bytes[40..56].copy_from_slice(&stream_id.0);
         bytes[56..88].copy_from_slice(&capability_digest.0);
         bytes[88..120].copy_from_slice(&config_digest.0);
         bytes[120..152].copy_from_slice(&previous_digest.0);
 
-        let mut expected_start = first.start_cycle;
+        let mut expected_start = first.start_tick;
         for (index, segment) in segments.iter().enumerate() {
             if segment.flags != 0 {
                 return Err(BlockError::SegmentFlags {
@@ -526,11 +558,10 @@ impl ExecutionBlock {
                     flags: segment.flags,
                 });
             }
-            if segment.start_cycle != expected_start || segment.end_cycle.0 <= segment.start_cycle.0
-            {
+            if segment.start_tick != expected_start || segment.end_tick.0 <= segment.start_tick.0 {
                 return Err(BlockError::SegmentTime { index });
             }
-            let duration = segment.end_cycle.0 - segment.start_cycle.0;
+            let duration = segment.end_tick.0 - segment.start_tick.0;
             let offset = EXECUTION_BLOCK_HEADER_BYTES
                 .checked_add(
                     index
@@ -547,7 +578,7 @@ impl ExecutionBlock {
                     .ok_or(BlockError::Arithmetic)?;
                 bytes[axis_offset..axis_offset + 8].copy_from_slice(&delta.to_le_bytes());
             }
-            expected_start = segment.end_cycle;
+            expected_start = segment.end_tick;
         }
         let digest = hash_block_prefix(&bytes);
         if digest.is_zero() {
@@ -614,16 +645,16 @@ impl ExecutionBlock {
                 expected: expected.sequence,
             });
         }
-        if header.start_cycle != expected.start_cycle {
-            return Err(BlockError::StartCycle {
-                received: header.start_cycle,
-                expected: expected.start_cycle,
+        if header.start_tick != expected.start_tick {
+            return Err(BlockError::StartTick {
+                received: header.start_tick,
+                expected: expected.start_tick,
             });
         }
         if header.previous_digest != expected.previous_digest {
             return Err(BlockError::PreviousDigest);
         }
-        let block_ticks = header.end_cycle.0 - header.start_cycle.0;
+        let block_ticks = header.end_tick.0 - header.start_tick.0;
         if limits.maximum_block_ticks == 0 || block_ticks > limits.maximum_block_ticks {
             return Err(BlockError::BlockTooLong {
                 duration: block_ticks,
@@ -634,7 +665,7 @@ impl ExecutionBlock {
         let mut final_steps = [0_i64; AXES];
         let mut segments = self.motion_segments::<AXES>()?;
         for (index, segment) in (&mut segments).enumerate() {
-            let duration = segment.end_cycle.0 - segment.start_cycle.0;
+            let duration = segment.end_tick.0 - segment.start_tick.0;
             if duration > limits.segment.maximum_segment_ticks {
                 return Err(BlockError::SegmentTooLong {
                     index,
@@ -659,7 +690,7 @@ impl ExecutionBlock {
         }
         Ok(ExecutionBlockSummary {
             sequence: header.sequence,
-            end_cycle: header.end_cycle,
+            end_tick: header.end_tick,
             final_steps,
             block_digest: header.block_digest,
             segment_count: header.segment_count,
@@ -687,7 +718,7 @@ impl ExecutionBlock {
             bytes: &self.bytes,
             next: 0,
             count: header.segment_count,
-            cycle: header.start_cycle,
+            tick: header.start_tick,
         })
     }
 }
@@ -714,11 +745,11 @@ pub struct MotionSegments<'a, const AXES: usize> {
     bytes: &'a [u8; EXECUTION_BLOCK_BYTES],
     next: u32,
     count: u32,
-    cycle: DeviceCycle,
+    tick: StreamTick,
 }
 
 impl<const AXES: usize> Iterator for MotionSegments<'_, AXES> {
-    type Item = Segment<AXES>;
+    type Item = ExecutionSegment<AXES>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.next >= self.count {
@@ -727,7 +758,7 @@ impl<const AXES: usize> Iterator for MotionSegments<'_, AXES> {
         let record_bytes = MOTION_RECORD_PREFIX_BYTES + AXES * 8;
         let offset = EXECUTION_BLOCK_HEADER_BYTES + usize::try_from(self.next).ok()? * record_bytes;
         let duration = read_u64(&self.bytes[..], offset);
-        let end_cycle = DeviceCycle(self.cycle.0.checked_add(duration)?);
+        let end_tick = StreamTick(self.tick.0.checked_add(duration)?);
         let mut delta_steps = [0_i64; AXES];
         let mut axis = 0;
         while axis < AXES {
@@ -737,13 +768,13 @@ impl<const AXES: usize> Iterator for MotionSegments<'_, AXES> {
             );
             axis += 1;
         }
-        let segment = Segment {
-            start_cycle: self.cycle,
-            end_cycle,
+        let segment = ExecutionSegment {
+            start_tick: self.tick,
+            end_tick,
             delta_steps,
             flags: read_u32(&self.bytes[..], offset + 8),
         };
-        self.cycle = end_cycle;
+        self.tick = end_tick;
         self.next += 1;
         Some(segment)
     }
@@ -912,12 +943,12 @@ pub enum BlockError {
     },
     /// Sequence could not advance without wrap.
     SequenceOverflow,
-    /// Block start was not contiguous with the admitted horizon.
-    StartCycle {
+    /// Block start tick was not contiguous with the admitted horizon.
+    StartTick {
         /// Received value.
-        received: DeviceCycle,
+        received: StreamTick,
         /// Required value.
-        expected: DeviceCycle,
+        expected: StreamTick,
     },
     /// Previous block digest did not match the admitted chain.
     PreviousDigest,
@@ -978,6 +1009,8 @@ pub enum BlockError {
         /// Axis index.
         axis: usize,
     },
+    /// Adding a relative stream tick to the committed device epoch overflowed.
+    EpochOverflow,
     /// Checked size, time, or counter arithmetic overflowed.
     Arithmetic,
 }
@@ -1035,8 +1068,8 @@ fn decode_block_header(
         sequence: read_u32(bytes, 12),
         segment_count: read_u32(bytes, 16),
         payload_len: read_u32(bytes, 20),
-        start_cycle: DeviceCycle(read_u64(bytes, 24)),
-        end_cycle: DeviceCycle(read_u64(bytes, 32)),
+        start_tick: StreamTick(read_u64(bytes, 24)),
+        end_tick: StreamTick(read_u64(bytes, 32)),
         stream_id: StreamId(stream_id),
         capability_digest: Digest(capability_digest),
         config_digest: Digest(config_digest),
@@ -1091,7 +1124,7 @@ fn validate_block_structure(
     {
         return Err(BlockError::Reserved);
     }
-    if header.end_cycle.0 <= header.start_cycle.0 {
+    if header.end_tick.0 <= header.start_tick.0 {
         return Err(BlockError::BlockTime);
     }
     let mut total_duration = 0_u64;
@@ -1121,7 +1154,7 @@ fn validate_block_structure(
             .checked_add(duration)
             .ok_or(BlockError::SegmentTime { index })?;
     }
-    if header.start_cycle.0.checked_add(total_duration) != Some(header.end_cycle.0) {
+    if header.start_tick.0.checked_add(total_duration) != Some(header.end_tick.0) {
         return Err(BlockError::BlockTime);
     }
     if header.block_digest.is_zero() || hash_block_prefix(bytes) != header.block_digest {
@@ -1267,18 +1300,22 @@ mod tests {
         }
     }
 
-    fn expected(sequence: u32, start_cycle: u64, previous_digest: Digest) -> BlockExpectation {
+    fn expected(sequence: u32, start_tick: u64, previous_digest: Digest) -> BlockExpectation {
         BlockExpectation {
             stream_id: stream_id(),
             capability_digest: Digest([1; 32]),
             config_digest: Digest([2; 32]),
             sequence,
-            start_cycle: DeviceCycle(start_cycle),
+            start_tick: StreamTick(start_tick),
             previous_digest,
         }
     }
 
-    fn block(sequence: u32, previous_digest: Digest, segments: &[Segment<3>]) -> ExecutionBlock {
+    fn block(
+        sequence: u32,
+        previous_digest: Digest,
+        segments: &[ExecutionSegment<3>],
+    ) -> ExecutionBlock {
         ExecutionBlock::encode_motion(
             stream_id(),
             Digest([1; 32]),
@@ -1402,15 +1439,15 @@ mod tests {
     #[test]
     fn owned_motion_block_has_canonical_bytes_and_independent_summary() {
         let segments = [
-            Segment {
-                start_cycle: DeviceCycle(100),
-                end_cycle: DeviceCycle(220),
+            ExecutionSegment {
+                start_tick: StreamTick(100),
+                end_tick: StreamTick(220),
                 delta_steps: [10, -4, 0],
                 flags: 0,
             },
-            Segment {
-                start_cycle: DeviceCycle(220),
-                end_cycle: DeviceCycle(350),
+            ExecutionSegment {
+                start_tick: StreamTick(220),
+                end_tick: StreamTick(350),
                 delta_steps: [5, 4, 2],
                 flags: 0,
             },
@@ -1426,8 +1463,8 @@ mod tests {
         assert_eq!(header.sequence, 0);
         assert_eq!(header.segment_count, 2);
         assert_eq!(header.payload_len, 80);
-        assert_eq!(header.start_cycle, DeviceCycle(100));
-        assert_eq!(header.end_cycle, DeviceCycle(350));
+        assert_eq!(header.start_tick, StreamTick(100));
+        assert_eq!(header.end_tick, StreamTick(350));
         assert_eq!(
             header.block_digest.0,
             [
@@ -1449,7 +1486,15 @@ mod tests {
         let summary = block
             .validate_motion::<3>(expected(0, 100, Digest::ZERO), block_limits())
             .unwrap();
-        assert_eq!(summary.end_cycle, DeviceCycle(350));
+        assert_eq!(summary.end_tick, StreamTick(350));
+        assert_eq!(
+            summary.end_tick.at_epoch(DeviceCycle(10_000)),
+            Ok(DeviceCycle(10_350))
+        );
+        assert_eq!(
+            StreamTick(1).at_epoch(DeviceCycle(u64::MAX)),
+            Err(BlockError::EpochOverflow)
+        );
         assert_eq!(summary.final_steps, [15, 0, 2]);
         assert_eq!(summary.segment_count, 2);
         assert_eq!(summary.block_digest, header.block_digest);
@@ -1463,9 +1508,9 @@ mod tests {
 
     #[test]
     fn envelope_digest_padding_and_chain_fail_closed() {
-        let segments = [Segment {
-            start_cycle: DeviceCycle(10),
-            end_cycle: DeviceCycle(20),
+        let segments = [ExecutionSegment {
+            start_tick: StreamTick(10),
+            end_tick: StreamTick(20),
             delta_steps: [1, 2, 3],
             flags: 0,
         }];
@@ -1507,22 +1552,22 @@ mod tests {
 
     #[test]
     fn fixed_payload_capacity_is_exact_for_three_and_eight_axes() {
-        let segment3 = Segment {
-            start_cycle: DeviceCycle(0),
-            end_cycle: DeviceCycle(1),
+        let segment3 = ExecutionSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(1),
             delta_steps: [0; 3],
             flags: 0,
         };
         let mut eight3 = [segment3; 8];
         for (index, segment) in eight3.iter_mut().enumerate() {
-            segment.start_cycle = DeviceCycle(u64::try_from(index).unwrap());
-            segment.end_cycle = DeviceCycle(u64::try_from(index + 1).unwrap());
+            segment.start_tick = StreamTick(u64::try_from(index).unwrap());
+            segment.end_tick = StreamTick(u64::try_from(index + 1).unwrap());
         }
         assert!(block(0, Digest::ZERO, &eight3).header().payload_len == 320);
         let mut nine3 = [segment3; 9];
         for (index, segment) in nine3.iter_mut().enumerate() {
-            segment.start_cycle = DeviceCycle(u64::try_from(index).unwrap());
-            segment.end_cycle = DeviceCycle(u64::try_from(index + 1).unwrap());
+            segment.start_tick = StreamTick(u64::try_from(index).unwrap());
+            segment.end_tick = StreamTick(u64::try_from(index + 1).unwrap());
         }
         assert!(matches!(
             ExecutionBlock::encode_motion(
@@ -1536,16 +1581,16 @@ mod tests {
             Err(BlockError::PayloadLength)
         ));
 
-        let segment8 = Segment {
-            start_cycle: DeviceCycle(0),
-            end_cycle: DeviceCycle(1),
+        let segment8 = ExecutionSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(1),
             delta_steps: [0; 8],
             flags: 0,
         };
         let mut four8 = [segment8; 4];
         for (index, segment) in four8.iter_mut().enumerate() {
-            segment.start_cycle = DeviceCycle(u64::try_from(index).unwrap());
-            segment.end_cycle = DeviceCycle(u64::try_from(index + 1).unwrap());
+            segment.start_tick = StreamTick(u64::try_from(index).unwrap());
+            segment.end_tick = StreamTick(u64::try_from(index + 1).unwrap());
         }
         let block = ExecutionBlock::encode_motion(
             stream_id(),
@@ -1561,16 +1606,16 @@ mod tests {
 
     #[test]
     fn arbitrary_storage_splits_assemble_two_owned_blocks() {
-        let first_segments = [Segment {
-            start_cycle: DeviceCycle(100),
-            end_cycle: DeviceCycle(200),
+        let first_segments = [ExecutionSegment {
+            start_tick: StreamTick(100),
+            end_tick: StreamTick(200),
             delta_steps: [1, 0, 0],
             flags: 0,
         }];
         let first = block(0, Digest::ZERO, &first_segments);
-        let second_segments = [Segment {
-            start_cycle: DeviceCycle(200),
-            end_cycle: DeviceCycle(300),
+        let second_segments = [ExecutionSegment {
+            start_tick: StreamTick(200),
+            end_tick: StreamTick(300),
             delta_steps: [0, 1, 0],
             flags: 0,
         }];
@@ -1639,9 +1684,9 @@ mod tests {
 
     #[test]
     fn segment_and_block_limits_are_checked_after_structural_decode() {
-        let segments = [Segment {
-            start_cycle: DeviceCycle(10),
-            end_cycle: DeviceCycle(111),
+        let segments = [ExecutionSegment {
+            start_tick: StreamTick(10),
+            end_tick: StreamTick(111),
             delta_steps: [1, 0, 0],
             flags: 0,
         }];

@@ -193,9 +193,15 @@ Storage chunks and execution blocks are intentionally different boundaries. A
 core-0 `PartitionAssembler` accepts arbitrary verified storage slices and emits
 at most one complete work block per call. Both cores maintain independent stream
 validators over stream/capability/configuration identities, sequence, exact
-cycle continuity, previous-block digest, per-segment bounds, and cumulative
+relative-tick continuity, previous-block digest, per-segment bounds, and cumulative
 lattice displacement. A storage-valid but machine-IR-invalid object never gains
 a work-queue credit.
+
+Cached blocks use a `StreamTick` newtype, while hardware timestamps use
+`DeviceCycle`. A later commit installs the future local device epoch and checked
+addition maps each relative tick to hardware time. The types intentionally
+prevent a cached schedule from arming itself or being confused with an absolute
+counter sample.
 
 ### ESP32 flash/cache constraint
 

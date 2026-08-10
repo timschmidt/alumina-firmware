@@ -668,7 +668,8 @@ mod tests {
 
     use super::*;
     use alumina_machine_ir::{
-        BlockExpectation, BlockValidationLimits, Segment, StreamId, ValidationLimits,
+        BlockExpectation, BlockValidationLimits, ExecutionSegment, StreamId, StreamTick,
+        ValidationLimits,
     };
     use alumina_protocol::{FRAME_MAGIC, PROTOCOL_VERSION};
 
@@ -690,9 +691,9 @@ mod tests {
             Digest([3; 32]),
             sequence,
             previous_digest,
-            &[Segment {
-                start_cycle: DeviceCycle(start),
-                end_cycle: DeviceCycle(start + 10),
+            &[ExecutionSegment {
+                start_tick: StreamTick(start),
+                end_tick: StreamTick(start + 10),
                 delta_steps: [1, -1, 0],
                 flags: 0,
             }],
@@ -706,7 +707,7 @@ mod tests {
             capability_digest: Digest([2; 32]),
             config_digest: Digest([3; 32]),
             sequence,
-            start_cycle: DeviceCycle(start),
+            start_tick: StreamTick(start),
             previous_digest,
         }
     }

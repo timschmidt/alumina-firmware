@@ -35,3 +35,12 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-SAFE-BOOT-OBSERVATION.md`](M3-SAFE-BOOT-OBSERVATION.md) — complete
   TinyBee static safe image, T-Deck high-impedance hazard state, pre-Wi-Fi boot
   gate, and freshness-bound core-1 safety authority for storage admission.
+- [`M3-PUBLISHED-OBJECT-READER.md`](M3-PUBLISHED-OBJECT-READER.md) — immutable
+  typed publication lookup and chunk/aggregate revalidation through fixed
+  caller-owned memory.
+- [`M3-MACHINE-BLOCK-BOUNDARY.md`](M3-MACHINE-BLOCK-BOUNDARY.md) — canonical
+  owned execution blocks, independent dual-core validation, and credited work
+  transfer.
+- [`M3-JOB-PREFETCH-LIFECYCLE.md`](M3-JOB-PREFETCH-LIFECYCLE.md) — bounded
+  provisioned-cache prefetch, backpressure retention, cancellation, and
+  independent core-1 admission actors.

@@ -85,20 +85,31 @@ to one exact typed object and manifest, verifies every sequential chunk before
 copying it into fixed caller memory, and withholds the last chunk until the
 aggregate object, manifest, and publication record all agree. Lookup misses are
 benign; media divergence or post-open corruption latches an integrity fault.
-This is storage readback, not executable job admission: machine-IR decoding and
-the credited owned-buffer boundary to core 1 are next. See the
+This is storage readback, not executable job admission; the later machine-block
+and job-prefetch layers add those independent gates. See the
 [published-object reader evidence](docs/evidence/M3-PUBLISHED-OBJECT-READER.md).
 
 The next boundary is also concrete: `alumina-machine-ir` now defines canonical
-512-byte motion blocks for up to eight axes, with exact cycle intervals, integer
-lattice displacement, repeated stream/capability/configuration identities,
-zero padding, SHA-256 block identity, and a previous-block digest chain. An
-incremental assembler handles arbitrary storage chunk splits. Core 0 and core 1
-use separate stateful validators, and a dedicated inline work ring transfers
-non-cloneable owned blocks under exact credits. Host simulation exercises the
-real media reader through a deliberately unaligned 700-byte upload layout and
-rejects storage-valid/machine-invalid bytes before queue admission. See the
+512-byte motion blocks for up to eight axes, with exact relative-tick intervals,
+integer lattice displacement, repeated stream/capability/configuration
+identities, zero padding, SHA-256 block identity, and a previous-block digest
+chain. An incremental assembler handles arbitrary storage chunk splits. Core 0
+and core 1 use separate stateful validators, and a dedicated inline work ring
+transfers non-cloneable owned blocks under exact credits. See the
 [machine-block boundary evidence](docs/evidence/M3-MACHINE-BLOCK-BOUNDARY.md).
+
+`alumina-job` now owns the portable prepare/prefetch/admission lifecycle. Core 0
+opens one exact typed publication, reads at most one verified SD chunk per
+bounded step, retains ownership across a full work ring, and never marks a
+partition complete until every block has transferred. Core 1 independently
+validates one owned block at a time and advances completion only through an
+exact acknowledgement token. Cached `StreamTick` values remain distinct from
+absolute `DeviceCycle` values until a future deterministic commit installs an
+epoch. The simulator drives these actors through a provisioned cache with
+700-byte chunks, forces backpressure, and proves identical terminal stream
+facts. Firmware now compiles the crate for both boards; authenticated job
+control, commit, and hardware execution remain open. See the
+[job-prefetch lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md).
 
 ## Developer checks
 

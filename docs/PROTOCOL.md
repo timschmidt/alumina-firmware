@@ -119,8 +119,8 @@ Each block has this canonical layout:
 | 12 | 4 | contiguous block sequence, beginning at zero |
 | 16 | 4 | nonzero motion-segment count |
 | 20 | 4 | exact initialized payload bytes |
-| 24 | 8 | inclusive local start cycle |
-| 32 | 8 | exclusive local end cycle |
+| 24 | 8 | inclusive partition-relative stream tick |
+| 32 | 8 | exclusive partition-relative stream tick |
 | 40 | 16 | nonzero prepared stream ID |
 | 56 | 32 | board-capability digest |
 | 88 | 32 | active-configuration digest |
@@ -133,7 +133,10 @@ One V1 motion record is `duration_ticks: u64`, zero flags `u32`, reserved zero
 `u32`, then one signed little-endian `i64` lattice displacement per axis. The
 payload length must equal `segment_count * (16 + 8 * axis_count)`. Thus one block
 holds exactly eight 3-axis records or four 8-axis records at maximum capacity.
-Durations must be nonzero and sum exactly to the block interval.
+Durations must be nonzero and sum exactly to the block interval. Stream ticks
+are not absolute device-counter values: deterministic commit supplies a future
+local `DeviceCycle` epoch, and firmware uses checked addition when scheduling.
+This keeps one cached partition independent of its eventual synchronized start.
 
 Core 0 verifies the storage object, assembles blocks, checks this structure and
 the prepared machine limits, then moves the complete owned value through a

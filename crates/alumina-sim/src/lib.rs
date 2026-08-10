@@ -848,16 +848,20 @@ fn finish_service_work(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alumina_machine_ir::{
-        AssembleOutcome, BlockError, BlockExpectation, BlockValidationLimits, ExecutionBlock,
-        MotionStreamValidator, PartitionAssembler, Segment, StreamId, ValidationLimits,
+    use alumina_job::{
+        JobDescriptor, PrefetchYield, RealtimeJob, RealtimeJobState, RealtimePoll, ServiceJobState,
+        ServicePrefetch,
     };
-    use alumina_protocol::{DeviceCycle, Digest};
+    use alumina_machine_ir::{
+        BlockError, BlockValidationLimits, ExecutionBlock, ExecutionSegment, PartitionAssembler,
+        StreamId, StreamTick, ValidationLimits,
+    };
+    use alumina_protocol::Digest;
     use alumina_runtime::IntercoreBoundary;
     use alumina_storage::media::{CacheMedia, MediaAvailability, MediaId, MediaRegion};
+    use alumina_storage::provisioning::{CacheProvisionRequest, ProvisionedCache};
     use alumina_storage::{ChunkUploadHeader, FinalizeUploadRequest, ObjectKind, UploadId};
     use embassy_futures::block_on;
-    use embassy_sync::channel::TrySendError;
 
     const LIMITS: CacheLimits = CacheLimits {
         maximum_object_bytes: 64 * 1_024,
@@ -867,6 +871,11 @@ mod tests {
     const MEDIA_REGION: MediaRegion = MediaRegion {
         start_block: 8,
         block_count: 120,
+    };
+    const PROVISIONED_DEVICE_BLOCKS: usize = 2_300;
+    const PROVISIONED_REGION: MediaRegion = MediaRegion {
+        start_block: 2_048,
+        block_count: 200,
     };
 
     fn plan_for(bytes: &[u8], chunk_bytes: u32, upload_id: u64) -> (UploadPlan, Vec<&[u8]>) {
@@ -958,15 +967,32 @@ mod tests {
         .unwrap()
     }
 
-    fn block_expectation(sequence: u32, cycle: u64, previous_digest: Digest) -> BlockExpectation {
-        BlockExpectation {
-            stream_id: StreamId([0x33; 16]),
-            capability_digest: Digest([0x44; 32]),
-            config_digest: Digest([0x55; 32]),
-            sequence,
-            start_cycle: DeviceCycle(cycle),
-            previous_digest,
+    fn upload_provisioned(
+        cache: &mut ProvisionedCache<SimBlockDevice>,
+        plan: UploadPlan,
+        chunks: &[&[u8]],
+    ) -> PublishedObject {
+        block_on(cache.begin_upload(plan, MutationContext::DISARMED_IDLE)).unwrap();
+        for (index, chunk) in chunks.iter().enumerate() {
+            block_on(cache.put_chunk(
+                ChunkUploadHeader {
+                    upload_id: plan.upload_id,
+                    index: u32::try_from(index).unwrap(),
+                    byte_len: u32::try_from(chunk.len()).unwrap(),
+                    content: sha256(chunk),
+                },
+                chunk,
+                MutationContext::DISARMED_IDLE,
+            ))
+            .unwrap();
         }
+        block_on(cache.finalize_upload(
+            FinalizeUploadRequest {
+                upload_id: plan.upload_id,
+            },
+            MutationContext::DISARMED_IDLE,
+        ))
+        .unwrap()
     }
 
     fn block_limits() -> BlockValidationLimits {
@@ -1024,16 +1050,16 @@ mod tests {
         let mut object = Vec::new();
         let mut previous_digest = Digest::ZERO;
         for sequence in 0_u32..3 {
-            let start = 1_000 + u64::from(sequence) * 100;
+            let start = u64::from(sequence) * 100;
             let block = ExecutionBlock::encode_motion(
                 StreamId::new([0x33; 16]).unwrap(),
                 Digest([0x44; 32]),
                 Digest([0x55; 32]),
                 sequence,
                 previous_digest,
-                &[Segment {
-                    start_cycle: DeviceCycle(start),
-                    end_cycle: DeviceCycle(start + 100),
+                &[ExecutionSegment {
+                    start_tick: StreamTick(start),
+                    end_tick: StreamTick(start + 100),
                     delta_steps: [i64::from(sequence) + 1, -1, 0],
                     flags: 0,
                 }],
@@ -1043,68 +1069,97 @@ mod tests {
             object.extend_from_slice(block.as_bytes());
         }
         let (plan, chunks) = plan_for(&object, 700, 0x3344);
-        let (device, _) = SimBlockDevice::erased(160);
-        let mut media = CacheMedia::new(device, MEDIA_REGION, LIMITS);
-        block_on(media.format(MediaId::new([0x5a; 16]).unwrap())).unwrap();
-        let published = upload_media(&mut media, plan, &chunks);
-        let mut reader = block_on(media.open_published(published)).unwrap();
-        let mut assembler = PartitionAssembler::new(plan.object.byte_len).unwrap();
-        let mut service_validator = MotionStreamValidator::<3>::new(
-            3,
-            block_expectation(0, 1_000, Digest::ZERO),
-            block_limits(),
+        let (device, _) = SimBlockDevice::erased(PROVISIONED_DEVICE_BLOCKS);
+        let mut cache = ProvisionedCache::new(device, LIMITS);
+        block_on(cache.discover()).unwrap();
+        let request = CacheProvisionRequest::new(
+            u64::try_from(PROVISIONED_DEVICE_BLOCKS).unwrap(),
+            0,
+            None,
+            PROVISIONED_REGION,
+            MediaId::new([0x5a; 16]).unwrap(),
+            false,
         )
         .unwrap();
-        let mut realtime_validator = MotionStreamValidator::<3>::new(
-            3,
-            block_expectation(0, 1_000, Digest::ZERO),
-            block_limits(),
-        )
-        .unwrap();
+        block_on(cache.provision(request, MutationContext::DISARMED_IDLE)).unwrap();
+        let published = upload_provisioned(&mut cache, plan, &chunks);
+        let descriptor = JobDescriptor {
+            prepare_id: 0x7788,
+            partition: published,
+            stream_id: StreamId::new([0x33; 16]).unwrap(),
+            capability_digest: Digest([0x44; 32]),
+            config_digest: Digest([0x55; 32]),
+            axis_count: 3,
+            block_count: 3,
+            first_tick: StreamTick(0),
+            limits: block_limits(),
+        };
+        let mut prefetch = block_on(ServicePrefetch::<3>::open(&mut cache, descriptor)).unwrap();
+        let mut realtime_job = RealtimeJob::<3>::prepare(descriptor).unwrap();
         type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
         let boundary = Box::leak(Box::new(Boundary::new()));
         let (mut service, mut realtime) = boundary.split();
-        let mut storage = [0_u8; alumina_storage::media::MAX_MEDIA_CHUNK_BYTES];
 
-        while let Some(chunk) =
-            block_on(media.read_next_published(&mut reader, &mut storage)).unwrap()
-        {
-            let mut offset = 0_usize;
-            let chunk_len = usize::try_from(chunk.byte_len).unwrap();
-            while offset < chunk_len {
-                match assembler.push(&storage[offset..chunk_len]).unwrap() {
-                    AssembleOutcome::NeedMore { consumed } => {
-                        assert!(consumed > 0);
-                        offset += consumed;
-                    }
-                    AssembleOutcome::Block { consumed, block } => {
-                        offset += consumed;
-                        service_validator.accept(&block).unwrap();
-                        let mut pending = block;
-                        loop {
-                            match service.try_send_work(pending) {
-                                Ok(()) => break,
-                                Err(TrySendError::Full(returned)) => {
-                                    let owned = realtime.try_receive_work().unwrap();
-                                    realtime_validator.accept(&owned).unwrap();
-                                    pending = returned;
-                                }
+        assert_eq!(
+            block_on(prefetch.step(&mut cache, &mut service))
+                .unwrap()
+                .yielded,
+            PrefetchYield::Progress
+        );
+        assert_eq!(
+            block_on(prefetch.step(&mut cache, &mut service))
+                .unwrap()
+                .yielded,
+            PrefetchYield::Progress
+        );
+        assert_eq!(service.work_free_capacity(), 0);
+        assert_eq!(
+            block_on(prefetch.step(&mut cache, &mut service))
+                .unwrap()
+                .yielded,
+            PrefetchYield::Backpressured
+        );
+
+        for _ in 0..8 {
+            if realtime_job.status().state != RealtimeJobState::Complete {
+                loop {
+                    match realtime_job.poll(&mut realtime).unwrap() {
+                        RealtimePoll::Block(admitted) => {
+                            let _segments: Vec<_> = admitted.segments().unwrap().collect();
+                            let complete = admitted.progress().complete;
+                            realtime_job.acknowledge(admitted).unwrap();
+                            if complete {
+                                break;
                             }
+                        }
+                        RealtimePoll::Empty => break,
+                        RealtimePoll::Outstanding => {
+                            panic!("test acknowledges every admitted block")
                         }
                     }
                 }
             }
+            if prefetch.status().state != ServiceJobState::Complete {
+                block_on(prefetch.step(&mut cache, &mut service)).unwrap();
+            }
+            if realtime_job.status().state == RealtimeJobState::Complete
+                && prefetch.status().state == ServiceJobState::Complete
+            {
+                break;
+            }
         }
-        assert!(reader.is_complete());
-        assert_eq!(assembler.finish(), Ok(3));
-        while let Ok(owned) = realtime.try_receive_work() {
-            realtime_validator.accept(&owned).unwrap();
-        }
-        let service_progress = service_validator.finish().unwrap();
-        let realtime_progress = realtime_validator.finish().unwrap();
+
+        let completion = block_on(prefetch.step(&mut cache, &mut service)).unwrap();
+        assert_eq!(completion.yielded, PrefetchYield::Complete);
+        assert_eq!(completion.status.state, ServiceJobState::Complete);
+        let service_progress = completion.status.final_progress.unwrap();
+        let realtime_status = realtime_job.status();
+        assert_eq!(realtime_status.state, RealtimeJobState::Complete);
+        let realtime_progress = realtime_status.completed_progress.unwrap();
         assert_eq!(service_progress, realtime_progress);
         assert_eq!(service_progress.position, [6, -3, 0]);
-        assert_eq!(service_progress.end_cycle, DeviceCycle(1_300));
+        assert_eq!(service_progress.end_tick, StreamTick(300));
+        assert_eq!(completion.status.storage_chunks_read, 3);
         assert_eq!(service.work_free_capacity(), 2);
     }
 
@@ -1116,9 +1171,9 @@ mod tests {
             Digest([0x55; 32]),
             0,
             Digest::ZERO,
-            &[Segment {
-                start_cycle: DeviceCycle(1_000),
-                end_cycle: DeviceCycle(1_100),
+            &[ExecutionSegment {
+                start_tick: StreamTick(1_000),
+                end_tick: StreamTick(1_100),
                 delta_steps: [1, 0, 0],
                 flags: 0,
             }],

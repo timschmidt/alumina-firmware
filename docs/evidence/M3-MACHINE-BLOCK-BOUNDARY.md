@@ -14,7 +14,7 @@ or HIL timing.
   determines the exact block count and its SHA-256 identity commits the whole
   concatenation; blocks do not embed a circular partition-content digest.
 - Each block binds `ALMBLK01`, exact machine-IR version, motion kind, axis width,
-  contiguous sequence, record count/length, inclusive/exclusive local cycles,
+  contiguous sequence, record count/length, inclusive/exclusive stream ticks,
   nonzero stream ID, board-capability digest, active-configuration digest, and
   previous-block digest. Eight reserved header bytes and unused payload bytes
   must be zero. SHA-256 over bytes `0..480` occupies bytes `480..512`.
@@ -31,10 +31,13 @@ or HIL timing.
   published object length to be a nonzero exact 512-byte multiple and refuses
   incomplete or excess data. The storage chunk layout is not the RT schema.
 - `MotionStreamValidator` checks each block against prepared identities,
-  exact-next sequence, previous digest, cycle continuity, block/segment timing
+  exact-next sequence, previous digest, relative-tick continuity, block/segment timing
   limits, per-axis displacement limits, and cumulative cross-block `i64`
   position. Its state advances only after complete validation. Core 0 and core 1
   instantiate separate validators over the same moved bytes.
+- `StreamTick` is a distinct relative-time type. It cannot be confused with the
+  absolute `DeviceCycle` supplied by a later deterministic commit; mapping to
+  hardware time uses checked epoch addition and rejects overflow.
 - `alumina-runtime` adds a dedicated inline `WorkQueue<N>` to the existing
   command, urgent, fault, and telemetry paths. The queue's free slots are the
   core-0 producer credits. A failed nonblocking send returns the still-owned
@@ -118,3 +121,7 @@ low-water/fault telemetry. Cancellation, stale identities, malformed blocks,
 reader faults, and underrun must revoke work without extending output. Only
 after that portable state machine passes simulator faults should either board
 wire it to hardware-timed motion.
+
+That portable successor is now implemented and recorded in
+[`M3-JOB-PREFETCH-LIFECYCLE.md`](M3-JOB-PREFETCH-LIFECYCLE.md). This file retains
+the narrower claim boundary of the commit it documents.

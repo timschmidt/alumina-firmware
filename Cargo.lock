@@ -20,6 +20,7 @@ name = "alumina-firmware"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
+ "alumina-job",
  "alumina-net",
  "alumina-protocol",
  "alumina-runtime",
@@ -52,6 +53,18 @@ dependencies = [
  "panic-rtt-target",
  "rtt-target",
  "static_cell",
+]
+
+[[package]]
+name = "alumina-job"
+version = "0.1.0"
+dependencies = [
+ "alumina-machine-ir",
+ "alumina-protocol",
+ "alumina-runtime",
+ "alumina-storage",
+ "critical-section",
+ "embassy-sync 0.7.2",
 ]
 
 [[package]]
@@ -121,6 +134,7 @@ dependencies = [
 name = "alumina-sim"
 version = "0.1.0"
 dependencies = [
+ "alumina-job",
  "alumina-machine-ir",
  "alumina-protocol",
  "alumina-runtime",

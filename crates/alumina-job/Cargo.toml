@@ -1,6 +1,6 @@
 [package]
-name = "alumina-sim"
-description = "Deterministic host simulator for Alumina storage and realtime service boundaries"
+name = "alumina-job"
+description = "Bounded cached-job preparation and dual-core admission for Alumina"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,16 +9,14 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-alumina-job.workspace = true
 alumina-machine-ir.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-storage.workspace = true
+embassy-sync.workspace = true
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }
-embassy-futures.workspace = true
-embassy-sync.workspace = true
 
 [lints]
 workspace = true
