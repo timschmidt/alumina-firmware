@@ -10,7 +10,8 @@ physical-start, synchronization-tolerance, or safety qualification.
 The coordinated source checkpoints are:
 
 - `aluminafw` clock contract commit `3d7671b`;
-- `alumina-interface` coordinator commit `003bafa`; and
+- `alumina-interface` coordinator commit `003bafa` plus operator-fixture commit
+  `4f467c4`; and
 - the current sibling CSGRS/Hyper workspace selected by the interface lockfile
   and source-policy audit. No published legacy CSGRS release is substituted.
 
@@ -72,6 +73,16 @@ commit protocol. A stale/unavailable clock yields no successful safe-window
 proof, and a reported post-guard participant makes the global state irrevocable.
 Physical safety-chain requirements remain separate.
 
+The application now renders a deterministic two-participant diagnostic fixture
+through these same production state machines. It performs both ordered cache
+deliveries, accepts three asymmetric affine-clock observations per simulated
+MCU, reconciles one deliberately lost install response, records global lifecycle
+phases, advances the portable prime/start/complete schedule, and shows ppm,
+accepted/rejected samples, uncertainty, local start cycle, simulated edge time,
+edge spread, and shared-epoch error. The panel is explicitly marked simulation
+only. It is a repeatable operator-view integration check, not a live device
+panel or physical edge observation.
+
 ## Reproduced checks
 
 From `alumina-interface`:
@@ -94,19 +105,19 @@ brotli -t dist/alumina-interface_bg.wasm.br
 git diff --check
 ```
 
-All 45 native tests pass: 7 application/coordinator, 18 headless client, and 20
+All 46 native tests pass: 8 application/coordinator, 18 headless client, and 20
 exact compiler/core tests. Native and WASM strict Clippy, WASM checking,
 warnings-denied rustdoc, current-sibling source/permissive-license audit, Trunk
 release, WASM validation, and compression integrity all pass.
 
 | Interface artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `alumina-interface_bg.wasm` | 3,878,868 | `4940f4643a846d867977215b1d5a43b0e16f4c84e910e2f7d2ddb14cbdd928bf` |
-| `alumina-interface_bg.wasm.br` | 1,487,999 | `1895abba0f02a6c23484f51fa5652afc19db30562252b14ff7c309acdde20061` |
-| `alumina-interface_bg.wasm.gz` | 1,812,391 | `3eb561532c5ede15f6593441645cadd6bb8398f8ce862e838b658dc7217090e8` |
-| `alumina-interface.js` | 75,566 | `d1d895b2870eb61e4e782d4123fa517ba029f964e0ab361b1e0e32e8e9baa97f` |
-| `index.html` | 1,290 | `348e082ed3efbe6ef6bed18b4af5912f8a8233bfb3ca2c309ab304d31fc6926a` |
-| `Cargo.lock` | - | `4a091f6c0f1bbaa21e041fc35f3b22266e052275639e3e2f5a13a4491e2f0c8c` |
+| `alumina-interface_bg.wasm` | 3,984,582 | `b4a00862551ac4515685e7fbf1fc07fc362a3a5d6b125c6bde831ff9041327ab` |
+| `alumina-interface_bg.wasm.br` | 1,524,339 | `36a1c4e5f09ce0f7d9101f58fa1d369a300dba6a55b1856372ff91a7eb23694f` |
+| `alumina-interface_bg.wasm.gz` | 1,858,428 | `65734ce6659e127ebb7b384ded63db01b16627b94000ea539eca42d5a95cd656` |
+| `alumina-interface.js` | 75,566 | `2b92d9e70c2ed9895b4cd361eb35f8a936f9a302a4c749762cd86c353f3ad28c` |
+| `index.html` | 1,290 | `04926872cbdf270b953f89c920cc8c3600c4bc224282e3c578be757ddeae81cb` |
+| `Cargo.lock` | - | `cd31aaadb49b3c2d537c0184fda3e2f8b24411801175ce6b85c8a3b48f3eb250` |
 
 From `aluminafw`:
 
@@ -139,8 +150,8 @@ These are linked-capacity observations, not stack watermarks or timing results.
 
 ## Remaining qualification boundary
 
-The UI still needs worker creation/supervision, multi-device session ownership,
-clock/delay/uncertainty panels, explicit attended-policy controls, and visible
+The UI still needs worker creation/supervision, live multi-device session
+ownership, clock-delay history, explicit attended-policy controls, and live
 participant/safety-chain state. Live-browser tests must cover background
 throttling, AP loss, delay spikes, reboot, corrupt/full storage, partial
 readiness, and ambiguous responses. Firmware telemetry still needs qualified
