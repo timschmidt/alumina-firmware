@@ -402,11 +402,38 @@ pub struct ClockObservation {
 pub struct ClockPrediction {
     pub boot_id: BootId,
     pub latest_probe_id: u64,
+    /// Browser-worker time at which freshness and local deadline admission were checked.
+    pub now_ui_ns: u64,
     pub target_ui_ns: u64,
+    /// Earliest retained device cycle at [`Self::now_ui_ns`].
+    pub now_earliest_cycle: DeviceCycle,
+    /// Latest retained device cycle at [`Self::now_ui_ns`].
+    pub now_latest_cycle: DeviceCycle,
     pub earliest_cycle: DeviceCycle,
     pub scheduled_cycle: DeviceCycle,
     pub latest_cycle: DeviceCycle,
     pub uncertainty_cycles: u64,
+    pub accepted_samples: u32,
+}
+
+/// Conservative mapped interval at one browser monotonic observation time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClockInstantEstimate {
+    /// Boot identity owning every retained causal sample.
+    pub boot_id: BootId,
+    /// Newest heartbeat identity contributing deadline evidence.
+    pub latest_probe_id: u64,
+    /// Browser monotonic instant being mapped.
+    pub ui_ns: u64,
+    /// Earliest possible device cycle at [`Self::ui_ns`].
+    pub earliest_cycle: DeviceCycle,
+    /// Integer midpoint used only as a representative display value.
+    pub midpoint_cycle: DeviceCycle,
+    /// Latest possible device cycle at [`Self::ui_ns`].
+    pub latest_cycle: DeviceCycle,
+    /// Maximum distance from the midpoint to either exact interval endpoint.
+    pub uncertainty_cycles: u64,
+    /// Number of intersecting causal samples in this estimate.
     pub accepted_samples: u32,
 }
 
@@ -616,9 +643,62 @@ impl ClockEstimator {
         Ok(ClockPrediction {
             boot_id,
             latest_probe_id: self.latest_probe_id,
+            now_ui_ns,
             target_ui_ns,
+            now_earliest_cycle: DeviceCycle(now_earliest),
+            now_latest_cycle: DeviceCycle(now_latest),
             earliest_cycle: DeviceCycle(earliest),
             scheduled_cycle: DeviceCycle(scheduled),
+            latest_cycle: DeviceCycle(latest),
+            uncertainty_cycles: uncertainty,
+            accepted_samples: self.accepted_samples,
+        })
+    }
+
+    /// Maps a browser monotonic instant without imposing future-start lead.
+    ///
+    /// This is the deadline-reconciliation counterpart to [`Self::predict`].
+    /// It retains the same boot, sample-count, health, freshness, arithmetic,
+    /// and uncertainty gates but does not claim that `ui_ns` is schedulable as
+    /// a new hardware start.
+    pub fn estimate_at(
+        &self,
+        ui_ns: u64,
+        maximum_uncertainty_cycles: u64,
+    ) -> Result<ClockInstantEstimate, ClockEstimateError> {
+        let boot_id = self
+            .boot_id
+            .ok_or(ClockEstimateError::InsufficientSamples)?;
+        if self.accepted_samples < u32::from(self.policy.minimum_samples) {
+            return Err(ClockEstimateError::InsufficientSamples);
+        }
+        if !self.latest_flags.contains(ClockFlags::DEADLINE_HEALTHY) {
+            return Err(ClockEstimateError::Unhealthy);
+        }
+        let age = ui_ns
+            .checked_sub(self.latest_ui_receive_ns)
+            .ok_or(ClockEstimateError::UiOrder)?;
+        if age > self.policy.maximum_sample_age_ns {
+            return Err(ClockEstimateError::Stale);
+        }
+        let (earliest, latest) = self.cycle_bounds(ui_ns)?;
+        if latest < earliest {
+            return Err(ClockEstimateError::Inconsistent);
+        }
+        let width = latest - earliest;
+        let midpoint = earliest
+            .checked_add(width / 2)
+            .ok_or(ClockEstimateError::Arithmetic)?;
+        let uncertainty = (midpoint - earliest).max(latest - midpoint);
+        if uncertainty > maximum_uncertainty_cycles {
+            return Err(ClockEstimateError::Uncertainty);
+        }
+        Ok(ClockInstantEstimate {
+            boot_id,
+            latest_probe_id: self.latest_probe_id,
+            ui_ns,
+            earliest_cycle: DeviceCycle(earliest),
+            midpoint_cycle: DeviceCycle(midpoint),
             latest_cycle: DeviceCycle(latest),
             uncertainty_cycles: uncertainty,
             accepted_samples: self.accepted_samples,
@@ -859,10 +939,20 @@ mod tests {
             .predict(2_000_500_000, target_ui_ns, 1_000)
             .unwrap();
         let exact = target_ui_ns / 1_000 + 50_000;
+        let exact_now = prediction.now_ui_ns / 1_000 + 50_000;
+        assert!(prediction.now_earliest_cycle.0 <= exact_now);
+        assert!(prediction.now_latest_cycle.0 >= exact_now);
         assert!(prediction.earliest_cycle.0 <= exact);
         assert!(prediction.latest_cycle.0 >= exact);
         assert!(prediction.uncertainty_cycles <= 1_000);
         assert_eq!(prediction.accepted_samples, 2);
+
+        let current = estimator.estimate_at(2_000_500_000, 1_000).unwrap();
+        assert_eq!(current.boot_id, BOOT);
+        assert_eq!(current.ui_ns, 2_000_500_000);
+        assert!(current.earliest_cycle.0 <= exact_now);
+        assert!(current.latest_cycle.0 >= exact_now);
+        assert!(current.uncertainty_cycles <= 1_000);
     }
 
     #[test]
