@@ -145,9 +145,12 @@ origin-bound HMAC V2 fetches, validates the fixed boot challenge and signed
 native responses, reconciles ambiguous resumable uploads through publication
 inspection, and orders each participant partition before the shared global
 manifest. The production WASM build exercises the current sibling CSGRS/Hyper
-and Alumina schemas. Credential and device-discovery UX, live-browser simulated
-HTTP tests, panels, WLAN provisioning, and clock acquisition remain open. See
-the [M7 browser cache-delivery evidence](evidence/M7-BROWSER-CACHE-DELIVERY.md).
+and Alumina schemas. Conservative boot-scoped heartbeat acquisition is now
+available to both window and worker scopes. Credential and device-discovery UX,
+live-browser simulated HTTP tests, panels, WLAN provisioning, and worker
+lifecycle supervision remain open. See the
+[M7 browser cache-delivery evidence](evidence/M7-BROWSER-CACHE-DELIVERY.md) and
+[clock/coordinator evidence](evidence/M7-BROWSER-CLOCK-COORDINATOR.md).
 
 Exit:
 
@@ -298,8 +301,12 @@ Exit:
 
 Implementation checkpoint: canonical participant packages, the identical
 global manifest, and retry-safe authenticated delivery state now reach the
-browser boundary. Clock acquisition/fitting and the complete
-prepare/install/confirm-or-abort coordinator remain open.
+browser boundary. Conservative heartbeat acquisition works from a window or
+worker scope, and the headless coordinator implements boot-bound
+prepare/install/confirm-or-abort, precommit cancellation, exact deadline
+classification, and read-only transition reconciliation. Worker
+creation/supervision, live multi-device sessions, operator panels, and physical
+qualification remain open.
 
 Exit:
 

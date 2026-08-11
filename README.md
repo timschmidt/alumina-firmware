@@ -157,10 +157,15 @@ from owned, independently replayed local cache artifacts and can give every MCU
 an independent resumable upload transaction without changing content identity.
 The headless browser client now authenticates the exact origin-bound native
 route, reconciles retry-safe cache uploads, and orders every executable
-partition before the shared manifest. Live browser/UI qualification and
-schedule orchestration remain the next integration boundary. See the
+partition before the shared manifest. It also acquires conservatively widened
+boot-scoped clock samples from window or worker contexts and coordinates exact
+prepare/install/confirm-or-abort transitions without confirming before all
+installs. Live browser/UI and physical timing qualification remain the next
+integration boundary. See the
 [global-job packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and
-[browser cache-delivery evidence](docs/evidence/M7-BROWSER-CACHE-DELIVERY.md).
+[browser cache-delivery evidence](docs/evidence/M7-BROWSER-CACHE-DELIVERY.md),
+plus the
+[browser clock/coordinator evidence](docs/evidence/M7-BROWSER-CLOCK-COORDINATOR.md).
 
 `alumina-config` defines canonical content-addressed resource bindings and
 reduced exact machine facts, validates them against the immutable board package,

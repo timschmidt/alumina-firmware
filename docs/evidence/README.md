@@ -102,6 +102,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M7-BROWSER-CACHE-DELIVERY.md`](M7-BROWSER-CACHE-DELIVERY.md) — exact
   origin-bound browser/firmware authentication, retry-safe SD publication
   reconciliation, ordered participant delivery, and renewed WASM/ESP artifacts.
+- [`M7-BROWSER-CLOCK-COORDINATOR.md`](M7-BROWSER-CLOCK-COORDINATOR.md) —
+  worker-capable conservative heartbeat acquisition, boot-scoped clock models,
+  exact prepare/install/confirm-or-abort coordination, and retry reconciliation.
 - [`M7-PRESTART-HARDWARE-PRIMING.md`](M7-PRESTART-HARDWARE-PRIMING.md) — schedule
   wire version 2, abort-guard hardware priming, explicit prestart horizon
   acknowledgement, scheduled firmware ownership, and compile-only TinyBee
