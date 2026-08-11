@@ -20,6 +20,7 @@ members = [
     "crates/alumina-sim",
     "crates/alumina-storage",
     "drivers/embedded-bus-async",
+    "drivers/alumina-as5600",
     "drivers/alumina-shift-register",
     "drivers/alumina-sd-spi",
     "drivers/sx126x-async-rs",
@@ -54,6 +55,7 @@ default-members = [
     "crates/alumina-sim",
     "crates/alumina-storage",
     "drivers/embedded-bus-async",
+    "drivers/alumina-as5600",
     "drivers/alumina-shift-register",
     "drivers/alumina-sd-spi",
     "xtask",
@@ -83,6 +85,7 @@ alumina-safety = { path = "crates/alumina-safety" }
 alumina-service = { path = "crates/alumina-service" }
 alumina-sim = { path = "crates/alumina-sim" }
 alumina-storage = { path = "crates/alumina-storage" }
+alumina-as5600 = { path = "drivers/alumina-as5600" }
 alumina-sd-spi = { path = "drivers/alumina-sd-spi" }
 alumina-shift-register = { path = "drivers/alumina-shift-register" }
 board-mks-tinybee = { path = "boards/mks-tinybee" }

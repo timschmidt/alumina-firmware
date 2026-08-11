@@ -1,6 +1,6 @@
 # Research sources
 
-Research captured on 2026-08-10. Upstream dependencies and hardware repositories
+Research captured on 2026-08-10 and extended on 2026-08-11. Upstream dependencies and hardware repositories
 must be rechecked and pinned by commit before implementation; this document is a
 planning evidence trail, not a floating dependency specification.
 
@@ -110,6 +110,13 @@ compatibility.
   together: driven low selects the low-side MOSFET, driven high selects the
   high-side MOSFET, and only high impedance permits the internal opposing input
   biases to select both-off.
+- [ams OSRAM AS5600 datasheet, v1-06](https://look.ams-osram.com/m/7059eac7531a86fd/original/AS5600-DS000365.pdf)
+  — official read-only sensor-transport reference. It establishes fixed
+  seven-bit address `0x36`, STATUS at `0x0B`, unscaled 12-bit RAW ANGLE at
+  `0x0C`/`0x0D`, random/sequential reads, the special raw-angle address-pointer
+  behavior, and I²C support through 1 MHz Fast-mode Plus. The MKS package keeps
+  its more conservative 400 kHz connector limit. The independently authored
+  driver exposes no configuration, range/zero, OTP, or burn operation.
 
 Only the V1.0 hardware artifacts, manual, and official component datasheets
 were consulted for the compile-only board target. Vendor test-code and

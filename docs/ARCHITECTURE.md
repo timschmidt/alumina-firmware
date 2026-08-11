@@ -827,10 +827,13 @@ low side and a driven high selects the high side; the internal HIN pull-down and
 LIN-bar pull-up make high impedance the only documented both-off candidate.
 
 The compile-only target consequently owns MCPWM0/1, ADC1, both encoder buses,
-and all six phase pins exclusively on core 1, makes the six pins no-pull inputs
-before the first await, and exposes no FOC commit path. GPIO2 is tied into the
-USB auto-programming/strap circuit and remains service-owned. Core 0 owns Wi-Fi
-and reports an unavailable cache transport. Configuration V2 removes the old
+and all six phase pins exclusively on core 1, makes phase and digital encoder
+pins no-pull inputs before the first await, retains the four hardware-input-only
+current GPIO singletons, and exposes no FOC commit path.
+MCPWM and ADC tokens are sealed in closed type states with no extractor and no
+`PowerStage`/`CurrentSense` implementation. GPIO2 is tied into the USB
+auto-programming/strap circuit and remains service-owned. Core 0 owns Wi-Fi and
+reports an unavailable cache transport. Configuration V2 removes the old
 `FocEnable` selector and requires a separate qualified shutdown contract. The
 MKS topology selects phase high impedance, but its `Described` stage cannot
 validate that contract until physical evidence promotes the immutable board
@@ -844,8 +847,20 @@ the result only under explicit component-width and squared-norm ULP limits.
 Absolute-count calibration separately retains direction, count modulus,
 reference/electrical offset, pole pairs, reduced rational count error, binary
 alignment error, and the configuration digest. A rotor sample carries the full
-phase-error arc and must replay to the same canonical rotation. These are
-portable contracts; the MKS AS5600 buses do not yet implement them.
+phase-error arc and must replay to the same canonical rotation.
+
+`alumina-as5600` now provides the preceding read-only transport boundary. It
+owns one async seven-bit I²C transport, decodes the exact 12-bit RAW ANGLE count,
+preserves documented and reserved STATUS bits separately, and can bracket a raw
+count with before/after field-status reads without claiming simultaneity. It
+exposes no sensor configuration or OTP/burn operation. On MKS, safe boot leaves
+both mode-selectable connectors dormant with every line an input. A separate
+synchronous type-state transition can select two independent 400 kHz AS5600
+buses; it sends no I²C transaction. That transition and all read methods are
+compiled but deliberately unscheduled pending stored connector-mode selection
+and HIL. Converting a count into a `RotorSample` remains the digest-bound
+`RotorCalibration` responsibility; sensor timing, alignment, and error bounds
+remain unqualified.
 
 ## Exact CAD-to-motor boundary
 

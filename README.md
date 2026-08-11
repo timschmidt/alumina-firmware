@@ -247,7 +247,7 @@ parameter snapshots whose complete PI output rectangle is voltage-circle
 bounded, digest-bound scheduled commands, and allocation-free
 sensor/current/power-stage traits. A deliberately dimensionless simulator proves
 deterministic controller replay, convergence, visible saturation, and fail-closed
-parameter/vector rejection. Target PWM/ADC/sensor adapters, motor identification,
+parameter/vector rejection. Energizing PWM/ADC adapters, motor identification,
 deadlines, shutdown measurement, and every energization claim remain open. See
 the [portable FOC evidence](docs/evidence/M8-PORTABLE-FOC-FOUNDATION.md).
 
@@ -278,9 +278,21 @@ enclosures have independent integer certificates; runtime ULP policies reject
 overwide components or unit-norm evidence. Absolute sensor counts, direction,
 pole pairs, half-count quantization, electrical alignment error, and lattice
 rounding are retained in one digest-bound rotor observation. This remains
-portable mathematics: no AS5600 transaction, physical alignment, PWM/ADC path,
-or energized target exists. See the
+portable mathematics: no scheduled AS5600 transaction, physical alignment,
+PWM/ADC path, or energized target exists. See the
 [exact-angle evidence](docs/evidence/M8-EXACT-ELECTRICAL-ANGLE.md).
+
+A clean-room `alumina-as5600` crate now owns the read-only sensor wire boundary:
+one two-byte RAW ANGLE transaction returns an exact count in `0..4096`, STATUS
+flags remain explicit, and an optional three-transaction observation brackets
+the angle without pretending the reads are simultaneous. It exposes no sensor
+configuration or OTP/burn command. The MKS target seals both MCPWM units and
+ADC1 in non-operational ownership states. Safe boot keeps both mode-selectable
+encoder connectors dormant as inputs; an explicit, currently unscheduled
+type-state transition can construct two independent 400 kHz AS5600 buses
+without sending a transaction. Motion still rejects and the board remains
+non-armable. See the
+[AS5600/closed-ownership evidence](docs/evidence/M8-AS5600-CLOSED-OWNERSHIP.md).
 
 ## Developer checks
 

@@ -520,10 +520,21 @@ configuration digest and pole pairs and replay their canonical rotation before
 controller use. See the
 [exact-angle evidence](evidence/M8-EXACT-ELECTRICAL-ANGLE.md).
 
-The next target slice composes compile-closed AS5600 sensor ownership and then
-one power stage behind a closed energization gate. MCPWM/ADC synchronization,
-physical electrical alignment, and any nonzero duty remain separate reviewed
-work.
+The AS5600/closed-ownership checkpoint now adds an independently authored,
+read-only async AS5600 driver. RAW ANGLE remains an exact 12-bit count; defined
+STATUS flags and reserved bits are separate, and a diagnostic observation
+brackets rather than conflates three I²C transactions. The MKS target keeps
+both mode-selectable connector buses dormant at safe boot, then offers an
+explicit unscheduled type-state transition to two independent 400 kHz AS5600
+owners. MCPWM0/1 plus their high-impedance phase pins and ADC1 plus its four
+uncalibrated inputs are sealed into types with no energizing/sampling trait or
+raw-token extractor. See the
+[AS5600/closed-ownership evidence](evidence/M8-AS5600-CLOSED-OWNERSHIP.md).
+
+The next target slice specifies calibrated current-sense snapshots and the
+PWM/ADC synchronization model without opening an energization path. Physical
+electrical alignment, measured sensor error/latency, and any nonzero duty remain
+separate reviewed work.
 
 Exit gate:
 

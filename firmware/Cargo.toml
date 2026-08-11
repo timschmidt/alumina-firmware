@@ -58,6 +58,7 @@ hil-mks-tinybee-pcm-short-safe = ["board-mks-tinybee"]
 
 [dependencies]
 alumina-board.workspace = true
+alumina-as5600.workspace = true
 alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-config.workspace = true
