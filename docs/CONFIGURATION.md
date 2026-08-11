@@ -167,8 +167,13 @@ activation mechanism.
 ## Current implementation boundary
 
 The portable canonical format, SD publication reader, dual independent
-validators, core framing, and lifecycle actor are implemented. Firmware routing,
-durable two-phase active selection, boot recovery, safety-state transition, and
+validators, core framing, lifecycle actor, and the raw-media two-phase selection
+journal are implemented. A durable prepare record leaves the previous selection
+active; only an exact matching commit changes it. Activation and clear therefore
+replay as the complete old or new state across every injected write/sync cut.
+An orphaned prepare is inert and may be superseded after boot.
+
+Firmware routing, boot-time reopen/revalidation, safety-state transition, and
 job-service identity handoff are the next gate. Until that gate is complete,
 both firmware job services retain a zero active identity and no configuration
 can enable job preparation.

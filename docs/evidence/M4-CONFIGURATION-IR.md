@@ -87,9 +87,9 @@ source header.
 
 ## Claim boundary and next gate
 
-No firmware image yet dispatches these commands, no active-selection record is
-durable, and no physical board was connected. The next checkpoint wires
-authenticated configuration operations into core 0, receives periodic core-1
-reports, implements fail-safe two-phase durable selection and boot recovery,
-updates both job actors only after exact activation, and keeps both non-armable
-boards closed pending HIL.
+No firmware image yet dispatches these commands and no physical board was
+connected. The raw-media fail-safe two-phase selector is now implemented and
+recorded separately in `M4-DURABLE-CONFIGURATION-SELECTION.md`. The next
+checkpoint wires authenticated configuration operations into core 0, receives
+periodic core-1 reports, performs boot recovery, updates both job actors only
+after exact activation, and keeps both non-armable boards closed pending HIL.

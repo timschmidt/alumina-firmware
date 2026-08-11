@@ -995,6 +995,9 @@ pub enum Error {
     },
     /// Upload/publication/repair mutation is forbidden by current RT/safety state.
     MutationForbidden,
+    /// A durable machine-configuration transition was malformed or disagreed
+    /// with the currently committed selection.
+    ConfigurationTransition,
     /// Another immutable declaration already owns the one bounded upload slot.
     UploadConflict,
     /// No upload transaction exists.

@@ -483,6 +483,15 @@ idle-only; reads during a run are bounded and qualified against motion load. A
 separate human-readable filesystem partition may be added later, but is not an
 executable job authority.
 
+Machine-configuration selection uses the same durability boundary but a
+separate prepare/commit state machine. Prepare binds a nonzero operation,
+`MachineConfiguration` object digest/length, and exact chunk-manifest digest; it
+does not change the replayed active selection. A matching commit changes active
+state. Clear uses the same two records and must name the exact active
+publication. On boot, an unmatched prepare is inert, while a committed selection
+is only a candidate for reopening and independent validation on both cores.
+Thus persistence never bypasses configuration validation or safe-output startup.
+
 The first firmware job slice now gives the service task sole ownership of a
 bounded `ServicePrefetch` actor and the real-time task sole ownership of an
 independent `RealtimeJob` actor. An authenticated `JobPrepare` descriptor binds
@@ -497,10 +506,11 @@ ownership vetoes storage mutation immediately, without waiting for periodic
 safety telemetry.
 
 Both first board packages now carry verified nonzero canonical capability
-digests, but there is not yet a committed active-configuration authority and
-both packages remain non-armable pending HIL. Consequently the target endpoint
-still rejects `JobPrepare` as `Unsupported`. Capability publication is discovery,
-not authorization to run, preserving an inspectable integration path without
+digests and storage has a committed active-configuration authority, but firmware
+has not yet routed activation or boot recovery and both packages remain
+non-armable pending HIL. Consequently the target endpoint still rejects
+`JobPrepare` as `Unsupported`. Capability publication is discovery, not
+authorization to run, preserving an inspectable integration path without
 creating an accidental executable path.
 
 For a distributed job, the UI maintains one measured affine mapping from its

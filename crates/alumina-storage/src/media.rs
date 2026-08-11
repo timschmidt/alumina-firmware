@@ -28,8 +28,10 @@ pub const CACHE_MEDIA_VERSION: u16 = 1;
 const ANCHOR_MAGIC: [u8; 8] = *b"ALMCACH1";
 const RECORD_MAGIC: [u8; 8] = *b"ALMREC01";
 const COMMIT_MAGIC: [u8; 8] = *b"ALMCOM01";
+const CONFIGURATION_SELECTION_MAGIC: [u8; 8] = *b"ALMCAS01";
 const ANCHOR_HASH_OFFSET: usize = MEDIA_BLOCK_BYTES - 32;
 const PUBLICATION_WIRE_LEN: usize = UploadPlan::WIRE_LEN + 8;
+const CONFIGURATION_SELECTION_WIRE_LEN: usize = 96;
 const MINIMUM_REGION_BLOCKS: u64 = MEDIA_ANCHOR_BLOCKS + 3;
 
 /// One exact block transferred to or from an SD-class device.
@@ -156,6 +158,122 @@ pub struct PublishedChunk {
     pub byte_len: u32,
     /// SHA-256 identity verified over exactly those initialized bytes.
     pub content: crate::ContentId,
+}
+
+/// Exact immutable configuration publication named by a durable activation.
+///
+/// The operation identity is retained for audit and idempotence. Boot recovery
+/// must still reopen and independently revalidate `publication` on both cores
+/// before any resource described by it can become active.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurableConfigurationSelection {
+    transaction_id: u64,
+    publication: PublishedObject,
+}
+
+impl DurableConfigurationSelection {
+    /// Constructs a selection only for a nonempty, SHA-256-addressed machine
+    /// configuration and a nonzero operation identity.
+    pub fn new(transaction_id: u64, publication: PublishedObject) -> Result<Self, StorageError> {
+        let selection = Self {
+            transaction_id,
+            publication,
+        };
+        selection.validate()?;
+        Ok(selection)
+    }
+
+    /// Operation identity that prepared and committed this selection.
+    pub const fn transaction_id(self) -> u64 {
+        self.transaction_id
+    }
+
+    /// Exact typed immutable object and manifest that must be reopened at boot.
+    pub const fn publication(self) -> PublishedObject {
+        self.publication
+    }
+
+    fn validate(self) -> Result<(), StorageError> {
+        if self.transaction_id == 0
+            || self.publication.object.kind != crate::ObjectKind::MachineConfiguration
+            || self.publication.object.byte_len == 0
+            || !self.publication.object.content.is_valid()
+            || !self.publication.manifest.is_valid()
+        {
+            return Err(StorageError::ConfigurationTransition);
+        }
+        Ok(())
+    }
+}
+
+/// Safety-relevant durable configuration transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ConfigurationTransitionAction {
+    /// Replace the active selection after both cores accepted the candidate.
+    Activate = 1,
+    /// Remove the exact currently active selection after core 1 deactivated it.
+    Clear = 2,
+}
+
+impl ConfigurationTransitionAction {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Activate),
+            2 => Some(Self::Clear),
+            _ => None,
+        }
+    }
+}
+
+/// One prepare/commit operation in the configuration-selection journal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfigurationTransition {
+    action: ConfigurationTransitionAction,
+    selection: DurableConfigurationSelection,
+}
+
+impl ConfigurationTransition {
+    /// Prepares selection of an independently validated publication.
+    pub fn activate(selection: DurableConfigurationSelection) -> Self {
+        Self {
+            action: ConfigurationTransitionAction::Activate,
+            selection,
+        }
+    }
+
+    /// Prepares removal of the exact active publication. The selection's
+    /// transaction identifies the clear operation, not the earlier activation.
+    pub fn clear(selection: DurableConfigurationSelection) -> Self {
+        Self {
+            action: ConfigurationTransitionAction::Clear,
+            selection,
+        }
+    }
+
+    /// Requested transition action.
+    pub const fn action(self) -> ConfigurationTransitionAction {
+        self.action
+    }
+
+    /// Exact publication and operation identity bound into the transition.
+    pub const fn selection(self) -> DurableConfigurationSelection {
+        self.selection
+    }
+
+    fn validate(self) -> Result<(), StorageError> {
+        self.selection.validate()
+    }
+}
+
+/// Replayed configuration selector state from the chosen committed anchor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfigurationJournal {
+    /// Last completely committed selection, if any.
+    pub active: Option<DurableConfigurationSelection>,
+    /// A durable prepare without its matching commit. This never changes
+    /// `active` and is safe to supersede after boot.
+    pub pending: Option<ConfigurationTransition>,
 }
 
 /// Linear, allocation-free cursor over one exact immutable publication.
@@ -325,6 +443,8 @@ enum RecordKind {
     Chunk = 2,
     Publish = 3,
     Abort = 4,
+    ConfigurationPrepare = 5,
+    ConfigurationCommit = 6,
 }
 
 impl RecordKind {
@@ -334,6 +454,8 @@ impl RecordKind {
             2 => Some(Self::Chunk),
             3 => Some(Self::Publish),
             4 => Some(Self::Abort),
+            5 => Some(Self::ConfigurationPrepare),
+            6 => Some(Self::ConfigurationCommit),
             _ => None,
         }
     }
@@ -352,6 +474,7 @@ struct ReadyState {
     uploads: UploadCoordinator,
     hashes: Option<ActiveHashes>,
     published_objects: u32,
+    configuration: ConfigurationJournal,
     degraded_anchor: bool,
 }
 
@@ -485,6 +608,10 @@ where
             uploads: UploadCoordinator::new(),
             hashes: None,
             published_objects: 0,
+            configuration: ConfigurationJournal {
+                active: None,
+                pending: None,
+            },
             degraded_anchor: false,
         });
         Ok(())
@@ -555,9 +682,90 @@ where
             uploads: replay.uploads,
             hashes: replay.hashes,
             published_objects: replay.published_objects,
+            configuration: replay.configuration,
             degraded_anchor,
         });
         Ok(self.status())
+    }
+
+    /// Returns the exact committed and prepared configuration selector state.
+    ///
+    /// A caller must treat `pending` as inert. Only `active` is a boot recovery
+    /// candidate, and even it requires reopening and independent validation.
+    pub fn configuration_journal(&self) -> Result<ConfigurationJournal, MediaError<D::Error>> {
+        Ok(self.ready()?.configuration)
+    }
+
+    /// Durably records intent to activate or clear one exact configuration.
+    ///
+    /// Preparing never changes the committed active selection. An exact retry
+    /// is idempotent; another valid prepare safely supersedes an orphaned one.
+    pub async fn prepare_configuration_transition(
+        &mut self,
+        transition: ConfigurationTransition,
+        context: MutationContext,
+    ) -> Result<ConfigurationJournal, MediaError<D::Error>> {
+        context.validate()?;
+        transition.validate()?;
+        let ready = self.ready()?;
+        if ready.uploads.checkpoint().is_some() {
+            return Err(StorageError::ConfigurationTransition.into());
+        }
+        let current = ready.configuration;
+        validate_configuration_transition(current.active, transition)?;
+        if current.pending == Some(transition) {
+            return Ok(current);
+        }
+
+        if transition.action == ConfigurationTransitionAction::Activate {
+            // Resolve the exact typed publication before durable intent can be
+            // recorded. Complete byte validation remains the responsibility of
+            // the two configuration validators immediately before this call.
+            let _ = self
+                .open_published(transition.selection.publication)
+                .await?;
+        }
+        let payload = encode_configuration_transition(transition);
+        self.append_record(
+            RecordKind::ConfigurationPrepare,
+            UploadId(transition.selection.transaction_id),
+            &payload,
+        )
+        .await?;
+        self.ready_mut()?.configuration.pending = Some(transition);
+        Ok(self.ready()?.configuration)
+    }
+
+    /// Commits exactly the prepared configuration transition.
+    ///
+    /// The matching commit record is the only event that changes replayed
+    /// active state, making every power cut resolve to the complete old or new
+    /// selection.
+    pub async fn commit_configuration_transition(
+        &mut self,
+        transition: ConfigurationTransition,
+        context: MutationContext,
+    ) -> Result<ConfigurationJournal, MediaError<D::Error>> {
+        context.validate()?;
+        transition.validate()?;
+        let ready = self.ready()?;
+        if ready.uploads.checkpoint().is_some() {
+            return Err(StorageError::ConfigurationTransition.into());
+        }
+        let current = ready.configuration;
+        if current.pending != Some(transition) {
+            return Err(StorageError::ConfigurationTransition.into());
+        }
+        let payload = encode_configuration_transition(transition);
+        self.append_record(
+            RecordKind::ConfigurationCommit,
+            UploadId(transition.selection.transaction_id),
+            &payload,
+        )
+        .await?;
+        let ready = self.ready_mut()?;
+        apply_configuration_commit(&mut ready.configuration, transition);
+        Ok(ready.configuration)
     }
 
     /// Locates the newest publication with this exact typed object and manifest.
@@ -909,6 +1117,9 @@ where
     ) -> Result<UploadProgress, MediaError<D::Error>> {
         let (mut uploads, existing) = {
             let ready = self.ready()?;
+            if ready.configuration.pending.is_some() {
+                return Err(StorageError::ConfigurationTransition.into());
+            }
             (ready.uploads, ready.uploads.checkpoint())
         };
         let progress = uploads.begin(plan, self.limits, context)?;
@@ -1258,6 +1469,7 @@ struct ReplayState {
     uploads: UploadCoordinator,
     hashes: Option<ActiveHashes>,
     published_objects: u32,
+    configuration: ConfigurationJournal,
 }
 
 impl ReplayState {
@@ -1266,6 +1478,10 @@ impl ReplayState {
             uploads: UploadCoordinator::new(),
             hashes: None,
             published_objects: 0,
+            configuration: ConfigurationJournal {
+                active: None,
+                pending: None,
+            },
         }
     }
 
@@ -1278,6 +1494,9 @@ impl ReplayState {
     ) -> Result<(), MediaCorruption> {
         match header.kind {
             RecordKind::Begin => {
+                if self.configuration.pending.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
                 let plan =
                     UploadPlan::decode(payload, limits).map_err(|_| MediaCorruption::Replay)?;
                 if plan.upload_id != header.upload_id || self.hashes.is_some() {
@@ -1383,9 +1602,124 @@ impl ReplayState {
                 }
                 self.hashes = None;
             }
+            RecordKind::ConfigurationPrepare => {
+                if self.hashes.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
+                let transition = decode_configuration_transition(payload)?;
+                if transition.selection.transaction_id != header.upload_id.0 {
+                    return Err(MediaCorruption::Replay);
+                }
+                validate_configuration_transition(self.configuration.active, transition)
+                    .map_err(|_| MediaCorruption::Replay)?;
+                self.configuration.pending = Some(transition);
+            }
+            RecordKind::ConfigurationCommit => {
+                if self.hashes.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
+                let transition = decode_configuration_transition(payload)?;
+                if transition.selection.transaction_id != header.upload_id.0
+                    || self.configuration.pending != Some(transition)
+                {
+                    return Err(MediaCorruption::Replay);
+                }
+                apply_configuration_commit(&mut self.configuration, transition);
+            }
         }
         Ok(())
     }
+}
+
+fn validate_configuration_transition(
+    active: Option<DurableConfigurationSelection>,
+    transition: ConfigurationTransition,
+) -> Result<(), StorageError> {
+    transition.validate()?;
+    match transition.action {
+        ConfigurationTransitionAction::Activate => Ok(()),
+        ConfigurationTransitionAction::Clear
+            if active
+                .is_some_and(|active| active.publication == transition.selection.publication) =>
+        {
+            Ok(())
+        }
+        ConfigurationTransitionAction::Clear => Err(StorageError::ConfigurationTransition),
+    }
+}
+
+fn apply_configuration_commit(
+    journal: &mut ConfigurationJournal,
+    transition: ConfigurationTransition,
+) {
+    journal.active = match transition.action {
+        ConfigurationTransitionAction::Activate => Some(transition.selection),
+        ConfigurationTransitionAction::Clear => None,
+    };
+    journal.pending = None;
+}
+
+fn encode_configuration_transition(
+    transition: ConfigurationTransition,
+) -> [u8; CONFIGURATION_SELECTION_WIRE_LEN] {
+    let mut encoded = [0_u8; CONFIGURATION_SELECTION_WIRE_LEN];
+    encoded[0..8].copy_from_slice(&CONFIGURATION_SELECTION_MAGIC);
+    encoded[8..10].copy_from_slice(&CACHE_MEDIA_VERSION.to_le_bytes());
+    encoded[10] = transition.action as u8;
+    encoded[11] = transition.selection.publication.object.kind as u8;
+    encoded[12] = transition.selection.publication.object.content.algorithm as u8;
+    encoded[13] = transition.selection.publication.manifest.algorithm as u8;
+    // Bytes 14..16 are reserved zero.
+    encoded[16..24].copy_from_slice(&transition.selection.transaction_id.to_le_bytes());
+    encoded[24..32].copy_from_slice(
+        &transition
+            .selection
+            .publication
+            .object
+            .byte_len
+            .to_le_bytes(),
+    );
+    encoded[32..64].copy_from_slice(&transition.selection.publication.object.content.digest.0);
+    encoded[64..96].copy_from_slice(&transition.selection.publication.manifest.digest.0);
+    encoded
+}
+
+fn decode_configuration_transition(
+    encoded: &[u8],
+) -> Result<ConfigurationTransition, MediaCorruption> {
+    if encoded.len() != CONFIGURATION_SELECTION_WIRE_LEN
+        || encoded[0..8] != CONFIGURATION_SELECTION_MAGIC
+        || read_u16(encoded, 8) != CACHE_MEDIA_VERSION
+        || encoded[11] != crate::ObjectKind::MachineConfiguration as u8
+        || encoded[12] != crate::DigestAlgorithm::Sha256 as u8
+        || encoded[13] != crate::DigestAlgorithm::Sha256 as u8
+        || encoded[14..16].iter().any(|byte| *byte != 0)
+    {
+        return Err(MediaCorruption::Replay);
+    }
+    let action =
+        ConfigurationTransitionAction::from_wire(encoded[10]).ok_or(MediaCorruption::Replay)?;
+    let mut object_digest = [0_u8; 32];
+    object_digest.copy_from_slice(&encoded[32..64]);
+    let mut manifest_digest = [0_u8; 32];
+    manifest_digest.copy_from_slice(&encoded[64..96]);
+    let selection = DurableConfigurationSelection::new(
+        read_u64(encoded, 16),
+        PublishedObject {
+            object: crate::StoredObject {
+                kind: crate::ObjectKind::MachineConfiguration,
+                content: crate::ContentId::from_sha256(Digest(object_digest)),
+                byte_len: read_u64(encoded, 24),
+            },
+            manifest: crate::ContentId::from_sha256(Digest(manifest_digest)),
+        },
+    )
+    .map_err(|_| MediaCorruption::Replay)?;
+    let transition = ConfigurationTransition { action, selection };
+    if encode_configuration_transition(transition) != encoded {
+        return Err(MediaCorruption::Replay);
+    }
+    Ok(transition)
 }
 
 fn decode_publication(
@@ -1810,10 +2144,14 @@ mod tests {
     }
 
     fn plan(bytes: &[u8], chunk_bytes: usize) -> UploadPlan {
+        plan_for_kind(bytes, chunk_bytes, ObjectKind::MachineJobPartition)
+    }
+
+    fn plan_for_kind(bytes: &[u8], chunk_bytes: usize, kind: ObjectKind) -> UploadPlan {
         assert!(!bytes.is_empty());
         let chunk_count = bytes.len().div_ceil(chunk_bytes);
         let object = StoredObject {
-            kind: ObjectKind::MachineJobPartition,
+            kind,
             content: sha256(bytes),
             byte_len: u64::try_from(bytes.len()).unwrap(),
         };
@@ -1863,7 +2201,16 @@ mod tests {
         bytes: &[u8],
         chunk_bytes: usize,
     ) -> (UploadPlan, PublishedObject) {
-        let plan = plan(bytes, chunk_bytes);
+        publish_kind(media, bytes, chunk_bytes, ObjectKind::MachineJobPartition)
+    }
+
+    fn publish_kind(
+        media: &mut CacheMedia<RamBlockDevice>,
+        bytes: &[u8],
+        chunk_bytes: usize,
+        kind: ObjectKind,
+    ) -> (UploadPlan, PublishedObject) {
+        let plan = plan_for_kind(bytes, chunk_bytes, kind);
         block_on(media.begin_upload(plan, MutationContext::DISARMED_IDLE)).unwrap();
         for (index, chunk) in bytes.chunks(chunk_bytes).enumerate() {
             block_on(media.put_chunk(
@@ -1881,6 +2228,13 @@ mod tests {
         ))
         .unwrap();
         (plan, published)
+    }
+
+    fn configuration_selection(
+        transaction_id: u64,
+        publication: PublishedObject,
+    ) -> DurableConfigurationSelection {
+        DurableConfigurationSelection::new(transaction_id, publication).unwrap()
     }
 
     fn collect_published(
@@ -2136,6 +2490,272 @@ mod tests {
         let device = media.into_device();
         let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
         assert_eq!(block_on(media.mount()).unwrap().upload, None);
+    }
+
+    #[test]
+    fn configuration_selection_requires_publication_and_matching_two_phase_commit() {
+        let (mut media, _) = formatted();
+        let (_, published) = publish_kind(
+            &mut media,
+            b"canonical machine configuration",
+            9,
+            ObjectKind::MachineConfiguration,
+        );
+        let selection = configuration_selection(0x4455, published);
+        let activation = ConfigurationTransition::activate(selection);
+
+        let journal = block_on(
+            media.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        assert_eq!(journal.active, None);
+        assert_eq!(journal.pending, Some(activation));
+        // An exact prepare retry does not consume another record.
+        let sequence = media.status().last_sequence;
+        assert_eq!(
+            block_on(
+                media.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE,)
+            )
+            .unwrap(),
+            journal
+        );
+        assert_eq!(media.status().last_sequence, sequence);
+
+        let device = media.into_device();
+        let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(media.mount()).unwrap();
+        assert_eq!(media.configuration_journal().unwrap(), journal);
+        let committed = block_on(
+            media.commit_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        assert_eq!(committed.active, Some(selection));
+        assert_eq!(committed.pending, None);
+
+        let clear_selection = configuration_selection(0x4456, published);
+        let clear = ConfigurationTransition::clear(clear_selection);
+        let prepared_clear =
+            block_on(media.prepare_configuration_transition(clear, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(prepared_clear.active, Some(selection));
+        assert_eq!(prepared_clear.pending, Some(clear));
+        let cleared =
+            block_on(media.commit_configuration_transition(clear, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(cleared.active, None);
+        assert_eq!(cleared.pending, None);
+
+        let device = media.into_device();
+        let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(media.mount()).unwrap();
+        assert_eq!(media.configuration_journal().unwrap(), cleared);
+    }
+
+    #[test]
+    fn invalid_configuration_transitions_reject_before_append() {
+        let (mut media, _) = formatted();
+        let (_, job) = publish(&mut media, b"not a configuration", 8);
+        assert_eq!(
+            DurableConfigurationSelection::new(1, job),
+            Err(StorageError::ConfigurationTransition)
+        );
+
+        let missing = PublishedObject {
+            object: StoredObject {
+                kind: ObjectKind::MachineConfiguration,
+                content: sha256(b"missing configuration"),
+                byte_len: 21,
+            },
+            manifest: sha256(b"missing manifest"),
+        };
+        let missing = ConfigurationTransition::activate(configuration_selection(2, missing));
+        let sequence = media.status().last_sequence;
+        assert!(matches!(
+            block_on(
+                media.prepare_configuration_transition(missing, MutationContext::DISARMED_IDLE,)
+            ),
+            Err(MediaError::PublishedNotFound)
+        ));
+        assert_eq!(media.status().last_sequence, sequence);
+
+        let (_, published) = publish_kind(
+            &mut media,
+            b"present configuration",
+            8,
+            ObjectKind::MachineConfiguration,
+        );
+        let activation = ConfigurationTransition::activate(configuration_selection(3, published));
+        let sequence = media.status().last_sequence;
+        assert!(matches!(
+            block_on(media.prepare_configuration_transition(
+                activation,
+                MutationContext {
+                    armed_or_energized: true,
+                    realtime_job_active: false,
+                },
+            )),
+            Err(MediaError::Storage(StorageError::MutationForbidden))
+        ));
+        assert_eq!(media.status().last_sequence, sequence);
+        assert!(matches!(
+            block_on(
+                media.commit_configuration_transition(activation, MutationContext::DISARMED_IDLE,)
+            ),
+            Err(MediaError::Storage(StorageError::ConfigurationTransition))
+        ));
+
+        let clear = ConfigurationTransition::clear(configuration_selection(4, published));
+        assert!(matches!(
+            block_on(
+                media.prepare_configuration_transition(clear, MutationContext::DISARMED_IDLE,)
+            ),
+            Err(MediaError::Storage(StorageError::ConfigurationTransition))
+        ));
+
+        let upload = plan(b"serialized upload", 8);
+        block_on(media.begin_upload(upload, MutationContext::DISARMED_IDLE)).unwrap();
+        assert!(matches!(
+            block_on(
+                media.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE,)
+            ),
+            Err(MediaError::Storage(StorageError::ConfigurationTransition))
+        ));
+        block_on(media.abort_upload(upload.upload_id, MutationContext::DISARMED_IDLE)).unwrap();
+        block_on(
+            media.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        assert!(matches!(
+            block_on(media.begin_upload(upload, MutationContext::DISARMED_IDLE)),
+            Err(MediaError::Storage(StorageError::ConfigurationTransition))
+        ));
+    }
+
+    #[test]
+    fn every_activation_cut_replays_complete_old_or_new_selection() {
+        let (mut baseline, _) = formatted();
+        let (_, old_publication) = publish_kind(
+            &mut baseline,
+            b"old exact configuration",
+            8,
+            ObjectKind::MachineConfiguration,
+        );
+        let old = configuration_selection(0x1001, old_publication);
+        let old_transition = ConfigurationTransition::activate(old);
+        block_on(
+            baseline
+                .prepare_configuration_transition(old_transition, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        block_on(
+            baseline
+                .commit_configuration_transition(old_transition, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        let (_, new_publication) = publish_kind(
+            &mut baseline,
+            b"new exact configuration",
+            8,
+            ObjectKind::MachineConfiguration,
+        );
+        let new = configuration_selection(0x1002, new_publication);
+        let transition = ConfigurationTransition::activate(new);
+        let before_prepare = baseline.into_device().snapshot();
+
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(before_prepare.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result = block_on(
+                media.prepare_configuration_transition(transition, MutationContext::DISARMED_IDLE),
+            );
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.configuration_journal().unwrap();
+            assert_eq!(journal.active, Some(old));
+            assert!(journal.pending.is_none() || journal.pending == Some(transition));
+            if result.is_ok() {
+                assert_eq!(journal.pending, Some(transition));
+            }
+        }
+
+        let (device, _) = RamBlockDevice::from_snapshot(before_prepare);
+        let mut prepared = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(prepared.mount()).unwrap();
+        block_on(
+            prepared.prepare_configuration_transition(transition, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        let before_commit = prepared.into_device().snapshot();
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(before_commit.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result = block_on(
+                media.commit_configuration_transition(transition, MutationContext::DISARMED_IDLE),
+            );
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.configuration_journal().unwrap();
+            assert!(journal.active == Some(old) || journal.active == Some(new));
+            if journal.active == Some(old) {
+                assert_eq!(journal.pending, Some(transition));
+            } else {
+                assert_eq!(journal.pending, None);
+            }
+            if result.is_ok() {
+                assert_eq!(journal.active, Some(new));
+            }
+        }
+    }
+
+    #[test]
+    fn every_clear_commit_cut_replays_selected_or_cleared() {
+        let (mut baseline, _) = formatted();
+        let (_, publication) = publish_kind(
+            &mut baseline,
+            b"configuration selected for clear",
+            8,
+            ObjectKind::MachineConfiguration,
+        );
+        let active = configuration_selection(0x2001, publication);
+        let activation = ConfigurationTransition::activate(active);
+        block_on(
+            baseline.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        block_on(
+            baseline.commit_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        let clear = ConfigurationTransition::clear(configuration_selection(0x2002, publication));
+        block_on(baseline.prepare_configuration_transition(clear, MutationContext::DISARMED_IDLE))
+            .unwrap();
+        let snapshot = baseline.into_device().snapshot();
+
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(snapshot.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result = block_on(
+                media.commit_configuration_transition(clear, MutationContext::DISARMED_IDLE),
+            );
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.configuration_journal().unwrap();
+            assert!(journal.active.is_none() || journal.active == Some(active));
+            if journal.active.is_some() {
+                assert_eq!(journal.pending, Some(clear));
+            } else {
+                assert_eq!(journal.pending, None);
+            }
+            if result.is_ok() {
+                assert_eq!(journal.active, None);
+            }
+        }
     }
 
     #[test]

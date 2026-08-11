@@ -624,7 +624,8 @@ const fn storage_error_status(error: StorageError) -> StatusCode {
         | StorageError::UploadIdMismatch { .. }
         | StorageError::UnexpectedChunk { .. }
         | StorageError::VerifiedChunkMismatch
-        | StorageError::PublishTokenMismatch => StatusCode::Conflict,
+        | StorageError::PublishTokenMismatch
+        | StorageError::ConfigurationTransition => StatusCode::Conflict,
         StorageError::PublishPending | StorageError::NotReadyToPublish => StatusCode::Busy,
         StorageError::ObjectTooLarge { .. } | StorageError::ChunkCount { .. } => {
             StatusCode::Capacity
