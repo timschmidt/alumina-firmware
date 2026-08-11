@@ -849,7 +849,8 @@ fn finish_service_work(
 mod tests {
     use super::*;
     use alumina_job::{
-        JobDescriptor, PrefetchYield, RealtimeJob, RealtimeJobState, RealtimePoll, ServiceJobState,
+        CoreJobCommand, JobDescriptor, JobStatusReport, PrefetchYield, RealtimeJob,
+        RealtimeJobReport, RealtimeJobState, RealtimePoll, ServiceJobReport, ServiceJobState,
         ServicePrefetch,
     };
     use alumina_machine_ir::{
@@ -1094,6 +1095,11 @@ mod tests {
             first_tick: StreamTick(0),
             limits: block_limits(),
         };
+        let command = CoreJobCommand::Prepare(descriptor).encode::<3>().unwrap();
+        let descriptor = match CoreJobCommand::decode::<3>(&command).unwrap() {
+            CoreJobCommand::Prepare(descriptor) => descriptor,
+            CoreJobCommand::Cancel { .. } => panic!("prepare command changed action"),
+        };
         let mut prefetch = block_on(ServicePrefetch::<3>::open(&mut cache, descriptor)).unwrap();
         let mut realtime_job = RealtimeJob::<3>::prepare(descriptor).unwrap();
         type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
@@ -1161,6 +1167,23 @@ mod tests {
         assert_eq!(service_progress.end_tick, StreamTick(300));
         assert_eq!(completion.status.storage_chunks_read, 3);
         assert_eq!(service.work_free_capacity(), 2);
+        let status = JobStatusReport {
+            service: Some(
+                ServiceJobReport::from_status(
+                    completion.status,
+                    service.work_free_capacity(),
+                    service.work_depth(),
+                )
+                .unwrap(),
+            ),
+            realtime: Some(
+                RealtimeJobReport::from_status(realtime_status, realtime.work_depth()).unwrap(),
+            ),
+        };
+        assert_eq!(
+            JobStatusReport::decode(&status.encode().unwrap()),
+            Ok(status)
+        );
     }
 
     #[test]

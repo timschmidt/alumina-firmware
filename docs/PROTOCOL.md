@@ -43,6 +43,13 @@ The prefix and body must consume the outer payload exactly. An operation is
 bound to one frame family. `TelemetryEvent`, `FaultEvent`, and `WaveformChunk`
 are device events; other V1 operations are correlated request/response pairs.
 
+Authenticated binary requests use the single greenfield transport endpoint
+`POST /api/v1/control`. Its body is exactly one complete native frame and its
+response is exactly one correlated native frame. The HTTP HMAC transcript binds
+the `/api/v1/control` path, so a proof cannot be replayed against another route.
+`GET /api/v1/storage` remains a small authenticated human-readable cache status;
+`POST /api/v1/storage` is method-not-allowed and is not a compatibility alias.
+
 ## Families and assigned operations
 
 | Family/range | V1 operations |
@@ -144,6 +151,77 @@ fixed-credit channel. Core 1 hashes and validates the same bytes independently
 before extending its admitted horizon. Unknown kinds, flags, versions, padding,
 identity changes, skipped/duplicate/wrapped sequences, time gaps, digest-chain
 changes, limit violations, and cumulative position overflow fail closed.
+
+## Cached-job preparation bodies
+
+`JobPrepare` has one exact 248-byte, self-hashed descriptor. The descriptor is
+the UI compiler's claim about one already published per-MCU partition; it does
+not contain a start epoch or permission to energize outputs.
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMJOBD1` |
+| 8 | 2 | exact descriptor version (`1`) |
+| 10 | 6 | flags/reserved, all zero |
+| 16 | 8 | nonzero boot-local prepare ID |
+| 24 | 1 | fixed `MachineJobPartition` object kind |
+| 25 | 1 | fixed SHA-256 object algorithm |
+| 26 | 1 | fixed SHA-256 manifest algorithm |
+| 27 | 1 | exact compile-time executor axis count |
+| 28 | 4 | nonzero execution-block count |
+| 32 | 8 | partition byte length, exactly `count * 512` |
+| 40 | 8 | first relative stream tick, zero in V1 |
+| 48 | 8 | nonzero maximum block ticks |
+| 56 | 8 | nonzero maximum segment ticks |
+| 64 | 8 | nonzero maximum lattice steps per segment |
+| 72 | 16 | nonzero prepared stream ID |
+| 88 | 32 | partition object SHA-256 digest |
+| 120 | 32 | canonical publication-manifest SHA-256 digest |
+| 152 | 32 | exact board-capability digest |
+| 184 | 32 | exact active-configuration digest |
+| 216 | 32 | SHA-256 over bytes `0..216` |
+
+Decoding re-encodes the value and rejects every alternate representation. Core 0
+also requires the outer frame configuration identity to equal the descriptor,
+opens the exact typed publication, and compares the capability identity with the
+selected board. Core 1 receives the complete descriptor in an independent fixed
+command, repeats those identity checks, and constructs a separate stream
+validator. The current TinyBee and T-Deck Pro packages deliberately publish a
+zero capability digest, so target firmware returns `Unsupported`; preparation
+cannot be activated until canonical capability and active-configuration
+authorities exist.
+
+The 256-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
+and one reserved zero byte. Action `1` contains the complete descriptor at bytes
+`8..256`. Action `2` contains only the nonzero prepare ID at bytes `8..16` and
+requires every remaining byte to be zero. `JobCancel` uses that same bare
+eight-byte prepare ID as its native operation body. Prepare and cancel are
+idempotent only for the exact current descriptor/ID; replacement waits for both
+actors and the work ring to become terminal and empty.
+
+`JobStatus` has an empty request body and a fixed 240-byte response:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMJST01` |
+| 8 | 2 | exact status version (`1`) |
+| 10 | 1 | bit 0 service report present; bit 1 realtime report present |
+| 11 | 5 | reserved zero |
+| 16 | 96 | `ALMJSV01` core-0 report, or all zero |
+| 112 | 128 | `ALMJRT01` core-1 report, or all zero |
+
+The service report carries state, axis width, validated/sent/total block counts,
+verified storage-chunk count, current ring credits/depth, and a terminal
+`(StreamTick, block digest)` only when prefetch is complete. The realtime report
+carries independently admitted/completed/total counts, ring depth, whether the
+executor owns a block, and admitted/completed tick-and-digest facts. Absent
+optional fields are zero-filled. Embedded reports must name the same nonzero
+prepare ID and block count; if both are complete, their independently derived
+terminal tick and block digest must also agree. Core 1 currently retains the
+first independently validated block without acknowledging it; no block is
+executed and no absolute `DeviceCycle` epoch exists at this checkpoint.
+`JobCommit`, start, hold, resume, and hardware scheduling remain unsupported
+gates rather than simulated success.
 
 The 112-byte storage-status body is canonical little-endian:
 

@@ -152,10 +152,12 @@ identified but unprovisioned card is `detached`; failed identification is
 `faulted`. Status distinguishes physical blocks, selected raw-region blocks,
 locator generation/media ID, degraded locator/anchor recovery, and upload versus
 provision mutation availability.
-`POST /api/v1/storage` accepts only a complete native frame and response-signs
-the native result. It checks outer/operation lengths, directions, storage-plan
-structure, chunk size, and chunk SHA-256. Boot reads the two fixed hashed
-provisioning locators at blocks 2046–2047 and mounts only the exact selected raw
+`POST /api/v1/control` accepts only a complete native frame and response-signs
+the native result. The operation family selects the sole core-0 owner; the route
+is not storage-specific. `POST /api/v1/storage` is method-not-allowed, with no
+legacy alias. Native admission checks outer/operation lengths, directions,
+storage-plan structure, chunk size, and chunk SHA-256. Boot reads the two fixed
+hashed provisioning locators at blocks 2046–2047 and mounts only the exact selected raw
 region after its media identity and complete committed log replay. Foreign
 locator bytes remain detached; damaged recognizable locators fail closed.
 `StorageProvision` is the only formatter: its 112-byte canonical request binds
@@ -432,10 +434,8 @@ Proposed routes:
 | `GET /api/v1/capabilities` | resources, devices, limits, clock domains, safety features |
 | `GET/PUT /api/v1/config` | inspect or transactionally stage/commit configuration |
 | `GET/POST /api/v1/network` | scan, inspect, join, leave, or recover AP/STA configuration |
-| `POST /api/v1/commands` | bounded non-stream control requests |
-| `GET/POST /api/v1/storage` | capacity, cached manifests/blobs, resumable upload sessions |
-| `POST /api/v1/jobs` | publish/validate an exact-derived per-MCU machine-IR job |
-| `POST /api/v1/jobs/{id}/{action}` | arm, start, hold, resume, cancel |
+| `POST /api/v1/control` | one authenticated canonical native request across storage, job, configuration, command, and future families |
+| `GET /api/v1/storage` | bounded human-readable cache/media status |
 | `GET /api/v1/health` | state, faults, queue depths, timing and reset causes |
 | `GET /api/v1/time` | timestamped cycle-counter heartbeat samples and clock quality |
 | `GET /api/v1/telemetry` | WebSocket upgrade for binary streams/events |
@@ -459,6 +459,25 @@ opens storage or trusts media metadata. Writes, compaction, and deletion are
 idle-only; reads during a run are bounded and qualified against motion load. A
 separate human-readable filesystem partition may be added later, but is not an
 executable job authority.
+
+The first firmware job slice now gives the service task sole ownership of a
+bounded `ServicePrefetch` actor and the real-time task sole ownership of an
+independent `RealtimeJob` actor. An authenticated `JobPrepare` descriptor binds
+one exact publication, stream, capability/configuration identities, axis width,
+block count, and machine limits. Core 0 reads at most one verified storage chunk
+per executor pass and stops on ring backpressure. Core 1 revalidates and retains
+at most the first block. It deliberately does not acknowledge or execute that
+block: deterministic commit, absolute epoch installation, scheduler admission,
+and hardware output are later gates. Cancellation clears core-0 partial state,
+invalidates the core-1 ownership token, and drains queued work. Core-0 local job
+ownership vetoes storage mutation immediately, without waiting for periodic
+safety telemetry.
+
+Both first board packages still carry a zero canonical capability digest, and
+there is not yet a committed active-configuration authority. Consequently the
+target endpoint rejects `JobPrepare` as `Unsupported`; assigning a digest alone
+must not be treated as authorization to run. This preserves a linked and
+inspectable integration path without creating an accidental executable path.
 
 For a distributed job, the UI maintains one measured affine mapping from its
 monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and

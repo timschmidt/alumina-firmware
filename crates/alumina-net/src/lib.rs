@@ -639,7 +639,7 @@ impl<'a> AuthHeaderAccumulator<'a> {
         if body_len > route.maximum_body_bytes() {
             return Err(HttpAdmissionError::BodyTooLarge);
         }
-        if route == Route::StorageCommand {
+        if route == Route::ControlCommand {
             if body_len == 0 {
                 return Err(HttpAdmissionError::BodyRequired);
             }
@@ -814,8 +814,8 @@ pub enum Route {
     Authentication,
     /// Authenticated bounded cache status.
     StorageStatus,
-    /// Authenticated native storage operation frame.
-    StorageCommand,
+    /// Authenticated native operation frame for any admitted service family.
+    ControlCommand,
     /// Known resource addressed with a forbidden method.
     MethodNotAllowed,
     /// Unknown path.
@@ -825,13 +825,13 @@ pub enum Route {
 impl Route {
     /// Whether the route requires a valid boot-scoped request proof.
     pub const fn requires_authentication(self) -> bool {
-        matches!(self, Self::StorageStatus | Self::StorageCommand)
+        matches!(self, Self::StorageStatus | Self::ControlCommand)
     }
 
     /// Exact maximum body accepted before authentication and operation decode.
     pub const fn maximum_body_bytes(self) -> usize {
         match self {
-            Self::StorageCommand => MAX_AUTHENTICATED_BODY_BYTES,
+            Self::ControlCommand => MAX_AUTHENTICATED_BODY_BYTES,
             _ => 0,
         }
     }
@@ -844,7 +844,8 @@ impl Route {
             Self::Health => Some("/api/v1/health"),
             Self::Network => Some("/api/v1/network"),
             Self::Authentication => Some("/api/v1/auth"),
-            Self::StorageStatus | Self::StorageCommand => Some("/api/v1/storage"),
+            Self::StorageStatus => Some("/api/v1/storage"),
+            Self::ControlCommand => Some("/api/v1/control"),
             Self::MethodNotAllowed | Self::NotFound => None,
         }
     }
@@ -859,11 +860,11 @@ pub fn classify_route(method: HttpMethod, path: &str) -> Route {
         (HttpMethod::Get, "/api/v1/network") => Route::Network,
         (HttpMethod::Get, "/api/v1/auth") => Route::Authentication,
         (HttpMethod::Get, "/api/v1/storage") => Route::StorageStatus,
-        (HttpMethod::Post, "/api/v1/storage") => Route::StorageCommand,
+        (HttpMethod::Post, "/api/v1/control") => Route::ControlCommand,
         (
             _,
             "/" | "/api/v1/identity" | "/api/v1/health" | "/api/v1/network" | "/api/v1/auth"
-            | "/api/v1/storage",
+            | "/api/v1/storage" | "/api/v1/control",
         ) => Route::MethodNotAllowed,
         _ => Route::NotFound,
     }
@@ -1062,11 +1063,15 @@ mod tests {
         );
         assert_eq!(
             classify_route(HttpMethod::Post, "/api/v1/storage"),
-            Route::StorageCommand
+            Route::MethodNotAllowed
+        );
+        assert_eq!(
+            classify_route(HttpMethod::Post, "/api/v1/control"),
+            Route::ControlCommand
         );
         assert!(Route::StorageStatus.requires_authentication());
         assert_eq!(
-            Route::StorageCommand.maximum_body_bytes(),
+            Route::ControlCommand.maximum_body_bytes(),
             MAX_AUTHENTICATED_BODY_BYTES
         );
     }
@@ -1088,7 +1093,7 @@ mod tests {
             nonce(),
             42,
             HttpMethod::Post,
-            "/api/v1/storage",
+            "/api/v1/control",
             body,
         )
         .unwrap();
@@ -1096,7 +1101,7 @@ mod tests {
         write_lower_hex(&proof.tag, &mut encoded).unwrap();
         assert_eq!(
             core::str::from_utf8(&encoded).unwrap(),
-            "1f2a037109085c3d7f224a3fe130bbe06967b89bf001ded3844676673dbcfeb3"
+            "5cbc3ec1155caa3a32a6f9a6a7d8be61e5b50591947d9e8ab86bc1cc51890235"
         );
         assert_eq!(
             parse_request_proof("42", core::str::from_utf8(&encoded).unwrap()).unwrap(),
@@ -1108,7 +1113,7 @@ mod tests {
                 nonce(),
                 proof,
                 HttpMethod::Post,
-                "/api/v1/storage",
+                "/api/v1/control",
                 body,
             ),
             Ok(())
@@ -1170,7 +1175,7 @@ mod tests {
             nonce(),
             7,
             HttpMethod::Get,
-            "/api/v1/storage",
+            "/api/v1/control",
             b"",
         )
         .unwrap();
@@ -1208,7 +1213,7 @@ mod tests {
             nonce(),
             7,
             HttpMethod::Post,
-            "/api/v1/storage",
+            "/api/v1/control",
             b"body",
         )
         .unwrap();
@@ -1225,10 +1230,10 @@ mod tests {
             .unwrap();
         headers.observe(AUTH_PROOF_HEADER.as_bytes(), &tag).unwrap();
         assert_eq!(
-            headers.finish(HttpMethod::Post, Route::StorageCommand),
+            headers.finish(HttpMethod::Post, Route::ControlCommand),
             Ok(AuthenticatedRequestMetadata {
                 method: HttpMethod::Post,
-                route: Route::StorageCommand,
+                route: Route::ControlCommand,
                 proof,
                 body_len: 4,
             })
@@ -1244,7 +1249,7 @@ mod tests {
         let mut chunked = headers;
         chunked.observe(b"Transfer-Encoding", b"chunked").unwrap();
         assert_eq!(
-            chunked.finish(HttpMethod::Post, Route::StorageCommand),
+            chunked.finish(HttpMethod::Post, Route::ControlCommand),
             Err(HttpAdmissionError::TransferEncoding)
         );
 
@@ -1260,14 +1265,14 @@ mod tests {
             .observe(AUTH_PROOF_HEADER.as_bytes(), &tag)
             .unwrap();
         assert_eq!(
-            leading_zero.finish(HttpMethod::Post, Route::StorageCommand),
+            leading_zero.finish(HttpMethod::Post, Route::ControlCommand),
             Err(HttpAdmissionError::ContentLength)
         );
 
         let mut too_large = leading_zero;
         too_large.content_length = Some(b"1149");
         assert_eq!(
-            too_large.finish(HttpMethod::Post, Route::StorageCommand),
+            too_large.finish(HttpMethod::Post, Route::ControlCommand),
             Err(HttpAdmissionError::BodyTooLarge)
         );
     }

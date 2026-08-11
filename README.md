@@ -108,8 +108,15 @@ absolute `DeviceCycle` values until a future deterministic commit installs an
 epoch. The simulator drives these actors through a provisioned cache with
 700-byte chunks, forces backpressure, and proves identical terminal stream
 facts. Firmware now compiles the crate for both boards; authenticated job
-control, commit, and hardware execution remain open. See the
-[job-prefetch lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md).
+control now routes canonical prepare/cancel/status frames through core 0, drives
+bounded verified prefetch, installs the independent core-1 validator, and
+publishes correlated status. Core 1 retains the first admitted block without
+acknowledging or executing it. Both board packages still expose a zero
+capability digest, so target preparation returns `Unsupported` until canonical
+capability and active-configuration authorities are implemented. Commit and
+hardware execution remain separate closed gates. See the
+[portable lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md) and
+[firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md).
 
 ## Developer checks
 

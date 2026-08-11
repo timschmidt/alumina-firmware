@@ -377,7 +377,7 @@ impl Handler for AluminaHttpHandler {
 
             let request = match route {
                 Route::StorageStatus => ServiceRequest::storage_status(),
-                Route::StorageCommand => match ServiceRequest::native(body) {
+                Route::ControlCommand => match ServiceRequest::native(body) {
                     Ok(request) => request,
                     Err(_) => {
                         reject_request(connection, RequestRejection::BodyTooLarge).await?;
@@ -478,7 +478,7 @@ impl Handler for AluminaHttpHandler {
                     )
                     .await?;
             }
-            Route::StorageStatus | Route::StorageCommand => unreachable!(),
+            Route::StorageStatus | Route::ControlCommand => unreachable!(),
             Route::MethodNotAllowed => {
                 connection
                     .initiate_response(

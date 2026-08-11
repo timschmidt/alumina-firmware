@@ -9,6 +9,10 @@ browser integration, live HTTP interoperability, flood timing, or HIL.
 This records the authentication milestone at its commit. The later
 [`M3-DURABLE-CACHE-MEDIA.md`](M3-DURABLE-CACHE-MEDIA.md) supersedes its status
 body and test/image totals while preserving the admission claims below.
+The later [`M3-FIRMWARE-JOB-PREFETCH.md`](M3-FIRMWARE-JOB-PREFETCH.md) replaces
+the storage-specific POST with the greenfield `POST /api/v1/control` native
+transport. This document's `/api/v1/storage` POST statements remain historical
+evidence, not a compatibility promise.
 
 ## Implemented claim
 

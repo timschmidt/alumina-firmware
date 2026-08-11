@@ -6,11 +6,50 @@ use alumina_machine_ir::{
     ExecutionBlock, ExecutionBlockHeader, MAX_EXECUTION_AXES, MotionSegments, MotionStreamProgress,
     MotionStreamValidator, PartitionAssembler, StreamId, StreamTick,
 };
+use alumina_protocol::Digest;
 use alumina_runtime::{RealtimeEndpoint, ServiceEndpoint};
 use alumina_storage::media::{AsyncBlockDevice, MAX_MEDIA_CHUNK_BYTES, PublishedReader};
 use alumina_storage::provisioning::{ProvisionedCache, ProvisionedCacheError};
-use alumina_storage::{ObjectKind, PublishedObject};
+use alumina_storage::{
+    ContentId, DigestAlgorithm, ObjectKind, PublishedObject, StoredObject, sha256,
+};
 use embassy_sync::channel::TrySendError;
+
+/// Exact canonical `JobPrepare` body length.
+pub const JOB_DESCRIPTOR_WIRE_BYTES: usize = 248;
+/// Exact fixed cross-core job-control payload length.
+pub const CORE_JOB_COMMAND_WIRE_BYTES: usize = 256;
+/// Exact fixed core-1 job report length.
+pub const REALTIME_JOB_REPORT_WIRE_BYTES: usize = 128;
+/// Exact fixed core-0 prefetch report length.
+pub const SERVICE_JOB_REPORT_WIRE_BYTES: usize = 96;
+/// Exact combined `JobStatus` response body length.
+pub const JOB_STATUS_WIRE_BYTES: usize = 240;
+/// Exact `JobCancel` operation body length.
+pub const JOB_CANCEL_WIRE_BYTES: usize = 8;
+
+const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD1";
+const JOB_DESCRIPTOR_VERSION: u16 = 1;
+const JOB_DESCRIPTOR_HASH_OFFSET: usize = JOB_DESCRIPTOR_WIRE_BYTES - 32;
+const CORE_JOB_COMMAND_MAGIC: [u8; 4] = *b"ALJC";
+const CORE_JOB_COMMAND_VERSION: u16 = 1;
+const CORE_JOB_PREPARE: u8 = 1;
+const CORE_JOB_CANCEL: u8 = 2;
+const REALTIME_JOB_REPORT_MAGIC: [u8; 8] = *b"ALMJRT01";
+const REALTIME_JOB_REPORT_VERSION: u16 = 1;
+const SERVICE_JOB_REPORT_MAGIC: [u8; 8] = *b"ALMJSV01";
+const SERVICE_JOB_REPORT_VERSION: u16 = 1;
+const SERVICE_REPORT_FLAG_FINAL: u8 = 1 << 0;
+const JOB_STATUS_MAGIC: [u8; 8] = *b"ALMJST01";
+const JOB_STATUS_VERSION: u16 = 1;
+const JOB_STATUS_FLAG_SERVICE: u8 = 1 << 0;
+const JOB_STATUS_FLAG_REALTIME: u8 = 1 << 1;
+const JOB_STATUS_KNOWN_FLAGS: u8 = JOB_STATUS_FLAG_SERVICE | JOB_STATUS_FLAG_REALTIME;
+const REPORT_FLAG_OUTSTANDING: u8 = 1 << 0;
+const REPORT_FLAG_ADMITTED_PROGRESS: u8 = 1 << 1;
+const REPORT_FLAG_COMPLETED_PROGRESS: u8 = 1 << 2;
+const REPORT_KNOWN_FLAGS: u8 =
+    REPORT_FLAG_OUTSTANDING | REPORT_FLAG_ADMITTED_PROGRESS | REPORT_FLAG_COMPLETED_PROGRESS;
 
 /// Complete immutable facts required before core 0 may read executable bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,6 +136,264 @@ impl JobDescriptor {
             previous_digest: alumina_protocol::Digest::ZERO,
         }
     }
+
+    /// Encodes one canonical, self-hashed prepare body.
+    pub fn encode<const AXES: usize>(
+        self,
+    ) -> Result<[u8; JOB_DESCRIPTOR_WIRE_BYTES], JobDescriptorWireError> {
+        self.validate::<AXES>()
+            .map_err(JobDescriptorWireError::Descriptor)?;
+        let mut encoded = [0_u8; JOB_DESCRIPTOR_WIRE_BYTES];
+        encoded[0..8].copy_from_slice(&JOB_DESCRIPTOR_MAGIC);
+        encoded[8..10].copy_from_slice(&JOB_DESCRIPTOR_VERSION.to_le_bytes());
+        // Bytes 10..16 are zero flags and reserved bytes.
+        encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
+        encoded[24] = self.partition.object.kind as u8;
+        encoded[25] = self.partition.object.content.algorithm as u8;
+        encoded[26] = self.partition.manifest.algorithm as u8;
+        encoded[27] = self.axis_count;
+        encoded[28..32].copy_from_slice(&self.block_count.to_le_bytes());
+        encoded[32..40].copy_from_slice(&self.partition.object.byte_len.to_le_bytes());
+        encoded[40..48].copy_from_slice(&self.first_tick.0.to_le_bytes());
+        encoded[48..56].copy_from_slice(&self.limits.maximum_block_ticks.to_le_bytes());
+        encoded[56..64].copy_from_slice(&self.limits.segment.maximum_segment_ticks.to_le_bytes());
+        encoded[64..72]
+            .copy_from_slice(&self.limits.segment.maximum_steps_per_segment.to_le_bytes());
+        encoded[72..88].copy_from_slice(&self.stream_id.0);
+        encoded[88..120].copy_from_slice(&self.partition.object.content.digest.0);
+        encoded[120..152].copy_from_slice(&self.partition.manifest.digest.0);
+        encoded[152..184].copy_from_slice(&self.capability_digest.0);
+        encoded[184..216].copy_from_slice(&self.config_digest.0);
+        let identity = sha256(&encoded[..JOB_DESCRIPTOR_HASH_OFFSET]);
+        encoded[JOB_DESCRIPTOR_HASH_OFFSET..].copy_from_slice(&identity.digest.0);
+        Ok(encoded)
+    }
+
+    /// Decodes only the exact canonical prepare representation for this executor.
+    pub fn decode<const AXES: usize>(encoded: &[u8]) -> Result<Self, JobDescriptorWireError> {
+        if encoded.len() != JOB_DESCRIPTOR_WIRE_BYTES {
+            return Err(JobDescriptorWireError::WireLength);
+        }
+        if encoded[0..8] != JOB_DESCRIPTOR_MAGIC {
+            return Err(JobDescriptorWireError::Magic);
+        }
+        if read_u16(encoded, 8) != JOB_DESCRIPTOR_VERSION {
+            return Err(JobDescriptorWireError::Version);
+        }
+        if encoded[10..16].iter().any(|byte| *byte != 0) {
+            return Err(JobDescriptorWireError::Reserved);
+        }
+        if encoded[24] != ObjectKind::MachineJobPartition as u8 {
+            return Err(JobDescriptorWireError::ObjectKind);
+        }
+        if encoded[25] != DigestAlgorithm::Sha256 as u8
+            || encoded[26] != DigestAlgorithm::Sha256 as u8
+        {
+            return Err(JobDescriptorWireError::Algorithm);
+        }
+        let identity = sha256(&encoded[..JOB_DESCRIPTOR_HASH_OFFSET]);
+        if encoded[JOB_DESCRIPTOR_HASH_OFFSET..] != identity.digest.0 {
+            return Err(JobDescriptorWireError::Integrity);
+        }
+        let mut stream_id = [0_u8; 16];
+        stream_id.copy_from_slice(&encoded[72..88]);
+        let mut object_digest = [0_u8; 32];
+        object_digest.copy_from_slice(&encoded[88..120]);
+        let mut manifest_digest = [0_u8; 32];
+        manifest_digest.copy_from_slice(&encoded[120..152]);
+        let mut capability_digest = [0_u8; 32];
+        capability_digest.copy_from_slice(&encoded[152..184]);
+        let mut config_digest = [0_u8; 32];
+        config_digest.copy_from_slice(&encoded[184..216]);
+        let descriptor = Self {
+            prepare_id: read_u64(encoded, 16),
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(Digest(object_digest)),
+                    byte_len: read_u64(encoded, 32),
+                },
+                manifest: ContentId::from_sha256(Digest(manifest_digest)),
+            },
+            stream_id: StreamId(stream_id),
+            capability_digest: Digest(capability_digest),
+            config_digest: Digest(config_digest),
+            axis_count: encoded[27],
+            block_count: read_u32(encoded, 28),
+            first_tick: StreamTick(read_u64(encoded, 40)),
+            limits: BlockValidationLimits {
+                maximum_block_ticks: read_u64(encoded, 48),
+                segment: alumina_machine_ir::ValidationLimits {
+                    maximum_segment_ticks: read_u64(encoded, 56),
+                    maximum_steps_per_segment: read_u64(encoded, 64),
+                },
+            },
+        };
+        descriptor
+            .validate::<AXES>()
+            .map_err(JobDescriptorWireError::Descriptor)?;
+        if descriptor.encode::<AXES>()? != encoded {
+            return Err(JobDescriptorWireError::Noncanonical);
+        }
+        Ok(descriptor)
+    }
+}
+
+/// Canonical descriptor rejection before a job actor is installed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JobDescriptorWireError {
+    /// Body length was not exactly [`JOB_DESCRIPTOR_WIRE_BYTES`].
+    WireLength,
+    /// Descriptor magic did not identify this schema.
+    Magic,
+    /// Descriptor version was unsupported.
+    Version,
+    /// Flags or reserved bytes were nonzero.
+    Reserved,
+    /// The object kind was not a per-MCU executable partition.
+    ObjectKind,
+    /// A content identity did not select SHA-256.
+    Algorithm,
+    /// The descriptor hash did not match its canonical prefix.
+    Integrity,
+    /// Decoded semantic facts were inadmissible.
+    Descriptor(DescriptorError),
+    /// Valid fields used a noncanonical representation.
+    Noncanonical,
+}
+
+/// Fixed cross-core command; it contains no references or allocator state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the fixed no-allocation command must own the complete prepare descriptor"
+)]
+pub enum CoreJobCommand {
+    /// Install the exact independently validated prepare descriptor.
+    Prepare(JobDescriptor),
+    /// Invalidate one exact boot-local preparation and drain its work.
+    Cancel { prepare_id: u64 },
+}
+
+impl CoreJobCommand {
+    /// Encodes a fixed 256-byte payload fitting the existing command ring.
+    pub fn encode<const AXES: usize>(
+        self,
+    ) -> Result<[u8; CORE_JOB_COMMAND_WIRE_BYTES], CoreJobCommandWireError> {
+        let mut encoded = [0_u8; CORE_JOB_COMMAND_WIRE_BYTES];
+        encoded[0..4].copy_from_slice(&CORE_JOB_COMMAND_MAGIC);
+        encoded[4..6].copy_from_slice(&CORE_JOB_COMMAND_VERSION.to_le_bytes());
+        match self {
+            Self::Prepare(descriptor) => {
+                encoded[6] = CORE_JOB_PREPARE;
+                encoded[8..].copy_from_slice(
+                    &descriptor
+                        .encode::<AXES>()
+                        .map_err(CoreJobCommandWireError::Descriptor)?,
+                );
+            }
+            Self::Cancel { prepare_id } => {
+                if prepare_id == 0 {
+                    return Err(CoreJobCommandWireError::PrepareId);
+                }
+                encoded[6] = CORE_JOB_CANCEL;
+                encoded[8..16].copy_from_slice(&prepare_id.to_le_bytes());
+            }
+        }
+        Ok(encoded)
+    }
+
+    /// Decodes a fixed payload and checks all unused bytes are zero.
+    pub fn decode<const AXES: usize>(encoded: &[u8]) -> Result<Self, CoreJobCommandWireError> {
+        if encoded.len() != CORE_JOB_COMMAND_WIRE_BYTES {
+            return Err(CoreJobCommandWireError::WireLength);
+        }
+        if encoded[0..4] != CORE_JOB_COMMAND_MAGIC {
+            return Err(CoreJobCommandWireError::Magic);
+        }
+        if read_u16(encoded, 4) != CORE_JOB_COMMAND_VERSION {
+            return Err(CoreJobCommandWireError::Version);
+        }
+        if encoded[7] != 0 {
+            return Err(CoreJobCommandWireError::Reserved);
+        }
+        match encoded[6] {
+            CORE_JOB_PREPARE => JobDescriptor::decode::<AXES>(&encoded[8..])
+                .map(Self::Prepare)
+                .map_err(CoreJobCommandWireError::Descriptor),
+            CORE_JOB_CANCEL => {
+                if encoded[16..].iter().any(|byte| *byte != 0) {
+                    return Err(CoreJobCommandWireError::Reserved);
+                }
+                let prepare_id = read_u64(encoded, 8);
+                if prepare_id == 0 {
+                    return Err(CoreJobCommandWireError::PrepareId);
+                }
+                Ok(Self::Cancel { prepare_id })
+            }
+            received => Err(CoreJobCommandWireError::Action { received }),
+        }
+    }
+}
+
+/// Cross-core control rejection before real-time job state changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoreJobCommandWireError {
+    /// Payload was not exactly [`CORE_JOB_COMMAND_WIRE_BYTES`].
+    WireLength,
+    /// Command magic did not match.
+    Magic,
+    /// Command version was unsupported.
+    Version,
+    /// Action selector was unknown.
+    Action {
+        /// Received action value.
+        received: u8,
+    },
+    /// A reserved byte was nonzero.
+    Reserved,
+    /// Cancellation used the zero prepare sentinel.
+    PrepareId,
+    /// Embedded prepare descriptor was invalid.
+    Descriptor(JobDescriptorWireError),
+}
+
+/// Exact idempotent cancellation request for one boot-local preparation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct JobCancelRequest {
+    /// Nonzero preparation correlation to invalidate.
+    pub prepare_id: u64,
+}
+
+impl JobCancelRequest {
+    /// Encodes the sole V1 cancellation field.
+    pub fn encode(self) -> Result<[u8; JOB_CANCEL_WIRE_BYTES], JobCancelWireError> {
+        if self.prepare_id == 0 {
+            return Err(JobCancelWireError::PrepareId);
+        }
+        Ok(self.prepare_id.to_le_bytes())
+    }
+
+    /// Decodes an exact nonzero preparation correlation.
+    pub fn decode(encoded: &[u8]) -> Result<Self, JobCancelWireError> {
+        if encoded.len() != JOB_CANCEL_WIRE_BYTES {
+            return Err(JobCancelWireError::WireLength);
+        }
+        let request = Self {
+            prepare_id: read_u64(encoded, 0),
+        };
+        request.encode()?;
+        Ok(request)
+    }
+}
+
+/// Canonical `JobCancel` body rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JobCancelWireError {
+    /// Body was not exactly eight bytes.
+    WireLength,
+    /// Preparation correlation used the zero sentinel.
+    PrepareId,
 }
 
 /// Descriptor rejection before storage or a queue is touched.
@@ -198,15 +495,28 @@ impl<
 
 /// Core-0 immutable read/assembly/validation lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum ServiceJobState {
     /// Publication is open and more blocks remain to validate or transfer.
-    Prefetching,
+    Prefetching = 1,
     /// Every declared block was validated and transferred into queue ownership.
-    Complete,
+    Complete = 2,
     /// Local cancellation discarded unread and pending service-side bytes.
-    Cancelled,
+    Cancelled = 3,
     /// Media, machine IR, or an internal invariant failed closed.
-    Faulted,
+    Faulted = 4,
+}
+
+impl ServiceJobState {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Prefetching),
+            2 => Some(Self::Complete),
+            3 => Some(Self::Cancelled),
+            4 => Some(Self::Faulted),
+            _ => None,
+        }
+    }
 }
 
 /// One bounded service-core prefetch observation.
@@ -226,6 +536,191 @@ pub struct ServiceJobStatus<const AXES: usize> {
     pub storage_chunks_read: u32,
     /// Complete service-side stream facts, only at terminal prefetch.
     pub final_progress: Option<MotionStreamProgress<AXES>>,
+}
+
+/// Fixed service-side prefetch summary safe for authenticated status responses.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServiceJobReport {
+    /// Exact boot-local preparation correlation.
+    pub prepare_id: u64,
+    /// Core-0 prefetch lifecycle state.
+    pub state: ServiceJobState,
+    /// Descriptor axis width.
+    pub axis_count: u8,
+    /// Blocks independently validated on core 0.
+    pub validated_blocks: u32,
+    /// Blocks transferred into ring ownership.
+    pub sent_blocks: u32,
+    /// Immutable partition block count.
+    pub total_blocks: u32,
+    /// Verified storage chunks read.
+    pub storage_chunks_read: u32,
+    /// Producer credits currently available.
+    pub queue_free: u32,
+    /// Blocks currently owned by the ring.
+    pub queue_depth: u32,
+    /// Terminal stream-relative tick and digest, only when complete.
+    pub final_progress: Option<(StreamTick, Digest)>,
+}
+
+impl ServiceJobReport {
+    /// Reduces a generic actor status to fixed external facts.
+    pub fn from_status<const AXES: usize>(
+        status: ServiceJobStatus<AXES>,
+        queue_free: usize,
+        queue_depth: usize,
+    ) -> Result<Self, ServiceJobReportWireError> {
+        let report = Self {
+            prepare_id: status.prepare_id,
+            state: status.state,
+            axis_count: u8::try_from(AXES).map_err(|_| ServiceJobReportWireError::AxisCount)?,
+            validated_blocks: status.validated_blocks,
+            sent_blocks: status.sent_blocks,
+            total_blocks: status.total_blocks,
+            storage_chunks_read: status.storage_chunks_read,
+            queue_free: u32::try_from(queue_free)
+                .map_err(|_| ServiceJobReportWireError::QueueDepth)?,
+            queue_depth: u32::try_from(queue_depth)
+                .map_err(|_| ServiceJobReportWireError::QueueDepth)?,
+            final_progress: status
+                .final_progress
+                .map(|progress| (progress.end_tick, progress.block_digest)),
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    /// Encodes one canonical fixed service report.
+    pub fn encode(self) -> Result<[u8; SERVICE_JOB_REPORT_WIRE_BYTES], ServiceJobReportWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; SERVICE_JOB_REPORT_WIRE_BYTES];
+        encoded[0..8].copy_from_slice(&SERVICE_JOB_REPORT_MAGIC);
+        encoded[8..10].copy_from_slice(&SERVICE_JOB_REPORT_VERSION.to_le_bytes());
+        encoded[10] = self.state as u8;
+        encoded[11] = if self.final_progress.is_some() {
+            SERVICE_REPORT_FLAG_FINAL
+        } else {
+            0
+        };
+        encoded[12] = self.axis_count;
+        // Bytes 13..16 and 88..96 remain reserved zero.
+        encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
+        encoded[24..28].copy_from_slice(&self.validated_blocks.to_le_bytes());
+        encoded[28..32].copy_from_slice(&self.sent_blocks.to_le_bytes());
+        encoded[32..36].copy_from_slice(&self.total_blocks.to_le_bytes());
+        encoded[36..40].copy_from_slice(&self.storage_chunks_read.to_le_bytes());
+        encoded[40..44].copy_from_slice(&self.queue_free.to_le_bytes());
+        encoded[44..48].copy_from_slice(&self.queue_depth.to_le_bytes());
+        if let Some((end_tick, digest)) = self.final_progress {
+            encoded[48..56].copy_from_slice(&end_tick.0.to_le_bytes());
+            encoded[56..88].copy_from_slice(&digest.0);
+        }
+        Ok(encoded)
+    }
+
+    /// Decodes and validates one exact service report.
+    pub fn decode(encoded: &[u8]) -> Result<Self, ServiceJobReportWireError> {
+        if encoded.len() != SERVICE_JOB_REPORT_WIRE_BYTES {
+            return Err(ServiceJobReportWireError::WireLength);
+        }
+        if encoded[0..8] != SERVICE_JOB_REPORT_MAGIC {
+            return Err(ServiceJobReportWireError::Magic);
+        }
+        if read_u16(encoded, 8) != SERVICE_JOB_REPORT_VERSION {
+            return Err(ServiceJobReportWireError::Version);
+        }
+        let flags = encoded[11];
+        if flags & !SERVICE_REPORT_FLAG_FINAL != 0
+            || encoded[13..16].iter().any(|byte| *byte != 0)
+            || encoded[88..96].iter().any(|byte| *byte != 0)
+        {
+            return Err(ServiceJobReportWireError::Reserved);
+        }
+        let mut final_digest = [0_u8; 32];
+        final_digest.copy_from_slice(&encoded[56..88]);
+        let final_progress = if flags & SERVICE_REPORT_FLAG_FINAL != 0 {
+            Some((StreamTick(read_u64(encoded, 48)), Digest(final_digest)))
+        } else {
+            if encoded[48..88].iter().any(|byte| *byte != 0) {
+                return Err(ServiceJobReportWireError::Reserved);
+            }
+            None
+        };
+        let report = Self {
+            prepare_id: read_u64(encoded, 16),
+            state: ServiceJobState::from_wire(encoded[10])
+                .ok_or(ServiceJobReportWireError::State)?,
+            axis_count: encoded[12],
+            validated_blocks: read_u32(encoded, 24),
+            sent_blocks: read_u32(encoded, 28),
+            total_blocks: read_u32(encoded, 32),
+            storage_chunks_read: read_u32(encoded, 36),
+            queue_free: read_u32(encoded, 40),
+            queue_depth: read_u32(encoded, 44),
+            final_progress,
+        };
+        report.validate()?;
+        if report.encode()? != encoded {
+            return Err(ServiceJobReportWireError::Noncanonical);
+        }
+        Ok(report)
+    }
+
+    fn validate(self) -> Result<(), ServiceJobReportWireError> {
+        if self.prepare_id == 0 {
+            return Err(ServiceJobReportWireError::PrepareId);
+        }
+        if self.axis_count == 0 || usize::from(self.axis_count) > MAX_EXECUTION_AXES {
+            return Err(ServiceJobReportWireError::AxisCount);
+        }
+        if self.total_blocks == 0
+            || self.sent_blocks > self.validated_blocks
+            || self.validated_blocks > self.total_blocks
+        {
+            return Err(ServiceJobReportWireError::Counts);
+        }
+        if self.final_progress.is_some() != (self.state == ServiceJobState::Complete) {
+            return Err(ServiceJobReportWireError::Progress);
+        }
+        if self.state == ServiceJobState::Complete
+            && (self.sent_blocks != self.total_blocks || self.validated_blocks != self.total_blocks)
+        {
+            return Err(ServiceJobReportWireError::Progress);
+        }
+        if let Some((_, digest)) = self.final_progress
+            && digest.is_zero()
+        {
+            return Err(ServiceJobReportWireError::Progress);
+        }
+        Ok(())
+    }
+}
+
+/// Fixed service report decoding or consistency failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServiceJobReportWireError {
+    /// Payload length was not exact.
+    WireLength,
+    /// Report magic did not match.
+    Magic,
+    /// Report version was unsupported.
+    Version,
+    /// State byte was unknown.
+    State,
+    /// Flags, absent fields, or reserved bytes were nonzero.
+    Reserved,
+    /// Prepare correlation was zero.
+    PrepareId,
+    /// Axis width was outside the V1 machine-block range.
+    AxisCount,
+    /// Block counts were empty or out of order.
+    Counts,
+    /// State and terminal progress disagreed.
+    Progress,
+    /// Queue counters did not fit their wire fields.
+    QueueDepth,
+    /// Valid fields used a noncanonical representation.
+    Noncanonical,
 }
 
 /// Why one prefetch invocation yielded.
@@ -474,17 +969,31 @@ impl<const AXES: usize> ServicePrefetch<AXES> {
 
 /// Core-1 job lifecycle independent of storage and network state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum RealtimeJobState {
     /// Descriptor installed; no block is currently owned by the executor.
-    Prepared,
+    Prepared = 1,
     /// One independently validated block is owned by the executor.
-    Admitted,
+    Admitted = 2,
     /// Every block was acknowledged consumed in exact order.
-    Complete,
+    Complete = 3,
     /// Local cancellation invalidated all outstanding work.
-    Cancelled,
+    Cancelled = 4,
     /// Validation or token mismatch faulted the stream.
-    Faulted,
+    Faulted = 5,
+}
+
+impl RealtimeJobState {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Prepared),
+            2 => Some(Self::Admitted),
+            3 => Some(Self::Complete),
+            4 => Some(Self::Cancelled),
+            5 => Some(Self::Faulted),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -507,6 +1016,8 @@ pub struct RealtimeJobStatus<const AXES: usize> {
     pub completed_blocks: u32,
     /// Exact immutable total.
     pub total_blocks: u32,
+    /// Validated facts through the block currently owned by the executor.
+    pub admitted_progress: Option<MotionStreamProgress<AXES>>,
     /// Terminal facts for the completed prefix.
     pub completed_progress: Option<MotionStreamProgress<AXES>>,
     /// Whether one admitted block is currently owned outside this state machine.
@@ -559,6 +1070,7 @@ pub struct RealtimeJob<const AXES: usize> {
     outstanding: Option<Outstanding>,
     admitted_blocks: u32,
     completed_blocks: u32,
+    admitted_progress: Option<MotionStreamProgress<AXES>>,
     completed_progress: Option<MotionStreamProgress<AXES>>,
 }
 
@@ -581,6 +1093,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             outstanding: None,
             admitted_blocks: 0,
             completed_blocks: 0,
+            admitted_progress: None,
             completed_progress: None,
         })
     }
@@ -616,6 +1129,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             block_digest: header.block_digest,
         });
         self.admitted_blocks = progress.accepted_blocks;
+        self.admitted_progress = Some(progress);
         self.state = RealtimeJobState::Admitted;
         Ok(RealtimePoll::Block(AdmittedBlock {
             prepare_id: self.descriptor.prepare_id,
@@ -639,12 +1153,15 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             || header.sequence != expected.sequence
             || header.block_digest != expected.block_digest
             || admitted.progress.accepted_blocks != self.admitted_blocks
+            || self.admitted_progress != Some(admitted.progress)
         {
             self.state = RealtimeJobState::Faulted;
             self.outstanding = None;
+            self.admitted_progress = None;
             return Err(JobError::AdmissionToken);
         }
         self.outstanding = None;
+        self.admitted_progress = None;
         self.completed_blocks = admitted.progress.accepted_blocks;
         self.completed_progress = Some(admitted.progress);
         if admitted.progress.complete {
@@ -664,6 +1181,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
         ) {
             self.state = RealtimeJobState::Cancelled;
             self.outstanding = None;
+            self.admitted_progress = None;
         }
     }
 
@@ -695,10 +1213,350 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             admitted_blocks: self.admitted_blocks,
             completed_blocks: self.completed_blocks,
             total_blocks: self.descriptor.block_count,
+            admitted_progress: self.admitted_progress,
             completed_progress: self.completed_progress,
             outstanding: self.outstanding.is_some(),
         }
     }
+}
+
+/// Fixed, allocation-free summary sent from core 1 to core 0.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeJobReport {
+    /// Exact boot-local preparation correlation.
+    pub prepare_id: u64,
+    /// Core-1 lifecycle state.
+    pub state: RealtimeJobState,
+    /// Blocks independently validated on core 1.
+    pub admitted_blocks: u32,
+    /// Blocks acknowledged by the hardware execution owner.
+    pub completed_blocks: u32,
+    /// Immutable partition block count.
+    pub total_blocks: u32,
+    /// Blocks waiting in the cross-core ownership ring.
+    pub queue_depth: u32,
+    /// Facts through an outstanding admitted block, when present.
+    pub admitted_progress: Option<(StreamTick, Digest)>,
+    /// Facts through the last acknowledged block, when present.
+    pub completed_progress: Option<(StreamTick, Digest)>,
+    /// Whether the execution owner currently holds one complete block.
+    pub outstanding: bool,
+}
+
+impl RealtimeJobReport {
+    /// Reduces a generic in-core status to the exact cross-core report facts.
+    pub fn from_status<const AXES: usize>(
+        status: RealtimeJobStatus<AXES>,
+        queue_depth: usize,
+    ) -> Result<Self, RealtimeJobReportWireError> {
+        let queue_depth =
+            u32::try_from(queue_depth).map_err(|_| RealtimeJobReportWireError::QueueDepth)?;
+        let report = Self {
+            prepare_id: status.prepare_id,
+            state: status.state,
+            admitted_blocks: status.admitted_blocks,
+            completed_blocks: status.completed_blocks,
+            total_blocks: status.total_blocks,
+            queue_depth,
+            admitted_progress: status
+                .admitted_progress
+                .map(|progress| (progress.end_tick, progress.block_digest)),
+            completed_progress: status
+                .completed_progress
+                .map(|progress| (progress.end_tick, progress.block_digest)),
+            outstanding: status.outstanding,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    /// Encodes one strict fixed-size telemetry payload.
+    pub fn encode(
+        self,
+    ) -> Result<[u8; REALTIME_JOB_REPORT_WIRE_BYTES], RealtimeJobReportWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; REALTIME_JOB_REPORT_WIRE_BYTES];
+        encoded[0..8].copy_from_slice(&REALTIME_JOB_REPORT_MAGIC);
+        encoded[8..10].copy_from_slice(&REALTIME_JOB_REPORT_VERSION.to_le_bytes());
+        encoded[10] = self.state as u8;
+        let mut flags = u8::from(self.outstanding) * REPORT_FLAG_OUTSTANDING;
+        if self.admitted_progress.is_some() {
+            flags |= REPORT_FLAG_ADMITTED_PROGRESS;
+        }
+        if self.completed_progress.is_some() {
+            flags |= REPORT_FLAG_COMPLETED_PROGRESS;
+        }
+        encoded[11] = flags;
+        // Bytes 12..16 and 120..128 remain reserved zero.
+        encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
+        encoded[24..28].copy_from_slice(&self.admitted_blocks.to_le_bytes());
+        encoded[28..32].copy_from_slice(&self.completed_blocks.to_le_bytes());
+        encoded[32..36].copy_from_slice(&self.total_blocks.to_le_bytes());
+        encoded[36..40].copy_from_slice(&self.queue_depth.to_le_bytes());
+        if let Some((end_tick, digest)) = self.admitted_progress {
+            encoded[40..48].copy_from_slice(&end_tick.0.to_le_bytes());
+            encoded[48..80].copy_from_slice(&digest.0);
+        }
+        if let Some((end_tick, digest)) = self.completed_progress {
+            encoded[80..88].copy_from_slice(&end_tick.0.to_le_bytes());
+            encoded[88..120].copy_from_slice(&digest.0);
+        }
+        Ok(encoded)
+    }
+
+    /// Decodes and validates one exact report from the real-time owner.
+    pub fn decode(encoded: &[u8]) -> Result<Self, RealtimeJobReportWireError> {
+        if encoded.len() != REALTIME_JOB_REPORT_WIRE_BYTES {
+            return Err(RealtimeJobReportWireError::WireLength);
+        }
+        if encoded[0..8] != REALTIME_JOB_REPORT_MAGIC {
+            return Err(RealtimeJobReportWireError::Magic);
+        }
+        if read_u16(encoded, 8) != REALTIME_JOB_REPORT_VERSION {
+            return Err(RealtimeJobReportWireError::Version);
+        }
+        let flags = encoded[11];
+        if flags & !REPORT_KNOWN_FLAGS != 0
+            || encoded[12..16].iter().any(|byte| *byte != 0)
+            || encoded[120..128].iter().any(|byte| *byte != 0)
+        {
+            return Err(RealtimeJobReportWireError::Reserved);
+        }
+        let state =
+            RealtimeJobState::from_wire(encoded[10]).ok_or(RealtimeJobReportWireError::State)?;
+        let mut admitted_digest = [0_u8; 32];
+        admitted_digest.copy_from_slice(&encoded[48..80]);
+        let mut completed_digest = [0_u8; 32];
+        completed_digest.copy_from_slice(&encoded[88..120]);
+        let admitted_progress = if flags & REPORT_FLAG_ADMITTED_PROGRESS != 0 {
+            Some((StreamTick(read_u64(encoded, 40)), Digest(admitted_digest)))
+        } else {
+            if encoded[40..80].iter().any(|byte| *byte != 0) {
+                return Err(RealtimeJobReportWireError::Reserved);
+            }
+            None
+        };
+        let completed_progress = if flags & REPORT_FLAG_COMPLETED_PROGRESS != 0 {
+            Some((StreamTick(read_u64(encoded, 80)), Digest(completed_digest)))
+        } else {
+            if encoded[80..120].iter().any(|byte| *byte != 0) {
+                return Err(RealtimeJobReportWireError::Reserved);
+            }
+            None
+        };
+        let report = Self {
+            prepare_id: read_u64(encoded, 16),
+            state,
+            admitted_blocks: read_u32(encoded, 24),
+            completed_blocks: read_u32(encoded, 28),
+            total_blocks: read_u32(encoded, 32),
+            queue_depth: read_u32(encoded, 36),
+            admitted_progress,
+            completed_progress,
+            outstanding: flags & REPORT_FLAG_OUTSTANDING != 0,
+        };
+        report.validate()?;
+        if report.encode()? != encoded {
+            return Err(RealtimeJobReportWireError::Noncanonical);
+        }
+        Ok(report)
+    }
+
+    fn validate(self) -> Result<(), RealtimeJobReportWireError> {
+        if self.prepare_id == 0 {
+            return Err(RealtimeJobReportWireError::PrepareId);
+        }
+        if self.total_blocks == 0
+            || self.completed_blocks > self.admitted_blocks
+            || self.admitted_blocks > self.total_blocks
+        {
+            return Err(RealtimeJobReportWireError::Counts);
+        }
+        if self.outstanding != (self.state == RealtimeJobState::Admitted)
+            || self.admitted_progress.is_some() != self.outstanding
+            || self.completed_progress.is_some() != (self.completed_blocks != 0)
+        {
+            return Err(RealtimeJobReportWireError::Progress);
+        }
+        if let Some((_, digest)) = self.admitted_progress
+            && digest.is_zero()
+        {
+            return Err(RealtimeJobReportWireError::Progress);
+        }
+        if let Some((_, digest)) = self.completed_progress
+            && digest.is_zero()
+        {
+            return Err(RealtimeJobReportWireError::Progress);
+        }
+        match self.state {
+            RealtimeJobState::Prepared
+                if self.admitted_blocks != self.completed_blocks
+                    || self.admitted_progress.is_some() =>
+            {
+                Err(RealtimeJobReportWireError::Progress)
+            }
+            RealtimeJobState::Admitted
+                if self.admitted_blocks != self.completed_blocks.saturating_add(1) =>
+            {
+                Err(RealtimeJobReportWireError::Progress)
+            }
+            RealtimeJobState::Complete
+                if self.completed_blocks != self.total_blocks || self.outstanding =>
+            {
+                Err(RealtimeJobReportWireError::Progress)
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Fixed real-time report decoding or consistency failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RealtimeJobReportWireError {
+    /// Payload length was not exactly [`REALTIME_JOB_REPORT_WIRE_BYTES`].
+    WireLength,
+    /// Report magic did not match.
+    Magic,
+    /// Report version was unsupported.
+    Version,
+    /// State byte was unknown.
+    State,
+    /// Flags, absent fields, or reserved bytes were nonzero.
+    Reserved,
+    /// Prepare correlation was zero.
+    PrepareId,
+    /// Block counts were empty or out of order.
+    Counts,
+    /// State, ownership, and progress facts disagreed.
+    Progress,
+    /// Queue depth did not fit its wire field.
+    QueueDepth,
+    /// Valid fields used a noncanonical representation.
+    Noncanonical,
+}
+
+/// One combined service/realtime snapshot returned by `JobStatus`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct JobStatusReport {
+    /// Current core-0 actor facts, absent when no job is installed.
+    pub service: Option<ServiceJobReport>,
+    /// Latest core-1 facts, absent until a correlated report arrives.
+    pub realtime: Option<RealtimeJobReport>,
+}
+
+impl JobStatusReport {
+    /// Encodes one fixed status body with strict zero-filled absent sections.
+    pub fn encode(self) -> Result<[u8; JOB_STATUS_WIRE_BYTES], JobStatusReportWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; JOB_STATUS_WIRE_BYTES];
+        encoded[0..8].copy_from_slice(&JOB_STATUS_MAGIC);
+        encoded[8..10].copy_from_slice(&JOB_STATUS_VERSION.to_le_bytes());
+        let mut flags = 0_u8;
+        if let Some(service) = self.service {
+            flags |= JOB_STATUS_FLAG_SERVICE;
+            encoded[16..112].copy_from_slice(
+                &service
+                    .encode()
+                    .map_err(JobStatusReportWireError::Service)?,
+            );
+        }
+        if let Some(realtime) = self.realtime {
+            flags |= JOB_STATUS_FLAG_REALTIME;
+            encoded[112..240].copy_from_slice(
+                &realtime
+                    .encode()
+                    .map_err(JobStatusReportWireError::Realtime)?,
+            );
+        }
+        encoded[10] = flags;
+        // Bytes 11..16 remain reserved zero.
+        Ok(encoded)
+    }
+
+    /// Decodes one exact combined status body.
+    pub fn decode(encoded: &[u8]) -> Result<Self, JobStatusReportWireError> {
+        if encoded.len() != JOB_STATUS_WIRE_BYTES {
+            return Err(JobStatusReportWireError::WireLength);
+        }
+        if encoded[0..8] != JOB_STATUS_MAGIC {
+            return Err(JobStatusReportWireError::Magic);
+        }
+        if read_u16(encoded, 8) != JOB_STATUS_VERSION {
+            return Err(JobStatusReportWireError::Version);
+        }
+        let flags = encoded[10];
+        if flags & !JOB_STATUS_KNOWN_FLAGS != 0 || encoded[11..16].iter().any(|byte| *byte != 0) {
+            return Err(JobStatusReportWireError::Reserved);
+        }
+        let service = if flags & JOB_STATUS_FLAG_SERVICE != 0 {
+            Some(
+                ServiceJobReport::decode(&encoded[16..112])
+                    .map_err(JobStatusReportWireError::Service)?,
+            )
+        } else {
+            if encoded[16..112].iter().any(|byte| *byte != 0) {
+                return Err(JobStatusReportWireError::Reserved);
+            }
+            None
+        };
+        let realtime = if flags & JOB_STATUS_FLAG_REALTIME != 0 {
+            Some(
+                RealtimeJobReport::decode(&encoded[112..240])
+                    .map_err(JobStatusReportWireError::Realtime)?,
+            )
+        } else {
+            if encoded[112..240].iter().any(|byte| *byte != 0) {
+                return Err(JobStatusReportWireError::Reserved);
+            }
+            None
+        };
+        let report = Self { service, realtime };
+        report.validate()?;
+        if report.encode()? != encoded {
+            return Err(JobStatusReportWireError::Noncanonical);
+        }
+        Ok(report)
+    }
+
+    fn validate(self) -> Result<(), JobStatusReportWireError> {
+        if let (Some(service), Some(realtime)) = (self.service, self.realtime)
+            && (service.prepare_id != realtime.prepare_id
+                || service.total_blocks != realtime.total_blocks)
+        {
+            return Err(JobStatusReportWireError::Correlation);
+        }
+        if let (Some(service), Some(realtime)) = (self.service, self.realtime)
+            && service.state == ServiceJobState::Complete
+            && realtime.state == RealtimeJobState::Complete
+            && service.final_progress != realtime.completed_progress
+        {
+            return Err(JobStatusReportWireError::TerminalDivergence);
+        }
+        Ok(())
+    }
+}
+
+/// Combined `JobStatus` body rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JobStatusReportWireError {
+    /// Body length was not exact.
+    WireLength,
+    /// Status magic did not match.
+    Magic,
+    /// Status version was unsupported.
+    Version,
+    /// Flags, absent sections, or reserved bytes were nonzero.
+    Reserved,
+    /// Embedded core-0 report failed validation.
+    Service(ServiceJobReportWireError),
+    /// Embedded core-1 report failed validation.
+    Realtime(RealtimeJobReportWireError),
+    /// Core reports named different preparations or partition lengths.
+    Correlation,
+    /// Independently validated terminal tick/digest facts diverged.
+    TerminalDivergence,
+    /// Valid fields used a noncanonical representation.
+    Noncanonical,
 }
 
 /// Cached-job lifecycle failure retaining a concrete media-device error.
@@ -714,6 +1572,32 @@ pub enum JobError<E> {
     State,
     /// An admitted block did not match the outstanding private token.
     AdmissionToken,
+}
+
+const fn read_u16(encoded: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([encoded[offset], encoded[offset + 1]])
+}
+
+const fn read_u32(encoded: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        encoded[offset],
+        encoded[offset + 1],
+        encoded[offset + 2],
+        encoded[offset + 3],
+    ])
+}
+
+const fn read_u64(encoded: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        encoded[offset],
+        encoded[offset + 1],
+        encoded[offset + 2],
+        encoded[offset + 3],
+        encoded[offset + 4],
+        encoded[offset + 5],
+        encoded[offset + 6],
+        encoded[offset + 7],
+    ])
 }
 
 #[cfg(test)]
@@ -806,6 +1690,117 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_and_core_command_have_one_canonical_wire_image() {
+        let descriptor = descriptor(2);
+        let encoded = descriptor.encode::<3>().unwrap();
+        assert_eq!(encoded.len(), JOB_DESCRIPTOR_WIRE_BYTES);
+        assert_eq!(JobDescriptor::decode::<3>(&encoded), Ok(descriptor));
+        assert_eq!(
+            CoreJobCommand::decode::<3>(
+                &CoreJobCommand::Prepare(descriptor).encode::<3>().unwrap()
+            ),
+            Ok(CoreJobCommand::Prepare(descriptor))
+        );
+        assert_eq!(
+            CoreJobCommand::decode::<3>(
+                &CoreJobCommand::Cancel { prepare_id: 7 }
+                    .encode::<3>()
+                    .unwrap()
+            ),
+            Ok(CoreJobCommand::Cancel { prepare_id: 7 })
+        );
+        let cancel = JobCancelRequest { prepare_id: 7 };
+        assert_eq!(
+            JobCancelRequest::decode(&cancel.encode().unwrap()),
+            Ok(cancel)
+        );
+
+        let mut corrupt = encoded;
+        corrupt[100] ^= 1;
+        assert_eq!(
+            JobDescriptor::decode::<3>(&corrupt),
+            Err(JobDescriptorWireError::Integrity)
+        );
+        let mut nonzero_reserved = CoreJobCommand::Cancel { prepare_id: 7 }
+            .encode::<3>()
+            .unwrap();
+        nonzero_reserved[200] = 1;
+        assert_eq!(
+            CoreJobCommand::decode::<3>(&nonzero_reserved),
+            Err(CoreJobCommandWireError::Reserved)
+        );
+    }
+
+    #[test]
+    fn combined_status_is_fixed_canonical_and_correlated() {
+        let progress = MotionStreamProgress {
+            accepted_blocks: 2,
+            expected_blocks: 2,
+            end_tick: StreamTick(200),
+            position: [2, -2, 0],
+            block_digest: Digest([0x44; 32]),
+            complete: true,
+        };
+        let service = ServiceJobReport::from_status(
+            ServiceJobStatus {
+                prepare_id: 7,
+                state: ServiceJobState::Complete,
+                validated_blocks: 2,
+                sent_blocks: 2,
+                total_blocks: 2,
+                storage_chunks_read: 1,
+                final_progress: Some(progress),
+            },
+            8,
+            0,
+        )
+        .unwrap();
+        let realtime = RealtimeJobReport {
+            prepare_id: 7,
+            state: RealtimeJobState::Complete,
+            admitted_blocks: 2,
+            completed_blocks: 2,
+            total_blocks: 2,
+            queue_depth: 0,
+            admitted_progress: None,
+            completed_progress: Some((StreamTick(200), Digest([0x44; 32]))),
+            outstanding: false,
+        };
+        let status = JobStatusReport {
+            service: Some(service),
+            realtime: Some(realtime),
+        };
+        let encoded = status.encode().unwrap();
+        assert_eq!(encoded.len(), JOB_STATUS_WIRE_BYTES);
+        assert_eq!(JobStatusReport::decode(&encoded), Ok(status));
+        assert_eq!(
+            JobStatusReport::decode(&JobStatusReport::default().encode().unwrap()),
+            Ok(JobStatusReport::default())
+        );
+
+        let wrong = JobStatusReport {
+            realtime: Some(RealtimeJobReport {
+                prepare_id: 8,
+                ..realtime
+            }),
+            ..status
+        };
+        assert_eq!(wrong.encode(), Err(JobStatusReportWireError::Correlation));
+
+        let divergent = JobStatusReport {
+            realtime: Some(RealtimeJobReport {
+                completed_progress: Some((StreamTick(200), Digest([0x55; 32]))),
+                ..realtime
+            }),
+            ..status
+        };
+        assert_eq!(
+            divergent.encode(),
+            Err(JobStatusReportWireError::TerminalDivergence)
+        );
+    }
+
+    #[test]
     fn realtime_admission_owns_one_block_and_rejects_wrong_order() {
         type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
         let boundary = Box::leak(Box::new(Boundary::new()));
@@ -822,6 +1817,13 @@ mod tests {
         };
         assert_eq!(admitted.header().sequence, 0);
         assert_eq!(admitted.segments().unwrap().len(), 1);
+        let report = RealtimeJobReport::from_status(job.status(), realtime.work_depth()).unwrap();
+        assert_eq!(report.state, RealtimeJobState::Admitted);
+        assert_eq!(report.admitted_progress.unwrap().0, StreamTick(100));
+        assert_eq!(
+            RealtimeJobReport::decode(&report.encode().unwrap()),
+            Ok(report)
+        );
         assert!(matches!(
             job.poll(&mut realtime).unwrap(),
             RealtimePoll::Outstanding
@@ -838,6 +1840,13 @@ mod tests {
         assert_eq!(status.state, RealtimeJobState::Complete);
         assert_eq!(status.completed_blocks, 2);
         assert_eq!(status.completed_progress.unwrap().position, [2, -2, 0]);
+        let report = RealtimeJobReport::from_status(status, realtime.work_depth()).unwrap();
+        assert_eq!(report.state, RealtimeJobState::Complete);
+        assert_eq!(report.completed_progress.unwrap().0, StreamTick(200));
+        assert_eq!(
+            RealtimeJobReport::decode(&report.encode().unwrap()),
+            Ok(report)
+        );
     }
 
     #[test]

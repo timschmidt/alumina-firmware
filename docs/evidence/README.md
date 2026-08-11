@@ -44,3 +44,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-JOB-PREFETCH-LIFECYCLE.md`](M3-JOB-PREFETCH-LIFECYCLE.md) — bounded
   provisioned-cache prefetch, backpressure retention, cancellation, and
   independent core-1 admission actors.
+- [`M3-FIRMWARE-JOB-PREFETCH.md`](M3-FIRMWARE-JOB-PREFETCH.md) — authenticated
+  canonical job control, live core-0/core-1 actor ownership, fail-closed first
+  block retention, storage-mutation exclusion, and linked target evidence.

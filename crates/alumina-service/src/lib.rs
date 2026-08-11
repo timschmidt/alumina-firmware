@@ -138,6 +138,21 @@ impl ServiceResponse {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes[..usize::from(self.len)]
     }
+
+    /// Builds a bounded native response for one already decoded request.
+    pub fn native(
+        request: NativeRequest<'_>,
+        now: DeviceCycle,
+        status: StatusCode,
+        body: &[u8],
+    ) -> Result<Self, NativeResponseError> {
+        native_response(request.frame, request.message, now, status, body)
+    }
+
+    /// Stable malformed-frame response shared by all native service families.
+    pub fn invalid_native() -> Self {
+        invalid_native_frame()
+    }
 }
 
 impl core::fmt::Debug for ServiceResponse {
@@ -156,6 +171,70 @@ impl core::fmt::Debug for ServiceResponse {
 pub enum ServiceAdmissionError {
     /// Body was empty or exceeded the reviewed fixed request buffer.
     RequestTooLarge,
+}
+
+/// One exact request frame split into universal, operation, and typed body parts.
+#[derive(Clone, Copy, Debug)]
+pub struct NativeRequest<'a> {
+    /// Validated universal frame header.
+    pub frame: FrameHeader,
+    /// Validated operation header bound to `frame.kind`.
+    pub message: MessageHeader,
+    /// Exact operation-specific bytes.
+    pub body: &'a [u8],
+}
+
+impl<'a> NativeRequest<'a> {
+    /// Decodes one complete bounded request without interpreting its body.
+    pub fn decode(bytes: &'a [u8]) -> Result<Self, NativeRequestError> {
+        let frame_bytes = bytes
+            .get(..FrameHeader::WIRE_LEN)
+            .ok_or(NativeRequestError::Frame)?;
+        let frame = FrameHeader::decode(
+            frame_bytes,
+            u32::try_from(MAX_NATIVE_PAYLOAD_BYTES).expect("native payload bound fits u32"),
+        )
+        .map_err(|_| NativeRequestError::Frame)?;
+        let payload_len =
+            usize::try_from(frame.payload_len).map_err(|_| NativeRequestError::Frame)?;
+        if FrameHeader::WIRE_LEN.checked_add(payload_len) != Some(bytes.len()) {
+            return Err(NativeRequestError::Frame);
+        }
+        let message_start = FrameHeader::WIRE_LEN;
+        let message_end = message_start + MessageHeader::WIRE_LEN;
+        let message_bytes = bytes
+            .get(message_start..message_end)
+            .ok_or(NativeRequestError::Message)?;
+        let message =
+            MessageHeader::decode_and_validate(message_bytes, frame.kind, frame.payload_len)
+                .map_err(|_| NativeRequestError::Message)?;
+        if message.direction != MessageDirection::Request {
+            return Err(NativeRequestError::Direction);
+        }
+        Ok(Self {
+            frame,
+            message,
+            body: &bytes[message_end..],
+        })
+    }
+}
+
+/// Universal native request rejection before family-specific body decoding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeRequestError {
+    /// Universal frame prefix, length, or outer framing was invalid.
+    Frame,
+    /// Operation prefix or family binding was invalid.
+    Message,
+    /// Only request-direction messages enter service dispatch.
+    Direction,
+}
+
+/// A native response exceeded the reviewed fixed response buffer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeResponseError {
+    /// Frame, operation prefix, and typed body did not fit.
+    TooLarge,
 }
 
 /// Stable backend availability returned by both JSON and native status routes.
@@ -565,6 +644,7 @@ const fn storage_error_status(error: StorageError) -> StatusCode {
 /// Storage admission/safety state intentionally owned by the service-core task.
 pub struct StorageServiceState {
     safety: SafetyObserver,
+    service_job_active: bool,
 }
 
 impl StorageServiceState {
@@ -578,7 +658,13 @@ impl StorageServiceState {
                 expected_contract: safe_output_contract,
                 maximum_age_cycles: maximum_safety_age_cycles,
             }),
+            service_job_active: false,
         }
+    }
+
+    /// Applies the immediate core-0 cache-ownership veto before RT telemetry catches up.
+    pub fn set_service_job_active(&mut self, active: bool) {
+        self.service_job_active = active;
     }
 
     /// Dispatches one already authenticated request on the sole service owner.
@@ -622,37 +708,15 @@ impl StorageServiceState {
         bytes: &[u8],
         now: DeviceCycle,
     ) -> ServiceResponse {
-        let Some(frame_bytes) = bytes.get(..FrameHeader::WIRE_LEN) else {
+        let Ok(request) = NativeRequest::decode(bytes) else {
             return invalid_native_frame();
         };
-        let Ok(frame) = FrameHeader::decode(
-            frame_bytes,
-            u32::try_from(MAX_NATIVE_PAYLOAD_BYTES).expect("native payload bound fits u32"),
-        ) else {
-            return invalid_native_frame();
-        };
-        let Ok(payload_len) = usize::try_from(frame.payload_len) else {
-            return invalid_native_frame();
-        };
-        if frame.kind != FrameKind::Storage
-            || FrameHeader::WIRE_LEN.checked_add(payload_len) != Some(bytes.len())
-        {
+        let frame = request.frame;
+        let message = request.message;
+        let body = request.body;
+        if frame.kind != FrameKind::Storage {
             return invalid_native_frame();
         }
-        let message_start = FrameHeader::WIRE_LEN;
-        let message_end = message_start + MessageHeader::WIRE_LEN;
-        let Some(message_bytes) = bytes.get(message_start..message_end) else {
-            return invalid_native_frame();
-        };
-        let Ok(message) =
-            MessageHeader::decode_and_validate(message_bytes, frame.kind, frame.payload_len)
-        else {
-            return invalid_native_frame();
-        };
-        if message.direction != MessageDirection::Request {
-            return invalid_native_frame();
-        }
-        let body = &bytes[message_end..];
         let mut response_body = [0_u8; STORAGE_BACKEND_STATUS_WIRE_BYTES];
         let (status, response_len) = match message.operation {
             Operation::StorageStatus if body.is_empty() => {
@@ -713,6 +777,7 @@ impl StorageServiceState {
             _ => (StatusCode::Unsupported, 0),
         };
         native_response(frame, message, now, status, &response_body[..response_len])
+            .expect("storage response is bounded by the fixed response body")
     }
 
     fn human_status<B: StorageBackend>(&self, backend: &B, now: DeviceCycle) -> ServiceResponse {
@@ -773,7 +838,7 @@ impl StorageServiceState {
         let safe_for_mutation = matches!(safety.state, SafetyState::Safe | SafetyState::Configured);
         MutationContext {
             armed_or_energized: !safe_for_mutation,
-            realtime_job_active: safety.realtime_job_active,
+            realtime_job_active: safety.realtime_job_active || self.service_job_active,
         }
     }
 }
@@ -815,11 +880,18 @@ fn native_response(
     now: DeviceCycle,
     status: StatusCode,
     body: &[u8],
-) -> ServiceResponse {
+) -> Result<ServiceResponse, NativeResponseError> {
+    let response_len = FrameHeader::WIRE_LEN
+        .checked_add(MessageHeader::WIRE_LEN)
+        .and_then(|prefix| prefix.checked_add(body.len()))
+        .ok_or(NativeResponseError::TooLarge)?;
+    if response_len > MAX_SERVICE_RESPONSE_BYTES {
+        return Err(NativeResponseError::TooLarge);
+    }
     let payload_len = u32::try_from(MessageHeader::WIRE_LEN + body.len())
-        .expect("bounded response payload fits u32");
+        .map_err(|_| NativeResponseError::TooLarge)?;
     let frame = FrameHeader::new(
-        FrameKind::Storage,
+        request_frame.kind,
         payload_len,
         request_frame.sequence,
         now,
@@ -829,15 +901,18 @@ fn native_response(
         request_message.operation,
         request_message.correlation_id,
         status,
-        u32::try_from(body.len()).expect("bounded response body fits u32"),
+        u32::try_from(body.len()).map_err(|_| NativeResponseError::TooLarge)?,
     );
     let mut bytes = [0_u8; MAX_SERVICE_RESPONSE_BYTES];
-    let response_len = FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN + body.len();
     bytes[..FrameHeader::WIRE_LEN].copy_from_slice(&frame.encode());
     bytes[FrameHeader::WIRE_LEN..FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN]
         .copy_from_slice(&message.encode());
     bytes[FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN..response_len].copy_from_slice(body);
-    ServiceResponse::from_bytes(200, ResponseMedia::NativeFrame, &bytes[..response_len])
+    Ok(ServiceResponse::from_bytes(
+        200,
+        ResponseMedia::NativeFrame,
+        &bytes[..response_len],
+    ))
 }
 
 #[cfg(test)]
@@ -907,7 +982,7 @@ mod tests {
     fn request(operation: Operation, body: &[u8]) -> ServiceRequest {
         let payload_len = MessageHeader::WIRE_LEN + body.len();
         let frame = FrameHeader::new(
-            FrameKind::Storage,
+            operation.frame_kind(),
             u32::try_from(payload_len).unwrap(),
             3,
             DeviceCycle(5),
@@ -1280,6 +1355,25 @@ mod tests {
     }
 
     #[test]
+    fn universal_native_envelope_preserves_nonstorage_family_and_correlation() {
+        let request = request(Operation::JobStatus, &[]);
+        let native = NativeRequest::decode(request.bytes()).unwrap();
+        assert_eq!(native.frame.kind, FrameKind::Job);
+        assert_eq!(native.message.operation, Operation::JobStatus);
+        assert!(native.body.is_empty());
+        let response = ServiceResponse::native(
+            native,
+            DeviceCycle(17),
+            StatusCode::Unsupported,
+            b"job-status",
+        )
+        .unwrap();
+        let (status, body) = response_parts(&response);
+        assert_eq!(status, StatusCode::Unsupported);
+        assert_eq!(body, b"job-status");
+    }
+
+    #[test]
     fn backend_mutation_remains_fail_closed_until_safe_state_is_observed() {
         let mut service = service();
         let mut backend = ReadyBackend::new();
@@ -1313,6 +1407,18 @@ mod tests {
         observe(&mut busy_service, SafetyState::Safe, 1, 10, true);
         let response = block_on(busy_service.dispatch(&mut busy_backend, &begin, DeviceCycle(10)));
         assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+
+        let mut local_service = service();
+        let mut local_backend = ReadyBackend::new();
+        observe(&mut local_service, SafetyState::Safe, 1, 10, false);
+        local_service.set_service_job_active(true);
+        let response =
+            block_on(local_service.dispatch(&mut local_backend, &begin, DeviceCycle(10)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+        local_service.set_service_job_active(false);
+        let response =
+            block_on(local_service.dispatch(&mut local_backend, &begin, DeviceCycle(10)));
+        assert_eq!(response_status(&response), StatusCode::Ok);
     }
 
     #[test]

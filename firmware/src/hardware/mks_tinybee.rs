@@ -25,6 +25,8 @@ use crate::storage::EspSdSpiBus;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
 pub type StorageBackend = ProvisionedCache<StorageCard>;
+/// Initial canonical motion-stream width for the three exposed XYZ axes.
+pub const JOB_AXES: usize = 3;
 
 /// Semantic identity of GPIO2 high-impedance plus the exact 24-bit static image.
 ///

@@ -119,6 +119,18 @@ is deliberately below the execution boundary: storage chunks may split any
 machine-IR field and must be incrementally decoded on core 0 into separately
 owned, fixed execution envelopes before a credit is transferred to core 1.
 
+The firmware now implements that pre-commit boundary behind the authenticated
+`POST /api/v1/control` route. `JobPrepare` opens an exact published partition and
+installs matching service/core-1 actors; the service actor reads at most one
+verified chunk per pass, and the real-time actor independently validates and
+retains one owned block. `JobStatus` reports both domains, queue credits/depth,
+and exact tick/digest progress; `JobCancel` invalidates the preparation and
+drains queued ownership. The admitted first block is intentionally left
+outstanding. No acknowledgement, epoch conversion, scheduler, or output path is
+present yet. The two first board packages also retain zero capability identities,
+so target preparation remains fail-closed until canonical capabilities and the
+active configuration can both be verified.
+
 ## Deterministic prepare/commit start
 
 The UI orchestrates a bounded two-phase procedure:

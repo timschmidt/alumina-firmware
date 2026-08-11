@@ -21,6 +21,10 @@ use crate::storage::EspSdSpiBus;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
 pub type StorageBackend = ProvisionedCache<StorageCard>;
+/// Protocol-only width for the sole RT-owned vibration output.
+///
+/// T-Deck Pro remains non-armable and no machine block drives this output.
+pub const JOB_AXES: usize = 1;
 
 /// Semantic identity of the current RT hazard contract: GPIO2 held high-Z.
 pub const SAFE_OUTPUT_CONTRACT: SafetyContractId =

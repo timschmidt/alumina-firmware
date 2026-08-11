@@ -6,6 +6,11 @@ Status: portable state-machine and target-compile evidence. This does not claim
 an authenticated firmware job endpoint, distributed commit, motion output, or
 physical hardware qualification.
 
+This records the portable lifecycle milestone at its commit. The later
+[`M3-FIRMWARE-JOB-PREFETCH.md`](M3-FIRMWARE-JOB-PREFETCH.md) instantiates these
+actors in both target images and supersedes the claim boundary and image/test
+totals below; deterministic commit and output remain closed.
+
 ## Implemented boundary
 
 `alumina-job` now joins the immutable publication reader, canonical machine

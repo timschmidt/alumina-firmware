@@ -12,6 +12,7 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 
 mod hardware;
+mod job;
 mod network;
 pub mod service;
 mod storage;
@@ -22,8 +23,9 @@ use alumina_runtime::{
     DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
 };
 use alumina_safety::{
-    Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED,
-    SafetyMachine, SafetyObservationPolicy, SafetyObserver, SafetySnapshot, SafetyState,
+    Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE,
+    SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetyMachine, SafetyObservationPolicy, SafetyObserver,
+    SafetySnapshot, SafetyState,
 };
 use defmt::{error, info};
 use embassy_executor::Spawner;
@@ -37,6 +39,7 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use hardware::selected;
+use job::{JobService, RealtimeJobService};
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
@@ -191,33 +194,34 @@ async fn service_task(
         SAFETY_OBSERVATION_MAX_AGE_CYCLES,
     );
     let mut storage_backend = resources.initialize_storage().await;
-    let mut sequence = 0_u32;
+    let mut jobs = JobService::new();
     let mut last_fault_generation = 0_u16;
     loop {
-        sequence = sequence.wrapping_add(1);
-        if let Ok(frame) = IntercoreFrame::new(
-            FrameKind::Command,
-            sequence,
-            DeviceCycle(Instant::now().as_ticks()),
-            Digest::ZERO,
-            &[0],
-        ) {
-            let _ = endpoint.try_send_command(frame);
-        }
-
         while let Ok(frame) = endpoint.try_receive_telemetry() {
             let now = DeviceCycle(Instant::now().as_ticks());
-            let valid = frame.validate(FrameKind::Telemetry).is_ok()
-                && frame.payload().is_ok_and(|payload| {
-                    storage
-                        .observe_safety_snapshot(
-                            frame.header().sequence,
-                            frame.header().cycle,
-                            now,
-                            payload,
-                        )
-                        .is_ok()
-                });
+            let valid = match frame.header().kind {
+                FrameKind::Telemetry => {
+                    frame.validate(FrameKind::Telemetry).is_ok()
+                        && frame.payload().is_ok_and(|payload| {
+                            storage
+                                .observe_safety_snapshot(
+                                    frame.header().sequence,
+                                    frame.header().cycle,
+                                    now,
+                                    payload,
+                                )
+                                .is_ok()
+                        })
+                }
+                FrameKind::Job => {
+                    frame.validate(FrameKind::Job).is_ok()
+                        && frame.payload().is_ok_and(|payload| {
+                            alumina_job::RealtimeJobReport::decode(payload)
+                                .is_ok_and(|report| jobs.observe_realtime(report).is_ok())
+                        })
+                }
+                _ => false,
+            };
             if !valid {
                 storage.invalidate_safety_observation();
                 endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
@@ -230,24 +234,37 @@ async fn service_task(
         }
 
         while let Some(request) = service_bridge.try_receive() {
-            let response = storage
-                .dispatch(
-                    &mut storage_backend,
-                    request.request(),
-                    DeviceCycle(Instant::now().as_ticks()),
-                )
-                .await;
+            storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
+            let now = DeviceCycle(Instant::now().as_ticks());
+            let response = if JobService::handles(request.request()) {
+                jobs.dispatch(&mut storage_backend, &mut endpoint, request.request(), now)
+                    .await
+            } else {
+                storage
+                    .dispatch(&mut storage_backend, request.request(), now)
+                    .await
+            };
             service_bridge.respond(&request, response);
+        }
+
+        if jobs
+            .prefetch_step(&mut storage_backend, &mut endpoint)
+            .await
+            .is_err()
+        {
+            endpoint.publish_urgent(UrgentKind::EmergencyStop, 4);
+            error!("cached job prefetch faulted closed");
         }
 
         let _keep_service_state_core_local = (
             &resources,
             &storage,
             &storage_backend,
+            &jobs,
             network.supervisor(),
             network.credential_source(),
         );
-        Timer::after(Duration::from_millis(100)).await;
+        Timer::after(Duration::from_millis(10)).await;
     }
 }
 
@@ -288,6 +305,8 @@ async fn realtime_task(
     let mut transition_generation = 1_u32;
     let mut divider = 0_u8;
     let mut urgent_generation = 0_u16;
+    let mut jobs = RealtimeJobService::new();
+    let mut last_job_active = false;
 
     publish_safety_snapshot(
         &mut endpoint,
@@ -295,7 +314,7 @@ async fn realtime_task(
         Instant::now(),
         safety,
         transition_generation,
-        true,
+        SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED,
         0,
     );
 
@@ -321,7 +340,14 @@ async fn realtime_task(
             }
         }
         while let Ok(command) = endpoint.try_receive_command() {
-            if command.validate(FrameKind::Command).is_err() {
+            let valid = match command.header().kind {
+                FrameKind::Job => jobs
+                    .apply_command(&mut endpoint, &command, DeviceCycle(observed.as_ticks()))
+                    .is_ok(),
+                FrameKind::Command => command.validate(FrameKind::Command).is_ok(),
+                _ => false,
+            };
+            if !valid {
                 let _ = safety.apply(
                     SafetyEvent::Fault(FaultCode::Identity),
                     Conditions::default(),
@@ -329,6 +355,32 @@ async fn realtime_task(
                 transition_generation = next_nonzero(transition_generation);
                 endpoint.publish_fault(3, 0);
             }
+        }
+        if jobs
+            .preadmit(&mut endpoint, DeviceCycle(observed.as_ticks()))
+            .is_err()
+        {
+            let _ = safety.apply(
+                SafetyEvent::Fault(FaultCode::Identity),
+                Conditions::default(),
+            );
+            transition_generation = next_nonzero(transition_generation);
+            endpoint.publish_fault(4, 0);
+        }
+
+        let job_active = jobs.active();
+        if job_active != last_job_active {
+            last_job_active = job_active;
+            transition_generation = next_nonzero(transition_generation);
+            publish_safety_snapshot(
+                &mut endpoint,
+                &mut telemetry_sequence,
+                observed,
+                safety,
+                transition_generation,
+                safety_snapshot_flags(true, job_active),
+                probe.maximum_lateness_cycles(),
+            );
         }
 
         divider = divider.wrapping_add(1);
@@ -340,9 +392,12 @@ async fn realtime_task(
                 observed,
                 safety,
                 transition_generation,
-                true,
+                safety_snapshot_flags(true, job_active),
                 probe.maximum_lateness_cycles(),
             );
+            if jobs.has_job() {
+                let _ = jobs.publish_report(&mut endpoint, DeviceCycle(observed.as_ticks()));
+            }
         }
 
         let _keep_tokens_core_local = &resources;
@@ -355,14 +410,9 @@ fn publish_safety_snapshot(
     observed: Instant,
     safety: SafetyMachine,
     transition_generation: u32,
-    safe_outputs_established: bool,
+    flags: u8,
     maximum_lateness_cycles: u64,
 ) {
-    let flags = if safe_outputs_established {
-        SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED
-    } else {
-        0
-    };
     let snapshot = SafetySnapshot {
         state: safety.state(),
         fault: safety.fault(),
@@ -399,7 +449,7 @@ async fn hold_safe_output_fault(endpoint: &mut DefaultRealtimeEndpoint, detail: 
     let mut sequence = 0_u32;
     endpoint.publish_fault(FaultCode::SafeOutput.wire_value(), detail);
     loop {
-        publish_safety_snapshot(endpoint, &mut sequence, Instant::now(), safety, 1, false, 0);
+        publish_safety_snapshot(endpoint, &mut sequence, Instant::now(), safety, 1, 0, 0);
         Timer::after(Duration::from_millis(100)).await;
     }
 }
@@ -407,4 +457,15 @@ async fn hold_safe_output_fault(endpoint: &mut DefaultRealtimeEndpoint, detail: 
 const fn next_nonzero(value: u32) -> u32 {
     let next = value.wrapping_add(1);
     if next == 0 { 1 } else { next }
+}
+
+const fn safety_snapshot_flags(safe_outputs_established: bool, realtime_job_active: bool) -> u8 {
+    let mut flags = 0;
+    if safe_outputs_established {
+        flags |= SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED;
+    }
+    if realtime_job_active {
+        flags |= SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE;
+    }
+    flags
 }
