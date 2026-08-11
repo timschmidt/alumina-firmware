@@ -17,18 +17,21 @@ auxiliaries, licensed-photo overlays, and explicit HIL promotion gates. There ar
 no deployed clients and no compatibility requirement: the old Alumina firmware
 and interface are functional references, not APIs to preserve.
 
-The coordinated interface now extends its greenfield I0 baseline through a
-first exact-CAM checkpoint. Exact and measured source values, canonical
+The coordinated interface now extends its greenfield I0 baseline through exact
+CAM, immutable per-MCU cache packaging, and canonical global-job construction.
+Exact and measured source values, canonical
 firmware values, and lossy display values remain separate Rust domains.
 Hypergraphics renders certified Hypercurve paths and role-preserving regions;
 a disjoint compiler certifies motion chords, exact lengths, machine-step
-rounding, and timer rounding into the real `alumina-machine-ir` schema. Native
-and WASM tests, strict lint, sibling-source and license policy, and the
-compressed production bundle pass. Hyperphysics still had concurrent tracked
-work, so this remains a development checkpoint rather than a reproducible
-compiler release. See the [interface baseline
+rounding, and timer rounding into the real `alumina-machine-ir` schema. It then
+replays canonical blocks, packages real content-addressed storage objects, and
+binds owned participant artifacts into the shared `alumina-job` manifest.
+Native and WASM tests, strict lint, sibling-source and license policy, and the
+compressed production bundle pass. This remains a development checkpoint, not
+a qualified compiler release. See the [interface baseline
 evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
-evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md).
+evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
+evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
@@ -145,8 +148,12 @@ source/compiler/policy/machine identities to every cached partition, resource
 set, evidence envelope, timer span, and terminal lattice state. Allocation-free
 decode recomputes the participant-set digest and proves local/global rational
 durations equal without floats; those identities feed the existing deterministic
-schedule commit directly. Interface-side construction and end-to-end cached
-multi-MCU upload remain the next integration boundary.
+schedule commit directly. The interface now constructs that exact shared object
+from owned, independently replayed local cache artifacts and can give every MCU
+an independent resumable upload transaction without changing content identity.
+Authenticated browser Wi-Fi upload, cache reconciliation, and schedule
+orchestration remain the next integration boundary. See the [global-job
+packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 `alumina-config` defines canonical content-addressed resource bindings and
 reduced exact machine facts, validates them against the immutable board package,

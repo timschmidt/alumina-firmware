@@ -211,10 +211,14 @@ representative source path into exact motion chords, then proves nearest
 machine-step and cumulative timer rounding before emitting the sibling
 `alumina-machine-ir` segment type. It retains a conservative
 source-curve-to-canonical-command-chord bound and keeps physical following error
-outside that claim. Capability-driven policy, full kinematics and lookahead,
-canonical job bytes, browser determinism tests, and SD/multi-MCU integration
-remain open. See the
-[M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md).
+outside that claim. It now independently replays canonical firmware blocks,
+publishes immutable local cache objects, and binds owned participant packages
+into the shared sorted multi-MCU manifest with exact rational duration checks.
+Capability-driven policy, full kinematics and lookahead, production-derived
+identities, browser determinism tests, and authenticated Wi-Fi/cache/schedule
+integration remain open. See the [M5/I1-I3
+evidence](evidence/M5-EXACT-CAM-COMPILER.md) and [M5/M7 packaging
+evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ## I4 — Annotated board explorer, logic analyzer, and oscilloscope
 

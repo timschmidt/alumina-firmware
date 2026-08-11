@@ -280,9 +280,14 @@ and role-preserving region presentation. A separate compiler certifies a
 line/arc/Bezier fixture through motion-specific curve chords, exact path length,
 machine-step and timer lattices, and the real canonical firmware IR. General
 Bezier metric promotion, complete machine constraints/error budgets,
-lookahead/jerk, canonical job packaging, browser transport, and release pinning
-remain open. See the [M5/I0 evidence](evidence/M5-INTERFACE-EXACT-BASELINE.md)
-and [M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md).
+lookahead/jerk, browser transport, and release pinning remain open. Canonical
+packaging now independently replays real firmware blocks, publishes immutable
+per-MCU storage objects, and binds owned partitions into the shared sorted
+global manifest with exact rational duration agreement. Fixture identities are
+still sentinels and automatic global resource partitioning remains open. See the
+[M5/I0 evidence](evidence/M5-INTERFACE-EXACT-BASELINE.md), [M5/I1-I3
+evidence](evidence/M5-EXACT-CAM-COMPILER.md), and [M5/M7 packaging
+evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
 
@@ -422,9 +427,12 @@ one-shot local hardware priming at the abort guard, an explicit `Primed`
 acknowledgement, and fail-closed missed-start behavior. The target binds that
 future horizon and confirmed local start to the exact scheduled step executor
 behind configuration, interlock, deadline, cached-work, package, and
-physical-output qualification gates. The browser-worker implementation,
-observed-edge reconciliation, packet-stress/HIL runs, qualified I²S/DMA backend,
-and physical exit gate remain open; current board packages are non-armable.
+physical-output qualification gates. The interface now produces the canonical
+global manifest and owned participant cache packages consumed by this protocol.
+Authenticated browser upload/cache reconciliation, the browser clock/coordinator
+worker, observed-edge reconciliation, packet-stress/HIL runs, a qualified
+I²S/DMA backend, and the physical exit gate remain open; current board packages
+are non-armable.
 
 Exit gate:
 

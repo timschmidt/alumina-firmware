@@ -96,6 +96,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed
   hardware-output gates.
+- [`M7-GLOBAL-JOB-MANIFEST.md`](M7-GLOBAL-JOB-MANIFEST.md) — browser/native
+  construction of replayed per-MCU cache objects and the shared canonical
+  multi-MCU manifest, with deterministic WASM production-bundle evidence.
 - [`M7-PRESTART-HARDWARE-PRIMING.md`](M7-PRESTART-HARDWARE-PRIMING.md) — schedule
   wire version 2, abort-guard hardware priming, explicit prestart horizon
   acknowledgement, scheduled firmware ownership, and compile-only TinyBee

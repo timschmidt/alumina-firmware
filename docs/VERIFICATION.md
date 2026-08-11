@@ -91,6 +91,12 @@ Golden cases include:
 - intentional integer-width and time-range overflow; and
 - reproducibility across native and WASM host builds where supported.
 
+Global-job cases additionally permute participant discovery order, duplicate
+device/stream identities, vary exact local timer ratios, corrupt named partition
+and evidence digests, split storage chunks across arbitrary byte boundaries,
+and replay every canonical manifest through the independent firmware decoder and
+storage coordinator.
+
 For each accepted job, independently compute or bound:
 
 - maximum geometric deviation from exact path to reduced path;
