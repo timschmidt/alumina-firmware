@@ -685,7 +685,11 @@ the next event; a staging mismatch, reordered token, early latch, or late latch
 is terminal. Logical block completion retains the unique admitted block until
 the ring is empty *and* its exact terminal cycle has been observed, including an
 output-free tail or dwell. Terminal driver disable is scheduled and physically
-acknowledged through the same ring. Only one block is currently planned at a
+acknowledged through the same ring. It is inserted while the final block remains
+owned, before physical draining could consume the hardware lead needed by a
+circular target. If the earliest legal disable would coincide with the prior
+complete image, it moves to the next exact output-grid boundary; two different
+images never claim one physical latch. Only one block is currently planned at a
 time, so cross-block prefill is still an open target integration boundary.
 
 The next serializer layer is now explicit and portable. `PcmShortMonoFrame`
@@ -698,6 +702,17 @@ whole transmit-frame lead. `PcmShortTimeline` expands sparse future image
 updates into a continuous dense stream, repeating the prior complete image in
 every unchanged frame. It never rounds a cycle, emits a partial image, or plans
 an update after its transmit frame has passed.
+
+`PcmShortDmaHorizon` adds portable circular-ring ownership without pretending to
+be a peripheral driver. Construction records an externally safe-prefilled ring.
+The target reports exact whole-frame slots released by DMA; the owner previews
+one dense frame, the target pushes exactly that frame, and only an explicit
+acceptance advances the sealed hardware horizon. An unexpected availability
+shrink, frame mismatch/order error, missed update, underrun, or external fault
+latches the owner and invalidates every retained tag. Descriptor release grants
+refill authority only. A separate monotonic observation of qualified physical
+latch boundaries is required before a materialized tag can become a motion
+commit.
 
 `alumina-sim` independently shifts all 64 modeled serial bits and reconstructs
 the image observed at the following latch. Wrong frame index/timing/contract,
@@ -716,6 +731,15 @@ motion owner. The simulator proves that draining the last image at cycle 136
 does not release a block whose output-free terminal boundary is cycle 140, and
 that the enable-hold-aligned disable at cycle 144 remains separately pending.
 Those rates are fixtures, not TinyBee configuration or physical evidence.
+
+A second host integration starts with a four-frame safe ring, models one
+descriptor becoming CPU-owned for each transmitted frame, refills each released
+slot from `PcmShortDmaHorizon`, and reconstructs the independent 64-bit wire.
+The final disable is already in the sparse plan before the block token can
+return and becomes visible before the job actor acknowledges completion. This
+proves circular ownership and ordering in software; it does not equate a DMA
+descriptor EOF with WS, qualify an ESP32 interrupt, or solve cross-block
+lookahead.
 
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The

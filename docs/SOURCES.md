@@ -153,7 +153,10 @@ compatibility.
   — selected HAL API's PCM-short timing model and circular-DMA surface. The
   original ESP32 target has different conditional implementation paths, so the
   local locked source and physical capture, not this cross-chip diagram alone,
-  determine target acceptance.
+  determine target acceptance. The locally locked permissive source also
+  establishes the exact `available`/`push` circular-TX API and per-descriptor
+  EOF configuration used by the compile-only ownership adapter; neither fact is
+  treated as evidence of FIFO drain or a physical WS/latch edge.
 - [Rust on ESP ancillary crates](https://docs.espressif.com/projects/rust/book/introduction/ancillary-crates.html)
   — `esp-radio` coverage of Wi-Fi, BLE, ESP-NOW, and low-level IEEE 802.15.4 plus
   its scheduler/background-runtime requirements and per-driver maturity caveat.

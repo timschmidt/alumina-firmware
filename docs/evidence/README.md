@@ -75,6 +75,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M6-SCHEDULED-OUTPUT-HORIZON.md`](M6-SCHEDULED-OUTPUT-HORIZON.md) — exact
   output lattice, bounded future-image ownership, staged/latched commit order,
   and end-to-end motion-to-wire simulation through terminal disable.
+- [`M6-CIRCULAR-DMA-HORIZON.md`](M6-CIRCULAR-DMA-HORIZON.md) — allocation-free
+  circular-ring release/refill ownership, two-phase dense-frame acceptance,
+  independent physical-latch authority, and final-disable lead simulation.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed

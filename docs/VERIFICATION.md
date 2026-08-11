@@ -62,6 +62,10 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   chain: future generation, bounded timeline acceptance, dense frame emission,
   independently reconstructed physical latch, output-free terminal dwell, and
   separately acknowledged terminal disable;
+- exact circular-DMA ring ownership: externally safe prefill, whole-frame
+  release credits, preview/push/accept refill identity, sealed versus writable
+  horizons, untracked-write/underrun faults, and final-disable preplanning while
+  the unique block remains retained;
 - flash-stall and delayed-service events without pretending to prove hardware
   timing; and
 - trace/replay of every command, state transition, scheduled event, output, sample,

@@ -5,9 +5,15 @@
 //! it cannot establish WS/data phase, physical latch observation, underrun
 //! behavior, or a qualified safe stop.
 
-use alumina_shift_register::PcmShortMonoFrame;
+use alumina_motion::{OutputCommitToken, ScheduledShiftOutput};
+use alumina_protocol::DeviceCycle;
+use alumina_shift_register::{
+    CompleteImage, PcmShortDmaHorizon, PcmShortFrameGrid, PcmShortMonoFrame, PlannedPcmShortFrame,
+    TaggedScheduledCompleteImage,
+};
+use embassy_time::TICK_HZ;
 use esp_hal::Blocking;
-use esp_hal::dma::DmaTransferTxCircular;
+use esp_hal::dma::{DmaError, DmaTransferTxCircular};
 use esp_hal::i2s::master::{Channels, Config, DataFormat, Error as I2sError, I2s, I2sTx};
 use esp_hal::time::Rate;
 
@@ -18,7 +24,16 @@ use super::{EstablishedRealtimeResources, SafetyInputBank, tinybee_safe_image};
 pub const UNQUALIFIED_PCM_SHORT_FRAME_RATE_HZ: u32 = 250_000;
 /// Safe frames retained by the compile-only internal-SRAM circular buffer.
 pub const UNQUALIFIED_PCM_SHORT_DMA_FRAMES: usize = 256;
+/// Sparse complete-image capacity paired with the compile-only DMA owner.
+pub const UNQUALIFIED_PCM_SHORT_UPDATES: usize = 64;
 const DMA_BYTES: usize = UNQUALIFIED_PCM_SHORT_DMA_FRAMES * size_of::<u32>();
+
+/// Portable horizon shape used by a future disconnected-load capture harness.
+pub type UnqualifiedPcmShortHorizon = PcmShortDmaHorizon<
+    OutputCommitToken,
+    UNQUALIFIED_PCM_SHORT_UPDATES,
+    UNQUALIFIED_PCM_SHORT_DMA_FRAMES,
+>;
 
 /// Failure while constructing or exercising the unqualified HAL surface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,7 +98,10 @@ impl EstablishedRealtimeResources {
         let (clock, data, latch, _delay) = safe_shift.into_parts();
         let safe = PcmShortMonoFrame::new(tinybee_safe_image())
             .map_err(|_| UnqualifiedPcmShortError::SafeImage)?;
-        let (_, _, tx_buffer, tx_descriptors) = esp_hal::dma_circular_buffers!(0, DMA_BYTES);
+        // One descriptor per complete four-byte frame makes released refill
+        // capacity frame-exact. It still does not prove the later FIFO/WS phase.
+        let (_, _, tx_buffer, tx_descriptors) =
+            esp_hal::dma_circular_buffers_chunk_size!(0, DMA_BYTES, size_of::<u32>());
         for word in tx_buffer.chunks_exact_mut(size_of::<u32>()) {
             word.copy_from_slice(&safe.dma_bytes_le());
         }
@@ -123,6 +141,37 @@ impl EstablishedRealtimeResources {
     reason = "compile-only HIL surface remains unreachable until waveform qualification"
 )]
 impl UnqualifiedPcmShortResources {
+    /// Constructs the portable ownership model for one explicit hypothesized
+    /// stream epoch. Only capture may qualify that epoch against physical WS.
+    pub fn new_horizon(
+        &self,
+        stream_epoch: DeviceCycle,
+    ) -> Result<UnqualifiedPcmShortHorizon, UnqualifiedPcmShortError> {
+        let grid =
+            PcmShortFrameGrid::new(stream_epoch.0, TICK_HZ, UNQUALIFIED_PCM_SHORT_FRAME_RATE_HZ)
+                .map_err(|_| UnqualifiedPcmShortError::Configuration)?;
+        PcmShortDmaHorizon::new(grid, tinybee_safe_image())
+            .map_err(|_| UnqualifiedPcmShortError::Configuration)
+    }
+
+    /// Transfers one generated motion token into the portable target-owned
+    /// sparse plan without manufacturing a replacement token.
+    pub fn stage_planned_output(
+        horizon: &mut UnqualifiedPcmShortHorizon,
+        output: ScheduledShiftOutput,
+    ) -> Result<(), UnqualifiedPcmShortError> {
+        horizon
+            .stage(TaggedScheduledCompleteImage {
+                tag: output.token,
+                commit_cycle: output.update.at.0,
+                image: CompleteImage {
+                    bits: output.update.image,
+                    ..tinybee_safe_image()
+                },
+            })
+            .map_err(|_| UnqualifiedPcmShortError::Transfer)
+    }
+
     /// Starts a safe-prefilled circular transfer borrowed from the retained
     /// owner. Dropping or stopping the returned guard stops the peripheral.
     pub fn start_safe_capture(
@@ -145,6 +194,32 @@ impl UnqualifiedPcmShortResources {
             .map_err(map_i2s_error)
     }
 
+    /// Reads the HAL's exact whole-frame refill capacity. This is descriptor
+    /// ownership evidence, not a physical latch observation.
+    pub fn available_frame_slots(
+        transfer: &mut DmaTransferTxCircular<'_, I2sTx<'static, Blocking>>,
+    ) -> Result<usize, UnqualifiedPcmShortError> {
+        let bytes = transfer.available().map_err(map_dma_error)?;
+        if !bytes.is_multiple_of(size_of::<u32>()) {
+            return Err(UnqualifiedPcmShortError::Transfer);
+        }
+        Ok(bytes / size_of::<u32>())
+    }
+
+    /// Pushes exactly one already planned dense frame into one released DMA
+    /// descriptor. The portable horizon must acknowledge it only after this
+    /// method succeeds.
+    pub fn push_planned_frame(
+        transfer: &mut DmaTransferTxCircular<'_, I2sTx<'static, Blocking>>,
+        frame: PlannedPcmShortFrame,
+    ) -> Result<(), UnqualifiedPcmShortError> {
+        let bytes = frame.frame.dma_bytes_le();
+        if transfer.push(&bytes).map_err(map_dma_error)? != bytes.len() {
+            return Err(UnqualifiedPcmShortError::Transfer);
+        }
+        Ok(())
+    }
+
     /// Exact safe-prefilled byte capacity exposed for HIL harness assertions.
     pub const fn dma_bytes(&self) -> usize {
         DMA_BYTES
@@ -152,5 +227,9 @@ impl UnqualifiedPcmShortResources {
 }
 
 const fn map_i2s_error(_error: I2sError) -> UnqualifiedPcmShortError {
+    UnqualifiedPcmShortError::Transfer
+}
+
+const fn map_dma_error(_error: DmaError) -> UnqualifiedPcmShortError {
     UnqualifiedPcmShortError::Transfer
 }

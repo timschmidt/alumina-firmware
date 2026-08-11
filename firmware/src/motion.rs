@@ -46,8 +46,10 @@ pub struct MotionService {
     configuration_digest: Digest,
     primed_epoch: Option<DeviceCycle>,
     running: bool,
+    remaining_blocks: u32,
     finish_requested: bool,
-    finish_staged: bool,
+    finish_preplanned: bool,
+    finish_committed: bool,
 }
 
 impl MotionService {
@@ -58,8 +60,10 @@ impl MotionService {
             configuration_digest: Digest::ZERO,
             primed_epoch: None,
             running: false,
+            remaining_blocks: 0,
             finish_requested: false,
-            finish_staged: false,
+            finish_preplanned: false,
+            finish_committed: false,
         }
     }
 
@@ -74,8 +78,10 @@ impl MotionService {
         self.configuration_digest = Digest::ZERO;
         self.primed_epoch = None;
         self.running = false;
+        self.remaining_blocks = 0;
         self.finish_requested = false;
-        self.finish_staged = false;
+        self.finish_preplanned = false;
+        self.finish_committed = false;
         let summary = configuration.identity.summary;
         if summary.stepper_axes == 0 {
             self.configuration_digest = configuration.identity.digest;
@@ -110,8 +116,10 @@ impl MotionService {
         self.configuration_digest = Digest::ZERO;
         self.primed_epoch = None;
         self.running = false;
+        self.remaining_blocks = 0;
         self.finish_requested = false;
-        self.finish_staged = false;
+        self.finish_preplanned = false;
+        self.finish_committed = false;
     }
 
     /// Whether the selected package and active mapping can enter arm authority.
@@ -162,18 +170,32 @@ impl MotionService {
             return Err(MotionServiceError::Output);
         }
         let plan = Self::plan_and_stage(runner, resources, required_horizon)?;
-        if Self::covered_through(plan, required_horizon)? < required_horizon {
+        let mut seal_through = Self::covered_through(plan, required_horizon)?;
+        let mut finish_preplanned = false;
+        if matches!(plan, ScheduledShiftPlan::BlockPlanned { .. }) && descriptor.block_count == 1 {
+            let finish_at = runner
+                .planned_finish_cycle()
+                .map_err(|_| MotionServiceError::State)?;
+            if writable_horizon < finish_at {
+                return Err(MotionServiceError::Output);
+            }
+            Self::schedule_and_stage_planned_finish(runner, resources, finish_at)?;
+            finish_preplanned = true;
+            seal_through = required_horizon.max(finish_at);
+        } else if seal_through < required_horizon {
             return Err(MotionServiceError::Output);
         }
         let sealed = resources
-            .seal_motion_output_horizon(required_horizon)
+            .seal_motion_output_horizon(seal_through)
             .map_err(|_| MotionServiceError::Output)?;
-        if sealed < required_horizon {
+        if sealed < seal_through {
             return Err(MotionServiceError::Output);
         }
         self.primed_epoch = Some(epoch);
+        self.remaining_blocks = descriptor.block_count;
         self.finish_requested = false;
-        self.finish_staged = false;
+        self.finish_preplanned = finish_preplanned;
+        self.finish_committed = false;
         Ok(())
     }
 
@@ -192,6 +214,9 @@ impl MotionService {
         reason = "rejection must return unique inline block ownership"
     )]
     pub fn admit(&mut self, admitted: OwnedBlock) -> Result<(), OwnedBlock> {
+        if self.remaining_blocks == 0 || self.finish_preplanned {
+            return Err(admitted);
+        }
         match self.runner.as_mut() {
             Some(runner) => runner
                 .admit_block(admitted)
@@ -213,6 +238,15 @@ impl MotionService {
         if !self.running {
             return Err(MotionServiceError::State);
         }
+        if self.finish_requested && self.finish_committed {
+            self.running = false;
+            self.primed_epoch = None;
+            self.remaining_blocks = 0;
+            self.finish_requested = false;
+            self.finish_preplanned = false;
+            self.finish_committed = false;
+            return Ok(MotionAction::JobComplete);
+        }
         if let Some((token, committed_at)) = resources
             .take_motion_commit()
             .map_err(|_| MotionServiceError::Output)?
@@ -221,58 +255,82 @@ impl MotionService {
                 .commit_output(token, committed_at)
                 .map_err(|_| MotionServiceError::Commit)?;
             if runner.take_job_complete() {
-                self.running = false;
-                self.primed_epoch = None;
-                self.finish_requested = false;
-                self.finish_staged = false;
-                return Ok(MotionAction::JobComplete);
+                self.finish_committed = true;
             }
             return Ok(MotionAction::OutputCommitted);
         }
+        let mut known_writable_horizon = None;
+        if self.remaining_blocks == 1
+            && !self.finish_preplanned
+            && runner.block_completion_planned()
+        {
+            let finish_at = runner
+                .planned_finish_cycle()
+                .map_err(|_| MotionServiceError::State)?;
+            if observed >= finish_at {
+                return Err(MotionServiceError::Output);
+            }
+            let writable_horizon = resources
+                .motion_output_writable_horizon(observed)
+                .map_err(|_| MotionServiceError::Output)?;
+            known_writable_horizon = Some(writable_horizon);
+            if writable_horizon >= finish_at {
+                Self::schedule_and_stage_planned_finish(runner, resources, finish_at)?;
+                self.finish_preplanned = true;
+            }
+            let sealed = resources
+                .seal_motion_output_horizon(writable_horizon)
+                .map_err(|_| MotionServiceError::Output)?;
+            if sealed < writable_horizon {
+                return Err(MotionServiceError::Output);
+            }
+            if !self.finish_preplanned {
+                return Ok(MotionAction::WaitingForHardware);
+            }
+        }
         if let Some(completed) = runner.take_completed_block(observed) {
+            if self.remaining_blocks == 0 || (self.remaining_blocks == 1 && !self.finish_preplanned)
+            {
+                return Err(MotionServiceError::State);
+            }
+            self.remaining_blocks -= 1;
             return Ok(MotionAction::BlockComplete(completed.into_block()));
         }
-        if self.finish_requested {
-            if !self.finish_staged {
-                let at = runner
-                    .earliest_finish_cycle()
-                    .map_err(|_| MotionServiceError::State)?;
-                let writable_horizon = resources
-                    .motion_output_writable_horizon(observed)
-                    .map_err(|_| MotionServiceError::Output)?;
-                if writable_horizon < at {
-                    return Ok(MotionAction::WaitingForHardware);
-                }
-                let pending = runner
-                    .schedule_finish(at)
-                    .map_err(|_| MotionServiceError::Generator)?;
-                resources
-                    .stage_motion_output(pending)
-                    .map_err(|_| MotionServiceError::Output)?;
-                runner
-                    .stage_output(pending)
-                    .map_err(|_| MotionServiceError::Commit)?;
-                let sealed = resources
-                    .seal_motion_output_horizon(at)
-                    .map_err(|_| MotionServiceError::Output)?;
-                if sealed < at {
-                    return Err(MotionServiceError::Output);
-                }
-                self.finish_staged = true;
+        let writable_horizon = match known_writable_horizon {
+            Some(horizon) => horizon,
+            None => resources
+                .motion_output_writable_horizon(observed)
+                .map_err(|_| MotionServiceError::Output)?,
+        };
+        if self.finish_preplanned {
+            let sealed = resources
+                .seal_motion_output_horizon(writable_horizon)
+                .map_err(|_| MotionServiceError::Output)?;
+            if sealed < writable_horizon {
+                return Err(MotionServiceError::Output);
             }
             return Ok(MotionAction::WaitingForHardware);
         }
-        let writable_horizon = resources
-            .motion_output_writable_horizon(observed)
-            .map_err(|_| MotionServiceError::Output)?;
         let plan = Self::plan_and_stage(runner, resources, writable_horizon)?;
-        let covered = Self::covered_through(plan, writable_horizon)?;
+        let mut covered = Self::covered_through(plan, writable_horizon)?;
+        let mut finish_preplanned = false;
+        if matches!(plan, ScheduledShiftPlan::BlockPlanned { .. }) && self.remaining_blocks == 1 {
+            let finish_at = runner
+                .planned_finish_cycle()
+                .map_err(|_| MotionServiceError::State)?;
+            if writable_horizon >= finish_at {
+                Self::schedule_and_stage_planned_finish(runner, resources, finish_at)?;
+                covered = writable_horizon;
+                finish_preplanned = true;
+            }
+        }
         let sealed = resources
             .seal_motion_output_horizon(covered)
             .map_err(|_| MotionServiceError::Output)?;
         if sealed < covered {
             return Err(MotionServiceError::Output);
         }
+        self.finish_preplanned = finish_preplanned;
         match plan {
             ScheduledShiftPlan::Idle => Ok(MotionAction::Idle),
             ScheduledShiftPlan::Future { at } => Ok(MotionAction::Future { at }),
@@ -307,18 +365,20 @@ impl MotionService {
         }
     }
 
-    /// Requests normal terminal disable after the exact job actor reports its
-    /// final block complete. [`Self::poll`] waits for the enable-hold deadline.
+    /// Releases job-complete reporting only after the final block token has
+    /// returned and its preplanned normal disable has physically committed.
     pub fn request_finish(&mut self) -> Result<(), MotionServiceError> {
         let runner = self
             .runner
             .as_ref()
             .ok_or(MotionServiceError::Unsupported)?;
-        if runner.planned_status().state != ExecutorState::Ready {
+        if self.remaining_blocks != 0
+            || !self.finish_preplanned
+            || runner.planned_status().state != ExecutorState::Complete
+        {
             return Err(MotionServiceError::State);
         }
         self.finish_requested = true;
-        self.finish_staged = false;
         Ok(())
     }
 
@@ -332,8 +392,10 @@ impl MotionService {
         let update = runner.fault(at);
         self.primed_epoch = None;
         self.running = false;
+        self.remaining_blocks = 0;
         self.finish_requested = false;
-        self.finish_staged = false;
+        self.finish_preplanned = false;
+        self.finish_committed = false;
         if selected::motion_shift_contract().map(|contract| contract.safe_image)
             != Some(update.image)
         {
@@ -343,14 +405,10 @@ impl MotionService {
         Ok(())
     }
 
-    /// Next exact edge/horizon deadline, if execution has started.
+    /// Next exact logical generation deadline. Target refill/commit wakeups are
+    /// an independent hardware responsibility.
     pub fn next_deadline(&self) -> Option<DeviceCycle> {
-        let runner = self.runner.as_ref()?;
-        if self.finish_requested {
-            runner.earliest_finish_cycle().ok()
-        } else {
-            runner.next_deadline()
-        }
+        self.runner.as_ref()?.next_deadline()
     }
 
     /// Whether this owner has entered the job lifecycle.
@@ -375,5 +433,22 @@ impl MotionService {
                 .map_err(|_| MotionServiceError::Commit)?;
         }
         Ok(plan)
+    }
+
+    fn schedule_and_stage_planned_finish(
+        runner: &mut Runner,
+        resources: &mut selected::EstablishedRealtimeResources,
+        at: DeviceCycle,
+    ) -> Result<(), MotionServiceError> {
+        let output = runner
+            .schedule_planned_finish(at)
+            .map_err(|_| MotionServiceError::Generator)?;
+        resources
+            .stage_motion_output(output)
+            .map_err(|_| MotionServiceError::Output)?;
+        runner
+            .stage_output(output)
+            .map_err(|_| MotionServiceError::Commit)?;
+        Ok(())
     }
 }

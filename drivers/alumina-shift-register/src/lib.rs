@@ -232,26 +232,34 @@ impl PcmShortFrameGrid {
         }
     }
 
+    /// Absolute frame-boundary index for one exactly aligned device cycle.
+    pub const fn boundary_index_for_cycle(self, cycle: u64) -> Result<u64, PcmShortGridError> {
+        if cycle < self.epoch_cycle {
+            return Err(PcmShortGridError::BeforeEpoch {
+                epoch_cycle: self.epoch_cycle,
+                received_cycle: cycle,
+            });
+        }
+        let delta = cycle - self.epoch_cycle;
+        if !delta.is_multiple_of(self.cycles_per_frame) {
+            return Err(PcmShortGridError::Unaligned {
+                received_cycle: cycle,
+                cycles_per_frame: self.cycles_per_frame,
+            });
+        }
+        Ok(delta / self.cycles_per_frame)
+    }
+
     /// Frame that must transmit an image for it to become visible at the
     /// requested exact latch cycle.
     pub const fn transmit_index_for_commit(
         self,
         commit_cycle: u64,
     ) -> Result<u64, PcmShortGridError> {
-        if commit_cycle < self.epoch_cycle {
-            return Err(PcmShortGridError::BeforeEpoch {
-                epoch_cycle: self.epoch_cycle,
-                received_cycle: commit_cycle,
-            });
-        }
-        let delta = commit_cycle - self.epoch_cycle;
-        if !delta.is_multiple_of(self.cycles_per_frame) {
-            return Err(PcmShortGridError::Unaligned {
-                received_cycle: commit_cycle,
-                cycles_per_frame: self.cycles_per_frame,
-            });
-        }
-        let boundary_index = delta / self.cycles_per_frame;
+        let boundary_index = match self.boundary_index_for_cycle(commit_cycle) {
+            Ok(index) => index,
+            Err(error) => return Err(error),
+        };
         match boundary_index.checked_sub(1) {
             Some(frame_index) => Ok(frame_index),
             None => Err(PcmShortGridError::PipelineLead {
@@ -467,6 +475,419 @@ pub enum PcmShortTimelineError {
     State,
     /// Frame indexing overflowed.
     Arithmetic,
+}
+
+/// One target-owned sparse update correlated with an opaque caller tag.
+///
+/// The tag is never serialized by this driver. Firmware can retain its
+/// process-local output token without making the transport depend on a motion
+/// crate or exposing a token constructor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TaggedScheduledCompleteImage<TAG> {
+    /// Opaque identity returned only after the corresponding latch boundary is
+    /// independently observed.
+    pub tag: TAG,
+    /// Exact future rising latch edge.
+    pub commit_cycle: u64,
+    /// Complete image that must become visible at that edge.
+    pub image: CompleteImage,
+}
+
+/// One staged tag whose exact boundary has been independently observed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortCommitObservation<TAG> {
+    pub tag: TAG,
+    pub commit_cycle: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TrackedPcmShortUpdate<TAG> {
+    tag: TAG,
+    commit_cycle: u64,
+    image: CompleteImage,
+    materialized: bool,
+}
+
+/// Allocation-free ownership model for a safe-prefilled circular PCM-short
+/// DMA ring.
+///
+/// `FRAMES` safe frames are already hardware-owned when this model is created.
+/// A target reports how many whole frame slots its DMA API has released for
+/// refill. Dense frames then cross an explicit preview/accept boundary: logical
+/// planning may preview a frame, but the continuous sealed horizon advances only
+/// after the target confirms that exact four-byte sample was accepted. Sparse
+/// tags become observable only after both materialization and a separate
+/// monotonic latch-boundary observation.
+///
+/// This type deliberately does not interpret a DMA descriptor completion as a
+/// physical latch edge. A chip adapter must qualify and supply that observation
+/// independently.
+pub struct PcmShortDmaHorizon<TAG, const UPDATES: usize, const FRAMES: usize>
+where
+    TAG: Copy + Eq,
+{
+    grid: PcmShortFrameGrid,
+    timeline: PcmShortTimeline<UPDATES>,
+    sealed_frames: u64,
+    released_frames: u64,
+    refill_credit_frames: usize,
+    pending_frame: Option<PlannedPcmShortFrame>,
+    updates: [Option<TrackedPcmShortUpdate<TAG>>; UPDATES],
+    update_head: usize,
+    update_len: usize,
+    observed_through: u64,
+    fault: Option<PcmShortDmaHorizonError>,
+}
+
+impl<TAG, const UPDATES: usize, const FRAMES: usize> PcmShortDmaHorizon<TAG, UPDATES, FRAMES>
+where
+    TAG: Copy + Eq,
+{
+    /// Starts after an external transaction has filled the complete physical
+    /// ring with the supplied safe image.
+    pub fn new(
+        grid: PcmShortFrameGrid,
+        safe_image: CompleteImage,
+    ) -> Result<Self, PcmShortDmaHorizonError> {
+        if FRAMES == 0 {
+            return Err(PcmShortDmaHorizonError::RingCapacity);
+        }
+        let prefilled = u64::try_from(FRAMES).map_err(|_| PcmShortDmaHorizonError::Arithmetic)?;
+        grid.boundary_cycle(prefilled)
+            .map_err(PcmShortDmaHorizonError::Grid)?;
+        let mut timeline =
+            PcmShortTimeline::new(grid, safe_image).map_err(PcmShortDmaHorizonError::Timeline)?;
+        // These frames already exist in the externally established DMA buffer.
+        // No sparse update can target them because `schedule` rejects a
+        // transmit index below this exact boundary.
+        timeline.next_transmit_index = prefilled;
+        Ok(Self {
+            grid,
+            timeline,
+            sealed_frames: prefilled,
+            released_frames: 0,
+            refill_credit_frames: 0,
+            pending_frame: None,
+            updates: [None; UPDATES],
+            update_head: 0,
+            update_len: 0,
+            observed_through: grid.epoch_cycle(),
+            fault: None,
+        })
+    }
+
+    /// Queues one immutable sparse update strictly beyond the sealed horizon.
+    pub fn stage(
+        &mut self,
+        update: TaggedScheduledCompleteImage<TAG>,
+    ) -> Result<(), PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        if UPDATES == 0 || self.update_len == UPDATES {
+            return self.fail(PcmShortDmaHorizonError::UpdateCapacity);
+        }
+        let mut offset = 0;
+        while offset < self.update_len {
+            let index = (self.update_head + offset) % UPDATES;
+            if self.updates[index].is_some_and(|tracked| tracked.tag == update.tag) {
+                return self.fail(PcmShortDmaHorizonError::DuplicateTag);
+            }
+            offset += 1;
+        }
+        self.timeline
+            .schedule(ScheduledCompleteImage {
+                commit_cycle: update.commit_cycle,
+                image: update.image,
+            })
+            .map_err(|error| self.latch(PcmShortDmaHorizonError::Timeline(error)))?;
+        let tail = (self.update_head + self.update_len) % UPDATES;
+        self.updates[tail] = Some(TrackedPcmShortUpdate {
+            tag: update.tag,
+            commit_cycle: update.commit_cycle,
+            image: update.image,
+            materialized: false,
+        });
+        self.update_len = self
+            .update_len
+            .checked_add(1)
+            .ok_or_else(|| self.latch(PcmShortDmaHorizonError::Arithmetic))?;
+        Ok(())
+    }
+
+    /// Reconciles the target DMA API's current whole-frame refill capacity.
+    ///
+    /// Capacity cannot shrink except through [`Self::accept_refill`]. A shrink
+    /// therefore proves an untracked write or inconsistent descriptor report
+    /// and latches the model.
+    pub fn synchronize_refill_availability(
+        &mut self,
+        available_frames: usize,
+    ) -> Result<(), PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        if available_frames > FRAMES || available_frames < self.refill_credit_frames {
+            return self.fail(PcmShortDmaHorizonError::Availability {
+                reported: available_frames,
+                retained: self.refill_credit_frames,
+                ring_frames: FRAMES,
+            });
+        }
+        let newly_released = available_frames - self.refill_credit_frames;
+        let newly_released = u64::try_from(newly_released)
+            .map_err(|_| self.latch(PcmShortDmaHorizonError::Arithmetic))?;
+        let released = self
+            .released_frames
+            .checked_add(newly_released)
+            .ok_or_else(|| self.latch(PcmShortDmaHorizonError::Arithmetic))?;
+        if released > self.sealed_frames {
+            return self.fail(PcmShortDmaHorizonError::Availability {
+                reported: available_frames,
+                retained: self.refill_credit_frames,
+                ring_frames: FRAMES,
+            });
+        }
+        self.released_frames = released;
+        self.refill_credit_frames = available_frames;
+        Ok(())
+    }
+
+    /// Returns the next exact dense frame without advancing the sealed
+    /// hardware horizon. Repeated calls return the same pending frame until it
+    /// is accepted or the model is faulted.
+    pub fn next_refill_frame(
+        &mut self,
+    ) -> Result<Option<PlannedPcmShortFrame>, PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        if let Some(frame) = self.pending_frame {
+            return Ok(Some(frame));
+        }
+        if self.refill_credit_frames == 0 {
+            return Ok(None);
+        }
+        let frame = self
+            .timeline
+            .next_frame()
+            .map_err(|error| self.latch(PcmShortDmaHorizonError::Timeline(error)))?;
+        if frame.transmit_index != self.sealed_frames {
+            return self.fail(PcmShortDmaHorizonError::FrameOrder {
+                expected: self.sealed_frames,
+                received: frame.transmit_index,
+            });
+        }
+        self.pending_frame = Some(frame);
+        Ok(Some(frame))
+    }
+
+    /// Confirms that the target accepted the exact pending four-byte sample.
+    pub fn accept_refill(
+        &mut self,
+        frame: PlannedPcmShortFrame,
+    ) -> Result<u64, PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        let Some(expected) = self.pending_frame else {
+            return self.fail(PcmShortDmaHorizonError::NoPendingFrame);
+        };
+        if frame != expected {
+            return self.fail(PcmShortDmaHorizonError::PendingFrameMismatch);
+        }
+        if self.refill_credit_frames == 0 || frame.transmit_index != self.sealed_frames {
+            return self.fail(PcmShortDmaHorizonError::FrameOrder {
+                expected: self.sealed_frames,
+                received: frame.transmit_index,
+            });
+        }
+
+        let mut offset = 0;
+        while offset < self.update_len {
+            let index = (self.update_head + offset) % UPDATES;
+            let tracked = self.updates[index]
+                .ok_or_else(|| self.latch(PcmShortDmaHorizonError::InternalState))?;
+            if !tracked.materialized {
+                if tracked.commit_cycle < frame.commits_at {
+                    return self.fail(PcmShortDmaHorizonError::MissedUpdate {
+                        commit_cycle: tracked.commit_cycle,
+                        frame_commit_cycle: frame.commits_at,
+                    });
+                }
+                if tracked.commit_cycle == frame.commits_at {
+                    if tracked.image != frame.frame.commits_image() {
+                        return self.fail(PcmShortDmaHorizonError::MaterializedImageMismatch);
+                    }
+                    self.updates[index] = Some(TrackedPcmShortUpdate {
+                        materialized: true,
+                        ..tracked
+                    });
+                }
+                break;
+            }
+            offset += 1;
+        }
+
+        self.sealed_frames = self
+            .sealed_frames
+            .checked_add(1)
+            .ok_or_else(|| self.latch(PcmShortDmaHorizonError::Arithmetic))?;
+        self.refill_credit_frames -= 1;
+        self.pending_frame = None;
+        self.sealed_horizon()
+    }
+
+    /// Latest exact latch boundary already represented by hardware-owned
+    /// dense frames.
+    pub fn sealed_horizon(&self) -> Result<u64, PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        self.grid
+            .boundary_cycle(self.sealed_frames)
+            .map_err(PcmShortDmaHorizonError::Grid)
+    }
+
+    /// Latest exact latch boundary that can be sealed using currently released
+    /// whole-frame slots.
+    pub fn writable_horizon(&self) -> Result<u64, PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        let credits = u64::try_from(self.refill_credit_frames)
+            .map_err(|_| PcmShortDmaHorizonError::Arithmetic)?;
+        let boundary = self
+            .sealed_frames
+            .checked_add(credits)
+            .ok_or(PcmShortDmaHorizonError::Arithmetic)?;
+        self.grid
+            .boundary_cycle(boundary)
+            .map_err(PcmShortDmaHorizonError::Grid)
+    }
+
+    /// Installs an independent, monotonic physical latch observation. An
+    /// observation beyond the sealed dense horizon is an exact underrun.
+    pub fn observe_latches_through(&mut self, through: u64) -> Result<(), PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        self.grid
+            .boundary_index_for_cycle(through)
+            .map_err(|error| self.latch(PcmShortDmaHorizonError::Grid(error)))?;
+        if through < self.observed_through {
+            return self.fail(PcmShortDmaHorizonError::ObservationOrder {
+                prior: self.observed_through,
+                received: through,
+            });
+        }
+        let sealed = self.sealed_horizon()?;
+        if through > sealed {
+            return self.fail(PcmShortDmaHorizonError::Underrun {
+                observed: through,
+                sealed,
+            });
+        }
+        self.observed_through = through;
+        Ok(())
+    }
+
+    /// Returns one materialized tag only after its exact latch boundary was
+    /// independently observed. Multiple observations drain in stage order.
+    pub fn take_commit(
+        &mut self,
+    ) -> Result<Option<PcmShortCommitObservation<TAG>>, PcmShortDmaHorizonError> {
+        self.ensure_live()?;
+        if self.update_len == 0 {
+            return Ok(None);
+        }
+        let tracked = self.updates[self.update_head]
+            .ok_or_else(|| self.latch(PcmShortDmaHorizonError::InternalState))?;
+        if !tracked.materialized || tracked.commit_cycle > self.observed_through {
+            return Ok(None);
+        }
+        self.updates[self.update_head] = None;
+        self.update_head = if UPDATES == 0 {
+            0
+        } else {
+            (self.update_head + 1) % UPDATES
+        };
+        self.update_len -= 1;
+        Ok(Some(PcmShortCommitObservation {
+            tag: tracked.tag,
+            commit_cycle: tracked.commit_cycle,
+        }))
+    }
+
+    /// Exact number of target-reported frame slots awaiting refill.
+    pub const fn refill_credit_frames(&self) -> usize {
+        self.refill_credit_frames
+    }
+
+    /// Exact number of sparse updates awaiting physical observation.
+    pub const fn pending_updates(&self) -> usize {
+        self.update_len
+    }
+
+    /// First retained fault, if any.
+    pub const fn fault(&self) -> Option<PcmShortDmaHorizonError> {
+        self.fault
+    }
+
+    /// Latches an external peripheral/safety failure and invalidates every tag.
+    pub fn invalidate(&mut self) {
+        if self.fault.is_none() {
+            let _ = self.latch(PcmShortDmaHorizonError::ExternalFault);
+        }
+    }
+
+    fn ensure_live(&self) -> Result<(), PcmShortDmaHorizonError> {
+        if self.fault.is_some() {
+            Err(PcmShortDmaHorizonError::FaultLatched)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn fail<T>(&mut self, error: PcmShortDmaHorizonError) -> Result<T, PcmShortDmaHorizonError> {
+        Err(self.latch(error))
+    }
+
+    fn latch(&mut self, error: PcmShortDmaHorizonError) -> PcmShortDmaHorizonError {
+        if self.fault.is_none() {
+            self.fault = Some(error);
+            self.pending_frame = None;
+            self.updates = [None; UPDATES];
+            self.update_head = 0;
+            self.update_len = 0;
+            self.refill_credit_frames = 0;
+        }
+        error
+    }
+}
+
+/// Fail-closed circular-DMA ownership or observation error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaHorizonError {
+    Timeline(PcmShortTimelineError),
+    Grid(PcmShortGridError),
+    RingCapacity,
+    UpdateCapacity,
+    DuplicateTag,
+    Availability {
+        reported: usize,
+        retained: usize,
+        ring_frames: usize,
+    },
+    FrameOrder {
+        expected: u64,
+        received: u64,
+    },
+    NoPendingFrame,
+    PendingFrameMismatch,
+    MissedUpdate {
+        commit_cycle: u64,
+        frame_commit_cycle: u64,
+    },
+    MaterializedImageMismatch,
+    ObservationOrder {
+        prior: u64,
+        received: u64,
+    },
+    Underrun {
+        observed: u64,
+        sealed: u64,
+    },
+    InternalState,
+    Arithmetic,
+    ExternalFault,
+    FaultLatched,
 }
 
 const fn same_image_contract(left: CompleteImage, right: CompleteImage) -> bool {
@@ -915,6 +1336,168 @@ mod tests {
             Err(PcmShortTimelineError::Capacity)
         );
         assert_eq!(no_updates.next_frame().unwrap().frame.commits_image(), safe);
+    }
+
+    #[test]
+    fn dma_horizon_separates_refill_seal_and_latch_observation() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let first = image(0x1269, BitOrder::MostSignificantFirst);
+        let second = image(0x12e9, BitOrder::MostSignificantFirst);
+        let mut horizon = PcmShortDmaHorizon::<u16, 4, 4>::new(grid, safe).unwrap();
+
+        // Four externally prefilled frames cover boundaries 104 through 116.
+        assert_eq!(horizon.sealed_horizon(), Ok(116));
+        assert_eq!(horizon.writable_horizon(), Ok(116));
+        assert_eq!(horizon.refill_credit_frames(), 0);
+        assert_eq!(horizon.observe_latches_through(116), Ok(()));
+
+        horizon
+            .stage(TaggedScheduledCompleteImage {
+                tag: 7,
+                commit_cycle: 120,
+                image: first,
+            })
+            .unwrap();
+        horizon
+            .stage(TaggedScheduledCompleteImage {
+                tag: 8,
+                commit_cycle: 128,
+                image: second,
+            })
+            .unwrap();
+        assert_eq!(horizon.pending_updates(), 2);
+        assert_eq!(horizon.take_commit(), Ok(None));
+
+        horizon.synchronize_refill_availability(2).unwrap();
+        assert_eq!(horizon.writable_horizon(), Ok(124));
+        let frame = horizon.next_refill_frame().unwrap().unwrap();
+        assert_eq!(frame.transmit_index, 4);
+        assert_eq!(frame.starts_at, 116);
+        assert_eq!(frame.commits_at, 120);
+        assert_eq!(frame.frame.commits_image(), first);
+        assert_eq!(horizon.next_refill_frame(), Ok(Some(frame)));
+        assert_eq!(horizon.accept_refill(frame), Ok(120));
+
+        let repeated = horizon.next_refill_frame().unwrap().unwrap();
+        assert_eq!(repeated.transmit_index, 5);
+        assert_eq!(repeated.commits_at, 124);
+        assert_eq!(repeated.frame.commits_image(), first);
+        assert_eq!(horizon.accept_refill(repeated), Ok(124));
+        assert_eq!(horizon.next_refill_frame(), Ok(None));
+        assert_eq!(horizon.take_commit(), Ok(None));
+
+        horizon.observe_latches_through(120).unwrap();
+        assert_eq!(
+            horizon.take_commit(),
+            Ok(Some(PcmShortCommitObservation {
+                tag: 7,
+                commit_cycle: 120,
+            }))
+        );
+        assert_eq!(horizon.take_commit(), Ok(None));
+
+        horizon.synchronize_refill_availability(2).unwrap();
+        assert_eq!(horizon.writable_horizon(), Ok(132));
+        let second_frame = horizon.next_refill_frame().unwrap().unwrap();
+        assert_eq!(second_frame.transmit_index, 6);
+        assert_eq!(second_frame.commits_at, 128);
+        assert_eq!(second_frame.frame.commits_image(), second);
+        horizon.accept_refill(second_frame).unwrap();
+        let second_repeat = horizon.next_refill_frame().unwrap().unwrap();
+        assert_eq!(second_repeat.commits_at, 132);
+        assert_eq!(second_repeat.frame.commits_image(), second);
+        assert_eq!(horizon.accept_refill(second_repeat), Ok(132));
+
+        horizon.observe_latches_through(132).unwrap();
+        assert_eq!(
+            horizon.take_commit(),
+            Ok(Some(PcmShortCommitObservation {
+                tag: 8,
+                commit_cycle: 128,
+            }))
+        );
+        assert_eq!(horizon.take_commit(), Ok(None));
+        assert_eq!(horizon.fault(), None);
+    }
+
+    #[test]
+    fn dma_horizon_rejects_late_updates_untracked_writes_and_underrun() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let update = image(0x1269, BitOrder::MostSignificantFirst);
+
+        let mut late = PcmShortDmaHorizon::<u8, 2, 4>::new(grid, safe).unwrap();
+        assert_eq!(
+            late.stage(TaggedScheduledCompleteImage {
+                tag: 1,
+                commit_cycle: 116,
+                image: update,
+            }),
+            Err(PcmShortDmaHorizonError::Timeline(
+                PcmShortTimelineError::Order
+            ))
+        );
+        assert_eq!(
+            late.sealed_horizon(),
+            Err(PcmShortDmaHorizonError::FaultLatched)
+        );
+
+        let mut untracked = PcmShortDmaHorizon::<u8, 2, 4>::new(grid, safe).unwrap();
+        untracked.synchronize_refill_availability(2).unwrap();
+        assert!(untracked.next_refill_frame().unwrap().is_some());
+        assert_eq!(
+            untracked.synchronize_refill_availability(1),
+            Err(PcmShortDmaHorizonError::Availability {
+                reported: 1,
+                retained: 2,
+                ring_frames: 4,
+            })
+        );
+        assert_eq!(
+            untracked.next_refill_frame(),
+            Err(PcmShortDmaHorizonError::FaultLatched)
+        );
+
+        let mut starved = PcmShortDmaHorizon::<u8, 2, 4>::new(grid, safe).unwrap();
+        assert_eq!(
+            starved.observe_latches_through(120),
+            Err(PcmShortDmaHorizonError::Underrun {
+                observed: 120,
+                sealed: 116,
+            })
+        );
+        assert_eq!(
+            starved.observe_latches_through(116),
+            Err(PcmShortDmaHorizonError::FaultLatched)
+        );
+        assert_eq!(
+            PcmShortDmaHorizon::<u8, 1, 0>::new(grid, safe).err(),
+            Some(PcmShortDmaHorizonError::RingCapacity)
+        );
+    }
+
+    #[test]
+    fn dma_horizon_requires_exact_two_phase_refill_identity() {
+        let grid = PcmShortFrameGrid::new(0, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut horizon = PcmShortDmaHorizon::<u8, 1, 3>::new(grid, safe).unwrap();
+        horizon.synchronize_refill_availability(1).unwrap();
+        let expected = horizon.next_refill_frame().unwrap().unwrap();
+        let mut wrong = expected;
+        wrong.commits_at += 4;
+        assert_eq!(
+            horizon.accept_refill(wrong),
+            Err(PcmShortDmaHorizonError::PendingFrameMismatch)
+        );
+        assert_eq!(
+            horizon.fault(),
+            Some(PcmShortDmaHorizonError::PendingFrameMismatch)
+        );
+        assert_eq!(
+            horizon.accept_refill(expected),
+            Err(PcmShortDmaHorizonError::FaultLatched)
+        );
     }
 
     #[test]

@@ -251,6 +251,8 @@ const fn reverse_low_bits(bits: u32, width: u8) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use alumina_board::{OwnerDomain, ResourceId};
     use alumina_config::{
         AxisDriverControl, BindingFlags, BindingRole, ResourceBinding, SignalPolarity,
@@ -269,7 +271,8 @@ mod tests {
     };
     use alumina_protocol::{DeviceCycle, Digest};
     use alumina_shift_register::{
-        BitOrder, CompleteImage, PcmShortFrameGrid, PcmShortTimeline, ScheduledCompleteImage,
+        BitOrder, CompleteImage, PcmShortDmaHorizon, PcmShortFrameGrid, PcmShortTimeline,
+        ScheduledCompleteImage, TaggedScheduledCompleteImage,
     };
     use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
 
@@ -532,6 +535,99 @@ mod tests {
             .unwrap();
         assert!(runner.take_job_complete());
         assert!(!runner.take_job_complete());
+    }
+
+    #[test]
+    fn circular_dma_lead_owns_final_disable_before_releasing_the_block() {
+        let grid = PcmShortFrameGrid::new(96, 1_000_000, 250_000).unwrap();
+        let mut bootstrap = PcmShortTimeline::<0>::new(grid, SAFE).unwrap();
+        let mut wire = SimPcmShortLatch::new(grid, SAFE).unwrap();
+        let mut dma = PcmShortDmaHorizon::<_, 8, 4>::new(grid, SAFE).unwrap();
+        let (mut job, admitted) = admitted_motion_block();
+        let mut runner =
+            ScheduledShiftedStepper::<3, 8>::new(shifted_profile(), shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(116), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(156)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                completion_at: DeviceCycle(156),
+            }
+        );
+        assert_eq!(runner.planned_finish_cycle(), Ok(DeviceCycle(160)));
+        let finish = runner.schedule_planned_finish(DeviceCycle(160)).unwrap();
+
+        let mut outputs = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            dma.stage(TaggedScheduledCompleteImage {
+                tag: output.token,
+                commit_cycle: output.update.at.0,
+                image: CompleteImage {
+                    bits: output.update.image,
+                    ..SAFE
+                },
+            })
+            .unwrap();
+            runner.stage_output(output).unwrap();
+            outputs.push(output);
+        }
+        assert_eq!(outputs.len(), 6);
+        assert_eq!(outputs.last().copied(), Some(finish));
+
+        // The external safe transaction populated all four physical slots.
+        let mut physical_ring = VecDeque::new();
+        for _ in 0..4 {
+            physical_ring.push_back(bootstrap.next_frame().unwrap());
+        }
+        assert_eq!(dma.sealed_horizon(), Ok(112));
+
+        let mut final_disable_observed = false;
+        let mut returned_block = None;
+        for _ in 0..20 {
+            let transmitted = physical_ring.pop_front().unwrap();
+            let observed = wire.consume_frame(transmitted).unwrap();
+            dma.observe_latches_through(observed.latch_cycle).unwrap();
+            while let Some(commit) = dma.take_commit().unwrap() {
+                let output = outputs
+                    .iter()
+                    .copied()
+                    .find(|output| output.token == commit.tag)
+                    .unwrap();
+                assert_eq!(commit.commit_cycle, output.update.at.0);
+                assert_eq!(wire.visible_image().bits, output.update.image);
+                runner
+                    .commit_output(commit.tag, DeviceCycle(commit.commit_cycle))
+                    .unwrap();
+                if runner.take_job_complete() {
+                    assert_eq!(commit.tag, finish.token);
+                    final_disable_observed = true;
+                }
+            }
+            if returned_block.is_none() {
+                returned_block = runner.take_completed_block(DeviceCycle(observed.latch_cycle));
+            }
+            if final_disable_observed && returned_block.is_some() {
+                break;
+            }
+
+            // One exact descriptor became CPU-owned; refill that slot for its
+            // next trip around the ring before acknowledging the dense frame.
+            dma.synchronize_refill_availability(1).unwrap();
+            let refill = dma.next_refill_frame().unwrap().unwrap();
+            dma.accept_refill(refill).unwrap();
+            physical_ring.push_back(refill);
+        }
+
+        assert!(final_disable_observed);
+        assert_eq!(wire.visible_image().bits, finish.update.image);
+        let completed = returned_block.unwrap();
+        assert_eq!(completed.completion().at, DeviceCycle(156));
+        assert_eq!(completed.completion().position, [2, 0, 0]);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
+        assert_eq!(dma.fault(), None);
     }
 
     #[test]

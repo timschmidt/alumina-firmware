@@ -2225,6 +2225,11 @@ pub enum ScheduledShiftError {
     Cached(CachedMotionError),
     Motion(MotionError),
     Image(ShiftImageError),
+    /// Two complete images cannot occupy the same hardware lattice boundary.
+    OutputOrder {
+        previous: DeviceCycle,
+        received: DeviceCycle,
+    },
     Arithmetic,
 }
 
@@ -2259,6 +2264,8 @@ pub struct ScheduledShiftedStepper<const AXES: usize, const OUTPUTS: usize> {
     completed: Option<ScheduledBlockCompletion<AXES>>,
     faulted_block: Option<AdmittedBlock<AXES>>,
     next_token: u32,
+    output_quantum_cycles: u32,
+    last_generated_at: Option<DeviceCycle>,
     maximum_commit_lateness_cycles: u32,
     committed_updates: u64,
     maximum_commit_lateness_observed: u32,
@@ -2290,6 +2297,8 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
             completed: None,
             faulted_block: None,
             next_token: 0,
+            output_quantum_cycles: profile.timing.output_quantum_cycles,
+            last_generated_at: None,
             maximum_commit_lateness_cycles: profile.timing.maximum_lateness_cycles,
             committed_updates: 0,
             maximum_commit_lateness_observed: 0,
@@ -2317,7 +2326,9 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         }
         self.cached
             .start_job(epoch, position)
-            .map_err(ScheduledShiftError::Motion)
+            .map_err(ScheduledShiftError::Motion)?;
+        self.last_generated_at = None;
+        Ok(())
     }
 
     /// Transfers one independently admitted block into the future generator.
@@ -2405,9 +2416,9 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
                         token: OutputCommitToken(self.next_token),
                         update,
                     };
-                    if self.push_output(output).is_err() {
+                    if let Err(error) = self.push_output(output) {
                         self.output_faulted = true;
-                        return Err(ScheduledShiftError::Arithmetic);
+                        return Err(error);
                     }
                 }
                 CachedMotionPoll::BlockComplete {
@@ -2576,7 +2587,24 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         {
             return Err(MotionError::State);
         }
-        self.cached.earliest_finish_cycle()
+        self.distinct_finish_cycle()
+    }
+
+    /// Exact normal-disable cycle after the current block's complete logical
+    /// trace has been planned but before its output ring is physically drained.
+    ///
+    /// This permits a continuous DMA target to materialize the final disable
+    /// with sufficient hardware lead while the unique block token remains
+    /// retained.
+    pub fn planned_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
+        if self.output_faulted
+            || self.completed.is_none()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(MotionError::State);
+        }
+        self.distinct_finish_cycle()
     }
 
     /// Adds the normal terminal-disable image to the same generated/staged/
@@ -2593,28 +2621,24 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         {
             return Err(ScheduledShiftError::State);
         }
-        let event = self
-            .cached
-            .finish_job(at)
-            .map_err(ScheduledShiftError::Motion)?;
-        let update = match self.mapper.apply(event) {
-            Ok(update) => update,
-            Err(error) => {
-                self.output_faulted = true;
-                return Err(ScheduledShiftError::Image(error));
-            }
-        };
-        self.next_token = next_output_token(self.next_token);
-        let output = ScheduledShiftOutput {
-            token: OutputCommitToken(self.next_token),
-            update,
-        };
-        if self.push_output(output).is_err() {
-            self.output_faulted = true;
-            return Err(ScheduledShiftError::Arithmetic);
+        self.append_finish(at)
+    }
+
+    /// Adds final disable while a logically complete final block and all of
+    /// its physical output ownership remain retained.
+    pub fn schedule_planned_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledShiftError> {
+        if self.output_faulted
+            || self.completed.is_none()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+            || self.len == OUTPUTS
+        {
+            return Err(ScheduledShiftError::State);
         }
-        self.finish_token = Some(output.token);
-        Ok(output)
+        self.append_finish(at)
     }
 
     /// Consumes the one-shot job-complete fact after terminal disable was
@@ -2666,6 +2690,12 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         self.staged
     }
 
+    /// Whether the current block's complete logical trace is retained while
+    /// its generated outputs await physical acknowledgement.
+    pub const fn block_completion_planned(&self) -> bool {
+        self.completed.is_some()
+    }
+
     /// Number of target-confirmed complete-image updates.
     pub const fn committed_updates(&self) -> u64 {
         self.committed_updates
@@ -2696,17 +2726,78 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         }
     }
 
-    fn push_output(&mut self, output: ScheduledShiftOutput) -> Result<(), ()> {
-        if self.len == OUTPUTS || OUTPUTS == 0 {
-            return Err(());
+    fn push_output(&mut self, output: ScheduledShiftOutput) -> Result<(), ScheduledShiftError> {
+        if let Some(previous) = self.last_generated_at
+            && output.update.at <= previous
+        {
+            return Err(ScheduledShiftError::OutputOrder {
+                previous,
+                received: output.update.at,
+            });
         }
-        let tail = (self.head + self.len) % OUTPUTS;
+        if self.len == OUTPUTS || OUTPUTS == 0 {
+            return Err(ScheduledShiftError::State);
+        }
+        let tail = self
+            .head
+            .checked_add(self.len)
+            .ok_or(ScheduledShiftError::Arithmetic)?
+            % OUTPUTS;
         if self.outputs[tail].is_some() {
-            return Err(());
+            return Err(ScheduledShiftError::State);
         }
         self.outputs[tail] = Some(output);
         self.len += 1;
+        self.last_generated_at = Some(output.update.at);
         Ok(())
+    }
+
+    fn distinct_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
+        let ready = self.cached.earliest_finish_cycle()?;
+        let Some(previous) = self.last_generated_at else {
+            return Ok(ready);
+        };
+        let next_boundary = previous
+            .0
+            .checked_add(u64::from(self.output_quantum_cycles))
+            .ok_or(MotionError::Arithmetic)?;
+        Ok(DeviceCycle(ready.0.max(next_boundary)))
+    }
+
+    fn append_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledShiftError> {
+        if let Some(previous) = self.last_generated_at
+            && at <= previous
+        {
+            return Err(ScheduledShiftError::OutputOrder {
+                previous,
+                received: at,
+            });
+        }
+        let event = self
+            .cached
+            .finish_job(at)
+            .map_err(ScheduledShiftError::Motion)?;
+        let update = match self.mapper.apply(event) {
+            Ok(update) => update,
+            Err(error) => {
+                self.output_faulted = true;
+                return Err(ScheduledShiftError::Image(error));
+            }
+        };
+        self.next_token = next_output_token(self.next_token);
+        let output = ScheduledShiftOutput {
+            token: OutputCommitToken(self.next_token),
+            update,
+        };
+        if let Err(error) = self.push_output(output) {
+            self.output_faulted = true;
+            return Err(error);
+        }
+        self.finish_token = Some(output.token);
+        Ok(output)
     }
 }
 
@@ -3516,6 +3607,59 @@ mod tests {
         assert!(!runner.take_job_complete());
         assert_eq!(runner.planned_status().state, ExecutorState::Complete);
         assert!(runner.planned_status().enabled.is_empty());
+    }
+
+    #[test]
+    fn scheduled_final_disable_can_be_owned_before_block_release() {
+        let (mut job, admitted) = admitted_block(&[segment(0, 8, [1, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(0);
+        profile.timing.output_quantum_cycles = 4;
+        for axis in &mut profile.timing.axes {
+            axis.pulse_high_cycles = 4;
+            axis.pulse_low_cycles = 4;
+        }
+        let mut runner = ScheduledShiftedStepper::<3, 8>::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(108)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                completion_at: DeviceCycle(108),
+            }
+        );
+        assert_eq!(runner.planned_finish_cycle(), Ok(DeviceCycle(112)));
+        assert_eq!(
+            runner.schedule_planned_finish(DeviceCycle(108)),
+            Err(ScheduledShiftError::OutputOrder {
+                previous: DeviceCycle(108),
+                received: DeviceCycle(108),
+            })
+        );
+        let terminal = runner.schedule_planned_finish(DeviceCycle(112)).unwrap();
+        assert_eq!(terminal.update.at, DeviceCycle(112));
+        assert_eq!(runner.queued_outputs(), 4);
+        assert_eq!(runner.planned_status().state, ExecutorState::Complete);
+        assert!(runner.take_completed_block(DeviceCycle(108)).is_none());
+
+        let mut staged = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            runner.stage_output(output).unwrap();
+            staged.push(output);
+        }
+        for output in staged.iter().copied() {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        assert_eq!(staged.len(), 4);
+        assert!(runner.take_job_complete());
+        let completed = runner.take_completed_block(DeviceCycle(108)).unwrap();
+        assert_eq!(completed.completion().position, [1, 0, 0]);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
     }
 
     #[test]

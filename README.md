@@ -165,6 +165,14 @@ a board-qualified `Priming → Primed` output-horizon acknowledgement before
 local start. TinyBee's safe-prefilled PCM-short HAL composition is compile-only;
 both board adapters still reject streaming, so armability remains closed. See
 the [prestart priming evidence](docs/evidence/M7-PRESTART-HARDWARE-PRIMING.md).
+The next portable slice models exact circular-DMA slot release/refill ownership,
+requires an accepted dense frame before extending the sealed horizon, and keeps
+descriptor progress distinct from physical latch authority. Final disable is
+owned before the final block can return, including the case where its earliest
+legal cycle follows the last step image. A four-slot circular-ring simulation
+exercises release, refill, serial reconstruction, and terminal disable without
+claiming TinyBee phase or timing. See the
+[circular-DMA evidence](docs/evidence/M6-CIRCULAR-DMA-HORIZON.md).
 
 ## Developer checks
 

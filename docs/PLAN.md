@@ -337,6 +337,18 @@ unreachable. Target frame materialization, a qualified cycle/frame epoch,
 cross-block prefill, safe peripheral reclaim, interrupt-backed commit
 observation, and logic-analyzer evidence remain open; both boards remain
 non-armable.
+The follow-on circular-DMA checkpoint now owns exact released frame credits and
+uses a preview/push/accept transaction so a failed or partial target write never
+extends the sealed horizon. Sparse motion tags become materialized only in their
+exact dense frame and can retire only after a separate monotonic physical-latch
+observation. The final normal-disable image is planned while the final block and
+its output tokens remain retained, and the scheduled owner enforces one complete
+image per strictly increasing output-grid boundary. A four-frame host ring
+simulation exercises steady release/refill and proves final disable is visible
+before block acknowledgement. The TinyBee HAL surface uses one four-byte DMA
+descriptor per modeled frame, but remains compile-only and unreachable. FIFO/WS
+phase, refill interrupt/wake policy, static-to-stream handoff, safe reclaim,
+multi-block cross-prefill, and all physical claims remain open.
 
 Exit gate:
 

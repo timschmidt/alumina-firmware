@@ -62,6 +62,12 @@ retire in strict order; block acknowledgement, output-free terminal dwell,
 normal disable, and schedule completion remain behind target-reported latch
 observations.
 
+The subsequent [circular-DMA checkpoint](M6-CIRCULAR-DMA-HORIZON.md) makes the
+portable target boundary more concrete: safe-prefilled frame slots cross an
+exact release/preview/push/accept ownership path, while latch observation remains
+independent. It also preplans terminal disable before final-block release. That
+checkpoint does not change this document's closed hardware claims.
+
 Safety remains authoritative throughout. A prime error latches a driver fault.
 Limit/E-stop/interlock/deadline faults first request the board-safe transaction,
 then invalidate all planned tokens and admitted ownership. Because a future
@@ -82,9 +88,11 @@ and proves the pinned permissive `esp-hal` API can compose original-ESP32 I²S0,
 `DMA_I2S0`, GPIO25 BCLK, GPIO26 WS, and GPIO27 data as a blocking PCM-short
 transmitter. It configures 32-bit mono slots at a model-only 250 kHz frame rate
 and prefills 256 internal-SRAM words with the complete safe image before a
-circular transfer can be borrowed. A separate compile-only operation writes two
-safe samples after a stopped circular guard so the modeled one-frame pipeline
-has a following latch boundary.
+circular transfer can be borrowed. The follow-on compile surface divides that
+buffer into one four-byte descriptor per complete modeled frame and exposes
+whole-frame availability plus exact single-frame push operations. A separate
+compile-only operation writes two safe samples after a stopped circular guard
+so the modeled one-frame pipeline has a following latch boundary.
 
 No boot, runtime, fault, or arm path can construct this owner. The selected rate,
 channel duplication, byte order, first-frame behavior, peripheral stop phase,
