@@ -115,3 +115,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   wire version 2, abort-guard hardware priming, explicit prestart horizon
   acknowledgement, scheduled firmware ownership, and compile-only TinyBee
   PCM-short HAL composition with physical claims kept closed.
+- [`M8-PORTABLE-FOC-FOUNDATION.md`](M8-PORTABLE-FOC-FOUNDATION.md) — exact Q2.30
+  point/interval arithmetic, certified transforms and modulation, widened
+  dq-current PI control, digest-bound commands, and deterministic functional
+  plant replay with every hardware claim kept closed.

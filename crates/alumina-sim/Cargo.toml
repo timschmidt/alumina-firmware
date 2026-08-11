@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 alumina-clock.workspace = true
+alumina-foc.workspace = true
 alumina-job.workspace = true
 alumina-machine-ir.workspace = true
 alumina-motion.workspace = true

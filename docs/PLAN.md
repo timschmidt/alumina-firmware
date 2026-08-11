@@ -482,6 +482,17 @@ Work:
   hardware-measured shutdown path. Qualify one motor at low voltage/current
   before dual-motor operation.
 
+Portable checkpoint: `alumina-foc` now provides allocation-free exact Q2.30
+point and outward-interval arithmetic, wide-intermediate Clarke/Park transforms,
+certified rotations, non-clipping min/max modulation, anti-windup dq-current PI
+control, voltage-circle-bounded digest snapshots/commands, and hardware ownership
+traits.
+The deterministic simulator replays a dimensionless one-pole dq plant and
+separates controller evidence from physical motor claims. The MKS board adapter,
+angle generation/alignment, other torque modes, cascaded motion loops, safety
+monitors, synchronized MCPWM/ADC, WCET, and all bench qualification remain open.
+See the [portable FOC evidence](evidence/M8-PORTABLE-FOC-FOUNDATION.md).
+
 Exit gate:
 
 - PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,

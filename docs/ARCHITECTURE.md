@@ -268,7 +268,7 @@ aluminafw/
 │   ├── alumina-safety/          # state machine and safe-output policies
 │   ├── alumina-motion/          # integer schedule checks, RT interpolation/hold
 │   ├── alumina-step/            # direct/RMT/I2S pulse backends
-│   ├── alumina-foc/             # motor/sensor/driver/current/control layers
+│   ├── alumina-foc/             # exact transforms, modulation, dq control/contracts
 │   ├── alumina-control-ir/      # deterministic deployed graph subset
 │   ├── alumina-net/             # embassy-net web/API implementation
 │   ├── alumina-storage/         # immutable SD cache and RT prefetch

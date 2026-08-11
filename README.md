@@ -239,6 +239,18 @@ refill result is explicitly not a waveform verdict. See the
 [HIL procedure](docs/HIL.md) and
 [harness evidence](docs/evidence/M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md).
 
+The first M8 portable FOC slice is also implemented without creating a hardware
+drive path. A new no-std crate carries exact Q2.30 points and outward intervals,
+wide-intermediate Clarke/Park transforms, certified rotation inputs,
+non-clipping min/max modulation, anti-windup dq-current PI control, immutable
+parameter snapshots whose complete PI output rectangle is voltage-circle
+bounded, digest-bound scheduled commands, and allocation-free
+sensor/current/power-stage traits. A deliberately dimensionless simulator proves
+deterministic controller replay, convergence, visible saturation, and fail-closed
+parameter/vector rejection. MKS board reconciliation, PWM/ADC adapters, motor
+identification, deadlines, shutdown measurement, and every energization claim
+remain open. See the [portable FOC evidence](docs/evidence/M8-PORTABLE-FOC-FOUNDATION.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

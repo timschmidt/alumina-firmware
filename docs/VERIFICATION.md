@@ -235,6 +235,11 @@ hardwired safety chain remains effective with all network equipment removed.
 FOC begins on reconciled MKS ESP32 FOC V1.0 with current-limited bench power, an
 emergency cutoff, and one unloaded or safely restrained motor. Progression:
 
+The current [portable FOC checkpoint](evidence/M8-PORTABLE-FOC-FOUNDATION.md)
+proves fixed-point interval arithmetic, transforms/modulation, dq PI state, and
+deterministic functional-plant replay only. It satisfies none of the physical
+progression steps or measurements below.
+
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.
 2. Low-voltage open-loop electrical rotation and sensor alignment.
