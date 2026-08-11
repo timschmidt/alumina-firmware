@@ -209,6 +209,7 @@ The current binary bodies are:
 | put-chunk prefix | 52 | exact declared chunk bytes |
 | upload progress | 32 | none |
 | finalize request | 8 | none |
+| exact publication inspect request/response | 80 | none |
 | destructive cache provision | 112 | none |
 
 An upload plan commits a nonzero upload ID, typed object, complete content
@@ -217,6 +218,15 @@ count. Chunks are sequential and independently hashed; the final chunk alone may
 be short. The canonical `ACMF` V1 manifest hash commits its schema, object facts,
 layout, and each ordered chunk descriptor. Mutation is rejected during every
 armed/energized state and while deterministic execution owns storage service.
+
+`StorageInspect` (`0x090a`) is the read-only retry/reconciliation primitive. Its
+80-byte body names one exact typed object, byte length, content digest, and
+ordered chunk-manifest digest. `Ok` returns the identical canonical body;
+`NotFound` is a benign cache miss. The backend linearly revalidates the
+publication chain, and any successful response that does not exactly echo the
+query is an integrity fault. This lets a Wi-Fi client resolve a lost finalize
+response without treating an upload transaction ID as content authority or
+blindly duplicating a published object.
 
 The implemented internal readback API identifies a publication by the exact
 typed stored object and canonical manifest. It linearly revalidates the committed

@@ -348,6 +348,14 @@ pub trait StorageBackend {
         Err(StatusCode::Unsupported)
     }
 
+    /// Revalidates and returns one exact typed publication for retry/cache reconciliation.
+    async fn inspect_published(
+        &mut self,
+        _expected: PublishedObject,
+    ) -> Result<PublishedObject, StatusCode> {
+        Err(StatusCode::Unsupported)
+    }
+
     /// Begins or idempotently resumes one durable declaration.
     async fn begin_upload(
         &mut self,
@@ -436,6 +444,16 @@ where
         )
     }
 
+    async fn inspect_published(
+        &mut self,
+        expected: PublishedObject,
+    ) -> Result<PublishedObject, StatusCode> {
+        CacheMedia::open_published(self, expected)
+            .await
+            .map(|reader| reader.published())
+            .map_err(media_error_status)
+    }
+
     async fn begin_upload(
         &mut self,
         plan: UploadPlan,
@@ -484,6 +502,16 @@ where
         ProvisionedCache::provision(self, request, context)
             .await
             .map(|_| ())
+            .map_err(provisioned_cache_error_status)
+    }
+
+    async fn inspect_published(
+        &mut self,
+        expected: PublishedObject,
+    ) -> Result<PublishedObject, StatusCode> {
+        ProvisionedCache::open_published(self, expected)
+            .await
+            .map(|reader| reader.published())
             .map_err(provisioned_cache_error_status)
     }
 
@@ -760,6 +788,18 @@ impl StorageServiceState {
                     Err(status) => (status, 0),
                 },
                 Err(CacheProvisionRequestError::Confirmation) => (StatusCode::Integrity, 0),
+                Err(_) => (StatusCode::InvalidRequest, 0),
+            },
+            Operation::StorageInspect => match PublishedObject::decode(body, CACHE_LIMITS) {
+                Ok(expected) => match backend.inspect_published(expected).await {
+                    Ok(publication) if publication == expected => {
+                        response_body[..PublishedObject::WIRE_LEN]
+                            .copy_from_slice(&publication.encode());
+                        (StatusCode::Ok, PublishedObject::WIRE_LEN)
+                    }
+                    Ok(_) => (StatusCode::Integrity, 0),
+                    Err(status) => (status, 0),
+                },
                 Err(_) => (StatusCode::InvalidRequest, 0),
             },
             Operation::StorageBeginUpload => match UploadPlan::decode(body, CACHE_LIMITS) {
@@ -1174,6 +1214,7 @@ mod tests {
 
     struct ReadyBackend {
         upload: Option<UploadProgress>,
+        published: Option<PublishedObject>,
         provisioned: Option<CacheProvisionRequest>,
         calls: u8,
     }
@@ -1182,6 +1223,7 @@ mod tests {
         const fn new() -> Self {
             Self {
                 upload: None,
+                published: None,
                 provisioned: None,
                 calls: 0,
             }
@@ -1218,6 +1260,18 @@ mod tests {
             context.validate().map_err(storage_error_status)?;
             self.provisioned = Some(request);
             Ok(())
+        }
+
+        async fn inspect_published(
+            &mut self,
+            expected: PublishedObject,
+        ) -> Result<PublishedObject, StatusCode> {
+            self.calls = self.calls.saturating_add(1);
+            match self.published {
+                Some(publication) if publication == expected => Ok(publication),
+                Some(_) => Err(StatusCode::Integrity),
+                None => Err(StatusCode::NotFound),
+            }
         }
 
         async fn begin_upload(
@@ -1271,10 +1325,12 @@ mod tests {
                 return Err(StatusCode::Conflict);
             }
             self.upload = None;
-            Ok(PublishedObject {
+            let publication = PublishedObject {
                 object: plan().object,
                 manifest: plan().manifest,
-            })
+            };
+            self.published = Some(publication);
+            Ok(publication)
         }
     }
 
@@ -1344,6 +1400,36 @@ mod tests {
             DeviceCycle(10),
         ));
         assert_eq!(response_status(&response), StatusCode::Unsupported);
+    }
+
+    #[test]
+    fn exact_publication_inspection_is_read_only_and_echoes_identity() {
+        let publication = PublishedObject {
+            object: plan().object,
+            manifest: plan().manifest,
+        };
+        let native = request(Operation::StorageInspect, &publication.encode());
+        let mut service = service();
+        let mut backend = ReadyBackend::new();
+
+        let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(10)));
+        assert_eq!(response_status(&response), StatusCode::NotFound);
+        assert_eq!(backend.calls, 1);
+
+        backend.published = Some(publication);
+        let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(11)));
+        let (status, body) = response_parts(&response);
+        assert_eq!(status, StatusCode::Ok);
+        assert_eq!(PublishedObject::decode(body, CACHE_LIMITS), Ok(publication));
+        assert_eq!(backend.calls, 2);
+
+        let response = block_on(service.dispatch(
+            &mut backend,
+            &request(Operation::StorageInspect, &[0; PublishedObject::WIRE_LEN]),
+            DeviceCycle(12),
+        ));
+        assert_eq!(response_status(&response), StatusCode::InvalidRequest);
+        assert_eq!(backend.calls, 2);
     }
 
     #[test]

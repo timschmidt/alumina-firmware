@@ -245,6 +245,25 @@ fn validate_layout(
     chunk_count: u32,
     limits: CacheLimits,
 ) -> Result<(), Error> {
+    validate_object(object, limits)?;
+    if chunk_bytes == 0 || chunk_bytes > limits.maximum_chunk_bytes {
+        return Err(Error::ChunkSize {
+            received: chunk_bytes,
+            maximum: limits.maximum_chunk_bytes,
+        });
+    }
+    let expected = object.byte_len.div_ceil(u64::from(chunk_bytes));
+    if expected > u64::from(limits.maximum_chunks) || u64::from(chunk_count) != expected {
+        return Err(Error::ChunkCount {
+            received: chunk_count,
+            expected,
+            maximum: limits.maximum_chunks,
+        });
+    }
+    Ok(())
+}
+
+fn validate_object(object: StoredObject, limits: CacheLimits) -> Result<(), Error> {
     limits.validate()?;
     if !object.content.is_valid() {
         return Err(Error::MissingDigest {
@@ -258,20 +277,6 @@ fn validate_layout(
         return Err(Error::ObjectTooLarge {
             received: object.byte_len,
             maximum: limits.maximum_object_bytes,
-        });
-    }
-    if chunk_bytes == 0 || chunk_bytes > limits.maximum_chunk_bytes {
-        return Err(Error::ChunkSize {
-            received: chunk_bytes,
-            maximum: limits.maximum_chunk_bytes,
-        });
-    }
-    let expected = object.byte_len.div_ceil(u64::from(chunk_bytes));
-    if expected > u64::from(limits.maximum_chunks) || u64::from(chunk_count) != expected {
-        return Err(Error::ChunkCount {
-            received: chunk_count,
-            expected,
-            maximum: limits.maximum_chunks,
         });
     }
     Ok(())
@@ -684,6 +689,79 @@ pub struct PublishedObject {
     pub manifest: ContentId,
 }
 
+impl PublishedObject {
+    /// Exact canonical `StorageInspect` request and successful-response length.
+    pub const WIRE_LEN: usize = 80;
+
+    /// Validates exact typed content/manifest identity against cache policy.
+    pub fn validate(self, limits: CacheLimits) -> Result<(), Error> {
+        validate_object(self.object, limits)?;
+        if !self.manifest.is_valid() {
+            return Err(Error::MissingDigest {
+                role: DigestRole::Manifest,
+            });
+        }
+        Ok(())
+    }
+
+    /// Encodes one exact publication identity for inspection or confirmation.
+    pub fn encode(self) -> [u8; Self::WIRE_LEN] {
+        let mut encoded = [0_u8; Self::WIRE_LEN];
+        encoded[0] = self.object.kind as u8;
+        encoded[1] = self.object.content.algorithm as u8;
+        // Bytes 2..4 are reserved zero in V1.
+        encoded[4..36].copy_from_slice(&self.object.content.digest.0);
+        encoded[36..44].copy_from_slice(&self.object.byte_len.to_le_bytes());
+        encoded[44] = self.manifest.algorithm as u8;
+        // Bytes 45..48 are reserved zero in V1.
+        encoded[48..80].copy_from_slice(&self.manifest.digest.0);
+        encoded
+    }
+
+    /// Decodes and validates one exact publication identity.
+    pub fn decode(encoded: &[u8], limits: CacheLimits) -> Result<Self, WireError> {
+        require_wire_len(encoded, Self::WIRE_LEN)?;
+        let object_kind = ObjectKind::from_wire(encoded[0]).ok_or(WireError::ObjectKind {
+            received: encoded[0],
+        })?;
+        let object_algorithm =
+            DigestAlgorithm::from_wire(encoded[1]).ok_or(WireError::Algorithm {
+                received: encoded[1],
+            })?;
+        if encoded[2..4].iter().any(|byte| *byte != 0)
+            || encoded[45..48].iter().any(|byte| *byte != 0)
+        {
+            return Err(WireError::Reserved);
+        }
+        let manifest_algorithm =
+            DigestAlgorithm::from_wire(encoded[44]).ok_or(WireError::Algorithm {
+                received: encoded[44],
+            })?;
+        let mut object_digest = [0_u8; 32];
+        object_digest.copy_from_slice(&encoded[4..36]);
+        let mut manifest_digest = [0_u8; 32];
+        manifest_digest.copy_from_slice(&encoded[48..80]);
+        let publication = Self {
+            object: StoredObject {
+                kind: object_kind,
+                content: ContentId {
+                    algorithm: object_algorithm,
+                    digest: Digest(object_digest),
+                },
+                byte_len: read_u64(encoded, 36),
+            },
+            manifest: ContentId {
+                algorithm: manifest_algorithm,
+                digest: Digest(manifest_digest),
+            },
+        };
+        publication
+            .validate(limits)
+            .map_err(WireError::Publication)?;
+        Ok(publication)
+    }
+}
+
 /// Small no-allocation transaction coordinator; it never owns filesystem bytes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct UploadCoordinator {
@@ -1082,6 +1160,8 @@ pub enum WireError {
     Reserved,
     /// Decoded upload plan failed storage admission.
     Plan(Error),
+    /// Decoded publication identity failed storage admission.
+    Publication(Error),
     /// Progress counters/identity were impossible.
     Progress,
     /// Chunk prefix contained zero/invalid identity or length.
@@ -1208,6 +1288,37 @@ mod tests {
             Err(Error::MissingDigest {
                 role: DigestRole::Manifest,
             })
+        );
+    }
+
+    #[test]
+    fn publication_identity_has_one_canonical_inspection_body() {
+        let publication = PublishedObject {
+            object: object(),
+            manifest: manifest(),
+        };
+        let encoded = publication.encode();
+        assert_eq!(encoded.len(), PublishedObject::WIRE_LEN);
+        assert_eq!(encoded[0], ObjectKind::MachineJobPartition as u8);
+        assert_eq!(encoded[1], DigestAlgorithm::Sha256 as u8);
+        assert_eq!(&encoded[36..44], &10_u64.to_le_bytes());
+        assert_eq!(encoded[44], DigestAlgorithm::Sha256 as u8);
+        assert_eq!(PublishedObject::decode(&encoded, LIMITS), Ok(publication));
+
+        let mut reserved = encoded;
+        reserved[45] = 1;
+        assert_eq!(
+            PublishedObject::decode(&reserved, LIMITS),
+            Err(WireError::Reserved)
+        );
+
+        let mut missing_manifest = encoded;
+        missing_manifest[48..80].fill(0);
+        assert_eq!(
+            PublishedObject::decode(&missing_manifest, LIMITS),
+            Err(WireError::Publication(Error::MissingDigest {
+                role: DigestRole::Manifest,
+            }))
         );
     }
 
