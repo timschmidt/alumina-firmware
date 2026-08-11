@@ -22,6 +22,10 @@ pub const DHCP_RANGE_START: [u8; 4] = [192, 168, 4, 100];
 pub const DHCP_RANGE_END: [u8; 4] = [192, 168, 4, 103];
 /// Boot-scoped request-authentication nonce size.
 pub const AUTH_NONCE_BYTES: usize = 16;
+/// Exact byte length of the current public authentication JSON response.
+pub const AUTH_DISCOVERY_BODY_BYTES: usize = 260;
+/// Canonical decimal HTTP content length for the authentication JSON response.
+pub const AUTH_DISCOVERY_CONTENT_LENGTH: &str = "260";
 /// HMAC-SHA-256 request proof size.
 pub const AUTH_TAG_BYTES: usize = 32;
 /// Exact lowercase hexadecimal request-proof header size.
@@ -37,9 +41,23 @@ pub const AUTH_COUNTER_HEADER: &str = "X-Alumina-Counter";
 pub const AUTH_PROOF_HEADER: &str = "X-Alumina-Authorization";
 /// Response header carrying a lowercase HMAC bound to the request counter.
 pub const AUTH_RESPONSE_HEADER: &str = "X-Alumina-Response-Authorization";
+/// Maximum canonical browser-origin bytes admitted by cross-origin control.
+pub const MAX_CORS_ORIGIN_BYTES: usize = 128;
+/// Browser header naming the calling document's exact origin.
+pub const CORS_ORIGIN_HEADER: &str = "Origin";
+/// Response header authorizing exactly one observed origin.
+pub const CORS_ALLOW_ORIGIN_HEADER: &str = "Access-Control-Allow-Origin";
+/// Preflight header naming the requested method.
+pub const CORS_REQUEST_METHOD_HEADER: &str = "Access-Control-Request-Method";
+/// Preflight header naming non-safelisted request fields.
+pub const CORS_REQUEST_HEADERS_HEADER: &str = "Access-Control-Request-Headers";
+/// Private-network preflight request opt-in field.
+pub const CORS_REQUEST_PRIVATE_NETWORK_HEADER: &str = "Access-Control-Request-Private-Network";
+/// Private-network preflight response opt-in field.
+pub const CORS_ALLOW_PRIVATE_NETWORK_HEADER: &str = "Access-Control-Allow-Private-Network";
 
-const AUTH_DOMAIN: &[u8] = b"ALUMINA-HTTP-AUTH-V1\0";
-const AUTH_RESPONSE_DOMAIN: &[u8] = b"ALUMINA-HTTP-RESPONSE-V1\0";
+const AUTH_DOMAIN: &[u8] = b"ALUMINA-HTTP-AUTH-V2\0";
+const AUTH_RESPONSE_DOMAIN: &[u8] = b"ALUMINA-HTTP-RESPONSE-V2\0";
 const REPLAY_WINDOW_BITS: u32 = 64;
 
 /// Provenance of the password protecting the device access point.
@@ -165,8 +183,12 @@ impl WebLimits {
     /// Reviewed initial limits used by the ESP adapter.
     pub const INITIAL: Self = Self {
         connections: 2,
-        header_bytes: 1_024,
-        header_count: 12,
+        // Chromium CORS/LAN requests commonly carry 13+ transport,
+        // fetch-metadata, origin, and access-control fields before the Alumina
+        // headers are counted. Keep the parser bounded without making ordinary
+        // browser requests depend on header elision.
+        header_bytes: 2_048,
+        header_count: 24,
         socket_bytes: 2_048,
         io_timeout_ms: 2_000,
         keepalive_timeout_ms: 5_000,
@@ -216,6 +238,92 @@ impl BootNonce {
     pub const fn as_bytes(self) -> [u8; AUTH_NONCE_BYTES] {
         self.0
     }
+}
+
+/// Owned, canonical browser origin bound into every authenticated transcript.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CorsOrigin {
+    len: u8,
+    bytes: [u8; MAX_CORS_ORIGIN_BYTES],
+}
+
+impl CorsOrigin {
+    /// Parses an exact path-free HTTP(S) origin and rejects header metacharacters.
+    pub fn parse(origin: &str) -> Result<Self, AuthError> {
+        let bytes = origin.as_bytes();
+        let authority = bytes
+            .strip_prefix(b"http://")
+            .or_else(|| bytes.strip_prefix(b"https://"))
+            .ok_or(AuthError::Origin)?;
+        if bytes.len() > MAX_CORS_ORIGIN_BYTES || !valid_origin_authority(authority) {
+            return Err(AuthError::Origin);
+        }
+        let len = u8::try_from(bytes.len()).map_err(|_| AuthError::Origin)?;
+        let mut stored = [0_u8; MAX_CORS_ORIGIN_BYTES];
+        stored[..bytes.len()].copy_from_slice(bytes);
+        Ok(Self { len, bytes: stored })
+    }
+
+    /// Exact origin text suitable for HMAC input and an allow-origin response.
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..usize::from(self.len)])
+            .expect("validated CORS origin is ASCII")
+    }
+}
+
+fn valid_origin_authority(authority: &[u8]) -> bool {
+    if authority.is_empty() {
+        return false;
+    }
+    if authority[0] == b'[' {
+        let Some(close) = authority.iter().position(|byte| *byte == b']') else {
+            return false;
+        };
+        let literal = &authority[1..close];
+        if literal.is_empty()
+            || !literal.contains(&b':')
+            || !literal
+                .iter()
+                .all(|byte| byte.is_ascii_hexdigit() || matches!(byte, b':' | b'.'))
+        {
+            return false;
+        }
+        return valid_origin_port(&authority[close + 1..]);
+    }
+
+    let mut split = authority.split(|byte| *byte == b':');
+    let host = split.next().unwrap_or_default();
+    let port = split.next();
+    if split.next().is_some()
+        || host.is_empty()
+        || !host
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    {
+        return false;
+    }
+    port.is_none_or(valid_origin_port_with_separator)
+}
+
+fn valid_origin_port(suffix: &[u8]) -> bool {
+    suffix.is_empty()
+        || suffix
+            .strip_prefix(b":")
+            .is_some_and(valid_origin_port_with_separator)
+}
+
+fn valid_origin_port_with_separator(port: &[u8]) -> bool {
+    if port.is_empty()
+        || !port.iter().all(u8::is_ascii_digit)
+        || (port.len() > 1 && port[0] == b'0')
+    {
+        return false;
+    }
+    let mut value = 0_u32;
+    for byte in port {
+        value = value * 10 + u32::from(*byte - b'0');
+    }
+    (1..=65_535).contains(&value)
 }
 
 /// Parsed proof supplied with one authenticated HTTP request.
@@ -332,14 +440,27 @@ impl AuthenticationState {
     pub fn authorize(
         &mut self,
         secret: &[u8],
-        proof: RequestProof,
-        method: HttpMethod,
-        path: &str,
+        metadata: AuthenticatedRequestMetadata,
         body: &[u8],
         now_ms: u64,
     ) -> Result<(), AuthError> {
-        verify_request_proof(secret, self.nonce, proof, method, path, body)?;
-        self.accept_counter(proof.counter)?;
+        if metadata.body_len != body.len() {
+            return Err(AuthError::BodyLength);
+        }
+        let path = metadata
+            .route
+            .canonical_path()
+            .ok_or(AuthError::PathLength)?;
+        verify_request_proof(
+            secret,
+            self.nonce,
+            metadata.proof,
+            metadata.method,
+            path,
+            metadata.origin,
+            body,
+        )?;
+        self.accept_counter(metadata.proof.counter)?;
         self.refill(now_ms);
         if self.tokens == 0 {
             return Err(AuthError::RateLimited);
@@ -407,12 +528,13 @@ pub fn sign_request(
     counter: u64,
     method: HttpMethod,
     path: &str,
+    origin: CorsOrigin,
     body: &[u8],
 ) -> Result<RequestProof, AuthError> {
     if counter == 0 {
         return Err(AuthError::Counter);
     }
-    let mac = request_mac(secret, nonce, counter, method, path, body)?;
+    let mac = request_mac(secret, nonce, counter, method, path, origin, body)?;
     let mut tag = [0_u8; AUTH_TAG_BYTES];
     tag.copy_from_slice(&mac.finalize().into_bytes());
     Ok(RequestProof { counter, tag })
@@ -424,12 +546,15 @@ fn request_mac(
     counter: u64,
     method: HttpMethod,
     path: &str,
+    origin: CorsOrigin,
     body: &[u8],
 ) -> Result<HmacSha256, AuthError> {
     if secret.is_empty() {
         return Err(AuthError::MissingSecret);
     }
     let path_len = u16::try_from(path.len()).map_err(|_| AuthError::PathLength)?;
+    let origin_text = origin.as_str();
+    let origin_len = u16::try_from(origin_text.len()).map_err(|_| AuthError::Origin)?;
     let body_len = u32::try_from(body.len()).map_err(|_| AuthError::BodyLength)?;
     let method = method.auth_value().ok_or(AuthError::Method)?;
     let body_digest = Sha256::digest(body);
@@ -440,6 +565,8 @@ fn request_mac(
     mac.update(&[method]);
     mac.update(&path_len.to_le_bytes());
     mac.update(path.as_bytes());
+    mac.update(&origin_len.to_le_bytes());
+    mac.update(origin_text.as_bytes());
     mac.update(&body_len.to_le_bytes());
     mac.update(&body_digest);
     Ok(mac)
@@ -452,12 +579,13 @@ pub fn verify_request_proof(
     proof: RequestProof,
     method: HttpMethod,
     path: &str,
+    origin: CorsOrigin,
     body: &[u8],
 ) -> Result<(), AuthError> {
     if proof.counter == 0 {
         return Err(AuthError::Counter);
     }
-    let mac = request_mac(secret, nonce, proof.counter, method, path, body)?;
+    let mac = request_mac(secret, nonce, proof.counter, method, path, origin, body)?;
     mac.verify_slice(&proof.tag)
         .map_err(|_| AuthError::Unauthorized)
 }
@@ -469,9 +597,10 @@ pub fn sign_response(
     counter: u64,
     http_status: u16,
     media: AuthenticatedMedia,
+    origin: CorsOrigin,
     body: &[u8],
 ) -> Result<ResponseProof, AuthError> {
-    let mac = response_mac(secret, nonce, counter, http_status, media, body)?;
+    let mac = response_mac(secret, nonce, counter, http_status, media, origin, body)?;
     let mut tag = [0_u8; AUTH_TAG_BYTES];
     tag.copy_from_slice(&mac.finalize().into_bytes());
     Ok(ResponseProof { counter, tag })
@@ -484,9 +613,18 @@ pub fn verify_response_proof(
     proof: ResponseProof,
     http_status: u16,
     media: AuthenticatedMedia,
+    origin: CorsOrigin,
     body: &[u8],
 ) -> Result<(), AuthError> {
-    let mac = response_mac(secret, nonce, proof.counter, http_status, media, body)?;
+    let mac = response_mac(
+        secret,
+        nonce,
+        proof.counter,
+        http_status,
+        media,
+        origin,
+        body,
+    )?;
     mac.verify_slice(&proof.tag)
         .map_err(|_| AuthError::Unauthorized)
 }
@@ -497,6 +635,7 @@ fn response_mac(
     counter: u64,
     http_status: u16,
     media: AuthenticatedMedia,
+    origin: CorsOrigin,
     body: &[u8],
 ) -> Result<HmacSha256, AuthError> {
     if secret.is_empty() {
@@ -506,6 +645,8 @@ fn response_mac(
         return Err(AuthError::Counter);
     }
     let body_len = u32::try_from(body.len()).map_err(|_| AuthError::BodyLength)?;
+    let origin_text = origin.as_str();
+    let origin_len = u16::try_from(origin_text.len()).map_err(|_| AuthError::Origin)?;
     let body_digest = Sha256::digest(body);
     let mut mac = HmacSha256::new_from_slice(secret).map_err(|_| AuthError::MissingSecret)?;
     mac.update(AUTH_RESPONSE_DOMAIN);
@@ -513,6 +654,8 @@ fn response_mac(
     mac.update(&counter.to_le_bytes());
     mac.update(&http_status.to_le_bytes());
     mac.update(&[media as u8]);
+    mac.update(&origin_len.to_le_bytes());
+    mac.update(origin_text.as_bytes());
     mac.update(&body_len.to_le_bytes());
     mac.update(&body_digest);
     Ok(mac)
@@ -568,6 +711,8 @@ pub struct AuthenticatedRequestMetadata {
     pub route: Route,
     /// Parsed boot-scoped request proof.
     pub proof: RequestProof,
+    /// Exact browser origin bound into request/response proofs and CORS policy.
+    pub origin: CorsOrigin,
     /// Exact body bytes the HTTP adapter must read before HMAC verification.
     pub body_len: usize,
 }
@@ -583,6 +728,7 @@ pub struct AuthHeaderAccumulator<'a> {
     transfer_encoding: Option<&'a [u8]>,
     counter: Option<&'a [u8]>,
     proof: Option<&'a [u8]>,
+    origin: Option<&'a [u8]>,
 }
 
 impl<'a> AuthHeaderAccumulator<'a> {
@@ -594,6 +740,7 @@ impl<'a> AuthHeaderAccumulator<'a> {
             transfer_encoding: None,
             counter: None,
             proof: None,
+            origin: None,
         }
     }
 
@@ -609,6 +756,8 @@ impl<'a> AuthHeaderAccumulator<'a> {
             Some(&mut self.counter)
         } else if name.eq_ignore_ascii_case(AUTH_PROOF_HEADER.as_bytes()) {
             Some(&mut self.proof)
+        } else if name.eq_ignore_ascii_case(CORS_ORIGIN_HEADER.as_bytes()) {
+            Some(&mut self.origin)
         } else {
             None
         };
@@ -654,10 +803,14 @@ impl<'a> AuthHeaderAccumulator<'a> {
         let proof = core::str::from_utf8(proof).map_err(|_| HttpAdmissionError::Credentials)?;
         let proof =
             parse_request_proof(counter, proof).map_err(|_| HttpAdmissionError::Credentials)?;
+        let origin = self.origin.ok_or(HttpAdmissionError::Origin)?;
+        let origin = core::str::from_utf8(origin).map_err(|_| HttpAdmissionError::Origin)?;
+        let origin = CorsOrigin::parse(origin).map_err(|_| HttpAdmissionError::Origin)?;
         Ok(AuthenticatedRequestMetadata {
             method,
             route,
             proof,
+            origin,
             body_len,
         })
     }
@@ -667,6 +820,149 @@ impl Default for AuthHeaderAccumulator<'_> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Owned facts admitted from one browser CORS/private-network preflight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CorsPreflight {
+    /// Exact calling-document origin to echo in the response.
+    pub origin: CorsOrigin,
+    /// Actual method the browser proposes to send after preflight.
+    pub target_method: HttpMethod,
+    /// Exact route selected by the proposed method and request path.
+    pub target_route: Route,
+    /// Whether the browser explicitly requested private-network access.
+    pub private_network: bool,
+}
+
+/// Strict single-value accumulator for browser preflight metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CorsPreflightAccumulator<'a> {
+    origin: Option<&'a [u8]>,
+    method: Option<&'a [u8]>,
+    headers: Option<&'a [u8]>,
+    private_network: Option<&'a [u8]>,
+}
+
+impl<'a> CorsPreflightAccumulator<'a> {
+    /// Empty preflight state.
+    pub const fn new() -> Self {
+        Self {
+            origin: None,
+            method: None,
+            headers: None,
+            private_network: None,
+        }
+    }
+
+    /// Observes one raw field and rejects duplicate security-relevant metadata.
+    pub fn observe(&mut self, name: &[u8], value: &'a [u8]) -> Result<(), HttpAdmissionError> {
+        let slot = if name.eq_ignore_ascii_case(CORS_ORIGIN_HEADER.as_bytes()) {
+            Some(&mut self.origin)
+        } else if name.eq_ignore_ascii_case(CORS_REQUEST_METHOD_HEADER.as_bytes()) {
+            Some(&mut self.method)
+        } else if name.eq_ignore_ascii_case(CORS_REQUEST_HEADERS_HEADER.as_bytes()) {
+            Some(&mut self.headers)
+        } else if name.eq_ignore_ascii_case(CORS_REQUEST_PRIVATE_NETWORK_HEADER.as_bytes()) {
+            Some(&mut self.private_network)
+        } else {
+            None
+        };
+        if let Some(slot) = slot
+            && slot.replace(value).is_some()
+        {
+            return Err(HttpAdmissionError::DuplicateHeader);
+        }
+        Ok(())
+    }
+
+    /// Admits only a method/path pair already exposed by the exact route table.
+    pub fn finish(self, path: &str) -> Result<CorsPreflight, HttpAdmissionError> {
+        let origin = self.origin.ok_or(HttpAdmissionError::Origin)?;
+        let origin = core::str::from_utf8(origin).map_err(|_| HttpAdmissionError::Origin)?;
+        let origin = CorsOrigin::parse(origin).map_err(|_| HttpAdmissionError::Origin)?;
+        let target_method = match self.method.ok_or(HttpAdmissionError::CorsMethod)? {
+            b"GET" => HttpMethod::Get,
+            b"POST" => HttpMethod::Post,
+            _ => return Err(HttpAdmissionError::CorsMethod),
+        };
+        let target_route = classify_route(target_method, path);
+        if matches!(
+            target_route,
+            Route::CorsPreflight | Route::MethodNotAllowed | Route::NotFound
+        ) {
+            return Err(HttpAdmissionError::CorsMethod);
+        }
+        validate_cors_request_headers(self.headers, target_route)?;
+        let private_network = match self.private_network {
+            None => false,
+            Some(b"true") => true,
+            Some(_) => return Err(HttpAdmissionError::CorsPrivateNetwork),
+        };
+        Ok(CorsPreflight {
+            origin,
+            target_method,
+            target_route,
+            private_network,
+        })
+    }
+}
+
+impl Default for CorsPreflightAccumulator<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn validate_cors_request_headers(
+    headers: Option<&[u8]>,
+    target_route: Route,
+) -> Result<(), HttpAdmissionError> {
+    let allowed = match target_route {
+        Route::StorageStatus => 0b110,
+        Route::ControlCommand => 0b111,
+        _ => 0,
+    };
+    let Some(headers) = headers else {
+        return Ok(());
+    };
+    let mut seen = 0_u8;
+    for header in headers.split(|byte| *byte == b',') {
+        let header = trim_http_ows(header);
+        let bit = if header.eq_ignore_ascii_case(b"Content-Type") {
+            0b001
+        } else if header.eq_ignore_ascii_case(AUTH_COUNTER_HEADER.as_bytes()) {
+            0b010
+        } else if header.eq_ignore_ascii_case(AUTH_PROOF_HEADER.as_bytes()) {
+            0b100
+        } else {
+            return Err(HttpAdmissionError::CorsHeaders);
+        };
+        if bit & allowed == 0 || seen & bit != 0 {
+            return Err(HttpAdmissionError::CorsHeaders);
+        }
+        seen |= bit;
+    }
+    if seen == 0 {
+        return Err(HttpAdmissionError::CorsHeaders);
+    }
+    Ok(())
+}
+
+fn trim_http_ows(mut value: &[u8]) -> &[u8] {
+    while value
+        .first()
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        value = &value[1..];
+    }
+    while value
+        .last()
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+    {
+        value = &value[..value.len() - 1];
+    }
+    value
 }
 
 fn parse_canonical_content_length(value: &[u8]) -> Result<usize, HttpAdmissionError> {
@@ -691,7 +987,7 @@ fn parse_canonical_content_length(value: &[u8]) -> Result<usize, HttpAdmissionEr
 pub enum HttpAdmissionError {
     /// A security-relevant field occurred more than once.
     DuplicateHeader,
-    /// Chunked or other transfer coding is not canonical for authenticated V1.
+    /// Chunked or other transfer coding is not canonical for authenticated V2.
     TransferEncoding,
     /// Content length was empty, nondecimal, noncanonical, or overflowed.
     ContentLength,
@@ -703,6 +999,14 @@ pub enum HttpAdmissionError {
     ContentType,
     /// Counter/proof fields were missing, non-UTF-8, or malformed.
     Credentials,
+    /// Browser origin was missing, duplicated, or noncanonical.
+    Origin,
+    /// Preflight target method/path was absent, noncanonical, or not exposed.
+    CorsMethod,
+    /// Preflight requested a header outside the route's finite allow set.
+    CorsHeaders,
+    /// Private-network preflight opt-in was not the exact `true` token.
+    CorsPrivateNetwork,
     /// Caller attempted authenticated metadata parsing for a public/error route.
     Route,
 }
@@ -739,9 +1043,11 @@ pub enum AuthError {
     Counter,
     /// Method is not admitted by the canonical transcript.
     Method,
-    /// Path cannot be represented by the V1 transcript.
+    /// Path cannot be represented by the V2 transcript.
     PathLength,
-    /// Body cannot be represented by the V1 transcript.
+    /// Browser origin was absent, noncanonical, or exceeded its fixed bound.
+    Origin,
+    /// Body cannot be represented by the V2 transcript.
     BodyLength,
     /// Proof was not exactly 64 lowercase hexadecimal characters.
     TagEncoding,
@@ -783,7 +1089,9 @@ pub enum HttpMethod {
     Put,
     /// Bounded deletion request.
     Delete,
-    /// Any method not admitted by protocol V1.
+    /// Browser CORS/private-network capability preflight.
+    Options,
+    /// Any method not admitted by protocol V2.
     Other,
 }
 
@@ -794,7 +1102,7 @@ impl HttpMethod {
             Self::Post => Some(2),
             Self::Put => Some(3),
             Self::Delete => Some(4),
-            Self::Other => None,
+            Self::Options | Self::Other => None,
         }
     }
 }
@@ -816,6 +1124,8 @@ pub enum Route {
     StorageStatus,
     /// Authenticated native operation frame for any admitted service family.
     ControlCommand,
+    /// Bodyless CORS/private-network preflight for one known API route.
+    CorsPreflight,
     /// Known resource addressed with a forbidden method.
     MethodNotAllowed,
     /// Unknown path.
@@ -846,7 +1156,7 @@ impl Route {
             Self::Authentication => Some("/api/v1/auth"),
             Self::StorageStatus => Some("/api/v1/storage"),
             Self::ControlCommand => Some("/api/v1/control"),
-            Self::MethodNotAllowed | Self::NotFound => None,
+            Self::CorsPreflight | Self::MethodNotAllowed | Self::NotFound => None,
         }
     }
 }
@@ -861,6 +1171,11 @@ pub fn classify_route(method: HttpMethod, path: &str) -> Route {
         (HttpMethod::Get, "/api/v1/auth") => Route::Authentication,
         (HttpMethod::Get, "/api/v1/storage") => Route::StorageStatus,
         (HttpMethod::Post, "/api/v1/control") => Route::ControlCommand,
+        (
+            HttpMethod::Options,
+            "/api/v1/identity" | "/api/v1/health" | "/api/v1/network" | "/api/v1/auth"
+            | "/api/v1/storage" | "/api/v1/control",
+        ) => Route::CorsPreflight,
         (
             _,
             "/" | "/api/v1/identity" | "/api/v1/health" | "/api/v1/network" | "/api/v1/auth"
@@ -1024,6 +1339,8 @@ mod tests {
     fn initial_profile_and_web_limits_are_bounded() {
         assert_eq!(DEVELOPMENT.validate(), Ok(()));
         assert_eq!(WebLimits::INITIAL.validate(), Ok(()));
+        assert_eq!(WebLimits::INITIAL.header_bytes, 2_048);
+        assert_eq!(WebLimits::INITIAL.header_count, 24);
         assert!(!DEVELOPMENT.credential_source.production_armable());
     }
 
@@ -1074,6 +1391,14 @@ mod tests {
             Route::ControlCommand.maximum_body_bytes(),
             MAX_AUTHENTICATED_BODY_BYTES
         );
+        assert_eq!(
+            classify_route(HttpMethod::Options, "/api/v1/control"),
+            Route::CorsPreflight
+        );
+        assert_eq!(
+            classify_route(HttpMethod::Options, "/api/v1/unknown"),
+            Route::NotFound
+        );
     }
 
     fn nonce() -> BootNonce {
@@ -1082,6 +1407,70 @@ mod tests {
             0xee, 0xff,
         ])
         .unwrap()
+    }
+
+    fn origin() -> CorsOrigin {
+        CorsOrigin::parse("http://alumina-ui.local").unwrap()
+    }
+
+    fn authorize_storage(
+        state: &mut AuthenticationState,
+        secret: &[u8],
+        proof: RequestProof,
+        body: &[u8],
+        now_ms: u64,
+    ) -> Result<(), AuthError> {
+        state.authorize(
+            secret,
+            AuthenticatedRequestMetadata {
+                method: HttpMethod::Get,
+                route: Route::StorageStatus,
+                proof,
+                origin: origin(),
+                body_len: body.len(),
+            },
+            body,
+            now_ms,
+        )
+    }
+
+    #[test]
+    fn cors_origins_are_bounded_canonical_http_authorities() {
+        for candidate in [
+            "http://alumina-ui.local",
+            "https://alumina.example",
+            "http://192.168.4.1:8080",
+            "https://[2001:db8::1]:8443",
+        ] {
+            assert_eq!(CorsOrigin::parse(candidate).unwrap().as_str(), candidate);
+        }
+
+        for candidate in [
+            "null",
+            "file:///tmp/alumina.html",
+            "http://",
+            "http://:",
+            "http://[]",
+            "http://user@alumina.local",
+            "http://alumina.local/",
+            "http://alumina.local/path",
+            "http://alumina.local?query",
+            "http://alumina.local#fragment",
+            "http://alumina.local:0",
+            "http://alumina.local:080",
+            "http://alumina.local:65536",
+            "HTTP://alumina.local",
+            "http://alumina.local\r\nx-evil: true",
+        ] {
+            assert_eq!(CorsOrigin::parse(candidate), Err(AuthError::Origin));
+        }
+        let too_long = concat!(
+            "http://",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert!(too_long.len() > MAX_CORS_ORIGIN_BYTES);
+        assert_eq!(CorsOrigin::parse(too_long), Err(AuthError::Origin));
     }
 
     #[test]
@@ -1094,6 +1483,7 @@ mod tests {
             42,
             HttpMethod::Post,
             "/api/v1/control",
+            origin(),
             body,
         )
         .unwrap();
@@ -1101,7 +1491,7 @@ mod tests {
         write_lower_hex(&proof.tag, &mut encoded).unwrap();
         assert_eq!(
             core::str::from_utf8(&encoded).unwrap(),
-            "5cbc3ec1155caa3a32a6f9a6a7d8be61e5b50591947d9e8ab86bc1cc51890235"
+            "3dac5c37d58b5eefbd04caee27fec16f3cc08e616212730c66213a00b57d08c9"
         );
         assert_eq!(
             parse_request_proof("42", core::str::from_utf8(&encoded).unwrap()).unwrap(),
@@ -1114,6 +1504,7 @@ mod tests {
                 proof,
                 HttpMethod::Post,
                 "/api/v1/control",
+                origin(),
                 body,
             ),
             Ok(())
@@ -1125,7 +1516,21 @@ mod tests {
                 proof,
                 HttpMethod::Post,
                 "/api/v1/storage",
+                origin(),
                 b"changed",
+            ),
+            Err(AuthError::Unauthorized)
+        );
+        let other_origin = CorsOrigin::parse("https://other-ui.local").unwrap();
+        assert_eq!(
+            verify_request_proof(
+                secret,
+                nonce(),
+                proof,
+                HttpMethod::Post,
+                "/api/v1/control",
+                other_origin,
+                body,
             ),
             Err(AuthError::Unauthorized)
         );
@@ -1136,13 +1541,14 @@ mod tests {
             42,
             200,
             AuthenticatedMedia::NativeFrame,
+            origin(),
             b"native-response-frame",
         )
         .unwrap();
         write_lower_hex(&response.tag, &mut encoded).unwrap();
         assert_eq!(
             core::str::from_utf8(&encoded).unwrap(),
-            "8cd5ace4a954c4f230aab6678d0f47c7386dbc6ff28181986bb0a41cc013d43b"
+            "605d057904149605c1b880555e407843810abcef6c1bf90ae4e3ed3d220369ac"
         );
         assert_eq!(
             verify_response_proof(
@@ -1151,6 +1557,7 @@ mod tests {
                 response,
                 200,
                 AuthenticatedMedia::NativeFrame,
+                origin(),
                 b"native-response-frame",
             ),
             Ok(())
@@ -1162,6 +1569,19 @@ mod tests {
                 response,
                 200,
                 AuthenticatedMedia::Json,
+                origin(),
+                b"native-response-frame",
+            ),
+            Err(AuthError::Unauthorized)
+        );
+        assert_eq!(
+            verify_response_proof(
+                secret,
+                nonce(),
+                response,
+                200,
+                AuthenticatedMedia::NativeFrame,
+                other_origin,
                 b"native-response-frame",
             ),
             Err(AuthError::Unauthorized)
@@ -1176,6 +1596,7 @@ mod tests {
             7,
             HttpMethod::Get,
             "/api/v1/control",
+            origin(),
             b"",
         )
         .unwrap();
@@ -1200,6 +1621,7 @@ mod tests {
                 wrong,
                 HttpMethod::Get,
                 "/api/v1/storage",
+                origin(),
                 b"",
             ),
             Err(AuthError::Unauthorized)
@@ -1214,6 +1636,7 @@ mod tests {
             7,
             HttpMethod::Post,
             "/api/v1/control",
+            origin(),
             b"body",
         )
         .unwrap();
@@ -1229,12 +1652,20 @@ mod tests {
             .observe(AUTH_COUNTER_HEADER.as_bytes(), b"7")
             .unwrap();
         headers.observe(AUTH_PROOF_HEADER.as_bytes(), &tag).unwrap();
+        let browser_origin = origin();
+        headers
+            .observe(
+                CORS_ORIGIN_HEADER.as_bytes(),
+                browser_origin.as_str().as_bytes(),
+            )
+            .unwrap();
         assert_eq!(
             headers.finish(HttpMethod::Post, Route::ControlCommand),
             Ok(AuthenticatedRequestMetadata {
                 method: HttpMethod::Post,
                 route: Route::ControlCommand,
                 proof,
+                origin: origin(),
                 body_len: 4,
             })
         );
@@ -1244,6 +1675,13 @@ mod tests {
         assert_eq!(
             duplicate.observe(b"content-length", b"5"),
             Err(HttpAdmissionError::DuplicateHeader)
+        );
+
+        let mut missing_origin = headers;
+        missing_origin.origin = None;
+        assert_eq!(
+            missing_origin.finish(HttpMethod::Post, Route::ControlCommand),
+            Err(HttpAdmissionError::Origin)
         );
 
         let mut chunked = headers;
@@ -1278,6 +1716,67 @@ mod tests {
     }
 
     #[test]
+    fn cors_preflight_is_exact_route_scoped_and_private_network_aware() {
+        let browser_origin = origin();
+        let mut preflight = CorsPreflightAccumulator::new();
+        preflight
+            .observe(
+                CORS_ORIGIN_HEADER.as_bytes(),
+                browser_origin.as_str().as_bytes(),
+            )
+            .unwrap();
+        preflight
+            .observe(CORS_REQUEST_METHOD_HEADER.as_bytes(), b"POST")
+            .unwrap();
+        preflight
+            .observe(
+                CORS_REQUEST_HEADERS_HEADER.as_bytes(),
+                b"content-type, x-alumina-authorization, x-alumina-counter",
+            )
+            .unwrap();
+        preflight
+            .observe(CORS_REQUEST_PRIVATE_NETWORK_HEADER.as_bytes(), b"true")
+            .unwrap();
+        assert_eq!(
+            preflight.finish("/api/v1/control"),
+            Ok(CorsPreflight {
+                origin: origin(),
+                target_method: HttpMethod::Post,
+                target_route: Route::ControlCommand,
+                private_network: true,
+            })
+        );
+
+        let mut wrong_method = preflight;
+        wrong_method.method = Some(b"GET");
+        assert_eq!(
+            wrong_method.finish("/api/v1/control"),
+            Err(HttpAdmissionError::CorsMethod)
+        );
+
+        let mut unknown_header = preflight;
+        unknown_header.headers = Some(b"content-type, authorization");
+        assert_eq!(
+            unknown_header.finish("/api/v1/control"),
+            Err(HttpAdmissionError::CorsHeaders)
+        );
+
+        let mut public_with_auth = preflight;
+        public_with_auth.method = Some(b"GET");
+        assert_eq!(
+            public_with_auth.finish("/api/v1/auth"),
+            Err(HttpAdmissionError::CorsHeaders)
+        );
+
+        let mut invalid_private_network = preflight;
+        invalid_private_network.private_network = Some(b"TRUE");
+        assert_eq!(
+            invalid_private_network.finish("/api/v1/control"),
+            Err(HttpAdmissionError::CorsPrivateNetwork)
+        );
+    }
+
+    #[test]
     fn replay_window_accepts_bounded_reordering_once() {
         let secret = b"secret";
         let mut state = AuthenticationState::new(nonce(), AuthRateLimit::INITIAL).unwrap();
@@ -1288,26 +1787,28 @@ mod tests {
                 counter,
                 HttpMethod::Get,
                 "/api/v1/storage",
+                origin(),
                 b"",
             )
             .unwrap();
             assert_eq!(
-                state.authorize(
-                    secret,
-                    proof,
-                    HttpMethod::Get,
-                    "/api/v1/storage",
-                    b"",
-                    counter,
-                ),
+                authorize_storage(&mut state, secret, proof, b"", counter),
                 Ok(())
             );
         }
 
-        let replay =
-            sign_request(secret, nonce(), 1, HttpMethod::Get, "/api/v1/storage", b"").unwrap();
+        let replay = sign_request(
+            secret,
+            nonce(),
+            1,
+            HttpMethod::Get,
+            "/api/v1/storage",
+            origin(),
+            b"",
+        )
+        .unwrap();
         assert_eq!(
-            state.authorize(secret, replay, HttpMethod::Get, "/api/v1/storage", b"", 65,),
+            authorize_storage(&mut state, secret, replay, b"", 65),
             Err(AuthError::Replay)
         );
 
@@ -1317,16 +1818,36 @@ mod tests {
             100,
             HttpMethod::Get,
             "/api/v1/storage",
+            origin(),
             b"",
         )
         .unwrap();
         state
-            .authorize(secret, newest, HttpMethod::Get, "/api/v1/storage", b"", 100)
+            .authorize(
+                secret,
+                AuthenticatedRequestMetadata {
+                    method: HttpMethod::Get,
+                    route: Route::StorageStatus,
+                    proof: newest,
+                    origin: origin(),
+                    body_len: 0,
+                },
+                b"",
+                100,
+            )
             .unwrap();
-        let old =
-            sign_request(secret, nonce(), 36, HttpMethod::Get, "/api/v1/storage", b"").unwrap();
+        let old = sign_request(
+            secret,
+            nonce(),
+            36,
+            HttpMethod::Get,
+            "/api/v1/storage",
+            origin(),
+            b"",
+        )
+        .unwrap();
         assert_eq!(
-            state.authorize(secret, old, HttpMethod::Get, "/api/v1/storage", b"", 101,),
+            authorize_storage(&mut state, secret, old, b"", 101),
             Err(AuthError::ReplayTooOld)
         );
     }
@@ -1346,30 +1867,44 @@ mod tests {
                 counter,
                 HttpMethod::Get,
                 "/api/v1/storage",
+                origin(),
                 b"",
             )
             .unwrap();
-            assert_eq!(
-                state.authorize(secret, proof, HttpMethod::Get, "/api/v1/storage", b"", 0,),
-                Ok(())
-            );
+            assert_eq!(authorize_storage(&mut state, secret, proof, b"", 0), Ok(()));
         }
 
-        let third =
-            sign_request(secret, nonce(), 3, HttpMethod::Get, "/api/v1/storage", b"").unwrap();
+        let third = sign_request(
+            secret,
+            nonce(),
+            3,
+            HttpMethod::Get,
+            "/api/v1/storage",
+            origin(),
+            b"",
+        )
+        .unwrap();
         assert_eq!(
-            state.authorize(secret, third, HttpMethod::Get, "/api/v1/storage", b"", 0,),
+            authorize_storage(&mut state, secret, third, b"", 0),
             Err(AuthError::RateLimited)
         );
         assert_eq!(
-            state.authorize(secret, third, HttpMethod::Get, "/api/v1/storage", b"", 10,),
+            authorize_storage(&mut state, secret, third, b"", 10),
             Err(AuthError::Replay)
         );
 
-        let fourth =
-            sign_request(secret, nonce(), 4, HttpMethod::Get, "/api/v1/storage", b"").unwrap();
+        let fourth = sign_request(
+            secret,
+            nonce(),
+            4,
+            HttpMethod::Get,
+            "/api/v1/storage",
+            origin(),
+            b"",
+        )
+        .unwrap();
         assert_eq!(
-            state.authorize(secret, fourth, HttpMethod::Get, "/api/v1/storage", b"", 10,),
+            authorize_storage(&mut state, secret, fourth, b"", 10),
             Ok(())
         );
     }

@@ -133,6 +133,19 @@ compatibility.
 - [`esp-radio` 0.17 Wi-Fi documentation](https://docs.espressif.com/projects/rust/esp-radio/0.17.0/esp32/esp_radio/wifi/index.html)
   — allocator/scheduler requirements, radio initialization, controller/device
   ownership, and async AP/STA interfaces used by the first firmware adapter.
+- [WHATWG Fetch Living Standard](https://fetch.spec.whatwg.org/) — normative
+  origin serialization, CORS-preflight method/header checks, exposed response
+  headers, credentials mode, redirects, and `Vary` behavior used by the browser
+  transport boundary.
+- [Chrome Private Network Access preflight guidance](https://developer.chrome.com/blog/private-network-access-preflight)
+  — legacy browser private-network preflight request/response fields. Alumina
+  validates the exact `true` opt-in when an older/experimental client presents
+  it, but does not depend on that superseded rollout.
+- [Chrome Local Network Access permission guidance](https://developer.chrome.com/blog/local-network-access)
+  and [Chrome 142 release notes](https://developer.chrome.com/release-notes/142)
+  — current permission-gated LAN fetch behavior, secure-context restriction,
+  mixed-content relaxation, and `targetAddressSpace: "local"`. LNA replaced the
+  paused PNA enforcement effort; ordinary cross-origin CORS remains independent.
 - [`esp-hal` ESP32 peripheral documentation](https://docs.espressif.com/projects/rust/esp-hal/1.1.0/esp32/esp_hal/index.html)
   — current HAL modules and chip-specific availability for GPIO, DMA, I²C, I²S,
   LEDC, MCPWM, PCNT, RMT, SPI, timers, TWAI, UART, and related resources.

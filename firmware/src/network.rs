@@ -10,10 +10,12 @@ use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use alumina_capability::{CapabilityIdentity, verify_declared_identity};
 use alumina_net::{
-    AUTH_COUNTER_HEADER, AUTH_NONCE_BYTES, AUTH_RESPONSE_HEADER, AUTH_TAG_HEX_BYTES,
-    AccessPointProfile, AuthError, AuthHeaderAccumulator, AuthRateLimit, AuthenticatedMedia,
-    AuthenticatedRequestMetadata, AuthenticationState, BootNonce, CredentialSource, DHCP_RANGE_END,
-    DHCP_RANGE_START, HttpAdmissionError, HttpMethod, MAX_AUTHENTICATED_BODY_BYTES,
+    AUTH_COUNTER_HEADER, AUTH_DISCOVERY_BODY_BYTES, AUTH_DISCOVERY_CONTENT_LENGTH,
+    AUTH_NONCE_BYTES, AUTH_RESPONSE_HEADER, AUTH_TAG_HEX_BYTES, AccessPointProfile, AuthError,
+    AuthHeaderAccumulator, AuthRateLimit, AuthenticatedMedia, AuthenticatedRequestMetadata,
+    AuthenticationState, BootNonce, CORS_ALLOW_ORIGIN_HEADER, CORS_ALLOW_PRIVATE_NETWORK_HEADER,
+    CORS_ORIGIN_HEADER, CorsOrigin, CorsPreflight, CorsPreflightAccumulator, CredentialSource,
+    DHCP_RANGE_END, DHCP_RANGE_START, HttpAdmissionError, HttpMethod, MAX_AUTHENTICATED_BODY_BYTES,
     NetworkSupervisor, PROVISIONING_ADDRESS, PROVISIONING_PREFIX, Route, WebLimits, classify_route,
     sign_response, write_lower_hex,
 };
@@ -351,16 +353,37 @@ impl Handler for AluminaHttpHandler {
                 Method::Post => HttpMethod::Post,
                 Method::Put => HttpMethod::Put,
                 Method::Delete => HttpMethod::Delete,
+                Method::Options => HttpMethod::Options,
                 _ => HttpMethod::Other,
             };
             (method, classify_route(method, headers.path))
+        };
+
+        if route == Route::CorsPreflight {
+            let preflight = match cors_preflight_metadata(connection.headers()?) {
+                Ok(preflight) => preflight,
+                Err(rejection) => {
+                    reject_request(connection, rejection, None).await?;
+                    return Ok(());
+                }
+            };
+            write_cors_preflight(connection, preflight).await?;
+            return Ok(());
+        }
+
+        let request_origin = match request_origin(connection.headers()?) {
+            Ok(origin) => origin,
+            Err(rejection) => {
+                reject_request(connection, rejection, None).await?;
+                return Ok(());
+            }
         };
 
         if route.requires_authentication() {
             let metadata = match authenticated_metadata(connection.headers()?, method, route) {
                 Ok(metadata) => metadata,
                 Err(rejection) => {
-                    reject_request(connection, rejection).await?;
+                    reject_request(connection, rejection, request_origin).await?;
                     return Ok(());
                 }
             };
@@ -370,9 +393,7 @@ impl Handler for AluminaHttpHandler {
             let auth_result = self.auth_state.lock(|state| {
                 state.borrow_mut().authorize(
                     AP_PASSPHRASE.as_bytes(),
-                    metadata.proof,
-                    metadata.method,
-                    metadata.route.canonical_path().unwrap_or(""),
+                    metadata,
                     body,
                     Instant::now().as_millis(),
                 )
@@ -385,6 +406,7 @@ impl Handler for AluminaHttpHandler {
                     } else {
                         RequestRejection::Unauthorized
                     },
+                    request_origin,
                 )
                 .await?;
                 return Ok(());
@@ -395,7 +417,8 @@ impl Handler for AluminaHttpHandler {
                 Route::ControlCommand => match ServiceRequest::native(body) {
                     Ok(request) => request,
                     Err(_) => {
-                        reject_request(connection, RequestRejection::BodyTooLarge).await?;
+                        reject_request(connection, RequestRejection::BodyTooLarge, request_origin)
+                            .await?;
                         return Ok(());
                     }
                 },
@@ -407,6 +430,7 @@ impl Handler for AluminaHttpHandler {
                 AP_PASSPHRASE.as_bytes(),
                 self.auth_nonce,
                 metadata.proof.counter,
+                metadata.origin,
                 &response,
             )
             .await?;
@@ -439,7 +463,7 @@ impl Handler for AluminaHttpHandler {
                     .await?;
             }
             Route::Identity => {
-                json_response(connection).await?;
+                json_response(connection, request_origin).await?;
                 connection
                     .write_all(b"{\"protocol_version\":1,\"board_id\":\"")
                     .await?;
@@ -474,13 +498,13 @@ impl Handler for AluminaHttpHandler {
                 connection.write_all(tail.as_bytes()).await?;
             }
             Route::Health => {
-                json_response(connection).await?;
+                json_response(connection, request_origin).await?;
                 connection
                     .write_all(b"{\"service_core\":0,\"network\":\"ap\",\"state\":\"boot\"}")
                     .await?;
             }
             Route::Network => {
-                json_response(connection).await?;
+                json_response(connection, request_origin).await?;
                 connection
                     .write_all(
                         b"{\"mode\":\"access-point\",\"address\":\"192.168.4.1\",\
@@ -489,26 +513,24 @@ impl Handler for AluminaHttpHandler {
                     .await?;
             }
             Route::Authentication => {
-                json_response(connection).await?;
                 let nonce = self.auth_nonce.as_bytes();
                 let mut encoded = [0_u8; AUTH_NONCE_BYTES * 2];
                 if write_lower_hex(&nonce, &mut encoded).is_err() {
                     panic!("authentication nonce encoding failed");
                 }
-                connection
-                    .write_all(b"{\"scheme\":\"hmac-sha256-v1\",\"boot_nonce\":\"")
-                    .await?;
-                connection.write_all(&encoded).await?;
-                connection
-                    .write_all(
-                        b"\",\"counter_window\":64,\"rate_burst\":32,\
-                          \"rate_per_second\":50,\"request_proof_header\":\
-                          \"X-Alumina-Authorization\",\"response_proof_header\":\
-                          \"X-Alumina-Response-Authorization\"}",
-                    )
-                    .await?;
+                let encoded = core::str::from_utf8(&encoded).expect("lowercase hex is UTF-8");
+                let mut body = FixedString::<AUTH_DISCOVERY_BODY_BYTES>::new();
+                write!(
+                    &mut body,
+                    "{{\"scheme\":\"hmac-sha256-v2\",\"origin_bound\":true,\"boot_nonce\":\"{encoded}\",\"counter_window\":64,\"rate_burst\":32,\"rate_per_second\":50,\"request_proof_header\":\"X-Alumina-Authorization\",\"response_proof_header\":\"X-Alumina-Response-Authorization\"}}"
+                )
+                .unwrap_or_else(|_| panic!("authentication response exceeded its fixed body"));
+                if body.len() != AUTH_DISCOVERY_BODY_BYTES {
+                    panic!("authentication response length changed without protocol update");
+                }
+                exact_json_response(connection, request_origin, body.as_bytes()).await?;
             }
-            Route::StorageStatus | Route::ControlCommand => unreachable!(),
+            Route::StorageStatus | Route::ControlCommand | Route::CorsPreflight => unreachable!(),
             Route::MethodNotAllowed => {
                 connection
                     .initiate_response(
@@ -563,11 +585,102 @@ fn authenticated_metadata<const N: usize>(
         .map_err(map_http_admission_error)
 }
 
+fn request_origin<const N: usize>(
+    headers: &RequestHeaders<'_, N>,
+) -> Result<Option<CorsOrigin>, RequestRejection> {
+    let mut origin = None;
+    for (candidate, value) in headers.headers.iter_raw() {
+        if !candidate
+            .as_bytes()
+            .eq_ignore_ascii_case(CORS_ORIGIN_HEADER.as_bytes())
+        {
+            continue;
+        }
+        if origin.is_some() {
+            return Err(RequestRejection::BadRequest);
+        }
+        let value = core::str::from_utf8(value).map_err(|_| RequestRejection::BadRequest)?;
+        origin = Some(CorsOrigin::parse(value).map_err(|_| RequestRejection::BadRequest)?);
+    }
+    Ok(origin)
+}
+
+fn cors_preflight_metadata<const N: usize>(
+    headers: &RequestHeaders<'_, N>,
+) -> Result<CorsPreflight, RequestRejection> {
+    let mut accumulator = CorsPreflightAccumulator::new();
+    for (candidate, value) in headers.headers.iter_raw() {
+        accumulator
+            .observe(candidate.as_bytes(), value)
+            .map_err(map_http_admission_error)?;
+    }
+    accumulator
+        .finish(headers.path)
+        .map_err(map_http_admission_error)
+}
+
+async fn write_cors_preflight<T, const N: usize>(
+    connection: &mut Connection<'_, T, N>,
+    preflight: CorsPreflight,
+) -> Result<(), HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let method = match preflight.target_method {
+        HttpMethod::Get => "GET",
+        HttpMethod::Post => "POST",
+        _ => panic!("preflight admitted an unsupported target method"),
+    };
+    let vary = "Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network";
+    if preflight.private_network {
+        connection
+            .initiate_response(
+                204,
+                Some("No Content"),
+                &[
+                    (CORS_ALLOW_ORIGIN_HEADER, preflight.origin.as_str()),
+                    ("Access-Control-Allow-Methods", method),
+                    (
+                        "Access-Control-Allow-Headers",
+                        "Content-Type, X-Alumina-Counter, X-Alumina-Authorization",
+                    ),
+                    ("Access-Control-Max-Age", "600"),
+                    (CORS_ALLOW_PRIVATE_NETWORK_HEADER, "true"),
+                    ("Vary", vary),
+                    ("Content-Length", "0"),
+                ],
+            )
+            .await
+    } else {
+        connection
+            .initiate_response(
+                204,
+                Some("No Content"),
+                &[
+                    (CORS_ALLOW_ORIGIN_HEADER, preflight.origin.as_str()),
+                    ("Access-Control-Allow-Methods", method),
+                    (
+                        "Access-Control-Allow-Headers",
+                        "Content-Type, X-Alumina-Counter, X-Alumina-Authorization",
+                    ),
+                    ("Access-Control-Max-Age", "600"),
+                    ("Vary", vary),
+                    ("Content-Length", "0"),
+                ],
+            )
+            .await
+    }
+}
+
 const fn map_http_admission_error(error: HttpAdmissionError) -> RequestRejection {
     match error {
         HttpAdmissionError::BodyTooLarge => RequestRejection::BodyTooLarge,
         HttpAdmissionError::ContentType => RequestRejection::UnsupportedMedia,
         HttpAdmissionError::Credentials => RequestRejection::Unauthorized,
+        HttpAdmissionError::Origin => RequestRejection::BadRequest,
+        HttpAdmissionError::CorsMethod
+        | HttpAdmissionError::CorsHeaders
+        | HttpAdmissionError::CorsPrivateNetwork => RequestRejection::BadRequest,
         HttpAdmissionError::DuplicateHeader
         | HttpAdmissionError::TransferEncoding
         | HttpAdmissionError::ContentLength
@@ -597,6 +710,7 @@ where
 async fn reject_request<T, const N: usize>(
     connection: &mut Connection<'_, T, N>,
     rejection: RequestRejection,
+    origin: Option<CorsOrigin>,
 ) -> Result<(), HttpError<T::Error>>
 where
     T: Read + Write,
@@ -614,7 +728,7 @@ where
         ),
         RequestRejection::RateLimited => (429, "Too Many Requests", b"rate limited\n".as_slice()),
     };
-    if rejection == RequestRejection::Unauthorized {
+    if let (Some(origin), RequestRejection::Unauthorized) = (origin, rejection) {
         connection
             .initiate_response(
                 status,
@@ -622,7 +736,48 @@ where
                 &[
                     ("Content-Type", "text/plain"),
                     ("Cache-Control", "no-store"),
-                    ("WWW-Authenticate", "Alumina-HMAC-SHA256"),
+                    (CORS_ALLOW_ORIGIN_HEADER, origin.as_str()),
+                    ("Vary", CORS_ORIGIN_HEADER),
+                    ("WWW-Authenticate", "Alumina-HMAC-SHA256-V2"),
+                ],
+            )
+            .await?;
+    } else if let (Some(origin), RequestRejection::RateLimited) = (origin, rejection) {
+        connection
+            .initiate_response(
+                status,
+                Some(reason),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                    (CORS_ALLOW_ORIGIN_HEADER, origin.as_str()),
+                    ("Vary", CORS_ORIGIN_HEADER),
+                    ("Retry-After", "1"),
+                ],
+            )
+            .await?;
+    } else if let Some(origin) = origin {
+        connection
+            .initiate_response(
+                status,
+                Some(reason),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                    (CORS_ALLOW_ORIGIN_HEADER, origin.as_str()),
+                    ("Vary", CORS_ORIGIN_HEADER),
+                ],
+            )
+            .await?;
+    } else if rejection == RequestRejection::Unauthorized {
+        connection
+            .initiate_response(
+                status,
+                Some(reason),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                    ("WWW-Authenticate", "Alumina-HMAC-SHA256-V2"),
                 ],
             )
             .await?;
@@ -658,6 +813,7 @@ async fn write_authenticated_response<T, const N: usize>(
     secret: &[u8],
     nonce: BootNonce,
     counter: u64,
+    origin: CorsOrigin,
     response: &ServiceResponse,
 ) -> Result<(), HttpError<T::Error>>
 where
@@ -676,6 +832,7 @@ where
         counter,
         response.http_status,
         media,
+        origin,
         response.bytes(),
     ) {
         Ok(proof) => proof,
@@ -707,6 +864,12 @@ where
                 ("X-Content-Type-Options", "nosniff"),
                 (AUTH_COUNTER_HEADER, counter_text.as_str()),
                 (AUTH_RESPONSE_HEADER, tag),
+                (CORS_ALLOW_ORIGIN_HEADER, origin.as_str()),
+                (
+                    "Access-Control-Expose-Headers",
+                    "X-Alumina-Counter, X-Alumina-Response-Authorization",
+                ),
+                ("Vary", CORS_ORIGIN_HEADER),
             ],
         )
         .await?;
@@ -715,21 +878,83 @@ where
 
 async fn json_response<T, const N: usize>(
     connection: &mut Connection<'_, T, N>,
+    origin: Option<CorsOrigin>,
 ) -> Result<(), HttpError<T::Error>>
 where
     T: Read + Write,
 {
-    connection
-        .initiate_response(
-            200,
-            Some("OK"),
-            &[
-                ("Content-Type", "application/json"),
-                ("Cache-Control", "no-store"),
-                ("X-Content-Type-Options", "nosniff"),
-            ],
-        )
-        .await
+    if let Some(origin) = origin {
+        connection
+            .initiate_response(
+                200,
+                Some("OK"),
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"),
+                    (CORS_ALLOW_ORIGIN_HEADER, origin.as_str()),
+                    ("Vary", CORS_ORIGIN_HEADER),
+                ],
+            )
+            .await
+    } else {
+        connection
+            .initiate_response(
+                200,
+                Some("OK"),
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"),
+                ],
+            )
+            .await
+    }
+}
+
+async fn exact_json_response<T, const N: usize>(
+    connection: &mut Connection<'_, T, N>,
+    origin: Option<CorsOrigin>,
+    body: &[u8],
+) -> Result<(), HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let mut length = FixedString::<20>::new();
+    write!(&mut length, "{}", body.len()).expect("content length text capacity is exact");
+    if body.len() == AUTH_DISCOVERY_BODY_BYTES && length.as_str() != AUTH_DISCOVERY_CONTENT_LENGTH {
+        panic!("authentication content length constant is inconsistent");
+    }
+    if let Some(origin) = origin {
+        connection
+            .initiate_response(
+                200,
+                Some("OK"),
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", length.as_str()),
+                    ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"),
+                    (CORS_ALLOW_ORIGIN_HEADER, origin.as_str()),
+                    ("Vary", CORS_ORIGIN_HEADER),
+                ],
+            )
+            .await?;
+    } else {
+        connection
+            .initiate_response(
+                200,
+                Some("OK"),
+                &[
+                    ("Content-Type", "application/json"),
+                    ("Content-Length", length.as_str()),
+                    ("Cache-Control", "no-store"),
+                    ("X-Content-Type-Options", "nosniff"),
+                ],
+            )
+            .await?;
+    }
+    connection.write_all(body).await
 }
 
 fn assert_service_core(component: &str) {

@@ -139,13 +139,17 @@ their not-yet-learned MAC address; physical-client qualification is mandatory.
 
 The next admission layer keeps authentication policy in portable `alumina-net`
 and native service dispatch in portable `alumina-service`. The HTTP task reads at
-most 1,148 exact body bytes, verifies a boot-nonce/counter HMAC and replay/rate
-policy, then copies one request into a single-slot same-executor bridge. The sole
-core-0 service task owns `StorageServiceState`, decodes the frame, and returns a
-correlated fixed response. One transaction mutex serializes the initial mutation
-surface; transaction IDs prevent a response produced after HTTP timeout
-cancellation from satisfying a later request. These same-executor locks do not
-mask interrupts on core 1.
+most 1,148 exact body bytes, verifies a boot-nonce/counter/origin HMAC and
+replay/rate policy, then copies one request into a single-slot same-executor
+bridge. Browser OPTIONS requests are admitted only for exact API paths, their
+proposed GET/POST method and finite Alumina header set are validated, and a
+private-network opt-in is echoed only when requested. The response echoes the
+one canonical HTTP(S) origin used by the HMAC; wildcard CORS is never emitted.
+The sole core-0 service task owns `StorageServiceState`, decodes the frame, and
+returns a correlated fixed response. One transaction mutex serializes the
+initial mutation surface; transaction IDs prevent a response produced after
+HTTP timeout cancellation from satisfying a later request. These same-executor
+locks do not mask interrupts on core 1.
 
 `GET /api/v1/storage` returns an authenticated, response-signed JSON status. An
 identified but unprovisioned card is `detached`; failed identification is

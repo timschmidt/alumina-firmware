@@ -110,11 +110,11 @@ describes the attached machine.
   `edge-nal-embassy` 0.6 line over `embassy-net` 0.7. The edge crates provide
   bounded protocol/socket machinery; Alumina owns route policy, authentication,
   authorization, rate limits, job admission, and recovery semantics.
-- Initial firmware reserves exactly two HTTP connections, 1,024 header bytes and
-  12 headers per connection, 2,048 TCP bytes per direction per connection, one
+- Initial firmware reserves exactly two HTTP connections, 2,048 header bytes and
+  24 headers per connection, 2,048 TCP bytes per direction per connection, one
   1,500-byte DHCP RX/TX pair, and four DHCP leases. These are reviewed starting
-  limits, not performance claims, and may change only with renewed release/HIL
-  evidence.
+  limits sized to retain bounded modern browser CORS/private-network metadata,
+  not performance claims, and may change only with renewed release/HIL evidence.
 - A compile-time development AP password exists solely to make first hardware
   bring-up possible. Its provenance is disclosed without returning the secret,
   and it is structurally non-production-armable. A build-provisioned password is
@@ -123,9 +123,12 @@ describes the attached machine.
 - Initial authenticated HTTP uses domain-separated HMAC-SHA-256 request and
   response transcripts, a random boot nonce, nonzero counters with a 64-entry
   replay window, and a global 32-burst/50-valid-request-per-second bucket. Strict
-  raw-header processing rejects duplicate security fields and transfer-coding
-  ambiguity. HMAC protects authenticity/integrity rather than confidentiality;
-  WPA2 plus the stated LAN/VPN boundary remains required.
+  raw-header processing rejects duplicate security fields, transfer-coding
+  ambiguity, noncanonical browser origins, and preflights for an unexposed
+  method/header set. V2 binds the exact calling origin into both request and
+  response proofs and never emits wildcard CORS. HMAC protects
+  authenticity/integrity rather than confidentiality; WPA2 plus the stated
+  LAN/VPN boundary remains required.
 - The first HMAC key is the same provisioned secret used for the protected AP so
   bench bring-up has one explicit credential. The UI must obtain it from the
   user/provisioning flow because browsers cannot read a Wi-Fi passphrase. A

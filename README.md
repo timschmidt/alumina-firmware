@@ -51,11 +51,15 @@ and can never make an image production-armable. See the
 Authenticated storage admission is also wired end to end: the public auth route
 returns a fresh 128-bit boot challenge; browser/WASM requests and device
 responses carry exact HMAC-SHA-256 proofs bound to a nonzero counter, method,
-path, status/media, and SHA-256 body identity. Strict raw-header policy rejects
-duplicates, transfer coding, noncanonical lengths, wrong media, replays, and a
-global valid-request flood before the core-0 service owner decodes a native
-frame. That admission milestone deliberately used an unavailable backend, so it
-could not acknowledge volatile bytes as durable. See the historical
+path, calling browser origin, status/media, and SHA-256 body identity. The V2
+browser boundary handles exact route-scoped CORS/private-network preflights,
+echoes only the observed canonical origin (never `*`), and exposes response
+proofs to the calling origin. Strict raw-header policy rejects duplicates,
+transfer coding, noncanonical lengths, wrong media, origin substitution,
+replays, and a global valid-request flood before the core-0 service owner
+decodes a native frame. That admission milestone deliberately used an
+unavailable backend, so it could not acknowledge volatile bytes as durable. See
+the historical
 [authenticated-service evidence](docs/evidence/M3-AUTHENTICATED-SERVICE.md).
 
 The cache backend itself is now concrete: `alumina-storage` implements a bounded
