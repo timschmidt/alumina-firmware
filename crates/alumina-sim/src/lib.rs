@@ -1097,6 +1097,7 @@ mod tests {
             axis_count: 3,
             block_count: 3,
             first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
             limits: block_limits(),
         };
         let boot_id = BootId::new([0x66; 16]).unwrap();

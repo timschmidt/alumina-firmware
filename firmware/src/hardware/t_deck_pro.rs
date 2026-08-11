@@ -1,5 +1,6 @@
 use alumina_board::BoardPackage;
 use alumina_config::RealtimeConfigurationProfile;
+use alumina_motion::{ShiftImageContract, ShiftImageUpdate};
 use alumina_protocol::DeviceCycle;
 use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
@@ -30,6 +31,17 @@ pub type StorageBackend = ProvisionedCache<StorageCard>;
 pub const JOB_AXES: usize = 1;
 /// Maximum unique resource claims retained by each configuration validator.
 pub const CONFIGURATION_BINDINGS: usize = 64;
+/// T-Deck Pro exposes no machine step/dir output backend.
+pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
+/// No machine output can authorize arming on this board package.
+pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// No physical commit-lateness claim exists.
+pub const MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES: u32 = 0;
+
+/// T-Deck Pro has no shifted machine-output contract.
+pub const fn motion_shift_contract() -> Option<ShiftImageContract> {
+    None
+}
 
 /// Semantic identity of the current RT hazard contract: GPIO2 held high-Z.
 pub const SAFE_OUTPUT_CONTRACT: SafetyContractId =
@@ -189,6 +201,8 @@ pub struct EstablishedRealtimeResources {
 pub enum SafeOutputError {
     /// Fixed board safety-input routes were internally inconsistent.
     SafetyInput(SafetyInputBackendError),
+    /// This board package has no machine-output engine.
+    MotionUnsupported,
 }
 
 impl RealtimeResources {
@@ -233,6 +247,11 @@ impl EstablishedRealtimeResources {
     pub fn force_safe_outputs(&mut self) -> Result<(), SafeOutputError> {
         self.vibration_motor.apply_config(&InputConfig::default());
         Ok(())
+    }
+
+    /// Rejects every machine-output update on this non-motion board.
+    pub fn apply_motion_image(&mut self, _update: ShiftImageUpdate) -> Result<(), SafeOutputError> {
+        Err(SafeOutputError::MotionUnsupported)
     }
 }
 

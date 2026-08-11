@@ -299,8 +299,14 @@ through exact execution, and permits acknowledgement only after independently
 correlated terminal progress. Exact count/position, half-tick interpolation,
 overflow, configured rate, pulse/setup/hold, normal disable, deadline-fault,
 malformed-report, ownership, and image-integrity tests pass. The hardware
-serializer, arm transition, browser planner, and physical workflow remain
-closed; both first board packages remain non-armable. The portable safety-input
+serializer, browser planner, and physical workflow remain closed; both first
+board packages remain non-armable. Core 1 now composes the exact cached executor
+with the active configuration, descriptor-bound absolute lattice origin,
+scheduled epoch, interlock-qualified arm/start state, and a two-phase complete-
+image transaction. A block is acknowledged only after every target-reported
+physical commit, and normal disable waits for the exact enable-hold cycle.
+TinyBee's blocking static writer is only a compile/HIL staging path and cannot
+qualify arming; T-Deck Pro has no motion output. The portable safety-input
 layer retains configuration-derived resource/polarity/pull/debounce/watchdog
 facts, exact stable transitions, and arming masks. TinyBee now binds its four
 digital routes to a transactional core-1 GPIO bank, scans at a nominal 1 ms,
@@ -343,9 +349,11 @@ Work:
 Implementation checkpoint: fixed heartbeat/RT-deadline wire formats, an exact
 causal host estimator, boot-bound prepare receipts, participant-bound
 install/confirm/abort state, dual-core firmware routing, and adversarial two-MCU
-simulation are present. The browser-worker implementation, interlock-qualified
-arm/start executor, observed-edge reconciliation, packet-stress/HIL runs, and
-physical exit gate remain open; current board packages are non-armable.
+simulation are present. The target now binds confirmed local starts to the exact
+step executor behind configuration, interlock, deadline, cached-work, package,
+and physical-output qualification gates. The browser-worker implementation,
+observed-edge reconciliation, packet-stress/HIL runs, qualified I²S/DMA backend,
+and physical exit gate remain open; current board packages are non-armable.
 
 Exit gate:
 

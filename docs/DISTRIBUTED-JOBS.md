@@ -134,12 +134,16 @@ the guard. Core 1 owns every deadline transition and reports schedule state;
 exact tick/digest progress. `JobCancel` remains the precommit/aborted cleanup
 operation and drains queued ownership.
 
-The admitted first block is intentionally left outstanding. The contract has no
-motor executor, interlock-qualified arm transition, hold/resume, lease renewal,
-or observed-edge capture yet. Both first packages expose verified canonical
-capability identities but remain non-armable pending HIL, so target preparation
-is still fail-closed. An impossible start that reaches this checkpoint is
-latched as an execution/safety fault and cannot drive an output.
+The admitted first block remains outstanding while the exact motion owner holds
+its unique token. Core 1 now installs a descriptor-bound lattice origin and
+scheduled epoch, preflights the block, and returns it only after each generated
+complete image has a matching target-confirmed commit. Fresh interlocks, deadline
+health, cached work, an armable package, and a qualified output backend jointly
+gate the local `Arm`/`Start` transitions. TinyBee has only an unqualified
+blocking bootstrap writer and T-Deck Pro has no machine-output backend, so both
+first packages remain non-armable and target preparation is still fail-closed.
+Hold currently degrades to a safe stop; constrained hold/resume, lease renewal,
+and observed-edge capture remain open.
 
 ## Deterministic prepare/commit start
 
@@ -148,9 +152,10 @@ The UI orchestrates a bounded two-phase procedure:
 1. **Upload:** every MCU stores and verifies its partition and global manifest.
 2. **Prepare:** the UI sends the exact already-published local partition,
    capability/configuration identities, stream identity, axis width, and
-   machine limits. Each MCU opens and independently validates it, retains the
-   first block, and returns a token bound to the authentication boot ID and all
-   248 canonical descriptor bytes.
+   machine limits and exact absolute machine-lattice starting position. Each MCU
+   opens and independently validates it, retains the first block, and returns a
+   token bound to the authentication boot ID and all 312 canonical descriptor
+   bytes.
 3. **Choose time:** after all participants are prepared, the UI chooses one
    future UI-time epoch with adequate guard margin and maps it to each MCU's
    integer start cycle. Quantization error is added to the sync certificate.

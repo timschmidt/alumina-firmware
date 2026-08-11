@@ -57,6 +57,7 @@ dependencies = [
  "alumina-clock",
  "alumina-config",
  "alumina-job",
+ "alumina-motion",
  "alumina-net",
  "alumina-protocol",
  "alumina-runtime",

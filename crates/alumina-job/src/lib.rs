@@ -21,9 +21,9 @@ use alumina_storage::{
 use embassy_sync::channel::TrySendError;
 
 /// Exact canonical `JobPrepare` body length.
-pub const JOB_DESCRIPTOR_WIRE_BYTES: usize = 248;
+pub const JOB_DESCRIPTOR_WIRE_BYTES: usize = 312;
 /// Exact fixed cross-core job-control payload length.
-pub const CORE_JOB_COMMAND_WIRE_BYTES: usize = 272;
+pub const CORE_JOB_COMMAND_WIRE_BYTES: usize = 336;
 /// Exact fixed core-1 job report length.
 pub const REALTIME_JOB_REPORT_WIRE_BYTES: usize = 128;
 /// Exact fixed core-0 prefetch report length.
@@ -33,8 +33,8 @@ pub const JOB_STATUS_WIRE_BYTES: usize = 304;
 /// Exact `JobCancel` operation body length.
 pub const JOB_CANCEL_WIRE_BYTES: usize = 8;
 
-const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD1";
-const JOB_DESCRIPTOR_VERSION: u16 = 1;
+const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD2";
+const JOB_DESCRIPTOR_VERSION: u16 = 2;
 const JOB_DESCRIPTOR_HASH_OFFSET: usize = JOB_DESCRIPTOR_WIRE_BYTES - 32;
 const CORE_JOB_COMMAND_MAGIC: [u8; 4] = *b"ALJC";
 const CORE_JOB_COMMAND_VERSION: u16 = 1;
@@ -78,8 +78,11 @@ pub struct JobDescriptor {
     pub axis_count: u8,
     /// Exact count implied by partition bytes; repeated for conflict detection.
     pub block_count: u32,
-    /// First relative stream tick; V1 full partitions begin at zero.
+    /// First relative stream tick; V2 full partitions begin at zero.
     pub first_tick: StreamTick,
+    /// Exact absolute machine-lattice position at `first_tick`. Slots at and
+    /// above `axis_count` are canonical zero.
+    pub initial_position: [i64; MAX_EXECUTION_AXES],
     /// Board/config-derived block and segment admission limits.
     pub limits: BlockValidationLimits,
 }
@@ -111,6 +114,12 @@ impl JobDescriptor {
         }
         if self.first_tick != StreamTick(0) {
             return Err(DescriptorError::FirstTick);
+        }
+        if self.initial_position[AXES..]
+            .iter()
+            .any(|position| *position != 0)
+        {
+            return Err(DescriptorError::InitialPosition);
         }
         if self.limits.maximum_block_ticks == 0
             || self.limits.segment.maximum_segment_ticks == 0
@@ -147,6 +156,17 @@ impl JobDescriptor {
         }
     }
 
+    /// Dense exact starting lattice position for the selected executor width.
+    pub fn initial_position_for<const AXES: usize>(self) -> Result<[i64; AXES], DescriptorError> {
+        self.validate::<AXES>()?;
+        self.initial_position[..AXES]
+            .try_into()
+            .map_err(|_| DescriptorError::AxisCount {
+                encoded: self.axis_count,
+                expected: AXES,
+            })
+    }
+
     /// Encodes one canonical, self-hashed prepare body.
     pub fn encode<const AXES: usize>(
         self,
@@ -174,6 +194,10 @@ impl JobDescriptor {
         encoded[120..152].copy_from_slice(&self.partition.manifest.digest.0);
         encoded[152..184].copy_from_slice(&self.capability_digest.0);
         encoded[184..216].copy_from_slice(&self.config_digest.0);
+        for (axis, position) in self.initial_position.into_iter().enumerate() {
+            let offset = 216 + axis * 8;
+            encoded[offset..offset + 8].copy_from_slice(&position.to_le_bytes());
+        }
         let identity = sha256(&encoded[..JOB_DESCRIPTOR_HASH_OFFSET]);
         encoded[JOB_DESCRIPTOR_HASH_OFFSET..].copy_from_slice(&identity.digest.0);
         Ok(encoded)
@@ -215,6 +239,10 @@ impl JobDescriptor {
         capability_digest.copy_from_slice(&encoded[152..184]);
         let mut config_digest = [0_u8; 32];
         config_digest.copy_from_slice(&encoded[184..216]);
+        let mut initial_position = [0_i64; MAX_EXECUTION_AXES];
+        for (axis, position) in initial_position.iter_mut().enumerate() {
+            *position = read_i64(encoded, 216 + axis * 8);
+        }
         let descriptor = Self {
             prepare_id: read_u64(encoded, 16),
             partition: PublishedObject {
@@ -231,6 +259,7 @@ impl JobDescriptor {
             axis_count: encoded[27],
             block_count: read_u32(encoded, 28),
             first_tick: StreamTick(read_u64(encoded, 40)),
+            initial_position,
             limits: BlockValidationLimits {
                 maximum_block_ticks: read_u64(encoded, 48),
                 segment: alumina_machine_ir::ValidationLimits {
@@ -296,7 +325,7 @@ pub enum CoreJobCommand {
 }
 
 impl CoreJobCommand {
-    /// Encodes a fixed 272-byte payload fitting the reviewed command ring.
+    /// Encodes a fixed 336-byte payload fitting the reviewed command ring.
     pub fn encode<const AXES: usize>(
         self,
     ) -> Result<[u8; CORE_JOB_COMMAND_WIRE_BYTES], CoreJobCommandWireError> {
@@ -519,8 +548,10 @@ pub enum DescriptorError {
     CapabilityIdentity,
     /// Configuration identity used the zero sentinel.
     ConfigurationIdentity,
-    /// V1 full partitions must begin at relative tick zero.
+    /// V2 full partitions must begin at relative tick zero.
     FirstTick,
+    /// A fixed position slot above the selected axis width was nonzero.
+    InitialPosition,
     /// A required motion/block bound was zero.
     Limits,
     /// Object length was not a representable nonempty block multiple.
@@ -1744,6 +1775,14 @@ const fn read_u64(encoded: &[u8], offset: usize) -> u64 {
     ])
 }
 
+fn read_i64(encoded: &[u8], offset: usize) -> i64 {
+    i64::from_le_bytes(
+        encoded[offset..offset + 8]
+            .try_into()
+            .expect("fixed descriptor field"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -1781,6 +1820,7 @@ mod tests {
             axis_count: 3,
             block_count: blocks,
             first_tick: StreamTick(0),
+            initial_position: [10, -20, 30, 0, 0, 0, 0, 0],
             limits: BlockValidationLimits {
                 maximum_block_ticks: 1_000,
                 segment: ValidationLimits {
@@ -1854,6 +1894,13 @@ mod tests {
         invalid = descriptor(2);
         invalid.first_tick = StreamTick(1);
         assert_eq!(invalid.validate::<3>(), Err(DescriptorError::FirstTick));
+        invalid = descriptor(2);
+        invalid.initial_position[3] = 1;
+        assert_eq!(
+            invalid.validate::<3>(),
+            Err(DescriptorError::InitialPosition)
+        );
+        assert_eq!(descriptor(2).initial_position_for::<3>(), Ok([10, -20, 30]));
     }
 
     #[test]
@@ -1862,6 +1909,11 @@ mod tests {
         let boot_id = BootId::new([0x66; BOOT_ID_BYTES]).unwrap();
         let encoded = descriptor.encode::<3>().unwrap();
         assert_eq!(encoded.len(), JOB_DESCRIPTOR_WIRE_BYTES);
+        assert_eq!(&encoded[0..8], b"ALMJOBD2");
+        assert_eq!(&encoded[216..224], &10_i64.to_le_bytes());
+        assert_eq!(&encoded[224..232], &(-20_i64).to_le_bytes());
+        assert_eq!(&encoded[232..240], &30_i64.to_le_bytes());
+        assert!(encoded[240..280].iter().all(|byte| *byte == 0));
         assert_eq!(JobDescriptor::decode::<3>(&encoded), Ok(descriptor));
         assert_eq!(
             CoreJobCommand::decode::<3>(

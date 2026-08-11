@@ -511,10 +511,14 @@ per executor pass and stops on ring backpressure. Core 1 revalidates and retains
 at most the first block. The portable motion composition preflights every
 segment, retains that unique block token throughout exact execution, and returns
 it to the job actor for acknowledgement only after terminal tick and cumulative
-lattice position independently agree. The non-armable target images do not yet
-install this executor. Boot-bound prepare plus participant-bound
-install/confirm/abort and exact absolute epoch state are implemented, while
-interlock-qualified arming, hold/resume, and hardware output remain later gates.
+lattice position independently agree. Core 1 now installs that executor from the
+independently active configuration, binds the descriptor's exact absolute
+machine-lattice origin and scheduled epoch, and advances only after the selected
+target confirms each complete-image commit. Boot-bound prepare plus
+participant-bound install/confirm/abort and qualified interlock/arm/start gates
+are implemented. TinyBee's blocking bootstrap writer remains deliberately
+unqualified, T-Deck Pro exposes no motion backend, and constrained hold/resume
+and hardware-timed serializer qualification remain later gates.
 Cancellation clears core-0 partial state, invalidates the core-1 ownership
 token, and drains queued work. Core-0 local job ownership vetoes storage
 mutation immediately, without waiting for periodic safety telemetry.
@@ -653,6 +657,17 @@ safe-state driver, out-of-width/conflicting events, and impossible step-level
 history without mutating the retained image. This is not yet an ESP32 I²S DMA
 backend or a hardware qualification: TinyBee remains non-armable until serializer
 word/WS phase, timing, safe-image, and load behavior are measured on the board.
+
+The target composition adds an explicit two-phase boundary around that mapper.
+At most one generated complete image can be pending, and a boot-local token plus
+the scheduled cycle must match the target's post-write upper-bound observation.
+Wrong-token, early, or over-bound commits latch execution; a block cannot return
+to its job actor until every image is physically acknowledged. Normal terminal
+disable passes through the same boundary after the exact enable-hold deadline.
+An asynchronous stop first reapplies the board-safe physical transaction, then
+invalidates pending logical tokens and outstanding work. TinyBee currently uses
+the static bootstrap shift writer solely as a compile/HIL staging path with a
+zero qualification claim, so it cannot satisfy arm authority.
 
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The

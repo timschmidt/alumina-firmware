@@ -44,6 +44,7 @@ alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-config.workspace = true
 alumina-job.workspace = true
+alumina-motion.workspace = true
 alumina-net.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true

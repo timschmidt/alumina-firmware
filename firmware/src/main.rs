@@ -16,6 +16,7 @@ mod clock;
 mod configuration;
 mod hardware;
 mod job;
+mod motion;
 mod network;
 pub mod service;
 mod storage;
@@ -25,7 +26,7 @@ use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
-use alumina_job::{JobScheduleAction, JobScheduleReport, RealtimeJobReport};
+use alumina_job::{JobScheduleAction, JobScheduleReport, RealtimeJobReport, RealtimeJobState};
 use alumina_protocol::{DeviceCycle, Digest, FrameKind};
 use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
@@ -53,6 +54,7 @@ use clock::ClockService;
 use configuration::ConfigurationService;
 use hardware::selected;
 use job::{JobService, RealtimeJobService};
+use motion::{MotionAction, MotionService};
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
@@ -407,6 +409,7 @@ async fn realtime_task(
     let mut divider = 0_u8;
     let mut urgent_generation = 0_u16;
     let mut jobs = RealtimeJobService::new();
+    let mut motion = MotionService::new();
     let mut configurations =
         RealtimeConfigurationService::<{ selected::CONFIGURATION_BINDINGS }>::new(
             selected::PACKAGE,
@@ -429,21 +432,34 @@ async fn realtime_task(
     );
 
     loop {
-        Timer::at(expected).await;
+        let schedule_wake = jobs.next_schedule_deadline();
+        let motion_wake = motion.next_deadline();
+        let wake = minimum_wake_cycle(DeviceCycle(expected.as_ticks()), schedule_wake, motion_wake);
+        Timer::at(Instant::from_ticks(wake.0)).await;
         let observed = Instant::now();
-        probe.observe(
-            DeviceCycle(expected.as_ticks()),
-            DeviceCycle(observed.as_ticks()),
-            100,
-        );
-        expected += period;
+        let management_due = observed >= expected;
+        if management_due {
+            probe.observe(
+                DeviceCycle(expected.as_ticks()),
+                DeviceCycle(observed.as_ticks()),
+                100,
+            );
+            loop {
+                expected += period;
+                if expected > observed {
+                    break;
+                }
+            }
+        }
 
         let now = DeviceCycle(observed.as_ticks());
+        let schedule_due = schedule_wake.is_some_and(|deadline| deadline <= now);
         // The first asynchronous fault is terminal until a qualified physical
         // reset path exists. Stop touching the faulted input monitor so a
         // deliberately non-healing sample-gap latch cannot retrigger work on
         // every real-time pass.
-        if safety.state() != SafetyState::Fault
+        if management_due
+            && safety.state() != SafetyState::Fault
             && let Some(scan) = safety_inputs
                 .as_mut()
                 .map(|monitor| resources.scan_safety_inputs(monitor, now))
@@ -458,6 +474,7 @@ async fn realtime_task(
                         Some(SafetyInputReaction::Fault(fault)) => {
                             latch_realtime_fault(
                                 &mut resources,
+                                &mut motion,
                                 &mut jobs,
                                 &mut safety,
                                 &mut endpoint,
@@ -481,6 +498,7 @@ async fn realtime_task(
                                 // hold, a probe request degrades to a safe stop.
                                 request_realtime_stop(
                                     &mut resources,
+                                    &mut motion,
                                     &mut jobs,
                                     &mut safety,
                                     &mut endpoint,
@@ -508,6 +526,7 @@ async fn realtime_task(
                     }
                     latch_realtime_fault(
                         &mut resources,
+                        &mut motion,
                         &mut jobs,
                         &mut safety,
                         &mut endpoint,
@@ -533,6 +552,7 @@ async fn realtime_task(
                     // deceleration yet, so Hold intentionally degrades to Stop.
                     request_realtime_stop(
                         &mut resources,
+                        &mut motion,
                         &mut jobs,
                         &mut safety,
                         &mut endpoint,
@@ -548,6 +568,7 @@ async fn realtime_task(
                 }
                 code if code == UrgentKind::EmergencyStop as u8 => latch_realtime_fault(
                     &mut resources,
+                    &mut motion,
                     &mut jobs,
                     &mut safety,
                     &mut endpoint,
@@ -566,6 +587,7 @@ async fn realtime_task(
                 }
                 _ => latch_realtime_fault(
                     &mut resources,
+                    &mut motion,
                     &mut jobs,
                     &mut safety,
                     &mut endpoint,
@@ -581,43 +603,81 @@ async fn realtime_task(
                 ),
             }
         }
-        while let Ok(command) = endpoint.try_receive_command() {
-            let mut safety_changed = false;
-            let valid = match command.header().kind {
-                FrameKind::Job => jobs
-                    .apply_command(
+        if management_due {
+            while let Ok(command) = endpoint.try_receive_command() {
+                let mut safety_changed = false;
+                let valid = match command.header().kind {
+                    FrameKind::Job => jobs
+                        .apply_command(
+                            &mut endpoint,
+                            &command,
+                            DeviceCycle(observed.as_ticks()),
+                            safety.state(),
+                            probe.misses() == 0,
+                        )
+                        .is_ok(),
+                    FrameKind::Configuration => match apply_configuration_command(
+                        &mut configurations,
+                        &mut resources,
+                        &mut motion,
+                        &mut safety_inputs,
+                        &mut safety_input_status,
+                        &mut jobs,
+                        &mut safety,
                         &mut endpoint,
                         &command,
                         DeviceCycle(observed.as_ticks()),
-                        safety.state(),
-                        probe.misses() == 0,
-                    )
-                    .is_ok(),
-                FrameKind::Configuration => match apply_configuration_command(
-                    &mut configurations,
-                    &mut resources,
-                    &mut safety_inputs,
-                    &mut safety_input_status,
-                    &mut jobs,
-                    &mut safety,
-                    &mut endpoint,
-                    &command,
-                    DeviceCycle(observed.as_ticks()),
-                    period.as_ticks(),
-                    &mut configuration_sequence,
-                ) {
-                    Ok(changed) => {
-                        safety_changed = changed;
-                        true
-                    }
-                    Err(()) => false,
-                },
-                FrameKind::Command => command.validate(FrameKind::Command).is_ok(),
-                _ => false,
-            };
-            if !valid {
+                        period.as_ticks(),
+                        &mut configuration_sequence,
+                    ) {
+                        Ok(changed) => {
+                            safety_changed = changed;
+                            true
+                        }
+                        Err(()) => false,
+                    },
+                    FrameKind::Command => command.validate(FrameKind::Command).is_ok(),
+                    _ => false,
+                };
+                if !valid {
+                    latch_realtime_fault(
+                        &mut resources,
+                        &mut motion,
+                        &mut jobs,
+                        &mut safety,
+                        &mut endpoint,
+                        &mut safe_outputs_established,
+                        &mut transition_generation,
+                        &mut telemetry_sequence,
+                        now,
+                        observed,
+                        probe.maximum_lateness_cycles(),
+                        safety_input_status,
+                        FaultCode::Identity,
+                        3,
+                    );
+                }
+                if safety_changed {
+                    transition_generation = next_nonzero(transition_generation);
+                    publish_safety_snapshot(
+                        &mut endpoint,
+                        &mut telemetry_sequence,
+                        observed,
+                        safety,
+                        transition_generation,
+                        safety_snapshot_flags(safe_outputs_established, jobs.active()),
+                        safety_input_status,
+                        probe.maximum_lateness_cycles(),
+                    );
+                }
+            }
+            if jobs
+                .preadmit(&mut endpoint, DeviceCycle(observed.as_ticks()))
+                .is_err()
+            {
                 latch_realtime_fault(
                     &mut resources,
+                    &mut motion,
                     &mut jobs,
                     &mut safety,
                     &mut endpoint,
@@ -629,60 +689,93 @@ async fn realtime_task(
                     probe.maximum_lateness_cycles(),
                     safety_input_status,
                     FaultCode::Identity,
-                    3,
+                    4,
                 );
             }
-            if safety_changed {
-                transition_generation = next_nonzero(transition_generation);
-                publish_safety_snapshot(
-                    &mut endpoint,
-                    &mut telemetry_sequence,
-                    observed,
-                    safety,
-                    transition_generation,
-                    safety_snapshot_flags(safe_outputs_established, jobs.active()),
-                    safety_input_status,
-                    probe.maximum_lateness_cycles(),
-                );
-            }
-        }
-        if jobs
-            .preadmit(&mut endpoint, DeviceCycle(observed.as_ticks()))
-            .is_err()
-        {
-            latch_realtime_fault(
-                &mut resources,
-                &mut jobs,
+
+            match reconcile_arm_state(
+                &configurations,
+                &jobs,
+                &motion,
                 &mut safety,
-                &mut endpoint,
-                &mut safe_outputs_established,
-                &mut transition_generation,
-                &mut telemetry_sequence,
-                now,
-                observed,
-                probe.maximum_lateness_cycles(),
+                safe_outputs_established,
                 safety_input_status,
-                FaultCode::Identity,
-                4,
-            );
+                probe.misses() == 0,
+            ) {
+                Ok(true) => {
+                    transition_generation = next_nonzero(transition_generation);
+                    publish_safety_snapshot(
+                        &mut endpoint,
+                        &mut telemetry_sequence,
+                        observed,
+                        safety,
+                        transition_generation,
+                        safety_snapshot_flags(safe_outputs_established, jobs.active()),
+                        safety_input_status,
+                        probe.maximum_lateness_cycles(),
+                    );
+                }
+                Ok(false) => {}
+                Err(()) => latch_realtime_fault(
+                    &mut resources,
+                    &mut motion,
+                    &mut jobs,
+                    &mut safety,
+                    &mut endpoint,
+                    &mut safe_outputs_established,
+                    &mut transition_generation,
+                    &mut telemetry_sequence,
+                    now,
+                    observed,
+                    probe.maximum_lateness_cycles(),
+                    safety_input_status,
+                    FaultCode::Identity,
+                    8,
+                ),
+            }
         }
 
-        let schedule_action = jobs
-            .advance_schedule(&mut endpoint, DeviceCycle(observed.as_ticks()))
-            .unwrap_or(JobScheduleAction::MissedStart);
+        let schedule_action = if management_due || schedule_due {
+            jobs.advance_schedule(&mut endpoint, DeviceCycle(observed.as_ticks()))
+                .unwrap_or(JobScheduleAction::MissedStart)
+        } else {
+            JobScheduleAction::None
+        };
         let schedule_fault = match schedule_action {
             JobScheduleAction::None | JobScheduleAction::AbortUnconfirmed => None,
-            JobScheduleAction::Start { .. } => {
-                let _ = jobs
-                    .reject_unimplemented_start(&mut endpoint, DeviceCycle(observed.as_ticks()));
-                Some(FaultCode::Identity)
-            }
+            JobScheduleAction::Start {
+                scheduled_cycle, ..
+            } => match start_realtime_motion(
+                &mut motion,
+                &mut jobs,
+                &mut safety,
+                scheduled_cycle,
+                safety_input_status,
+                probe.misses() == 0,
+            ) {
+                Ok(()) => {
+                    transition_generation = next_nonzero(transition_generation);
+                    publish_safety_snapshot(
+                        &mut endpoint,
+                        &mut telemetry_sequence,
+                        observed,
+                        safety,
+                        transition_generation,
+                        safety_snapshot_flags(safe_outputs_established, jobs.active()),
+                        safety_input_status,
+                        probe.maximum_lateness_cycles(),
+                    );
+                    None
+                }
+                Err(()) => Some(FaultCode::Identity),
+            },
             JobScheduleAction::MissedStart => Some(FaultCode::Deadline),
             JobScheduleAction::LeaseExpired => Some(FaultCode::Watchdog),
         };
         if let Some(fault) = schedule_fault {
             latch_realtime_fault(
                 &mut resources,
+                &mut motion,
                 &mut jobs,
                 &mut safety,
                 &mut endpoint,
@@ -696,6 +789,48 @@ async fn realtime_task(
                 fault,
                 5,
             );
+        }
+
+        match service_realtime_motion(
+            &mut resources,
+            &mut motion,
+            &mut jobs,
+            &mut safety,
+            &mut endpoint,
+        ) {
+            Ok(true) => {
+                transition_generation = next_nonzero(transition_generation);
+                publish_safety_snapshot(
+                    &mut endpoint,
+                    &mut telemetry_sequence,
+                    Instant::now(),
+                    safety,
+                    transition_generation,
+                    safety_snapshot_flags(safe_outputs_established, jobs.active()),
+                    safety_input_status,
+                    probe.maximum_lateness_cycles(),
+                );
+            }
+            Ok(false) => {}
+            Err(()) => {
+                let fault_observed = Instant::now();
+                latch_realtime_fault(
+                    &mut resources,
+                    &mut motion,
+                    &mut jobs,
+                    &mut safety,
+                    &mut endpoint,
+                    &mut safe_outputs_established,
+                    &mut transition_generation,
+                    &mut telemetry_sequence,
+                    DeviceCycle(fault_observed.as_ticks()),
+                    fault_observed,
+                    probe.maximum_lateness_cycles(),
+                    safety_input_status,
+                    FaultCode::Driver,
+                    9,
+                );
+            }
         }
 
         let job_active = jobs.active();
@@ -714,43 +849,193 @@ async fn realtime_task(
             );
         }
 
-        divider = divider.wrapping_add(1);
-        if divider == 100 {
-            divider = 0;
-            publish_safety_snapshot(
-                &mut endpoint,
-                &mut telemetry_sequence,
-                observed,
-                safety,
-                transition_generation,
-                safety_snapshot_flags(safe_outputs_established, job_active),
-                safety_input_status,
-                probe.maximum_lateness_cycles(),
-            );
-            if jobs.has_job() {
-                let _ = jobs.publish_report(&mut endpoint, DeviceCycle(observed.as_ticks()));
+        if management_due {
+            divider = divider.wrapping_add(1);
+            if divider == 100 {
+                divider = 0;
+                publish_safety_snapshot(
+                    &mut endpoint,
+                    &mut telemetry_sequence,
+                    observed,
+                    safety,
+                    transition_generation,
+                    safety_snapshot_flags(safe_outputs_established, job_active),
+                    safety_input_status,
+                    probe.maximum_lateness_cycles(),
+                );
+                if jobs.has_job() {
+                    let _ = jobs.publish_report(&mut endpoint, DeviceCycle(observed.as_ticks()));
+                }
+                let _ = publish_configuration_report(
+                    &mut endpoint,
+                    &mut configuration_sequence,
+                    DeviceCycle(observed.as_ticks()),
+                    configurations.report(),
+                );
+                let _ = publish_clock_report(
+                    &mut endpoint,
+                    &mut clock_sequence,
+                    DeviceCycle(observed.as_ticks()),
+                    probe,
+                );
             }
-            let _ = publish_configuration_report(
-                &mut endpoint,
-                &mut configuration_sequence,
-                DeviceCycle(observed.as_ticks()),
-                configurations.report(),
-            );
-            let _ = publish_clock_report(
-                &mut endpoint,
-                &mut clock_sequence,
-                DeviceCycle(observed.as_ticks()),
-                probe,
-            );
         }
 
         let _keep_tokens_core_local = &resources;
     }
 }
 
+fn start_realtime_motion(
+    motion: &mut MotionService,
+    jobs: &mut RealtimeJobService,
+    safety: &mut SafetyMachine,
+    scheduled_cycle: DeviceCycle,
+    safety_inputs: SafetyInputStatus,
+    deadline_healthy: bool,
+) -> Result<(), ()> {
+    if safety.state() != SafetyState::Armed || !safety_inputs.ready_to_arm() || !deadline_healthy {
+        return Err(());
+    }
+    let descriptor = jobs.descriptor().ok_or(())?;
+    motion.start(descriptor, scheduled_cycle).map_err(|_| ())?;
+    let admitted = jobs.take_admitted().ok_or(())?;
+    motion.admit(admitted).map_err(|_| ())?;
+    safety
+        .apply(
+            SafetyEvent::Start,
+            Conditions {
+                safe_outputs_established: true,
+                configuration_valid: true,
+                interlocks_closed: true,
+                buffer_ready: true,
+                physical_reset_confirmed: false,
+            },
+        )
+        .map_err(|_| ())?;
+    Ok(())
+}
+
+fn minimum_wake_cycle(
+    management: DeviceCycle,
+    schedule: Option<DeviceCycle>,
+    motion: Option<DeviceCycle>,
+) -> DeviceCycle {
+    let mut wake = management;
+    if let Some(schedule) = schedule {
+        wake = wake.min(schedule);
+    }
+    if let Some(motion) = motion {
+        wake = wake.min(motion);
+    }
+    wake
+}
+
+/// Services every transaction due at the same observed cycle, while bounding
+/// internal zero-time handoffs between adjacent cached blocks.
+fn service_realtime_motion(
+    resources: &mut selected::EstablishedRealtimeResources,
+    motion: &mut MotionService,
+    jobs: &mut RealtimeJobService,
+    safety: &mut SafetyMachine,
+    endpoint: &mut DefaultRealtimeEndpoint,
+) -> Result<bool, ()> {
+    if safety.state() != SafetyState::Running {
+        return Ok(false);
+    }
+    if !motion.started() {
+        return Err(());
+    }
+    let mut handoffs = 0_u8;
+    loop {
+        if handoffs == 16 {
+            return Err(());
+        }
+        handoffs += 1;
+        let now = DeviceCycle(Instant::now().as_ticks());
+        match motion.poll(resources, now).map_err(|_| ())? {
+            MotionAction::Future { at } => {
+                if at <= now {
+                    return Err(());
+                }
+                return Ok(false);
+            }
+            MotionAction::OutputCommitted => {}
+            MotionAction::BlockComplete(admitted) => {
+                match jobs.acknowledge_executed(endpoint, now, admitted)? {
+                    RealtimeJobState::Complete => motion.request_finish().map_err(|_| ())?,
+                    RealtimeJobState::Prepared => {
+                        jobs.preadmit(endpoint, now)?;
+                        let next = jobs.take_admitted().ok_or(())?;
+                        motion.admit(next).map_err(|_| ())?;
+                    }
+                    RealtimeJobState::Admitted
+                    | RealtimeJobState::Cancelled
+                    | RealtimeJobState::Faulted => return Err(()),
+                }
+            }
+            MotionAction::JobComplete => {
+                jobs.complete_schedule(endpoint, now)?;
+                safety
+                    .apply(SafetyEvent::Finish, Conditions::default())
+                    .map_err(|_| ())?;
+                return Ok(true);
+            }
+            MotionAction::Idle => return Err(()),
+        }
+    }
+}
+
+fn reconcile_arm_state(
+    configurations: &RealtimeConfigurationService<'static, { selected::CONFIGURATION_BINDINGS }>,
+    jobs: &RealtimeJobService,
+    motion: &MotionService,
+    safety: &mut SafetyMachine,
+    safe_outputs_established: bool,
+    safety_inputs: SafetyInputStatus,
+    deadline_healthy: bool,
+) -> Result<bool, ()> {
+    if safety.state() == SafetyState::Configured
+        && configurations.authorized_configuration().is_some()
+        && jobs.ready_to_arm()
+        && motion.ready_to_arm()
+        && safe_outputs_established
+        && safety_inputs.ready_to_arm()
+        && deadline_healthy
+    {
+        safety
+            .apply(
+                SafetyEvent::Arm,
+                Conditions {
+                    safe_outputs_established,
+                    configuration_valid: true,
+                    interlocks_closed: true,
+                    buffer_ready: true,
+                    physical_reset_confirmed: false,
+                },
+            )
+            .map_err(|_| ())?;
+        return Ok(true);
+    }
+    if safety.state() == SafetyState::Armed
+        && !matches!(
+            jobs.schedule_state(),
+            Some(
+                alumina_job::JobScheduleState::Installed | alumina_job::JobScheduleState::Confirmed
+            )
+        )
+    {
+        safety
+            .apply(SafetyEvent::Disarm, Conditions::default())
+            .map_err(|_| ())?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn latch_realtime_fault(
     resources: &mut selected::EstablishedRealtimeResources,
+    motion: &mut MotionService,
     jobs: &mut RealtimeJobService,
     safety: &mut SafetyMachine,
     endpoint: &mut DefaultRealtimeEndpoint,
@@ -769,10 +1054,13 @@ fn latch_realtime_fault(
     let prior_job_active = jobs.active();
     let safe_applied = resources.force_safe_outputs().is_ok();
     *safe_outputs_established &= safe_applied;
-    let fault = if safe_applied {
-        requested_fault
-    } else {
+    let motion_invalidated = motion.fault(now).is_ok();
+    let fault = if !safe_applied {
         FaultCode::SafeOutput
+    } else if !motion_invalidated {
+        FaultCode::Identity
+    } else {
+        requested_fault
     };
     let _ = jobs.local_safety_fault(endpoint, now);
     let _ = safety.apply(SafetyEvent::Fault(fault), Conditions::default());
@@ -781,6 +1069,7 @@ fn latch_realtime_fault(
         || prior_fault != safety.fault()
         || prior_job_active != jobs.active()
         || !safe_applied
+        || !motion_invalidated
     {
         *transition_generation = next_nonzero(*transition_generation);
     }
@@ -800,6 +1089,7 @@ fn latch_realtime_fault(
 #[allow(clippy::too_many_arguments)]
 fn request_realtime_stop(
     resources: &mut selected::EstablishedRealtimeResources,
+    motion: &mut MotionService,
     jobs: &mut RealtimeJobService,
     safety: &mut SafetyMachine,
     endpoint: &mut DefaultRealtimeEndpoint,
@@ -818,6 +1108,7 @@ fn request_realtime_stop(
         *safe_outputs_established = false;
         latch_realtime_fault(
             resources,
+            motion,
             jobs,
             safety,
             endpoint,
@@ -833,11 +1124,31 @@ fn request_realtime_stop(
         );
         return;
     }
+    if motion.fault(now).is_err() {
+        latch_realtime_fault(
+            resources,
+            motion,
+            jobs,
+            safety,
+            endpoint,
+            safe_outputs_established,
+            transition_generation,
+            telemetry_sequence,
+            now,
+            observed,
+            maximum_lateness_cycles,
+            safety_input_status,
+            FaultCode::Identity,
+            detail,
+        );
+        return;
+    }
     let prior_state = safety.state();
     let prior_job_active = jobs.active();
     if jobs.local_stop(endpoint, now).is_err() {
         latch_realtime_fault(
             resources,
+            motion,
             jobs,
             safety,
             endpoint,
@@ -863,6 +1174,7 @@ fn request_realtime_stop(
     if transition.is_err() {
         latch_realtime_fault(
             resources,
+            motion,
             jobs,
             safety,
             endpoint,
@@ -900,6 +1212,7 @@ fn apply_configuration_command(
         { selected::CONFIGURATION_BINDINGS },
     >,
     resources: &mut selected::EstablishedRealtimeResources,
+    motion: &mut MotionService,
     safety_inputs: &mut Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>,
     safety_input_status: &mut SafetyInputStatus,
     jobs: &mut RealtimeJobService,
@@ -930,6 +1243,7 @@ fn apply_configuration_command(
                     return Err(());
                 }
                 let active = configurations.active_configuration().ok_or(())?;
+                motion.configure(active).map_err(|_| ())?;
                 let monitor = resources
                     .configure_safety_inputs(&active.profile, nominal_scan_period_cycles)
                     .map_err(|_| ())?;
@@ -964,6 +1278,7 @@ fn apply_configuration_command(
                     return Err(());
                 }
                 resources.clear_safety_inputs();
+                motion.clear();
                 *safety_inputs = None;
                 *safety_input_status = SafetyInputStatus::unconfigured();
                 jobs.set_active_config(Digest::ZERO);

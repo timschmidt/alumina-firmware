@@ -991,6 +991,7 @@ mod tests {
             axis_count: 3,
             block_count: 1,
             first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
             limits: BlockValidationLimits {
                 maximum_block_ticks: 10_000,
                 segment: ValidationLimits {

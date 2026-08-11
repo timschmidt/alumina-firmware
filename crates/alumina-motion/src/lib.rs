@@ -1030,6 +1030,32 @@ impl<const AXES: usize> StepperExecutor<AXES> {
         active.next_output_cycle().or(Some(active.end))
     }
 
+    /// Earliest exact cycle at which normal terminal disable can satisfy every
+    /// configured enable-hold bound. This is not used for asynchronous faults.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
+        if self.state != ExecutorState::Ready || self.active.is_some() {
+            return Err(MotionError::State);
+        }
+        let mut ready = self
+            .epoch
+            .0
+            .checked_add(self.next_tick.0)
+            .ok_or(MotionError::EpochOverflow)?;
+        let mut axis = 0;
+        while axis < AXES {
+            if self.enabled.contains(axis) {
+                let last_fall = self.last_fall[axis].ok_or(MotionError::OutputInvariant)?;
+                let axis_ready = last_fall
+                    .0
+                    .checked_add(u64::from(self.timing.axes[axis].enable_hold_cycles))
+                    .ok_or(MotionError::Arithmetic)?;
+                ready = ready.max(axis_ready);
+            }
+            axis += 1;
+        }
+        Ok(DeviceCycle(ready))
+    }
+
     /// Returns one event only when its cycle is due. A late event outside the
     /// configured bound faults without returning or applying that event.
     pub fn poll(&mut self, observed: DeviceCycle) -> Result<MotionPoll<AXES>, MotionError> {
@@ -1542,6 +1568,14 @@ impl<const AXES: usize> CachedStepperExecutor<AXES> {
         }
     }
 
+    /// Exact normal-disable deadline after the terminal block is returned.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
+        if self.admitted.is_some() || self.faulted {
+            return Err(MotionError::State);
+        }
+        self.stepper.earliest_finish_cycle()
+    }
+
     /// Completes a job only after the admitted block token has been returned to
     /// its job actor and the configured driver hold time has elapsed.
     pub fn finish_job(&mut self, at: DeviceCycle) -> Result<StepperEvent, MotionError> {
@@ -1709,6 +1743,372 @@ pub enum CachedMotionError {
     Progress,
     PositionOverflow { axis: usize },
     Arithmetic,
+}
+
+/// Unforgeable boot-local correlation for one complete-image transaction.
+/// Tokens are deliberately process-local: the hardware owner consumes them
+/// immediately and only the resulting bounded report crosses a core boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OutputCommitToken(u32);
+
+impl OutputCommitToken {
+    /// Nonzero diagnostic representation.
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+/// One logical event translated to a complete shifted image, but not yet
+/// acknowledged as physically committed by the sole output owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PendingShiftOutput {
+    pub token: OutputCommitToken,
+    pub update: ShiftImageUpdate,
+    /// Software lateness observed before the backend transaction began.
+    pub generation_lateness_cycles: u32,
+}
+
+/// Exact upper-bound observation returned after one image commit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommittedShiftOutput {
+    pub token: OutputCommitToken,
+    pub update: ShiftImageUpdate,
+    pub committed_at: DeviceCycle,
+    /// Total lateness from the planned image-commit cycle.
+    pub commit_lateness_cycles: u32,
+}
+
+/// Construction failure before any cached block or output image is owned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShiftedExecutorBuildError {
+    Motion(MotionError),
+    Image(ShiftImageError),
+}
+
+/// Fail-closed generated-output or image-mapping failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShiftedMotionError {
+    State,
+    Cached(CachedMotionError),
+    Motion(MotionError),
+    Image(ShiftImageError),
+}
+
+/// A physical commit observation that cannot correspond to the sole pending
+/// output transaction. Any rejection latches the coordinator until
+/// [`ShiftedCachedStepper::fault`] returns the complete safe image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputCommitError {
+    State,
+    Token {
+        expected: OutputCommitToken,
+        received: OutputCommitToken,
+    },
+    Early {
+        scheduled: DeviceCycle,
+        committed: DeviceCycle,
+    },
+    Deadline {
+        scheduled: DeviceCycle,
+        committed: DeviceCycle,
+        maximum_lateness_cycles: u32,
+    },
+    Arithmetic,
+}
+
+/// Nonblocking result from the generated/physically-committed output boundary.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "block completion returns unique inline ownership to the job actor"
+)]
+pub enum ShiftedMotionPoll<const AXES: usize> {
+    Idle,
+    Future {
+        at: DeviceCycle,
+    },
+    /// A new image transaction that the hardware owner must apply exactly once.
+    Output(PendingShiftOutput),
+    /// The prior output has not been committed; it must never be applied again.
+    AwaitingCommit(PendingShiftOutput),
+    BlockComplete {
+        admitted: AdmittedBlock<AXES>,
+        completion: SegmentCompletion<AXES>,
+    },
+}
+
+/// Couples cached exact event generation to a two-phase complete-image commit.
+///
+/// The logical executor may advance far enough to construct one image, but it
+/// cannot generate another event, complete a block, or release its unique token
+/// until the target backend reports the first image's physical commit cycle.
+/// Invalid or late acknowledgements latch the coordinator and require the
+/// caller to apply the complete safe image returned by [`Self::fault`].
+pub struct ShiftedCachedStepper<const AXES: usize> {
+    cached: CachedStepperExecutor<AXES>,
+    mapper: ShiftImageMapper<AXES>,
+    pending: Option<PendingShiftOutput>,
+    next_token: u32,
+    maximum_commit_lateness_cycles: u32,
+    committed_updates: u64,
+    maximum_commit_lateness_observed: u32,
+    output_faulted: bool,
+}
+
+impl<const AXES: usize> ShiftedCachedStepper<AXES> {
+    /// Binds one independently derived execution profile to its only complete
+    /// shifted-image engine.
+    pub fn new(
+        profile: StepperExecutionProfile<AXES>,
+        contract: ShiftImageContract,
+    ) -> Result<Self, ShiftedExecutorBuildError> {
+        let cached = CachedStepperExecutor::new(profile.timing)
+            .map_err(ShiftedExecutorBuildError::Motion)?;
+        let mapper =
+            ShiftImageMapper::new(&profile, contract).map_err(ShiftedExecutorBuildError::Image)?;
+        Ok(Self {
+            cached,
+            mapper,
+            pending: None,
+            next_token: 0,
+            maximum_commit_lateness_cycles: profile.timing.maximum_lateness_cycles,
+            committed_updates: 0,
+            maximum_commit_lateness_observed: 0,
+            output_faulted: false,
+        })
+    }
+
+    /// Installs the exact local epoch while the physical image remains safe.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), ShiftedMotionError> {
+        if self.output_faulted || self.pending.is_some() {
+            return Err(ShiftedMotionError::State);
+        }
+        self.cached
+            .start_job(epoch, position)
+            .map_err(ShiftedMotionError::Motion)
+    }
+
+    /// Transfers one independently admitted block into the exact generator.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection preserves unique inline block ownership"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedMotionBlock<AXES>> {
+        if self.output_faulted || self.pending.is_some() {
+            return Err(RejectedMotionBlock {
+                error: CachedMotionError::State,
+                admitted,
+            });
+        }
+        self.cached.admit_block(admitted)
+    }
+
+    /// Generates at most one new complete image. A pending image is reported
+    /// distinctly and never regenerated or reapplied.
+    pub fn poll(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Result<ShiftedMotionPoll<AXES>, ShiftedMotionError> {
+        if self.output_faulted {
+            return Err(ShiftedMotionError::State);
+        }
+        if let Some(pending) = self.pending {
+            return Ok(ShiftedMotionPoll::AwaitingCommit(pending));
+        }
+        match self
+            .cached
+            .poll(observed)
+            .map_err(ShiftedMotionError::Cached)?
+        {
+            CachedMotionPoll::Idle => Ok(ShiftedMotionPoll::Idle),
+            CachedMotionPoll::Future { at } => Ok(ShiftedMotionPoll::Future { at }),
+            CachedMotionPoll::Event {
+                event,
+                lateness_cycles,
+            } => {
+                let update = match self.mapper.apply(event) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        self.output_faulted = true;
+                        return Err(ShiftedMotionError::Image(error));
+                    }
+                };
+                self.next_token = next_output_token(self.next_token);
+                let pending = PendingShiftOutput {
+                    token: OutputCommitToken(self.next_token),
+                    update,
+                    generation_lateness_cycles: lateness_cycles,
+                };
+                self.pending = Some(pending);
+                Ok(ShiftedMotionPoll::Output(pending))
+            }
+            CachedMotionPoll::BlockComplete {
+                admitted,
+                completion,
+            } => Ok(ShiftedMotionPoll::BlockComplete {
+                admitted,
+                completion,
+            }),
+        }
+    }
+
+    /// Acknowledges the upper-bound cycle at which the target backend finished
+    /// committing the sole pending image. Early, wrong-token, or late reports
+    /// latch the coordinator without clearing the transaction.
+    pub fn commit_output(
+        &mut self,
+        token: OutputCommitToken,
+        committed_at: DeviceCycle,
+    ) -> Result<CommittedShiftOutput, OutputCommitError> {
+        if self.output_faulted {
+            return Err(OutputCommitError::State);
+        }
+        let pending = match self.pending {
+            Some(pending) => pending,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::State);
+            }
+        };
+        if token != pending.token {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Token {
+                expected: pending.token,
+                received: token,
+            });
+        }
+        if committed_at < pending.update.at {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Early {
+                scheduled: pending.update.at,
+                committed: committed_at,
+            });
+        }
+        let lateness = committed_at.0 - pending.update.at.0;
+        if lateness > u64::from(self.maximum_commit_lateness_cycles) {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Deadline {
+                scheduled: pending.update.at,
+                committed: committed_at,
+                maximum_lateness_cycles: self.maximum_commit_lateness_cycles,
+            });
+        }
+        let lateness = match u32::try_from(lateness) {
+            Ok(lateness) => lateness,
+            Err(_) => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::Arithmetic);
+            }
+        };
+        self.committed_updates = match self.committed_updates.checked_add(1) {
+            Some(updates) => updates,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::Arithmetic);
+            }
+        };
+        self.maximum_commit_lateness_observed = self.maximum_commit_lateness_observed.max(lateness);
+        self.pending = None;
+        Ok(CommittedShiftOutput {
+            token,
+            update: pending.update,
+            committed_at,
+            commit_lateness_cycles: lateness,
+        })
+    }
+
+    /// Produces and retains the normal terminal disable image. The result uses
+    /// the same two-phase physical commit boundary as a step edge.
+    pub fn finish_job(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<PendingShiftOutput, ShiftedMotionError> {
+        if self.output_faulted || self.pending.is_some() {
+            return Err(ShiftedMotionError::State);
+        }
+        let event = self
+            .cached
+            .finish_job(at)
+            .map_err(ShiftedMotionError::Motion)?;
+        let update = match self.mapper.apply(event) {
+            Ok(update) => update,
+            Err(error) => {
+                self.output_faulted = true;
+                return Err(ShiftedMotionError::Image(error));
+            }
+        };
+        self.next_token = next_output_token(self.next_token);
+        let pending = PendingShiftOutput {
+            token: OutputCommitToken(self.next_token),
+            update,
+            generation_lateness_cycles: 0,
+        };
+        self.pending = Some(pending);
+        Ok(pending)
+    }
+
+    /// Latches logical execution and returns the complete safe image for an
+    /// immediate local hardware transaction. This invalidates every pending
+    /// output token; it does not claim that the returned image was applied.
+    pub fn fault(&mut self, at: DeviceCycle) -> ShiftImageUpdate {
+        self.output_faulted = true;
+        self.pending = None;
+        let _ = self.cached.fault(at);
+        self.mapper.force_safe(at)
+    }
+
+    /// Releases an unacknowledgeable block after the caller has applied the
+    /// safe image returned by [`Self::fault`].
+    pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
+        self.cached.take_faulted_block()
+    }
+
+    /// Exact next generator deadline. A pending transaction retains its own
+    /// scheduled cycle until physically committed.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        self.pending
+            .map(|pending| pending.update.at)
+            .or_else(|| self.cached.next_deadline())
+    }
+
+    /// Exact cycle at which a requested normal terminal disable may commit.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
+        if self.output_faulted || self.pending.is_some() {
+            return Err(MotionError::State);
+        }
+        self.cached.earliest_finish_cycle()
+    }
+
+    /// Bounded logical executor status.
+    pub const fn status(&self) -> StepperStatus<AXES> {
+        self.cached.status()
+    }
+
+    /// Number of target-confirmed complete-image updates.
+    pub const fn committed_updates(&self) -> u64 {
+        self.committed_updates
+    }
+
+    /// Largest exact target-reported image commit lateness.
+    pub const fn maximum_commit_lateness_observed(&self) -> u32 {
+        self.maximum_commit_lateness_observed
+    }
+
+    /// Current mapped complete image, including a pending logical update.
+    pub const fn image(&self) -> u32 {
+        self.mapper.image()
+    }
+}
+
+const fn next_output_token(previous: u32) -> u32 {
+    let next = previous.wrapping_add(1);
+    if next == 0 { 1 } else { next }
 }
 
 fn apply_delta<const AXES: usize>(
@@ -1963,6 +2363,15 @@ mod tests {
         }
     }
 
+    const fn shifted_contract() -> ShiftImageContract {
+        ShiftImageContract {
+            engine: 0,
+            width: 24,
+            defined_mask: 0x00ff_ffff,
+            safe_image: 0x0000_1249,
+        }
+    }
+
     struct OneBlock(Option<ExecutionBlock>);
 
     impl WorkSource for OneBlock {
@@ -2004,6 +2413,7 @@ mod tests {
             axis_count: 3,
             block_count: 1,
             first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
             limits: BlockValidationLimits {
                 maximum_block_ticks: 1_000,
                 segment: ValidationLimits {
@@ -2195,14 +2605,201 @@ mod tests {
     }
 
     #[test]
+    fn shifted_runner_releases_block_only_after_every_physical_commit() {
+        let (mut job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(2);
+        let mut runner = ShiftedCachedStepper::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+
+        let mut output_count = 0_u64;
+        let admitted = loop {
+            let deadline = runner.next_deadline().unwrap();
+            match runner.poll(deadline).unwrap() {
+                ShiftedMotionPoll::Output(pending) => {
+                    assert!(matches!(
+                        runner.poll(deadline).unwrap(),
+                        ShiftedMotionPoll::AwaitingCommit(repeated) if repeated == pending
+                    ));
+                    let committed_at = DeviceCycle(deadline.0 + output_count % 2);
+                    let committed = runner.commit_output(pending.token, committed_at).unwrap();
+                    assert_eq!(committed.update, pending.update);
+                    assert_eq!(
+                        committed.commit_lateness_cycles,
+                        u32::try_from(output_count % 2).unwrap()
+                    );
+                    output_count += 1;
+                }
+                ShiftedMotionPoll::BlockComplete {
+                    admitted,
+                    completion,
+                } => {
+                    assert_eq!(completion.at, DeviceCycle(120));
+                    assert_eq!(completion.position, [2, 0, 0]);
+                    break admitted;
+                }
+                ShiftedMotionPoll::Idle
+                | ShiftedMotionPoll::Future { .. }
+                | ShiftedMotionPoll::AwaitingCommit(_) => {
+                    panic!("exact-deadline shifted runner made no progress")
+                }
+            }
+        };
+        assert_eq!(output_count, 5);
+        assert_eq!(runner.committed_updates(), 5);
+        assert_eq!(runner.maximum_commit_lateness_observed(), 1);
+        assert_eq!(runner.earliest_finish_cycle(), Ok(DeviceCycle(120)));
+        assert_eq!(job.status().state, RealtimeJobState::Admitted);
+        assert_eq!(
+            job.acknowledge(admitted).unwrap().state,
+            RealtimeJobState::Complete
+        );
+
+        let terminal = runner.finish_job(DeviceCycle(120)).unwrap();
+        assert_eq!(terminal.update.at, DeviceCycle(120));
+        runner
+            .commit_output(terminal.token, DeviceCycle(121))
+            .unwrap();
+        assert_eq!(runner.committed_updates(), 6);
+        assert_eq!(runner.status().state, ExecutorState::Complete);
+        assert!(runner.status().enabled.is_empty());
+    }
+
+    #[test]
+    fn shifted_normal_finish_waits_for_exact_enable_hold_before_commit() {
+        let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(0);
+        profile.timing.axes[0].enable_hold_cycles = 20;
+        let mut runner = ShiftedCachedStepper::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+
+        loop {
+            let deadline = runner.next_deadline().unwrap();
+            match runner.poll(deadline).unwrap() {
+                ShiftedMotionPoll::Output(pending) => {
+                    runner.commit_output(pending.token, deadline).unwrap();
+                }
+                ShiftedMotionPoll::BlockComplete { completion, .. } => {
+                    assert_eq!(completion.at, DeviceCycle(120));
+                    break;
+                }
+                ShiftedMotionPoll::Idle
+                | ShiftedMotionPoll::Future { .. }
+                | ShiftedMotionPoll::AwaitingCommit(_) => {
+                    panic!("exact-deadline shifted runner made no progress")
+                }
+            }
+        }
+
+        assert_eq!(runner.earliest_finish_cycle(), Ok(DeviceCycle(136)));
+        assert!(matches!(
+            runner.finish_job(DeviceCycle(135)),
+            Err(ShiftedMotionError::Motion(MotionError::EnableHold {
+                axis: 0
+            }))
+        ));
+        let terminal = runner.finish_job(DeviceCycle(136)).unwrap();
+        assert_eq!(terminal.update.at, DeviceCycle(136));
+        assert!(matches!(
+            runner.poll(DeviceCycle(136)).unwrap(),
+            ShiftedMotionPoll::AwaitingCommit(repeated) if repeated == terminal
+        ));
+        runner
+            .commit_output(terminal.token, DeviceCycle(136))
+            .unwrap();
+        assert_eq!(runner.status().state, ExecutorState::Complete);
+        assert!(runner.status().enabled.is_empty());
+    }
+
+    #[test]
+    fn invalid_output_commit_latches_until_complete_safe_image_is_requested() {
+        let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(2);
+        let mut runner = ShiftedCachedStepper::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        let pending = match runner.poll(DeviceCycle(100)).unwrap() {
+            ShiftedMotionPoll::Output(pending) => pending,
+            _ => panic!("boundary image must be generated"),
+        };
+        let wrong = OutputCommitToken(pending.token.0 + 1);
+        assert_eq!(
+            runner.commit_output(wrong, DeviceCycle(100)),
+            Err(OutputCommitError::Token {
+                expected: pending.token,
+                received: wrong,
+            })
+        );
+        assert_eq!(
+            runner.commit_output(pending.token, DeviceCycle(100)),
+            Err(OutputCommitError::State)
+        );
+        assert!(matches!(
+            runner.poll(DeviceCycle(100)),
+            Err(ShiftedMotionError::State)
+        ));
+        assert!(runner.take_faulted_block().is_none());
+        assert_eq!(
+            runner.fault(DeviceCycle(101)),
+            ShiftImageUpdate {
+                at: DeviceCycle(101),
+                image: shifted_contract().safe_image,
+            }
+        );
+        assert_eq!(runner.take_faulted_block().unwrap().header().sequence, 0);
+    }
+
+    #[test]
+    fn early_and_late_physical_commits_never_clear_the_pending_image() {
+        for (committed_at, expected) in [
+            (
+                DeviceCycle(99),
+                OutputCommitError::Early {
+                    scheduled: DeviceCycle(100),
+                    committed: DeviceCycle(99),
+                },
+            ),
+            (
+                DeviceCycle(103),
+                OutputCommitError::Deadline {
+                    scheduled: DeviceCycle(100),
+                    committed: DeviceCycle(103),
+                    maximum_lateness_cycles: 2,
+                },
+            ),
+        ] {
+            let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+            let mut profile = shifted_profile();
+            profile.timing = timing(2);
+            let mut runner = ShiftedCachedStepper::new(profile, shifted_contract()).unwrap();
+            runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+            runner.admit_block(admitted).unwrap();
+            let pending = match runner.poll(DeviceCycle(100)).unwrap() {
+                ShiftedMotionPoll::Output(pending) => pending,
+                _ => panic!("boundary image must be generated"),
+            };
+            assert_eq!(
+                runner.commit_output(pending.token, committed_at),
+                Err(expected)
+            );
+            assert_eq!(runner.committed_updates(), 0);
+            assert!(runner.take_faulted_block().is_none());
+            assert_eq!(
+                runner.fault(DeviceCycle(104)).image,
+                shifted_contract().safe_image
+            );
+            assert!(runner.take_faulted_block().is_some());
+        }
+    }
+
+    #[test]
     fn complete_shift_image_maps_enable_direction_and_steps_without_losing_other_bits() {
         let profile = shifted_profile();
-        let contract = ShiftImageContract {
-            engine: 0,
-            width: 24,
-            defined_mask: 0x00ff_ffff,
-            safe_image: 0x0000_1249,
-        };
+        let contract = shifted_contract();
         let mut mapper = ShiftImageMapper::new(&profile, contract).unwrap();
 
         let boundary = mapper

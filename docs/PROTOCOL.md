@@ -284,14 +284,14 @@ a mid-execution fault makes it unacknowledgeable.
 
 ## Cached-job preparation bodies
 
-`JobPrepare` has one exact 248-byte, self-hashed descriptor. The descriptor is
+`JobPrepare` has one exact 312-byte, self-hashed descriptor. The descriptor is
 the UI compiler's claim about one already published per-MCU partition; it does
 not contain a start epoch or permission to energize outputs.
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMJOBD1` |
-| 8 | 2 | exact descriptor version (`1`) |
+| 0 | 8 | ASCII `ALMJOBD2` |
+| 8 | 2 | exact descriptor version (`2`) |
 | 10 | 6 | flags/reserved, all zero |
 | 16 | 8 | nonzero boot-local prepare ID |
 | 24 | 1 | fixed `MachineJobPartition` object kind |
@@ -300,7 +300,7 @@ not contain a start epoch or permission to energize outputs.
 | 27 | 1 | exact compile-time executor axis count |
 | 28 | 4 | nonzero execution-block count |
 | 32 | 8 | partition byte length, exactly `count * 512` |
-| 40 | 8 | first relative stream tick, zero in V1 |
+| 40 | 8 | first relative stream tick, zero in V2 |
 | 48 | 8 | nonzero maximum block ticks |
 | 56 | 8 | nonzero maximum segment ticks |
 | 64 | 8 | nonzero maximum lattice steps per segment |
@@ -309,7 +309,8 @@ not contain a start epoch or permission to energize outputs.
 | 120 | 32 | canonical publication-manifest SHA-256 digest |
 | 152 | 32 | exact board-capability digest |
 | 184 | 32 | exact active-configuration digest |
-| 216 | 32 | SHA-256 over bytes `0..216` |
+| 216 | 64 | eight signed `i64` absolute machine-lattice starting positions; slots at or above the axis count are zero |
+| 280 | 32 | SHA-256 over bytes `0..280` |
 
 Decoding re-encodes the value and rejects every alternate representation. Core 0
 also requires the outer frame configuration identity to equal the descriptor,
@@ -322,14 +323,14 @@ requires an exact nonzero active-configuration identity and an armable board.
 Neither first board currently satisfies those later gates, so target
 `JobPrepare` still returns `Unsupported` before storage is opened.
 
-The 272-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
+The 336-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
 and one reserved zero byte. Action `1` carries the 16-byte authentication boot ID
-at `8..24` and the complete descriptor at `24..272`. Action `2` contains only the
+at `8..24` and the complete descriptor at `24..336`. Action `2` contains only the
 nonzero prepare ID at `8..16`. Actions `3`, `4`, and `5` carry commit, confirm,
 and abort bodies beginning at byte 8. Every unused byte is zero. `JobCancel`
-uses the same bare eight-byte prepare ID as its native body. This 16-byte command
-growth raises the reviewed runtime boundary storage from 12,480 to 12,608 bytes;
-the 64 KiB internal-memory budget still covers the boundary and core-1 stack.
+uses the same bare eight-byte prepare ID as its native body. The reviewed default
+runtime boundary occupies 13,120 bytes; together with the core-1 stack its
+45,888-byte requirement remains below the 64 KiB internal-memory budget.
 
 `JobCommit` is an exact 240-byte `ALMJCOM1` body:
 
@@ -401,13 +402,16 @@ only when their prepared token or every committed field matches its exact local
 descriptor/commit.
 
 The current target images route prepare/commit/confirm/abort and independently
-enforce these contracts on both cores, but neither board package is armable and
-there is no interlock-qualified `Arm` transition or motor executor yet. Thus
-target `JobPrepare` remains closed; if a future package were incorrectly made
-armable without installing an executor, an emitted start is converted
-immediately to a latched execution/safety fault rather than driving an output.
-Hold, resume, lease renewal, observed-edge reconciliation, and cached-autonomous
-authorization remain later operations.
+enforce these contracts on both cores. Core 1 now binds the descriptor's exact
+starting position and scheduled local epoch to the cached step executor, retains
+each block until every complete output image has a target-confirmed physical
+commit, and permits `Arm`/`Start` only with fresh interlocks, an admitted block,
+healthy deadlines, an armable package, and a qualified output backend. TinyBee
+contains only an unqualified blocking bootstrap writer; T-Deck Pro has no
+machine-output backend. Both packages therefore keep `JobPrepare` closed and
+remain non-armable. Hold degrades to a safe stop; constrained hold/resume, lease
+renewal, observed-edge reconciliation, and cached-autonomous authorization remain
+later operations.
 
 ## Real-time motion report
 

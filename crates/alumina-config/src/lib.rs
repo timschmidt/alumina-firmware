@@ -1545,7 +1545,7 @@ pub struct RealtimeConfiguration {
 pub const CORE_CONFIGURATION_COMMAND_PREFIX_BYTES: usize = 64;
 /// Maximum document bytes transferred in one 256-byte intercore command.
 pub const MAX_CORE_CONFIGURATION_DATA_BYTES: usize = 192;
-/// Complete fixed command storage, matching the default runtime command payload.
+/// Complete fixed command storage, bounded below the default runtime payload.
 pub const CORE_CONFIGURATION_COMMAND_CAPACITY: usize =
     CORE_CONFIGURATION_COMMAND_PREFIX_BYTES + MAX_CORE_CONFIGURATION_DATA_BYTES;
 /// Exact fixed core-1 configuration report bytes, filling one telemetry payload.

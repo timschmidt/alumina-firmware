@@ -144,12 +144,17 @@ watchdogs, arming masks, and typed E-stop/interlock/limit/driver/probe reactions
 TinyBee now realizes GPIO 33/32/22/35 as a transactional nominal one-millisecond
 core-1 polling bank; every fault first reapplies the full board-safe image and
 invalidates admitted job ownership. The exact input masks and next watchdog
-deadline cross to core 0 in the canonical safety snapshot. This is target
-wiring, not measured GPIO, electrical, response-time, or motion-output
+deadline cross to core 0 in the canonical safety snapshot. Core 1 also binds
+the exact scheduled epoch and descriptor starting lattice position to cached
+motion, and releases a block only after every complete output image has a
+target-confirmed physical commit. TinyBee's blocking writer is an unqualified
+compile/HIL staging path; T-Deck Pro has no motion backend. This is target wiring,
+not measured GPIO, electrical, response-time, or motion-output
 qualification, so both packages remain non-armable. See the
 [stepper evidence](docs/evidence/M6-EXACT-STEPPER-CORE.md) and
 [portable safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md), plus the
-[target safety-input evidence](docs/evidence/M6-TARGET-SAFETY-INPUTS.md).
+[target safety-input evidence](docs/evidence/M6-TARGET-SAFETY-INPUTS.md) and
+[target motion-commit evidence](docs/evidence/M6-TARGET-MOTION-COMMIT.md).
 
 ## Developer checks
 

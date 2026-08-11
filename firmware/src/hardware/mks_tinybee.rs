@@ -1,5 +1,6 @@
 use alumina_board::{BoardPackage, ResourceId};
 use alumina_config::RealtimeConfigurationProfile;
+use alumina_motion::{ShiftImageContract, ShiftImageUpdate};
 use alumina_protocol::DeviceCycle;
 use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
@@ -34,6 +35,23 @@ pub type StorageBackend = ProvisionedCache<StorageCard>;
 pub const JOB_AXES: usize = 3;
 /// Maximum unique resource claims retained by each configuration validator.
 pub const CONFIGURATION_BINDINGS: usize = 64;
+/// A complete-image writer exists, but its blocking GPIO timing has not been
+/// qualified as a motion serializer and therefore cannot authorize arming.
+pub const MOTION_OUTPUT_IMPLEMENTED: bool = true;
+/// Physical step/dir output remains closed until I²S/DMA HIL evidence exists.
+pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// No nonzero commit-lateness claim is made before serializer qualification.
+pub const MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES: u32 = 0;
+
+/// Exact full-width shifted-output mapping consumed by the portable executor.
+pub const fn motion_shift_contract() -> Option<ShiftImageContract> {
+    Some(ShiftImageContract {
+        engine: 0,
+        width: board_mks_tinybee::SHIFT_CHAIN_WIDTH,
+        defined_mask: board_mks_tinybee::COMPLETE_SHIFT_MASK,
+        safe_image: board_mks_tinybee::DESCRIBED_SAFE_I2S_IMAGE,
+    })
+}
 
 /// Semantic identity of GPIO2 and the four sampled digital inputs retained
 /// with output drivers disabled, plus the exact 24-bit static image.
@@ -279,6 +297,19 @@ impl EstablishedRealtimeResources {
             self.safe_shift
                 .write_complete(tinybee_safe_image(), Timing::CONSERVATIVE_100NS),
         )
+    }
+
+    /// Applies one complete mapped image through the bootstrap transport.
+    /// This path exists for compile-time integration and eventual low-rate HIL;
+    /// [`MOTION_OUTPUT_QUALIFIED`] keeps it outside arm authority.
+    pub fn apply_motion_image(&mut self, update: ShiftImageUpdate) -> Result<(), SafeOutputError> {
+        infallible_pins(self.safe_shift.write_complete(
+            CompleteImage {
+                bits: update.image,
+                ..tinybee_safe_image()
+            },
+            Timing::CONSERVATIVE_100NS,
+        ))
     }
 }
 

@@ -116,6 +116,7 @@ impl JobService {
         }
         let expected_capability = selected::PACKAGE.board.capability_digest;
         if !selected::PACKAGE.armable
+            || !selected::MOTION_OUTPUT_QUALIFIED
             || expected_capability.is_zero()
             || self.active_config.is_zero()
         {
@@ -722,6 +723,7 @@ impl RealtimeJobService {
                     || descriptor.capability_digest != selected::PACKAGE.board.capability_digest
                     || descriptor.capability_digest.is_zero()
                     || !selected::PACKAGE.armable
+                    || !selected::MOTION_OUTPUT_QUALIFIED
                     || self.active_config.is_zero()
                     || descriptor.config_digest != self.active_config
                 {
@@ -859,6 +861,85 @@ impl RealtimeJobService {
         }
     }
 
+    /// Exact immutable descriptor retained for the current boot-local job.
+    pub const fn descriptor(&self) -> Option<JobDescriptor> {
+        self.descriptor
+    }
+
+    /// Whether an installed schedule and its first independently admitted
+    /// block are both present for the local arm transition.
+    pub fn ready_to_arm(&self) -> bool {
+        self.admitted.is_some()
+            && self
+                .job
+                .as_ref()
+                .is_some_and(|job| job.status().state == RealtimeJobState::Admitted)
+            && self
+                .schedule
+                .is_some_and(|schedule| schedule.report().state == JobScheduleState::Installed)
+    }
+
+    /// Transfers the sole pre-admitted block into the physical motion owner.
+    /// The job actor retains its outstanding token until the same block is
+    /// returned by exact, physically committed execution.
+    pub fn take_admitted(&mut self) -> Option<AdmittedBlock<{ selected::JOB_AXES }>> {
+        self.admitted.take()
+    }
+
+    /// Completes the outstanding token only after the motion owner returns the
+    /// exact block following every physical output commit.
+    pub fn acknowledge_executed(
+        &mut self,
+        endpoint: &mut DefaultRealtimeEndpoint,
+        now: DeviceCycle,
+        admitted: AdmittedBlock<{ selected::JOB_AXES }>,
+    ) -> Result<RealtimeJobState, ()> {
+        let state = self
+            .job
+            .as_mut()
+            .ok_or(())?
+            .acknowledge(admitted)
+            .map_err(|_| ())?
+            .state;
+        self.publish_report(endpoint, now)?;
+        Ok(state)
+    }
+
+    /// Marks the committed local schedule complete only after the normal
+    /// terminal output image has been physically acknowledged.
+    pub fn complete_schedule(
+        &mut self,
+        endpoint: &mut DefaultRealtimeEndpoint,
+        now: DeviceCycle,
+    ) -> Result<(), ()> {
+        self.schedule
+            .as_mut()
+            .ok_or(())?
+            .complete(now)
+            .map_err(|_| ())?;
+        self.publish_report(endpoint, now)
+    }
+
+    /// Current local schedule lifecycle for safety-state reconciliation.
+    pub fn schedule_state(&self) -> Option<JobScheduleState> {
+        self.schedule.map(|schedule| schedule.report().state)
+    }
+
+    /// Next exact schedule-only wake cycle, independent of motion edges.
+    pub fn next_schedule_deadline(&self) -> Option<DeviceCycle> {
+        let report = self.schedule?.report();
+        match report.state {
+            JobScheduleState::Installed => Some(report.confirm_deadline_cycle),
+            JobScheduleState::Confirmed => Some(report.local_start_cycle),
+            JobScheduleState::Running => Some(report.lease_expiry_cycle),
+            JobScheduleState::Prepared
+            | JobScheduleState::Aborted
+            | JobScheduleState::Expired
+            | JobScheduleState::Complete
+            | JobScheduleState::Faulted => None,
+        }
+    }
+
     /// Re-publishes the latest exact report; ordinary queue pressure may drop it.
     pub fn publish_report(
         &mut self,
@@ -894,21 +975,6 @@ impl RealtimeJobService {
             self.publish_report(endpoint, now)?;
         }
         Ok(action)
-    }
-
-    /// Converts an emitted start into a latched execution fault while the
-    /// actual motor executor remains intentionally unavailable.
-    pub fn reject_unimplemented_start(
-        &mut self,
-        endpoint: &mut DefaultRealtimeEndpoint,
-        now: DeviceCycle,
-    ) -> Result<(), ()> {
-        self.schedule
-            .as_mut()
-            .ok_or(())?
-            .fault_execution()
-            .map_err(|_| ())?;
-        self.publish_report(endpoint, now)
     }
 
     /// Invalidates all core-1 job ownership after the hardware owner has

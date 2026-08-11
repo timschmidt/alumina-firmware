@@ -66,6 +66,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M6-TARGET-SAFETY-INPUTS.md`](M6-TARGET-SAFETY-INPUTS.md) — transactional
   TinyBee GPIO sampling, canonical input telemetry, and local safe-stop/job
   invalidation wiring, with all physical timing/electrical claims still closed.
+- [`M6-TARGET-MOTION-COMMIT.md`](M6-TARGET-MOTION-COMMIT.md) — descriptor-bound
+  target step execution, two-phase complete-image physical acknowledgement,
+  qualified arm/start gates, and fail-closed terminal disable coordination.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed
