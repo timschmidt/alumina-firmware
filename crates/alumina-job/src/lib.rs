@@ -1,8 +1,10 @@
 #![no_std]
 #![doc = "Bounded cached-job preparation and dual-core admission for Alumina."]
 
+mod manifest;
 mod schedule;
 
+pub use manifest::*;
 pub use schedule::*;
 
 use alumina_clock::{BOOT_ID_BYTES, BootId};

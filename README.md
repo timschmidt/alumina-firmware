@@ -139,6 +139,15 @@ hardware qualification remain separate closed gates. See the
 [capability format](docs/CAPABILITIES.md) and
 [canonical-capability evidence](docs/evidence/M3-CANONICAL-CAPABILITIES.md).
 
+The same shared job crate now defines the canonical global multi-MCU manifest:
+a fixed header plus strictly sorted, fixed participant records binding exact
+source/compiler/policy/machine identities to every cached partition, resource
+set, evidence envelope, timer span, and terminal lattice state. Allocation-free
+decode recomputes the participant-set digest and proves local/global rational
+durations equal without floats; those identities feed the existing deterministic
+schedule commit directly. Interface-side construction and end-to-end cached
+multi-MCU upload remain the next integration boundary.
+
 `alumina-config` defines canonical content-addressed resource bindings and
 reduced exact machine facts, validates them against the immutable board package,
 and streams a real published SD object through independent validators on both

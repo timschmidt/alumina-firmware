@@ -69,6 +69,25 @@ segments, local resource events, synchronization points, bounded conditions, and
 expected terminal state. It does not contain CAD, G-code, arbitrary graph files,
 or another MCU's executable work.
 
+Canonical manifest schema V1 is now implemented allocation-free in
+`alumina-job`. It admits 1–16 participant records, requires them in strict
+`DeviceId` order, rejects duplicate stream identities, and hashes their complete
+canonical records under a domain-separated participant-set digest. The exact
+manifest is a 320-byte header followed by one 496-byte record per participant;
+its SHA-256 is the `global_job_digest` already consumed by `JobCommit`.
+
+Each record binds board package, capability, active configuration, local
+partition object/chunk-manifest/terminal-block identities, resource set,
+error/safety evidence, block layout, timer, and initial/final eight-slot lattice
+state. Unused axis slots are zero. Every local stream begins at zero, and
+cross-multiplication in `u128` proves that `local_end_ticks / local_timer_hz`
+equals the manifest's exact `global_duration_ticks / global_timebase_hz` without
+a float or rounded-duration comparison. The global record binds source,
+compiler, interface, precision/scheduling policy, machine, coordinate epoch,
+safety policy, and synchronization-marker identities. Storage's separately
+verified object content digest protects the complete encoded manifest; no
+self-referential digest field or alternate JSON representation exists.
+
 ## SD cache service
 
 Core 0 owns an explicit raw SD cache region and exposes authenticated APIs to:

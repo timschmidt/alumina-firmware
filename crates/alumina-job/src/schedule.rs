@@ -92,7 +92,7 @@ pub enum JobNetworkPolicy {
 }
 
 impl JobNetworkPolicy {
-    const fn from_wire(value: u8) -> Option<Self> {
+    pub(crate) const fn from_wire(value: u8) -> Option<Self> {
         match value {
             1 => Some(Self::NetworkAttended),
             2 => Some(Self::CachedAutonomous),

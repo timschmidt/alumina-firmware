@@ -282,6 +282,34 @@ token is returned for acknowledgement only after the emitted trace reaches the
 same terminal tick and cumulative position; rejection returns it unchanged, and
 a mid-execution fault makes it unacknowledgeable.
 
+## Cached global job manifest
+
+The immutable `MachineJobManifest` object is canonical binary data stored under
+`ObjectKind::MachineJobManifest`. It is not an HTTP/JSON alternative to the
+native protocol. Schema V1 is exactly `320 + participant_count * 496` bytes and
+admits 1–16 participants.
+
+The 320-byte `ALMJMF01` header contains version/policy/count, an exact global
+integer timebase and duration, eight SHA-256 identities for source, compiler,
+interface build, compile policy, machine, coordinate epoch, safety policy, and
+synchronization markers, followed by a domain-separated digest of all ordered
+participant records. Records are strictly sorted by stable 16-byte device ID.
+
+Each 496-byte record contains device and stream IDs; board, capability,
+configuration, partition object, partition chunk-manifest, terminal block,
+resource-set, error-evidence, and safety-envelope digests; partition byte/block
+counts; axis width; exact local timer and stream span; and eight signed `i64`
+initial and terminal lattice positions. Reserved and unused-axis bytes are zero.
+Partition bytes must equal `block_count * 512`, streams begin at tick zero, and
+each local rational duration must equal the global rational duration exactly.
+
+The SHA-256 content identity of the complete canonical object is the
+`global_job_digest` installed below. Its participant-set field is the
+`participant_set_digest`; the selected participant record's partition object
+digest is the local `partition_digest`. Thus schedule installation consumes
+identities derived directly from the cached manifest rather than UI-only
+metadata.
+
 ## Cached-job preparation bodies
 
 `JobPrepare` has one exact 312-byte, self-hashed descriptor. The descriptor is

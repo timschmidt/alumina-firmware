@@ -523,6 +523,16 @@ Cancellation clears core-0 partial state, invalidates the core-1 ownership
 token, and drains queued work. Core-0 local job ownership vetoes storage
 mutation immediately, without waiting for periodic safety telemetry.
 
+The shared job crate now also owns canonical global manifest schema V1. Its
+fixed header and sorted fixed participant records bind the authoritative
+source/compiler/policy/machine/coordinate/safety identities to every local
+partition, resource/error/safety envelope, timer span, and terminal lattice
+state. Allocation-free decode recomputes the participant-set digest and proves
+each local rational duration equals the exact global duration. The complete
+manifest content digest and participant-set digest feed the existing schedule
+commit fields directly; firmware and interface therefore do not need parallel
+manifest models.
+
 Both first board packages now carry verified nonzero canonical capability
 digests. Firmware routes authenticated configuration validation/commit/rollback,
 replays the durable selector at boot, independently revalidates on both cores,
