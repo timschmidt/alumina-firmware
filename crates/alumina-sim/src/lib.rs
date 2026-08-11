@@ -1,6 +1,7 @@
 #![doc = "Deterministic host models for Alumina storage and service/RT boundaries."]
 
 pub mod distributed;
+pub mod http_fixture;
 pub mod shift_register;
 
 use core::cell::{Cell, RefCell};
