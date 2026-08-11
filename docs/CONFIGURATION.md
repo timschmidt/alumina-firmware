@@ -147,7 +147,9 @@ Core 0 opens the exact typed publication, verifies each storage chunk, hashes
 and semantically validates the complete document, and emits ordered core
 commands. Every command has a 64-byte `ALCC` prefix containing version, action,
 transaction ID, digest, total bytes, exact offset, and data length. `Data`
-carries 1–192 bytes, filling at most the runtime's 256-byte command payload.
+carries 1–192 bytes within the runtime's 272-byte command payload; the larger
+boundary also carries a boot-bound cached-job prepare without changing this
+configuration format.
 Actions are begin, data, finish, activate, clear, abort, and authorize. Activate
 installs the independently validated identity on core 1 but deliberately marks
 it unauthorized. Authorize is a separate exact-identity command sent only after

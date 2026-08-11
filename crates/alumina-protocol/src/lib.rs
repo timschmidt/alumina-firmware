@@ -315,6 +315,8 @@ pub enum Operation {
     JobPrepare = 0x0502,
     /// Install a nonce/digest-bound future local start cycle.
     JobCommit = 0x0503,
+    /// Confirm an installed start only after every participant acknowledged.
+    JobConfirm = 0x0509,
     /// Idempotently invalidate a prepared or abortable committed job.
     JobAbort = 0x0504,
     /// Request a bounded controlled hold.
@@ -414,6 +416,7 @@ impl Operation {
             Self::JobInspect
             | Self::JobPrepare
             | Self::JobCommit
+            | Self::JobConfirm
             | Self::JobAbort
             | Self::JobHold
             | Self::JobResume
@@ -474,6 +477,7 @@ impl Operation {
             0x0506 => Some(Self::JobResume),
             0x0507 => Some(Self::JobCancel),
             0x0508 => Some(Self::JobStatus),
+            0x0509 => Some(Self::JobConfirm),
             0x0601 => Some(Self::CommandBatch),
             0x0602 => Some(Self::CommandDiagnosticLease),
             0x0603 => Some(Self::CommandDiagnosticRelease),
@@ -948,6 +952,7 @@ mod tests {
             Operation::from_wire(0x0909),
             Some(Operation::StorageProvision)
         );
+        assert_eq!(Operation::from_wire(0x0509), Some(Operation::JobConfirm));
         assert_eq!(Operation::from_wire(0x090a), None);
     }
 

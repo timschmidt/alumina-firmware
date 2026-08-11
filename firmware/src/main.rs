@@ -12,6 +12,7 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 
 mod capability;
+mod clock;
 mod configuration;
 mod hardware;
 mod job;
@@ -19,10 +20,12 @@ mod network;
 pub mod service;
 mod storage;
 
+use alumina_clock::{BootId, RealtimeClockReport};
 use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
+use alumina_job::{JobScheduleAction, JobScheduleReport, RealtimeJobReport};
 use alumina_protocol::{DeviceCycle, Digest, FrameKind};
 use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
@@ -45,6 +48,7 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use capability::CapabilityService;
+use clock::ClockService;
 use configuration::ConfigurationService;
 use hardware::selected;
 use job::{JobService, RealtimeJobService};
@@ -202,7 +206,10 @@ async fn service_task(
         SAFETY_OBSERVATION_MAX_AGE_CYCLES,
     );
     let mut storage_backend = resources.initialize_storage().await;
-    let mut jobs = JobService::new();
+    let boot_id = BootId::new(network.boot_nonce().as_bytes())
+        .unwrap_or_else(|_| panic!("network boot nonce did not form a clock identity"));
+    let mut clocks = ClockService::new(boot_id);
+    let mut jobs = JobService::new(boot_id);
     let mut configurations = ConfigurationService::new();
     let mut last_fault_generation = 0_u16;
     loop {
@@ -225,8 +232,32 @@ async fn service_task(
                 FrameKind::Job => {
                     frame.validate(FrameKind::Job).is_ok()
                         && frame.payload().is_ok_and(|payload| {
-                            alumina_job::RealtimeJobReport::decode(payload)
-                                .is_ok_and(|report| jobs.observe_realtime(report).is_ok())
+                            match RealtimeJobReport::decode(payload) {
+                                Ok(report) => jobs
+                                    .observe_realtime(frame.header().config_digest, report)
+                                    .is_ok(),
+                                Err(_) => match JobScheduleReport::decode(payload) {
+                                    Ok(report) => jobs
+                                        .observe_schedule(frame.header().config_digest, report)
+                                        .is_ok(),
+                                    Err(_) => false,
+                                },
+                            }
+                        })
+                }
+                FrameKind::ClockSample => {
+                    frame.validate(FrameKind::ClockSample).is_ok()
+                        && frame.payload().is_ok_and(|payload| {
+                            RealtimeClockReport::decode(payload).is_ok_and(|report| {
+                                clocks
+                                    .observe_realtime(
+                                        frame.header().sequence,
+                                        frame.header().cycle,
+                                        now,
+                                        report,
+                                    )
+                                    .is_ok()
+                            })
                         })
                 }
                 FrameKind::Configuration => {
@@ -242,12 +273,14 @@ async fn service_task(
             };
             if !valid {
                 storage.invalidate_safety_observation();
+                clocks.invalidate_realtime();
                 endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
             }
         }
         if let Some(fault) = endpoint.fault_after(last_fault_generation) {
             last_fault_generation = fault.generation;
             storage.invalidate_safety_observation();
+            clocks.invalidate_realtime();
             error!("RT fault code={} detail={}", fault.code, fault.detail);
         }
 
@@ -273,7 +306,15 @@ async fn service_task(
             jobs.set_configuration_transition(configurations.blocks_job_admission());
             jobs.set_active_config(configurations.authorized_digest());
             let now = DeviceCycle(Instant::now().as_ticks());
-            let response = if CapabilityService::handles(request.request()) {
+            let response = if ClockService::handles(request.request()) {
+                clocks.dispatch(
+                    request.request(),
+                    now,
+                    &endpoint,
+                    storage.effective_safety(now),
+                    jobs.clock_facts(now),
+                )
+            } else if CapabilityService::handles(request.request()) {
                 CapabilityService::dispatch(request.request(), now)
             } else if ConfigurationService::handles(request.request()) {
                 configurations
@@ -285,8 +326,16 @@ async fn service_task(
                     )
                     .await
             } else if JobService::handles(request.request()) {
-                jobs.dispatch(&mut storage_backend, &mut endpoint, request.request(), now)
-                    .await
+                let latest_probe = clocks.latest_probe_id(now);
+                jobs.dispatch(
+                    &mut storage_backend,
+                    &mut endpoint,
+                    request.request(),
+                    now,
+                    latest_probe,
+                    storage.effective_safety(now).state,
+                )
+                .await
             } else {
                 storage
                     .dispatch(&mut storage_backend, request.request(), now)
@@ -309,6 +358,7 @@ async fn service_task(
             &storage,
             &storage_backend,
             &jobs,
+            &clocks,
             &configurations,
             network.supervisor(),
             network.credential_source(),
@@ -361,6 +411,7 @@ async fn realtime_task(
         );
     let mut last_job_active = false;
     let mut configuration_sequence = 0_u32;
+    let mut clock_sequence = 0_u32;
 
     publish_safety_snapshot(
         &mut endpoint,
@@ -397,7 +448,13 @@ async fn realtime_task(
             let mut safety_changed = false;
             let valid = match command.header().kind {
                 FrameKind::Job => jobs
-                    .apply_command(&mut endpoint, &command, DeviceCycle(observed.as_ticks()))
+                    .apply_command(
+                        &mut endpoint,
+                        &command,
+                        DeviceCycle(observed.as_ticks()),
+                        safety.state(),
+                        probe.misses() == 0,
+                    )
                     .is_ok(),
                 FrameKind::Configuration => match apply_configuration_command(
                     &mut configurations,
@@ -450,6 +507,34 @@ async fn realtime_task(
             endpoint.publish_fault(4, 0);
         }
 
+        let schedule_action = jobs
+            .advance_schedule(&mut endpoint, DeviceCycle(observed.as_ticks()))
+            .unwrap_or(JobScheduleAction::MissedStart);
+        let schedule_fault = match schedule_action {
+            JobScheduleAction::None | JobScheduleAction::AbortUnconfirmed => None,
+            JobScheduleAction::Start { .. } => {
+                let _ = jobs
+                    .reject_unimplemented_start(&mut endpoint, DeviceCycle(observed.as_ticks()));
+                Some(FaultCode::Identity)
+            }
+            JobScheduleAction::MissedStart => Some(FaultCode::Deadline),
+            JobScheduleAction::LeaseExpired => Some(FaultCode::Watchdog),
+        };
+        if let Some(fault) = schedule_fault {
+            let _ = safety.apply(SafetyEvent::Fault(fault), Conditions::default());
+            transition_generation = next_nonzero(transition_generation);
+            endpoint.publish_fault(fault.wire_value(), 5);
+            publish_safety_snapshot(
+                &mut endpoint,
+                &mut telemetry_sequence,
+                observed,
+                safety,
+                transition_generation,
+                safety_snapshot_flags(true, jobs.active()),
+                probe.maximum_lateness_cycles(),
+            );
+        }
+
         let job_active = jobs.active();
         if job_active != last_job_active {
             last_job_active = job_active;
@@ -485,6 +570,12 @@ async fn realtime_task(
                 &mut configuration_sequence,
                 DeviceCycle(observed.as_ticks()),
                 configurations.report(),
+            );
+            let _ = publish_clock_report(
+                &mut endpoint,
+                &mut clock_sequence,
+                DeviceCycle(observed.as_ticks()),
+                probe,
             );
         }
 
@@ -576,6 +667,33 @@ fn publish_configuration_report(
         sequence,
         now,
         report.active_digest,
+        &payload,
+    )
+    .map_err(|_| ())?;
+    if endpoint.try_publish_telemetry(frame).is_ok() {
+        *report_sequence = sequence;
+    }
+    Ok(())
+}
+
+fn publish_clock_report(
+    endpoint: &mut DefaultRealtimeEndpoint,
+    report_sequence: &mut u32,
+    now: DeviceCycle,
+    probe: DeadlineProbe,
+) -> Result<(), ()> {
+    let report = RealtimeClockReport {
+        samples: probe.samples(),
+        missed_deadlines: probe.misses(),
+        maximum_lateness_cycles: probe.maximum_lateness_cycles(),
+    };
+    let payload = report.encode().map_err(|_| ())?;
+    let sequence = next_nonzero(*report_sequence);
+    let frame = IntercoreFrame::new(
+        FrameKind::ClockSample,
+        sequence,
+        now,
+        Digest::ZERO,
         &payload,
     )
     .map_err(|_| ())?;

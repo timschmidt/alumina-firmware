@@ -37,13 +37,16 @@ frequency. A heartbeat exchange records:
 - boot ID, sequence, counter width, clock source, and current real-time state;
 - queue horizon, missed deadlines, and oscillator/clock-quality flags.
 
-The UI unwraps counters per boot and fits a robust affine model
-`device_cycles = rate * ui_monotonic + offset`. It rejects high-delay/asymmetric
-samples, tracks rate drift, and maintains a prediction uncertainty envelope.
-Mapping is continuously measured, never inferred solely from nominal CPU MHz or
-wall-clock time. Browser workers own acquisition and fitting so rendering stalls
-do not corrupt the model, but background throttling is still treated as clock
-quality loss.
+The portable reference estimator intersects exact causal affine intervals for
+`device_cycles = rate * ui_monotonic + offset`. It bounds rate by declared
+frequency plus configurable drift, rejects excessive round trip/device work,
+and never assumes symmetric Wi-Fi delay. It also rejects reordered samples,
+changed boot/frequency, inconsistent intersections, stale models, unhealthy
+deadline evidence, device lead/horizon violations, and uncertainty beyond the
+caller's certificate. Mapping is continuously measured, never inferred solely
+from nominal CPU MHz or wall-clock time. The browser worker will own the same
+acquisition/fitting contract so rendering stalls do not corrupt the model;
+background throttling remains clock-quality loss.
 
 A command or job start is schedulable only if its lead time exceeds measured
 network/validation margin and its required synchronization tolerance exceeds the
@@ -119,43 +122,58 @@ is deliberately below the execution boundary: storage chunks may split any
 machine-IR field and must be incrementally decoded on core 0 into separately
 owned, fixed execution envelopes before a credit is transferred to core 1.
 
-The firmware now implements that pre-commit boundary behind the authenticated
+The firmware implements that cache and schedule boundary behind the authenticated
 `POST /api/v1/control` route. `JobPrepare` opens an exact published partition and
 installs matching service/core-1 actors; the service actor reads at most one
 verified chunk per pass, and the real-time actor independently validates and
-retains one owned block. `JobStatus` reports both domains, queue credits/depth,
-and exact tick/digest progress; `JobCancel` invalidates the preparation and
-drains queued ownership. The admitted first block is intentionally left
-outstanding. No acknowledgement, epoch conversion, scheduler, or output path is
-present yet. Both first packages now expose verified canonical capability
-identities, but target preparation remains fail-closed because no active
-configuration is committed and neither board is armable pending HIL.
+retains one owned block. A boot/descriptor-derived prepared token is then
+reported. `JobCommit` installs a participant-bound future local schedule,
+`JobConfirm` separately grants start authority, and `JobAbort` revokes it before
+the guard. Core 1 owns every deadline transition and reports schedule state;
+`JobStatus` combines that with both stream domains, queue credits/depth, and
+exact tick/digest progress. `JobCancel` remains the precommit/aborted cleanup
+operation and drains queued ownership.
+
+The admitted first block is intentionally left outstanding. The contract has no
+motor executor, interlock-qualified arm transition, hold/resume, lease renewal,
+or observed-edge capture yet. Both first packages expose verified canonical
+capability identities but remain non-armable pending HIL, so target preparation
+is still fail-closed. An impossible start that reaches this checkpoint is
+latched as an execution/safety fault and cannot drive an output.
 
 ## Deterministic prepare/commit start
 
 The UI orchestrates a bounded two-phase procedure:
 
 1. **Upload:** every MCU stores and verifies its partition and global manifest.
-2. **Prepare:** the UI sends the global job/epoch, local partition digest, desired
-   start window, and local configuration digest. Each MCU preflights storage,
-   buffers, resources, safety inputs, and clock quality, then returns a
-   nonce-bound prepared token and latest permissible commit time.
+2. **Prepare:** the UI sends the exact already-published local partition,
+   capability/configuration identities, stream identity, axis width, and
+   machine limits. Each MCU opens and independently validates it, retains the
+   first block, and returns a token bound to the authentication boot ID and all
+   248 canonical descriptor bytes.
 3. **Choose time:** after all participants are prepared, the UI chooses one
    future UI-time epoch with adequate guard margin and maps it to each MCU's
    integer start cycle. Quantization error is added to the sync certificate.
-4. **Commit:** each MCU receives the complete participant set, global digest,
-   prepared tokens, its local start cycle, and a finite arm lease. It acknowledges
-   that the start compare is installed but remains abortable until a declared
-   guard boundary.
-5. **Confirm or abort:** the UI confirms every acknowledgement before that
-   boundary. Any missing participant causes repeated authenticated/idempotent aborts to
-   all participants; an unconfirmed MCU self-aborts when its lease expires.
+4. **Install:** each MCU receives the participant-set/global/local digests, its
+   own prepared token and boot ID, local start, confirmation deadline, later
+   abort guard, finite execution lease, exact heartbeat probe, uncertainty, and
+   synchronization tolerance. Delivery installs but cannot start.
+5. **Confirm or abort:** only after every MCU reports the exact installed commit
+   does the UI send each exact commit digest back as `JobConfirm`. It polls until
+   all report `Confirmed`. If any remains missing or expired at the confirmation
+   deadline, the UI repeatedly sends authenticated/idempotent `JobAbort` to all
+   reachable participants before the later abort guard. An unconfirmed MCU
+   self-expires at the confirmation deadline; the lease bounds a job after it
+   actually starts.
 6. **Execute:** after the boundary, each committed MCU starts from its local
    hardware clock without another network packet. Telemetry later reconciles the
    observed start edges and sync error.
 
 This produces deterministic scheduled starts within a measured tolerance, not a
-mathematically atomic distributed transaction. The initial qualification uses
+mathematically atomic distributed transaction. Loss of confirm or abort delivery
+can leave participants in different local states; the explicit gap between
+confirmation deadline and abort guard is the bounded reconciliation window, not
+an atomicity proof. The initial qualification uses
 harmless GPIO pulses and capture equipment. A machine whose safety depends on
 all MCUs stopping simultaneously needs a hardwired, appropriately rated safety
 chain; Wi-Fi stop/cancel is supplementary.
@@ -163,6 +181,8 @@ chain; Wi-Fi stop/cancel is supplementary.
 ## Operation after network loss
 
 A manifest declares either `network_attended` or `cached_autonomous` policy.
+Only finite attended commits are currently admitted by target firmware;
+cached-autonomous admission and attended lease renewal remain closed.
 
 - An attended job holds or safely stops when its communication lease expires.
 - A cached autonomous job may finish without the browser only when all resource

@@ -320,6 +320,13 @@ Work:
 - Qualify in simulation, then with harmless GPIO pulses on two physical
   dual-core boards before distributed axes or process energy.
 
+Implementation checkpoint: fixed heartbeat/RT-deadline wire formats, an exact
+causal host estimator, boot-bound prepare receipts, participant-bound
+install/confirm/abort state, dual-core firmware routing, and adversarial two-MCU
+simulation are present. The browser-worker implementation, interlock-qualified
+arm/start executor, observed-edge reconciliation, packet-stress/HIL runs, and
+physical exit gate remain open; current board packages are non-armable.
+
 Exit gate:
 
 - Starts meet a published cross-MCU edge tolerance under nominal and saturated

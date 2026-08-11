@@ -1,0 +1,15 @@
+[package]
+name = "alumina-clock"
+description = "Canonical heartbeat and conservative exact clock mapping for Alumina"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alumina-protocol.workspace = true
+
+[lints]
+workspace = true

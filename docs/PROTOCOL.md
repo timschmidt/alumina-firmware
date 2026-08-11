@@ -64,7 +64,7 @@ the `/api/v1/control` path, so a proof cannot be replayed against another route.
 | capabilities `0x02xx` | get canonical capabilities |
 | clock `0x03xx` | timestamped heartbeat |
 | configuration `0x04xx` | get, validate, commit, rollback |
-| job `0x05xx` | inspect, prepare, commit, abort, hold, resume, cancel, status |
+| job `0x05xx` | inspect, prepare, commit, confirm, abort, hold, resume, cancel, status |
 | command `0x06xx` | scheduled batch, diagnostic lease/release |
 | telemetry `0x07xx` | subscribe, unsubscribe, event |
 | network `0x08xx` | status, scan, join, leave, recover protected AP |
@@ -74,9 +74,56 @@ the `/api/v1/control` path, so a proof cannot be replayed against another route.
 | waveform `0x0cxx` | configure, arm, chunk, stop |
 | update `0x0dxx` | inspect, begin, put chunk, finalize, commit, rollback |
 
-The Rust enum assigns all 49 values explicitly and rejects every unassigned
+The Rust enum assigns all 50 values explicitly and rejects every unassigned
 number. Operation-specific bodies are added only with fixed budgets and golden
 browser/native/firmware fixtures.
+
+## Clock heartbeat
+
+`ClockHeartbeat` (`0x0301`) is an authenticated request in the zero-configuration
+`ClockSample` family. Its 32-byte `ALMCLKQ1` body contains version/reserved bytes,
+a nonzero browser probe ID at offset 16, and the browser worker's monotonic
+nanosecond send timestamp at offset 24.
+
+The fixed 128-byte `ALMCLKR1` response is:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | magic `ALMCLKR1` |
+| 8 | 2 | exact version (`1`) |
+| 10 | 2 | monotonic/shared/deadline/job/safety flags |
+| 12 | 1 | counter width, exactly 64 bits |
+| 13 | 1 | clock source, currently Embassy monotonic (`1`) |
+| 14 | 2 | reserved zero |
+| 16 | 8 | echoed nonzero probe ID |
+| 24 | 8 | echoed browser-worker send nanoseconds |
+| 32 | 16 | nonzero boot ID, identical to the HTTP boot nonce |
+| 48 | 8 | core-0 request-dequeue receive cycle |
+| 56 | 8 | core-0 response-construction transmit cycle |
+| 64 | 8 | Embassy counter frequency in hertz |
+| 72 | 8 | minimum local start lead cycles |
+| 80 | 8 | maximum local start horizon cycles |
+| 88 | 8 | currently reported job/queue horizon cycles |
+| 96 | 8 | cumulative maximum core-1 loop lateness |
+| 104 | 8 | cumulative core-1 deadline misses this boot |
+| 112 | 4 | free core-0→core-1 command slots |
+| 116 | 4 | queued machine-work blocks |
+| 120 | 8 | reserved zero |
+
+Core 1 publishes a separate 40-byte `ALMCRTR1` report every 100 scheduler
+samples: version/reserved at offsets 8/10, cumulative samples at 16, cumulative
+misses at 24, and maximum lateness at 32. Core 0 accepts only fresh, increasing,
+non-regressing reports. A heartbeat is schedule-authoritative only while that
+report has zero misses and the separately observed safety state is fresh and
+non-faulted. The firmware retains only the most recently returned healthy probe
+for 500 ms; `JobCommit` must cite it exactly. Core 1 independently checks its
+own deadline health again when applying commit and confirm.
+
+The portable estimator maintains exact causal offset/rate intervals with a
+declared parts-per-million rate envelope. It neither assumes nor estimates
+symmetric Wi-Fi delay. Stale, high-round-trip, high-processing, reordered,
+changed-boot/frequency, inconsistent, insufficient, or overly uncertain models
+cannot yield a start cycle.
 
 ## Board capabilities
 
@@ -236,37 +283,92 @@ requires an exact nonzero active-configuration identity and an armable board.
 Neither first board currently satisfies those later gates, so target
 `JobPrepare` still returns `Unsupported` before storage is opened.
 
-The 256-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
-and one reserved zero byte. Action `1` contains the complete descriptor at bytes
-`8..256`. Action `2` contains only the nonzero prepare ID at bytes `8..16` and
-requires every remaining byte to be zero. `JobCancel` uses that same bare
-eight-byte prepare ID as its native operation body. Prepare and cancel are
-idempotent only for the exact current descriptor/ID; replacement waits for both
-actors and the work ring to become terminal and empty.
+The 272-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
+and one reserved zero byte. Action `1` carries the 16-byte authentication boot ID
+at `8..24` and the complete descriptor at `24..272`. Action `2` contains only the
+nonzero prepare ID at `8..16`. Actions `3`, `4`, and `5` carry commit, confirm,
+and abort bodies beginning at byte 8. Every unused byte is zero. `JobCancel`
+uses the same bare eight-byte prepare ID as its native body. This 16-byte command
+growth raises the reviewed runtime boundary storage from 12,480 to 12,608 bytes;
+the 64 KiB internal-memory budget still covers the boundary and core-1 stack.
 
-`JobStatus` has an empty request body and a fixed 240-byte response:
+`JobCommit` is an exact 240-byte `ALMJCOM1` body:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | magic `ALMJCOM1` |
+| 8 | 2 | exact version (`1`) |
+| 10 | 1 | attended (`1`) or cached-autonomous (`2`) policy |
+| 11 | 5 | reserved zero |
+| 16 | 8 | nonzero prepare ID |
+| 24 | 16 | exact current boot ID |
+| 40 | 32 | global job digest |
+| 72 | 32 | complete participant-set digest |
+| 104 | 32 | boot/descriptor-bound prepared token |
+| 136 | 32 | local partition digest |
+| 168 | 8 | local integer start cycle |
+| 176 | 8 | confirmation deadline cycle |
+| 184 | 8 | abort guard cycle |
+| 192 | 8 | finite execution-lease expiry cycle |
+| 200 | 8 | exact fresh heartbeat probe ID |
+| 208 | 8 | certified local clock uncertainty cycles |
+| 216 | 8 | nonzero required synchronization tolerance cycles |
+| 224 | 16 | nonzero UI-selected commit ID |
+
+The canonical order is `now < confirm deadline < abort guard < start < lease
+expiry`; uncertainty may not exceed the required tolerance. The commit identity
+used by later actions is SHA-256 over all 240 bytes. `JobConfirm` and `JobAbort`
+each use an 88-byte `ALMJREF1` body: version/action/reserved at `8..16`, prepare
+ID at 16, boot ID at 24, commit ID at 40, and complete commit digest at 56.
+Confirm is deliberately a distinct `0x0509` operation; merely delivering commit
+never grants start authority.
+
+Core 1 owns `Prepared → Installed → Confirmed → Running → Complete/Faulted` plus
+safe `Aborted` and unconfirmed `Expired` terminals. Installation requires the
+exact active configuration, boot token, cached first block, local safety state,
+fresh deadline health, lead/horizon/lease bounds, and policy. Confirmation must
+arrive before both earlier guards and requires the realtime safety machine to
+already be `Armed`. Missing confirmation self-expires at the confirmation
+deadline; abort remains possible until the later abort guard. Start is emitted
+at most once and a start later than its synchronization tolerance faults.
+
+The 64-byte `ALMJSCH1` schedule report uses a strict union. Its header holds
+version, state, fault, and commit/policy/start flags in bytes `8..16`. In
+`Prepared`, bytes `16..48` are the prepared token and `48..64` are zero. After
+commit, bytes `16..48` are start/confirmation/abort/lease cycles and `48..64`
+is the commit ID. A committed report never carries a prepared token.
+
+`JobStatus` has an empty request body and a fixed 304-byte response:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
 | 0 | 8 | ASCII `ALMJST01` |
 | 8 | 2 | exact status version (`1`) |
-| 10 | 1 | bit 0 service report present; bit 1 realtime report present |
+| 10 | 1 | bits 0/1/2: service, realtime, and schedule reports present |
 | 11 | 5 | reserved zero |
 | 16 | 96 | `ALMJSV01` core-0 report, or all zero |
 | 112 | 128 | `ALMJRT01` core-1 report, or all zero |
+| 240 | 64 | `ALMJSCH1` core-1 schedule report, or all zero |
 
 The service report carries state, axis width, validated/sent/total block counts,
 verified storage-chunk count, current ring credits/depth, and a terminal
 `(StreamTick, block digest)` only when prefetch is complete. The realtime report
 carries independently admitted/completed/total counts, ring depth, whether the
 executor owns a block, and admitted/completed tick-and-digest facts. Absent
-optional fields are zero-filled. Embedded reports must name the same nonzero
+optional fields are zero-filled. Embedded stream reports must name the same nonzero
 prepare ID and block count; if both are complete, their independently derived
-terminal tick and block digest must also agree. Core 1 currently retains the
-first independently validated block without acknowledging it; no block is
-executed and no absolute `DeviceCycle` epoch exists at this checkpoint.
-`JobCommit`, start, hold, resume, and hardware scheduling remain unsupported
-gates rather than simulated success.
+terminal tick and block digest must also agree. Core 0 admits schedule reports
+only when their prepared token or every committed field matches its exact local
+descriptor/commit.
+
+The current target images route prepare/commit/confirm/abort and independently
+enforce these contracts on both cores, but neither board package is armable and
+there is no interlock-qualified `Arm` transition or motor executor yet. Thus
+target `JobPrepare` remains closed; if a future package were incorrectly made
+armable without installing an executor, an emitted start is converted
+immediately to a latched execution/safety fault rather than driving an output.
+Hold, resume, lease renewal, observed-edge reconciliation, and cached-autonomous
+authorization remain later operations.
 
 The 112-byte storage-status body is canonical little-endian:
 

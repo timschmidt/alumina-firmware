@@ -5,6 +5,7 @@ members = [
     "boards/t-deck-pro",
     "crates/alumina-board",
     "crates/alumina-capability",
+    "crates/alumina-clock",
     "crates/alumina-config",
     "crates/alumina-machine-ir",
     "crates/alumina-job",
@@ -35,6 +36,7 @@ default-members = [
     "boards/t-deck-pro",
     "crates/alumina-board",
     "crates/alumina-capability",
+    "crates/alumina-clock",
     "crates/alumina-config",
     "crates/alumina-machine-ir",
     "crates/alumina-job",
@@ -62,6 +64,7 @@ publish = false
 [workspace.dependencies]
 alumina-board = { path = "crates/alumina-board" }
 alumina-capability = { path = "crates/alumina-capability" }
+alumina-clock = { path = "crates/alumina-clock" }
 alumina-config = { path = "crates/alumina-config" }
 alumina-machine-ir = { path = "crates/alumina-machine-ir" }
 alumina-job = { path = "crates/alumina-job" }

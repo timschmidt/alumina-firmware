@@ -27,6 +27,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-clock"
+version = "0.1.0"
+dependencies = [
+ "alumina-protocol",
+]
+
+[[package]]
 name = "alumina-config"
 version = "0.1.0"
 dependencies = [
@@ -46,6 +53,7 @@ version = "0.1.0"
 dependencies = [
  "alumina-board",
  "alumina-capability",
+ "alumina-clock",
  "alumina-config",
  "alumina-job",
  "alumina-net",
@@ -86,6 +94,7 @@ dependencies = [
 name = "alumina-job"
 version = "0.1.0"
 dependencies = [
+ "alumina-clock",
  "alumina-machine-ir",
  "alumina-protocol",
  "alumina-runtime",
@@ -161,6 +170,7 @@ dependencies = [
 name = "alumina-sim"
 version = "0.1.0"
 dependencies = [
+ "alumina-clock",
  "alumina-job",
  "alumina-machine-ir",
  "alumina-protocol",

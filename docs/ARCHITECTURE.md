@@ -200,8 +200,10 @@ lattice displacement. A storage-valid but machine-IR-invalid object never gains
 a work-queue credit.
 
 Cached blocks use a `StreamTick` newtype, while hardware timestamps use
-`DeviceCycle`. A later commit installs the future local device epoch and checked
-addition maps each relative tick to hardware time. The types intentionally
+`DeviceCycle`. The installed commit supplies a future local device epoch and
+checked addition maps each relative tick to hardware time. The schedule owner
+does not imply that a motor timer executor exists; current target images fault
+an otherwise impossible emitted start. The types intentionally
 prevent a cached schedule from arming itself or being confused with an absolute
 counter sample.
 
@@ -456,18 +458,18 @@ Current routes and reserved endpoint roles:
 | --- | --- |
 | `GET /api/v1/identity` | board, firmware, boot, security, schema versions |
 | `GET/POST /api/v1/network` | scan, inspect, join, leave, or recover AP/STA configuration |
-| `POST /api/v1/control` | one authenticated canonical native request across capability, storage, job, configuration, command, and future families |
+| `POST /api/v1/control` | one authenticated canonical native request across clock, capability, storage, job, configuration, command, and future families |
 | `GET /api/v1/storage` | bounded human-readable cache/media status |
 | `GET /api/v1/health` | state, faults, queue depths, timing and reset causes |
-| `GET /api/v1/time` | timestamped cycle-counter heartbeat samples and clock quality |
 | `GET /api/v1/telemetry` | WebSocket upgrade for binary streams/events |
 | `POST /api/v1/update` | idle-only signed update staging |
 
 Only routes already present in `alumina-net` are accepted today. Capability
 ranges use `CapabilitiesGet` through `/api/v1/control`; configuration uses the
 same native route rather than creating a parallel REST representation.
-Time, telemetry, and update endpoints remain reserved until their bounded wire
-contracts and admission policies land.
+Clock samples likewise use the fixed `ClockHeartbeat` native operation rather
+than a second REST representation. Telemetry and update endpoints remain
+reserved until their bounded wire contracts and admission policies land.
 | `/` and immutable assets | compressed Alumina interface bundle |
 
 There are no legacy routes. Textual G-code and source geometry are never accepted
@@ -507,11 +509,12 @@ one exact publication, stream, capability/configuration identities, axis width,
 block count, and machine limits. Core 0 reads at most one verified storage chunk
 per executor pass and stops on ring backpressure. Core 1 revalidates and retains
 at most the first block. It deliberately does not acknowledge or execute that
-block: deterministic commit, absolute epoch installation, scheduler admission,
-and hardware output are later gates. Cancellation clears core-0 partial state,
-invalidates the core-1 ownership token, and drains queued work. Core-0 local job
-ownership vetoes storage mutation immediately, without waiting for periodic
-safety telemetry.
+block. Boot-bound prepare plus participant-bound install/confirm/abort and exact
+absolute epoch state are implemented, while interlock-qualified arming, the
+motor scheduler, hold/resume, and hardware output remain later gates.
+Cancellation clears core-0 partial state, invalidates the core-1 ownership
+token, and drains queued work. Core-0 local job ownership vetoes storage
+mutation immediately, without waiting for periodic safety telemetry.
 
 Both first board packages now carry verified nonzero canonical capability
 digests. Firmware routes authenticated configuration validation/commit/rollback,
@@ -524,9 +527,11 @@ creating an accidental executable path.
 
 For a distributed job, the UI maintains one measured affine mapping from its
 monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and
-validate its own partition. A prepare/commit exchange installs a sufficiently
-future local hardware start cycle on all participants; start proceeds only while
-clock uncertainty and lead time meet the manifest's tolerance. Details and
+validate its own partition. Exact causal clock intervals map one future UI epoch
+to each local counter. Commit installs but cannot start; a separate confirmation
+is accepted only after all install acknowledgements and before an earlier
+deadline, leaving a later abort guard for reconciliation. This is deterministic
+within a certified uncertainty, not an atomic Wi-Fi transaction. Details and
 failure semantics are normative in `DISTRIBUTED-JOBS.md`.
 
 ## T-Deck integration

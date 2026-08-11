@@ -1,5 +1,7 @@
 #![doc = "Deterministic host models for Alumina storage and service/RT boundaries."]
 
+pub mod distributed;
+
 use core::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
@@ -848,6 +850,7 @@ fn finish_service_work(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alumina_clock::BootId;
     use alumina_job::{
         CoreJobCommand, JobDescriptor, JobStatusReport, PrefetchYield, RealtimeJob,
         RealtimeJobReport, RealtimeJobState, RealtimePoll, ServiceJobReport, ServiceJobState,
@@ -1095,10 +1098,19 @@ mod tests {
             first_tick: StreamTick(0),
             limits: block_limits(),
         };
-        let command = CoreJobCommand::Prepare(descriptor).encode::<3>().unwrap();
+        let boot_id = BootId::new([0x66; 16]).unwrap();
+        let command = CoreJobCommand::Prepare {
+            boot_id,
+            descriptor,
+        }
+        .encode::<3>()
+        .unwrap();
         let descriptor = match CoreJobCommand::decode::<3>(&command).unwrap() {
-            CoreJobCommand::Prepare(descriptor) => descriptor,
-            CoreJobCommand::Cancel { .. } => panic!("prepare command changed action"),
+            CoreJobCommand::Prepare { descriptor, .. } => descriptor,
+            CoreJobCommand::Cancel { .. }
+            | CoreJobCommand::Commit(_)
+            | CoreJobCommand::Confirm(_)
+            | CoreJobCommand::Abort(_) => panic!("prepare command changed action"),
         };
         let mut prefetch = block_on(ServicePrefetch::<3>::open(&mut cache, descriptor)).unwrap();
         let mut realtime_job = RealtimeJob::<3>::prepare(descriptor).unwrap();
@@ -1179,6 +1191,7 @@ mod tests {
             realtime: Some(
                 RealtimeJobReport::from_status(realtime_status, realtime.work_depth()).unwrap(),
             ),
+            schedule: None,
         };
         assert_eq!(
             JobStatusReport::decode(&status.encode().unwrap()),

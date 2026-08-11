@@ -109,6 +109,7 @@ pub struct NetworkControl {
     station: WifiDevice<'static>,
     supervisor: NetworkSupervisor,
     credential_source: CredentialSource,
+    boot_nonce: BootNonce,
 }
 
 impl NetworkControl {
@@ -120,6 +121,11 @@ impl NetworkControl {
     /// Credential provenance without credential material.
     pub const fn credential_source(&self) -> CredentialSource {
         self.credential_source
+    }
+
+    /// Public boot identity shared by authentication, clock models, and jobs.
+    pub const fn boot_nonce(&self) -> BootNonce {
+        self.boot_nonce
     }
 }
 
@@ -221,6 +227,7 @@ pub async fn start(
         station: interfaces.sta,
         supervisor,
         credential_source: CREDENTIAL_SOURCE,
+        boot_nonce: auth_nonce,
     }
 }
 

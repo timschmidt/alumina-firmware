@@ -53,3 +53,11 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M4-CONFIGURATION-IR.md`](M4-CONFIGURATION-IR.md) — canonical resource and
   exact-machine facts, real published-SD streaming, and identical independent
   core-0/core-1 candidate validation with activation still closed.
+- [`M4-DURABLE-CONFIGURATION-SELECTION.md`](M4-DURABLE-CONFIGURATION-SELECTION.md)
+  — power-cut-safe active selection and explicit clear/abort replay.
+- [`M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md`](M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md)
+  — authenticated dual-core validate/activate/durable-commit/authorize wiring.
+- [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
+  causal clock estimation, boot-bound cached schedules, three-stage
+  install/confirm/start authority, adversarial two-MCU simulation, and closed
+  hardware-output gates.

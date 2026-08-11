@@ -8,7 +8,8 @@ use alumina_protocol::{
     DeviceCycle, FrameHeader, FrameKind, MessageDirection, MessageHeader, Operation, StatusCode,
 };
 use alumina_safety::{
-    ObservationError, SafetyContractId, SafetyObservationPolicy, SafetyObserver, SafetyState,
+    EffectiveSafety, ObservationError, SafetyContractId, SafetyObservationPolicy, SafetyObserver,
+    SafetyState,
 };
 use alumina_storage::media::{
     AsyncBlockDevice, CacheMedia, MediaAvailability, MediaError, MediaId, MediaRegion, MediaStatus,
@@ -717,6 +718,11 @@ impl StorageServiceState {
     /// Revokes service-side safety authority after the independent fault path fires.
     pub fn invalidate_safety_observation(&mut self) {
         self.safety.invalidate();
+    }
+
+    /// Latest freshness-checked core-1 safety facts for other core-0 services.
+    pub fn effective_safety(&self, now: DeviceCycle) -> EffectiveSafety {
+        self.safety.effective(now.0)
     }
 
     async fn dispatch_native<B: StorageBackend>(
