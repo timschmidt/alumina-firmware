@@ -8,6 +8,8 @@ use std::process::{Command, ExitCode};
 use alumina_board::{BoardPackage, BusKind, DeviceRoute, OwnerDomain, ResourceId, SafeValue};
 use alumina_capability::{calculate_identity, verify_declared_identity};
 
+mod hil_record;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Board {
     source: PathBuf,
@@ -91,6 +93,18 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         [group, command, id] if group == "hil" && command == "build" => {
             run_hil_build(root, &boards, id)
         }
+        [group, command, path] if group == "hil" && command == "validate-record" => {
+            let summary = hil_record::validate(root, Path::new(path))?;
+            println!(
+                "HIL record {}: {} ({}, captured={} ns, admitted={} ns)",
+                summary.run_id,
+                summary.disposition,
+                summary.wifi_condition,
+                summary.captured_edge_spread_ns,
+                summary.predicted_max_edge_spread_ns
+            );
+            Ok(())
+        }
         [] => {
             print_help();
             Ok(())
@@ -113,6 +127,7 @@ fn print_help() {
     println!("  cargo xtask build --board <board-id> [--profile <name>]");
     println!("  cargo xtask hil list");
     println!("  cargo xtask hil build mks-tinybee-pcm-short-safe");
+    println!("  cargo xtask hil validate-record <repository-relative-record.toml>");
 }
 
 fn repository_registry(root: &Path) -> PathBuf {

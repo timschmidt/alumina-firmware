@@ -13,6 +13,7 @@ alumina-board.workspace = true
 alumina-capability.workspace = true
 board-mks-tinybee.workspace = true
 board-t-deck-pro.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

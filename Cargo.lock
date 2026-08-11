@@ -2774,6 +2774,7 @@ dependencies = [
  "alumina-capability",
  "board-mks-tinybee",
  "board-t-deck-pro",
+ "sha2",
 ]
 
 [[package]]

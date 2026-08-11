@@ -110,3 +110,39 @@ Record:
 Photographs and capture assets must be repository-owned or permissively
 licensed with explicit provenance. GPL-family source, decoders, code, and assets
 are not accepted into the implementation or evidence bundle.
+
+## M7 two-board start record
+
+The cross-device start gate uses a strict repository-owned run record in
+addition to raw captures. Start from
+[`docs/hil/templates/m7-two-board-start.toml`](hil/templates/m7-two-board-start.toml),
+copy it below `docs/hil/runs/<run-id>/record.toml`, replace every placeholder,
+and validate it from the repository root:
+
+```console
+cargo xtask hil validate-record docs/hil/runs/<run-id>/record.toml
+```
+
+The validator rejects unknown, duplicate, missing, zero-identity, and unsafe
+path fields. It streams and verifies SHA-256 for both release ELFs, both
+annotated fixture photos, the browser/device clock log, the raw analyzer
+capture, and the reviewer notes. Evidence assets must stay below
+`docs/hil/runs`; build artifacts must stay below `target`. Photos must be
+operator-owned `CC0-1.0` or attributed `CC-BY-4.0` assets. Vendor/wiki images
+are not substitutes for the actual fixture.
+
+Each participant must identify its exact revision, fixture serial, boot ID,
+reviewed physical output route, scheduled cycle, and observed cycle interval.
+The shared section binds the UI epoch, pre-commit admitted spread, post-run
+reconciled spread, physically captured spread, analyzer identity/firmware/sample
+rate/threshold, Wi-Fi load condition, and source commits. A `pass` disposition
+is impossible when the physical spread exceeds the pre-commit certificate or
+when the reconstructed interval excludes the capture. Failed and inconclusive
+runs are still retained rather than rewritten as passes.
+
+This schema prepares the evidence boundary; it does not supply a waveform. At
+this checkpoint no two-board HIL image has been flashed and no T-Deck output
+route has been approved. The T-Deck's real-time GPIO2 vibration route is a
+candidate only after its polarity, fixture access, and bounded harmless pulse
+are physically reviewed. Do not infer permission to drive it from its presence
+in board metadata or this template.

@@ -1,0 +1,59 @@
+# Copy this file to docs/hil/runs/<run-id>/record.toml and replace every
+# REPLACE value. The template is intentionally invalid evidence.
+schema = 1
+fixture_id = "m7-two-board-start"
+run_id = "REPLACE"
+started_utc = "REPLACE"
+operator = "REPLACE"
+reviewer = "REPLACE"
+disposition = "inconclusive"
+wifi_condition = "nominal"
+aluminafw_commit = "0000000000000000000000000000000000000000"
+alumina_interface_commit = "0000000000000000000000000000000000000000"
+hazardous_loads_disconnected = false
+
+tinybee_board_id = "mks-tinybee-v1"
+tinybee_revision = "REPLACE"
+tinybee_serial = "REPLACE"
+tinybee_boot_id = "00000000000000000000000000000000"
+tinybee_output_route = "REVIEW AND REPLACE"
+tinybee_artifact_path = "target/xtensa-esp32-none-elf/release/REPLACE"
+tinybee_artifact_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+tinybee_scheduled_cycle = 0
+tinybee_observed_earliest_cycle = 0
+tinybee_observed_latest_cycle = 0
+tinybee_photo_path = "docs/hil/runs/REPLACE/tinybee-annotated.webp"
+tinybee_photo_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+tinybee_photo_license = "CC0-1.0"
+tinybee_photo_attribution = "REPLACE"
+
+t_deck_board_id = "t-deck-pro"
+t_deck_revision = "REPLACE"
+t_deck_serial = "REPLACE"
+t_deck_boot_id = "00000000000000000000000000000000"
+t_deck_output_route = "REVIEW AND REPLACE"
+t_deck_output_reviewed = false
+t_deck_artifact_path = "target/xtensa-esp32s3-none-elf/release/REPLACE"
+t_deck_artifact_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+t_deck_scheduled_cycle = 0
+t_deck_observed_earliest_cycle = 0
+t_deck_observed_latest_cycle = 0
+t_deck_photo_path = "docs/hil/runs/REPLACE/t-deck-annotated.webp"
+t_deck_photo_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+t_deck_photo_license = "CC0-1.0"
+t_deck_photo_attribution = "REPLACE"
+
+target_ui_ns = 0
+predicted_max_edge_spread_ns = 0
+reconciled_max_edge_spread_ns = 0
+captured_edge_spread_ns = 0
+analyzer_model = "REPLACE"
+analyzer_firmware = "REPLACE"
+analyzer_sample_rate_hz = 0
+analyzer_threshold_mv = 0
+clock_log_path = "docs/hil/runs/REPLACE/clock-log.bin"
+clock_log_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+capture_path = "docs/hil/runs/REPLACE/start-capture.bin"
+capture_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+review_notes_path = "docs/hil/runs/REPLACE/review.md"
+review_notes_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
