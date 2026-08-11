@@ -60,6 +60,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M6-EXACT-STEPPER-CORE.md`](M6-EXACT-STEPPER-CORE.md) — exact centered
   integer step interpolation, configuration-derived electrical timing,
   complete shifted-image mapping, canonical status, and cached-block simulation.
+- [`M6-SAFETY-INPUT-CORE.md`](M6-SAFETY-INPUT-CORE.md) — configuration-derived
+  safety-input slots, exact debounce and sample watchdogs, arming masks, and
+  typed conservative reactions with target sampling still closed.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed

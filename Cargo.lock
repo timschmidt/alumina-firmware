@@ -40,6 +40,7 @@ dependencies = [
  "alumina-board",
  "alumina-capability",
  "alumina-protocol",
+ "alumina-safety",
  "alumina-storage",
  "board-mks-tinybee",
  "board-t-deck-pro",
@@ -148,6 +149,10 @@ dependencies = [
 [[package]]
 name = "alumina-safety"
 version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-protocol",
+]
 
 [[package]]
 name = "alumina-sd-spi"

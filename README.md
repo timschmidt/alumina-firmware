@@ -134,6 +134,17 @@ durably authorized digest reaches either job actor. See the
 [portable configuration evidence](docs/evidence/M4-CONFIGURATION-IR.md), and
 [firmware lifecycle evidence](docs/evidence/M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md).
 
+The first portable M6 execution slice now binds cached ownership to an exact
+integer step-event trace: whole blocks are preflighted without work proportional
+to step count, retained until terminal tick/position correlation, and never
+acknowledged after a fault. Configuration-derived safety inputs have stable
+core-1 slots with polarity, pull, exact assert/release debounce, finite sampling
+watchdogs, arming masks, and typed E-stop/interlock/limit/driver/probe reactions.
+Neither slice is wired to a physically qualified serializer or GPIO sampler, so
+both board packages remain non-armable. See the
+[stepper evidence](docs/evidence/M6-EXACT-STEPPER-CORE.md) and
+[safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

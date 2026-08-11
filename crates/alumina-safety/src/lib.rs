@@ -1,6 +1,12 @@
 #![no_std]
 #![doc = "Small deterministic safety-state core for Alumina devices."]
 
+use alumina_board::ResourceId;
+use alumina_protocol::DeviceCycle;
+
+/// Maximum safety inputs representable by one fixed status mask.
+pub const MAX_SAFETY_INPUTS: usize = 32;
+
 /// Top-level real-time safety state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -67,6 +73,8 @@ pub enum FaultCode {
     Watchdog = 9,
     /// Board-safe output transaction could not be established or retained.
     SafeOutput = 10,
+    /// Required physical guard, door, or machine interlock opened.
+    SafetyInterlock = 11,
 }
 
 impl FaultCode {
@@ -88,8 +96,469 @@ impl FaultCode {
             8 => Some(Self::Feedback),
             9 => Some(Self::Watchdog),
             10 => Some(Self::SafeOutput),
+            11 => Some(Self::SafetyInterlock),
             _ => None,
         }
+    }
+}
+
+/// Safety-relevant meaning assigned to one physical digital input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum SafetyInputRole {
+    AxisLimitMinimum = 1,
+    AxisLimitMaximum = 2,
+    AxisMotorFault = 3,
+    Probe = 4,
+    EmergencyStop = 5,
+    SafetyInterlock = 6,
+    FocFault = 7,
+}
+
+impl SafetyInputRole {
+    /// First-release arming gate before operation-specific homing/probing
+    /// policies exist. Only a probe may be stably asserted while arming.
+    pub const fn conservatively_requires_clear_to_arm(self) -> bool {
+        !matches!(self, Self::Probe)
+    }
+}
+
+/// Electrical level that means a safety input is asserted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputPolarity {
+    ActiveHigh,
+    ActiveLow,
+}
+
+/// Configured on-chip bias for a digital safety input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputBias {
+    Floating,
+    PullUp,
+    PullDown,
+}
+
+/// Compact executable safety-input facts derived from one exact configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SafetyInputSpec {
+    pub instance: u16,
+    pub role: SafetyInputRole,
+    pub resource: ResourceId,
+    pub polarity: InputPolarity,
+    pub bias: InputBias,
+    /// Input must be known, fresh, and inactive before arming.
+    pub required_for_arm: bool,
+    /// Minimum asserted observation interval, with no contradictory or stale
+    /// sample, before accepting assertion.
+    pub minimum_active_cycles: u32,
+    /// Minimum inactive observation interval, with no contradictory or stale
+    /// sample, before accepting release or the initial clear state.
+    pub minimum_inactive_cycles: u32,
+    /// Maximum interval between samples before local control fails closed.
+    pub maximum_sample_gap_cycles: u32,
+}
+
+impl SafetyInputSpec {
+    /// Rejects specs that cannot provide a finite fail-closed observation.
+    pub const fn validate(self) -> Result<(), SafetyInputError> {
+        if !matches!(
+            self.resource,
+            ResourceId::Gpio(_) | ResourceId::SafetyInput(_)
+        ) || self.maximum_sample_gap_cycles == 0
+            || self.role.conservatively_requires_clear_to_arm() && !self.required_for_arm
+        {
+            return Err(SafetyInputError::Spec);
+        }
+        Ok(())
+    }
+
+    const fn active(self, level_high: bool) -> bool {
+        match self.polarity {
+            InputPolarity::ActiveHigh => level_high,
+            InputPolarity::ActiveLow => !level_high,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MonitoredInput {
+    known: bool,
+    stable_active: bool,
+    candidate_valid: bool,
+    candidate_active: bool,
+    candidate_since: u64,
+    last_sample: Option<u64>,
+}
+
+impl MonitoredInput {
+    const EMPTY: Self = Self {
+        known: false,
+        stable_active: false,
+        candidate_valid: false,
+        candidate_active: false,
+        candidate_since: 0,
+        last_sample: None,
+    };
+}
+
+/// One exact debounced transition from unknown/inactive/active state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SafetyInputTransition {
+    pub at: DeviceCycle,
+    pub slot: u8,
+    pub spec: SafetyInputSpec,
+    /// `None` means this transition established the first stable observation.
+    pub previous_active: Option<bool>,
+    pub active: bool,
+    pub generation: u32,
+}
+
+impl SafetyInputTransition {
+    /// Conservative first-release reaction. Operation-specific homing and
+    /// probing policy may consume a limit/probe before applying this fallback.
+    pub const fn conservative_reaction(self) -> SafetyInputReaction {
+        if !self.active {
+            return SafetyInputReaction::Clear;
+        }
+        match self.spec.role {
+            SafetyInputRole::Probe => SafetyInputReaction::Hold,
+            SafetyInputRole::EmergencyStop => SafetyInputReaction::Fault(FaultCode::EmergencyStop),
+            SafetyInputRole::SafetyInterlock => {
+                SafetyInputReaction::Fault(FaultCode::SafetyInterlock)
+            }
+            SafetyInputRole::AxisLimitMinimum | SafetyInputRole::AxisLimitMaximum => {
+                SafetyInputReaction::Fault(FaultCode::HardLimit)
+            }
+            SafetyInputRole::AxisMotorFault | SafetyInputRole::FocFault => {
+                SafetyInputReaction::Fault(FaultCode::Driver)
+            }
+        }
+    }
+}
+
+/// Immediate policy-neutral result expected by the local safety coordinator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafetyInputReaction {
+    Clear,
+    Hold,
+    Fault(FaultCode),
+}
+
+/// One input whose finite sampling promise has expired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SafetyInputWatchdogFault {
+    pub at: DeviceCycle,
+    pub slot: u8,
+    pub spec: SafetyInputSpec,
+}
+
+impl SafetyInputWatchdogFault {
+    /// Sampling loss is always a local watchdog fault, independent of the
+    /// electrical role whose observation expired.
+    pub const fn conservative_reaction(self) -> SafetyInputReaction {
+        SafetyInputReaction::Fault(FaultCode::Watchdog)
+    }
+}
+
+/// Bounded live input facts suitable for arming and diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SafetyInputStatus {
+    pub input_count: u8,
+    pub known_mask: u32,
+    pub active_mask: u32,
+    pub required_mask: u32,
+    pub stale_mask: u32,
+    pub transition_generation: u32,
+    /// First cycle at which some currently sampled input becomes stale.
+    pub next_watchdog_deadline: Option<DeviceCycle>,
+}
+
+impl SafetyInputStatus {
+    /// All configured inputs are known/fresh and every required input is clear.
+    pub const fn ready_to_arm(self) -> bool {
+        if self.input_count == 0 || self.input_count > 32 {
+            return false;
+        }
+        let expected = if self.input_count == 32 {
+            u32::MAX
+        } else {
+            (1_u32 << self.input_count) - 1
+        };
+        self.known_mask == expected
+            && self.stale_mask == 0
+            && self.active_mask & self.required_mask == 0
+    }
+}
+
+/// Allocation-free, exact-cycle debounce and sampling-watchdog monitor.
+pub struct SafetyInputMonitor<const INPUTS: usize> {
+    specs: [Option<SafetyInputSpec>; INPUTS],
+    states: [MonitoredInput; INPUTS],
+    count: usize,
+    transition_generation: u32,
+}
+
+impl<const INPUTS: usize> SafetyInputMonitor<INPUTS> {
+    /// Constructs a monitor in canonical slot order. Resource and
+    /// `(role, instance)` identities must be unique.
+    pub fn new(specs: &[SafetyInputSpec]) -> Result<Self, SafetyInputError> {
+        Self::from_specs(specs.iter().copied())
+    }
+
+    /// Constructs from an allocation-free source such as an executable
+    /// configuration-profile iterator.
+    pub fn from_specs(
+        specs: impl IntoIterator<Item = SafetyInputSpec>,
+    ) -> Result<Self, SafetyInputError> {
+        if INPUTS == 0 || INPUTS > MAX_SAFETY_INPUTS {
+            return Err(SafetyInputError::Capacity);
+        }
+        let mut retained: [Option<SafetyInputSpec>; INPUTS] = [None; INPUTS];
+        let mut count = 0;
+        for spec in specs {
+            if count >= INPUTS {
+                return Err(SafetyInputError::Capacity);
+            }
+            spec.validate()?;
+            let mut prior = 0;
+            while prior < count {
+                let previous = retained[prior].expect("prior slots are initialized");
+                if previous.resource == spec.resource {
+                    return Err(SafetyInputError::DuplicateResource(spec.resource));
+                }
+                if previous.role == spec.role && previous.instance == spec.instance {
+                    return Err(SafetyInputError::DuplicateIdentity {
+                        role: spec.role,
+                        instance: spec.instance,
+                    });
+                }
+                prior += 1;
+            }
+            if count != 0 {
+                let previous = retained[count - 1].expect("prior slot is initialized");
+                if (previous.instance, previous.role as u8) >= (spec.instance, spec.role as u8) {
+                    return Err(SafetyInputError::Order);
+                }
+            }
+            retained[count] = Some(spec);
+            count += 1;
+        }
+        if count == 0 {
+            return Err(SafetyInputError::Capacity);
+        }
+        Ok(Self {
+            specs: retained,
+            states: [MonitoredInput::EMPTY; INPUTS],
+            count,
+            transition_generation: 0,
+        })
+    }
+
+    /// Number of configuration-stable input slots.
+    pub const fn len(&self) -> usize {
+        self.count
+    }
+
+    /// Whether no inputs are monitored. A successfully constructed monitor is
+    /// never empty, but this keeps the bounded collection API conventional.
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Configuration-stable physical mapping for one sample slot.
+    pub const fn spec(&self, slot: usize) -> Option<SafetyInputSpec> {
+        if slot < self.count {
+            self.specs[slot]
+        } else {
+            None
+        }
+    }
+
+    /// Observes one physical level at an exact local cycle. Repeated or
+    /// backwards timestamps are rejected without changing retained state.
+    pub fn observe(
+        &mut self,
+        slot: usize,
+        level_high: bool,
+        at: DeviceCycle,
+    ) -> Result<Option<SafetyInputTransition>, SafetyInputError> {
+        let spec = self.spec(slot).ok_or(SafetyInputError::Slot { slot })?;
+        let current = self.states[slot];
+        if let Some(previous) = current.last_sample
+            && at.0 <= previous
+        {
+            return Err(SafetyInputError::TimeOrder {
+                slot,
+                previous: DeviceCycle(previous),
+                observed: at,
+            });
+        }
+        if let Some(previous) = current.last_sample
+            && at.0 - previous > u64::from(spec.maximum_sample_gap_cycles)
+        {
+            return Err(SafetyInputError::SampleGap {
+                slot,
+                previous: DeviceCycle(previous),
+                observed: at,
+                maximum_gap_cycles: spec.maximum_sample_gap_cycles,
+            });
+        }
+
+        let active = spec.active(level_high);
+        let mut next = current;
+        next.last_sample = Some(at.0);
+        if current.known && current.stable_active == active {
+            next.candidate_valid = false;
+            self.states[slot] = next;
+            return Ok(None);
+        }
+
+        if !current.candidate_valid || current.candidate_active != active {
+            next.candidate_valid = true;
+            next.candidate_active = active;
+            next.candidate_since = at.0;
+        }
+        let debounce = if active {
+            spec.minimum_active_cycles
+        } else {
+            spec.minimum_inactive_cycles
+        };
+        let accept_at = next
+            .candidate_since
+            .checked_add(u64::from(debounce))
+            .ok_or(SafetyInputError::Arithmetic)?;
+        if at.0 < accept_at {
+            self.states[slot] = next;
+            return Ok(None);
+        }
+
+        let previous_active = current.known.then_some(current.stable_active);
+        next.known = true;
+        next.stable_active = active;
+        next.candidate_valid = false;
+        self.states[slot] = next;
+        self.transition_generation = next_nonzero_generation(self.transition_generation);
+        Ok(Some(SafetyInputTransition {
+            at,
+            slot: u8::try_from(slot).expect("constructor limits slots to 32"),
+            spec,
+            previous_active,
+            active,
+            generation: self.transition_generation,
+        }))
+    }
+
+    /// Returns current masks and exact first watchdog-failure cycle. Unknown
+    /// and time-inconsistent inputs are stale and therefore fail closed.
+    pub fn status(&self, now: DeviceCycle) -> SafetyInputStatus {
+        let mut known_mask = 0_u32;
+        let mut active_mask = 0_u32;
+        let mut required_mask = 0_u32;
+        let mut stale_mask = 0_u32;
+        let mut next_watchdog_deadline = None;
+        let mut slot = 0;
+        while slot < self.count {
+            let bit = 1_u32 << slot;
+            let spec = self.specs[slot].expect("constructor fills every retained slot");
+            let state = self.states[slot];
+            if state.known {
+                known_mask |= bit;
+            }
+            if state.known && state.stable_active {
+                active_mask |= bit;
+            }
+            if spec.required_for_arm {
+                required_mask |= bit;
+            }
+            let deadline = state.last_sample.and_then(|sample| {
+                sample
+                    .checked_add(u64::from(spec.maximum_sample_gap_cycles))
+                    .and_then(|last_healthy| last_healthy.checked_add(1))
+                    .map(DeviceCycle)
+            });
+            let stale = match state.last_sample {
+                Some(sample) => {
+                    now.0 < sample || now.0 - sample > u64::from(spec.maximum_sample_gap_cycles)
+                }
+                None => true,
+            };
+            if stale {
+                stale_mask |= bit;
+            } else if let Some(deadline) = deadline {
+                next_watchdog_deadline = minimum_device_cycle(next_watchdog_deadline, deadline);
+            }
+            slot += 1;
+        }
+        SafetyInputStatus {
+            input_count: u8::try_from(self.count).expect("constructor limits inputs to 32"),
+            known_mask,
+            active_mask,
+            required_mask,
+            stale_mask,
+            transition_generation: self.transition_generation,
+            next_watchdog_deadline: if stale_mask == 0 {
+                next_watchdog_deadline
+            } else {
+                None
+            },
+        }
+    }
+
+    /// First stale input in stable configuration order, if any.
+    pub fn watchdog_fault(&self, now: DeviceCycle) -> Option<SafetyInputWatchdogFault> {
+        let stale = self.status(now).stale_mask;
+        if stale == 0 {
+            return None;
+        }
+        let slot = stale.trailing_zeros() as usize;
+        Some(SafetyInputWatchdogFault {
+            at: now,
+            slot: u8::try_from(slot).expect("mask width is 32"),
+            spec: self.specs[slot].expect("stale bit names a retained slot"),
+        })
+    }
+}
+
+/// Rejected input configuration or non-monotonic observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafetyInputError {
+    Capacity,
+    Spec,
+    DuplicateResource(ResourceId),
+    DuplicateIdentity {
+        role: SafetyInputRole,
+        instance: u16,
+    },
+    Order,
+    Slot {
+        slot: usize,
+    },
+    TimeOrder {
+        slot: usize,
+        previous: DeviceCycle,
+        observed: DeviceCycle,
+    },
+    SampleGap {
+        slot: usize,
+        previous: DeviceCycle,
+        observed: DeviceCycle,
+        maximum_gap_cycles: u32,
+    },
+    Arithmetic,
+}
+
+const fn next_nonzero_generation(previous: u32) -> u32 {
+    let next = previous.wrapping_add(1);
+    if next == 0 { 1 } else { next }
+}
+
+const fn minimum_device_cycle(
+    left: Option<DeviceCycle>,
+    right: DeviceCycle,
+) -> Option<DeviceCycle> {
+    match left {
+        Some(left) if left.0 <= right.0 => Some(left),
+        Some(_) | None => Some(right),
     }
 }
 
@@ -676,6 +1145,183 @@ mod tests {
         machine
     }
 
+    fn input_spec(role: SafetyInputRole, resource: ResourceId) -> SafetyInputSpec {
+        SafetyInputSpec {
+            instance: 0,
+            role,
+            resource,
+            polarity: InputPolarity::ActiveHigh,
+            bias: InputBias::Floating,
+            required_for_arm: role.conservatively_requires_clear_to_arm(),
+            minimum_active_cycles: 0,
+            minimum_inactive_cycles: 0,
+            maximum_sample_gap_cycles: 10,
+        }
+    }
+
+    #[test]
+    fn safety_input_specs_require_finite_unique_fail_closed_routes() {
+        assert!(
+            core::mem::size_of::<SafetyInputMonitor<MAX_SAFETY_INPUTS>>() <= 2_048,
+            "the full monitor must remain suitable for static core-1 ownership"
+        );
+        let emergency = SafetyInputSpec {
+            polarity: InputPolarity::ActiveLow,
+            minimum_inactive_cycles: 3,
+            maximum_sample_gap_cycles: 5,
+            ..input_spec(SafetyInputRole::EmergencyStop, ResourceId::Gpio(33))
+        };
+        assert!(SafetyInputMonitor::<2>::new(&[emergency]).is_ok());
+        assert_eq!(
+            SafetyInputMonitor::<2>::new(&[SafetyInputSpec {
+                maximum_sample_gap_cycles: 0,
+                ..emergency
+            }])
+            .err(),
+            Some(SafetyInputError::Spec)
+        );
+        assert_eq!(
+            SafetyInputMonitor::<2>::new(&[SafetyInputSpec {
+                required_for_arm: false,
+                ..emergency
+            }])
+            .err(),
+            Some(SafetyInputError::Spec)
+        );
+        assert!(matches!(
+            SafetyInputMonitor::<2>::new(&[
+                emergency,
+                SafetyInputSpec {
+                    role: SafetyInputRole::SafetyInterlock,
+                    ..emergency
+                },
+            ])
+            .err(),
+            Some(SafetyInputError::DuplicateResource(ResourceId::Gpio(33)))
+        ));
+        assert_eq!(
+            SafetyInputMonitor::<2>::new(&[
+                emergency,
+                input_spec(SafetyInputRole::AxisLimitMinimum, ResourceId::Gpio(32)),
+            ])
+            .err(),
+            Some(SafetyInputError::Order)
+        );
+    }
+
+    #[test]
+    fn exact_debounce_polarity_readiness_and_reactions_are_deterministic() {
+        let emergency = SafetyInputSpec {
+            polarity: InputPolarity::ActiveLow,
+            minimum_inactive_cycles: 3,
+            maximum_sample_gap_cycles: 5,
+            ..input_spec(SafetyInputRole::EmergencyStop, ResourceId::Gpio(33))
+        };
+        let limit = SafetyInputSpec {
+            instance: 1,
+            minimum_active_cycles: 2,
+            minimum_inactive_cycles: 1,
+            maximum_sample_gap_cycles: 4,
+            ..input_spec(SafetyInputRole::AxisLimitMinimum, ResourceId::Gpio(32))
+        };
+        let mut monitor = SafetyInputMonitor::<4>::new(&[emergency, limit]).unwrap();
+
+        assert_eq!(monitor.observe(0, true, DeviceCycle(10)).unwrap(), None);
+        assert_eq!(monitor.observe(0, true, DeviceCycle(12)).unwrap(), None);
+        let clear = monitor.observe(0, true, DeviceCycle(13)).unwrap().unwrap();
+        assert_eq!(clear.previous_active, None);
+        assert_eq!(clear.conservative_reaction(), SafetyInputReaction::Clear);
+        assert_eq!(monitor.observe(1, false, DeviceCycle(10)).unwrap(), None);
+        let clear_limit = monitor.observe(1, false, DeviceCycle(11)).unwrap().unwrap();
+        assert_eq!(clear_limit.generation, 2);
+
+        let ready = monitor.status(DeviceCycle(13));
+        assert!(ready.ready_to_arm());
+        assert_eq!(ready.known_mask, 0b11);
+        assert_eq!(ready.required_mask, 0b11);
+        assert_eq!(ready.next_watchdog_deadline, Some(DeviceCycle(16)));
+
+        assert_eq!(monitor.observe(1, true, DeviceCycle(14)).unwrap(), None);
+        assert_eq!(monitor.observe(1, true, DeviceCycle(15)).unwrap(), None);
+        let asserted_limit = monitor.observe(1, true, DeviceCycle(16)).unwrap().unwrap();
+        assert_eq!(
+            asserted_limit.conservative_reaction(),
+            SafetyInputReaction::Fault(FaultCode::HardLimit)
+        );
+        assert!(!monitor.status(DeviceCycle(16)).ready_to_arm());
+
+        let asserted_stop = monitor.observe(0, false, DeviceCycle(14)).unwrap().unwrap();
+        assert_eq!(
+            asserted_stop.conservative_reaction(),
+            SafetyInputReaction::Fault(FaultCode::EmergencyStop)
+        );
+        assert!(!monitor.status(DeviceCycle(16)).ready_to_arm());
+    }
+
+    #[test]
+    fn sampling_watchdog_fails_on_the_first_cycle_beyond_the_bound() {
+        let spec = SafetyInputSpec {
+            maximum_sample_gap_cycles: 4,
+            ..input_spec(SafetyInputRole::SafetyInterlock, ResourceId::SafetyInput(0))
+        };
+        let mut monitor = SafetyInputMonitor::<1>::new(&[spec]).unwrap();
+        monitor.observe(0, false, DeviceCycle(100)).unwrap();
+        assert!(monitor.status(DeviceCycle(104)).ready_to_arm());
+        assert_eq!(monitor.watchdog_fault(DeviceCycle(104)), None);
+        assert_eq!(
+            monitor.status(DeviceCycle(104)).next_watchdog_deadline,
+            Some(DeviceCycle(105))
+        );
+        let fault = SafetyInputWatchdogFault {
+            at: DeviceCycle(105),
+            slot: 0,
+            spec,
+        };
+        assert_eq!(monitor.watchdog_fault(DeviceCycle(105)), Some(fault));
+        assert_eq!(
+            fault.conservative_reaction(),
+            SafetyInputReaction::Fault(FaultCode::Watchdog)
+        );
+        assert!(!monitor.status(DeviceCycle(105)).ready_to_arm());
+        assert_eq!(
+            monitor.observe(0, false, DeviceCycle(105)),
+            Err(SafetyInputError::SampleGap {
+                slot: 0,
+                previous: DeviceCycle(100),
+                observed: DeviceCycle(105),
+                maximum_gap_cycles: 4,
+            })
+        );
+        assert!(monitor.watchdog_fault(DeviceCycle(105)).is_some());
+    }
+
+    #[test]
+    fn bounce_and_nonmonotonic_samples_cannot_create_false_transitions() {
+        let spec = SafetyInputSpec {
+            minimum_active_cycles: 3,
+            ..input_spec(SafetyInputRole::SafetyInterlock, ResourceId::Gpio(22))
+        };
+        let mut monitor = SafetyInputMonitor::<1>::new(&[spec]).unwrap();
+        let initial = monitor.observe(0, false, DeviceCycle(10)).unwrap().unwrap();
+        assert_eq!(initial.generation, 1);
+        assert_eq!(monitor.observe(0, true, DeviceCycle(11)).unwrap(), None);
+        assert_eq!(monitor.observe(0, false, DeviceCycle(12)).unwrap(), None);
+        assert_eq!(monitor.observe(0, true, DeviceCycle(13)).unwrap(), None);
+        assert_eq!(monitor.observe(0, true, DeviceCycle(15)).unwrap(), None);
+        let asserted = monitor.observe(0, true, DeviceCycle(16)).unwrap().unwrap();
+        assert_eq!(asserted.generation, 2);
+        assert_eq!(
+            asserted.conservative_reaction(),
+            SafetyInputReaction::Fault(FaultCode::SafetyInterlock)
+        );
+        let before = monitor.status(DeviceCycle(16));
+        assert!(matches!(
+            monitor.observe(0, false, DeviceCycle(16)),
+            Err(SafetyInputError::TimeOrder { .. })
+        ));
+        assert_eq!(monitor.status(DeviceCycle(16)), before);
+    }
+
     #[test]
     fn nominal_run_requires_every_ordered_gate() {
         let mut machine = running_machine();
@@ -779,6 +1425,14 @@ mod tests {
             SafetySnapshot::decode(&encoded[..encoded.len() - 1]),
             Err(SnapshotError::Length { .. })
         ));
+
+        let mut interlock = safe_snapshot(4);
+        interlock.state = SafetyState::Fault;
+        interlock.fault = Some(FaultCode::SafetyInterlock);
+        assert_eq!(
+            SafetySnapshot::decode(&interlock.encode().unwrap()),
+            Ok(interlock)
+        );
     }
 
     #[test]

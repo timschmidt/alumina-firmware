@@ -11,6 +11,9 @@ use alumina_capability::{
     CapabilityError, decode_resource_id, encode_resource_id, verify_declared_identity,
 };
 use alumina_protocol::Digest;
+use alumina_safety::{
+    InputBias, InputPolarity, MAX_SAFETY_INPUTS, SafetyInputRole, SafetyInputSpec,
+};
 use alumina_storage::media::{AsyncBlockDevice, MAX_MEDIA_CHUNK_BYTES, PublishedReader};
 use alumina_storage::provisioning::{ProvisionedCache, ProvisionedCacheError};
 use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
@@ -555,6 +558,19 @@ impl BindingRole {
                 | Self::FocFault
         )
     }
+
+    const fn safety_input_role(self) -> Option<SafetyInputRole> {
+        match self {
+            Self::AxisLimitMinimum => Some(SafetyInputRole::AxisLimitMinimum),
+            Self::AxisLimitMaximum => Some(SafetyInputRole::AxisLimitMaximum),
+            Self::AxisMotorFault => Some(SafetyInputRole::AxisMotorFault),
+            Self::Probe => Some(SafetyInputRole::Probe),
+            Self::EmergencyStop => Some(SafetyInputRole::EmergencyStop),
+            Self::SafetyInterlock => Some(SafetyInputRole::SafetyInterlock),
+            Self::FocFault => Some(SafetyInputRole::FocFault),
+            _ => None,
+        }
+    }
 }
 
 /// Explicit active electrical polarity for a signal-like binding.
@@ -966,6 +982,19 @@ impl ConfigurationRecord {
                 if binding.role.is_hazardous_role() && binding.watchdog_cycles == 0 {
                     return Err(ConfigurationError::Timing);
                 }
+                let safety_role = binding.role.safety_input_role();
+                let required = binding.flags.0 & BindingFlags::REQUIRED_INTERLOCK != 0;
+                if required && safety_role.is_none()
+                    || matches!(
+                        safety_role,
+                        Some(SafetyInputRole::EmergencyStop | SafetyInputRole::SafetyInterlock)
+                    ) && !required
+                {
+                    return Err(ConfigurationError::Binding);
+                }
+                if safety_role.is_some() && binding.watchdog_cycles == 0 {
+                    return Err(ConfigurationError::Timing);
+                }
             }
             Self::Scalar(scalar) => {
                 scalar.value.validate()?;
@@ -1045,11 +1074,15 @@ pub struct StepperAxisProfile {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RealtimeConfigurationProfile {
     stepper_axes: [Option<StepperAxisProfile>; MAX_EXECUTABLE_STEPPER_AXES],
+    safety_inputs: [Option<SafetyInputSpec>; MAX_SAFETY_INPUTS],
+    safety_input_count: u8,
 }
 
 impl RealtimeConfigurationProfile {
     const EMPTY: Self = Self {
         stepper_axes: [None; MAX_EXECUTABLE_STEPPER_AXES],
+        safety_inputs: [None; MAX_SAFETY_INPUTS],
+        safety_input_count: 0,
     };
 
     /// Profile for one logical stepper-axis instance.
@@ -1059,6 +1092,28 @@ impl RealtimeConfigurationProfile {
         } else {
             None
         }
+    }
+
+    /// Count of canonical safety-input slots retained for core-1 sampling.
+    pub const fn safety_input_count(&self) -> usize {
+        self.safety_input_count as usize
+    }
+
+    /// One configuration-stable safety-input slot.
+    pub const fn safety_input(&self, slot: usize) -> Option<SafetyInputSpec> {
+        if slot < self.safety_input_count as usize {
+            self.safety_inputs[slot]
+        } else {
+            None
+        }
+    }
+
+    /// Iterates the exact configuration-stable slots without allocation.
+    pub fn safety_inputs(&self) -> impl Iterator<Item = SafetyInputSpec> + '_ {
+        self.safety_inputs[..self.safety_input_count as usize]
+            .iter()
+            .copied()
+            .flatten()
     }
 }
 
@@ -1073,6 +1128,8 @@ pub struct ConfigurationValidator<'a, const MAX_BINDINGS: usize> {
     claimed_len: usize,
     axes: [AxisState; MAX_AXIS_INSTANCES],
     steppers: [StepperProfileState; MAX_EXECUTABLE_STEPPER_AXES],
+    safety_inputs: [Option<SafetyInputSpec>; MAX_SAFETY_INPUTS],
+    safety_input_count: usize,
     safety_binding: bool,
 }
 
@@ -1098,6 +1155,8 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             claimed_len: 0,
             axes: [AxisState::EMPTY; MAX_AXIS_INSTANCES],
             steppers: [StepperProfileState::EMPTY; MAX_EXECUTABLE_STEPPER_AXES],
+            safety_inputs: [None; MAX_SAFETY_INPUTS],
+            safety_input_count: 0,
             safety_binding: false,
         })
     }
@@ -1237,6 +1296,9 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         {
             return Err(ConfigurationError::MotionPolicy);
         }
+        profile.safety_inputs = self.safety_inputs;
+        profile.safety_input_count = u8::try_from(self.safety_input_count)
+            .map_err(|_| ConfigurationError::SafetyInputCapacity)?;
         let summary = ConfigurationSummary {
             record_count: self.seen_records,
             realtime_record_count: self.realtime_records,
@@ -1274,6 +1336,39 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         }
         self.validate_constraints(binding)?;
         self.validate_bus_rate(binding)?;
+        let safety_spec = if let Some(role) = binding.role.safety_input_role() {
+            if self.safety_input_count >= MAX_SAFETY_INPUTS {
+                return Err(ConfigurationError::SafetyInputCapacity);
+            }
+            let polarity = match binding.polarity {
+                SignalPolarity::ActiveHigh => InputPolarity::ActiveHigh,
+                SignalPolarity::ActiveLow => InputPolarity::ActiveLow,
+                SignalPolarity::NotApplicable => return Err(ConfigurationError::Polarity),
+            };
+            let bias = if binding.flags.0 & BindingFlags::PULL_UP != 0 {
+                InputBias::PullUp
+            } else if binding.flags.0 & BindingFlags::PULL_DOWN != 0 {
+                InputBias::PullDown
+            } else {
+                InputBias::Floating
+            };
+            let spec = SafetyInputSpec {
+                instance: binding.instance,
+                role,
+                resource: binding.resource,
+                polarity,
+                bias,
+                required_for_arm: role.conservatively_requires_clear_to_arm()
+                    || binding.flags.0 & BindingFlags::REQUIRED_INTERLOCK != 0,
+                minimum_active_cycles: binding.minimum_active_cycles,
+                minimum_inactive_cycles: binding.minimum_inactive_cycles,
+                maximum_sample_gap_cycles: binding.watchdog_cycles,
+            };
+            spec.validate().map_err(|_| ConfigurationError::Binding)?;
+            Some(spec)
+        } else {
+            None
+        };
         if self.claimed[..self.claimed_len].contains(&Some(binding.resource)) {
             return Err(ConfigurationError::DuplicateResource(binding.resource));
         }
@@ -1283,6 +1378,11 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             .ok_or(ConfigurationError::BindingCapacity)?;
         *slot = Some(binding.resource);
         self.claimed_len += 1;
+
+        if let Some(spec) = safety_spec {
+            self.safety_inputs[self.safety_input_count] = Some(spec);
+            self.safety_input_count += 1;
+        }
 
         if binding.role.axis_role() {
             let instance = usize::from(binding.instance);
@@ -1861,7 +1961,9 @@ impl ConfigurationFaultCode {
             | ConfigurationError::AxisCount
             | ConfigurationError::AxisRange
             | ConfigurationError::MotionPolicy => Self::Completeness,
-            ConfigurationError::BindingCapacity => Self::Capacity,
+            ConfigurationError::BindingCapacity | ConfigurationError::SafetyInputCapacity => {
+                Self::Capacity
+            }
             ConfigurationError::Length
             | ConfigurationError::Magic
             | ConfigurationError::Version
@@ -3155,6 +3257,7 @@ pub enum ConfigurationError {
     Polarity,
     Binding,
     BindingCapacity,
+    SafetyInputCapacity,
     Timing,
     Frequency,
     ElectricalConstraint,
@@ -3336,6 +3439,7 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::vec;
     use alloc::vec::Vec;
+    use alumina_safety::SafetyInputMonitor;
     use alumina_storage::media::{
         ConfigurationTransition, DurableConfigurationSelection, MEDIA_BLOCK_BYTES, MediaBlock,
         MediaId, MediaRegion,
@@ -3424,17 +3528,26 @@ mod tests {
         polarity: SignalPolarity,
         timed: bool,
     ) -> ConfigurationRecord {
+        let safety_input = role.safety_input_role().is_some();
+        let required_interlock = matches!(
+            role,
+            BindingRole::EmergencyStop | BindingRole::SafetyInterlock
+        );
         ConfigurationRecord::Binding(ResourceBinding {
             instance,
             role,
             resource,
             owner: OwnerDomain::Realtime,
             polarity,
-            flags: BindingFlags::default(),
+            flags: BindingFlags(if required_interlock {
+                BindingFlags::REQUIRED_INTERLOCK
+            } else {
+                0
+            }),
             minimum_active_cycles: u32::from(timed) * 48,
             minimum_inactive_cycles: u32::from(timed) * 48,
             maximum_frequency_hz: u32::from(timed) * 100_000,
-            watchdog_cycles: if timed || role.is_hazardous_role() {
+            watchdog_cycles: if timed || role.is_hazardous_role() || safety_input {
                 240_000
             } else {
                 0
@@ -3639,6 +3752,10 @@ mod tests {
 
     #[test]
     fn tinybee_motion_document_validates_at_every_chunk_split() {
+        assert!(
+            core::mem::size_of::<RealtimeConfigurationProfile>() <= 2_048,
+            "executable profiles are retained transactionally on core 1"
+        );
         let records = tinybee_motion_records();
         let flags = ConfigurationFlags(ConfigurationFlags::MOTION);
         let (bytes, digest) = document(&board_mks_tinybee::PACKAGE, &records, flags);
@@ -3668,7 +3785,67 @@ mod tests {
             assert_eq!(axis.driver_control.minimum_inactive_cycles, 48);
             assert_eq!(axis.driver_control_action, AxisDriverControl::Disable);
             assert!(realtime_profile.stepper_axis(1).is_none());
+            assert_eq!(realtime_profile.safety_input_count(), 1);
+            assert_eq!(
+                realtime_profile.safety_input(0),
+                Some(SafetyInputSpec {
+                    instance: 0,
+                    role: SafetyInputRole::EmergencyStop,
+                    resource: ResourceId::Gpio(33),
+                    polarity: InputPolarity::ActiveLow,
+                    bias: InputBias::Floating,
+                    required_for_arm: true,
+                    minimum_active_cycles: 0,
+                    minimum_inactive_cycles: 0,
+                    maximum_sample_gap_cycles: 240_000,
+                })
+            );
+            assert!(realtime_profile.safety_input(1).is_none());
+            let monitor =
+                SafetyInputMonitor::<4>::from_specs(realtime_profile.safety_inputs()).unwrap();
+            assert_eq!(monitor.len(), 1);
+            assert_eq!(monitor.spec(0), realtime_profile.safety_input(0));
         }
+    }
+
+    #[test]
+    fn realtime_safety_input_requires_explicit_arm_gate_and_sample_watchdog() {
+        let ConfigurationRecord::Binding(mut emergency) = binding(
+            0,
+            BindingRole::EmergencyStop,
+            ResourceId::Gpio(33),
+            SignalPolarity::ActiveLow,
+            false,
+        ) else {
+            unreachable!()
+        };
+        emergency.flags = BindingFlags::default();
+        assert_eq!(
+            ConfigurationRecord::Binding(emergency).encode(),
+            Err(ConfigurationError::Binding)
+        );
+
+        emergency.flags = BindingFlags(BindingFlags::REQUIRED_INTERLOCK);
+        emergency.watchdog_cycles = 0;
+        assert_eq!(
+            ConfigurationRecord::Binding(emergency).encode(),
+            Err(ConfigurationError::Timing)
+        );
+
+        let ConfigurationRecord::Binding(mut ordinary) = binding(
+            0,
+            BindingRole::DigitalInput,
+            ResourceId::Gpio(32),
+            SignalPolarity::ActiveLow,
+            false,
+        ) else {
+            unreachable!()
+        };
+        ordinary.flags = BindingFlags(BindingFlags::REQUIRED_INTERLOCK);
+        assert_eq!(
+            ConfigurationRecord::Binding(ordinary).encode(),
+            Err(ConfigurationError::Binding)
+        );
     }
 
     #[test]

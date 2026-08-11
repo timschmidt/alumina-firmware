@@ -299,9 +299,12 @@ through exact execution, and permits acknowledgement only after independently
 correlated terminal progress. Exact count/position, half-tick interpolation,
 overflow, configured rate, pulse/setup/hold, normal disable, deadline-fault,
 malformed-report, ownership, and image-integrity tests pass. The hardware
-serializer, endstop/E-stop sampling, bounded hold/stop fallback, arm transition,
-browser planner, and physical workflow remain closed; both first board packages
-remain non-armable.
+serializer, target-side endstop/E-stop sampling, bounded hold/stop fallback, arm
+transition, browser planner, and physical workflow remain closed; both first
+board packages remain non-armable. The portable safety-input layer now retains
+configuration-derived resource/polarity/pull/debounce/watchdog facts, supplies
+exact stable transitions and arming masks, and fails stale sampling closed before
+any target claims physical input support.
 
 Exit gate:
 

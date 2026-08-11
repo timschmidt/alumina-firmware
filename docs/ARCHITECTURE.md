@@ -578,6 +578,21 @@ Actual transitions are stricter than this sketch. Key rules:
   command.
 - Web clients receive state transitions but cannot override physical interlocks.
 
+The portable `SafetyInputMonitor` consumes the exact core-1 configuration
+profile rather than numeric pin aliases. It retains at most 32 stable slots for
+GPIO or board-local safety inputs, applies configured polarity and separate
+assert/release debounce intervals in the local `DeviceCycle` domain, rejects
+nonmonotonic samples, and marks an input stale on the first cycle beyond its
+finite sample-gap promise. A late sample is rejected and cannot retroactively
+heal the missing interval. Arming requires every configured safety input to be
+known and fresh and every arm-required input inactive. The conservative default
+makes every fault-class role arm-required; only a probe may remain active until
+an operation-specific homing/probing policy is qualified. Typed transitions
+keep E-stop, interlock, limit, driver fault, and probe semantics distinct; the
+first-release mapping faults on the first four classes and requests a hold for a
+probe. ESP GPIO interrupt/poll integration and HIL response-time qualification
+remain separate gates.
+
 ## Advanced stepper motion
 
 The motion stack is layered:

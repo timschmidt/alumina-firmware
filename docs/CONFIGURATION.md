@@ -59,7 +59,7 @@ Every record is exactly 64 bytes. Its common prefix is:
 | 16 | 4 | minimum active/debounce-high cycles |
 | 20 | 4 | minimum inactive/debounce-low cycles |
 | 24 | 4 | requested maximum event/sample/carrier/bus Hz |
-| 28 | 4 | local watchdog cycles; nonzero for hazardous/timed output |
+| 28 | 4 | local watchdog/sample-gap cycles; nonzero for hazardous/timed output and every safety input |
 | 32 | 32 | reserved zero |
 
 Binding-role values are:
@@ -69,7 +69,7 @@ Binding-role values are:
 | 1–9 | axis step, direction, enable, minimum limit, maximum limit, encoder A, encoder B, encoder index, motor fault |
 | 10–19 | probe, E-stop, safety interlock, digital input, digital output, analog input, PWM output, serial port, timer, counter |
 | 20–29 | FOC phase U/V/W, current A/B/C, bus voltage, encoder, enable, fault |
-| 30–37 | process output, storage, I2C bus, SPI bus, TWAI bus, capture input, waveform output, fitted device |
+| 30–38 | process output, storage, I2C bus, SPI bus, TWAI bus, capture input, waveform output, fitted device, axis disable |
 
 The validator resolves the resource only in the advertised typed namespace. It
 requires exact owner agreement, rejects duplicate physical claims, admits only
@@ -84,6 +84,19 @@ encoder/capture and analog/current-sense inputs require a nonzero bounded sample
 or event rate. Analog/controller resources use no synthetic pin polarity. Timed
 step/PWM/waveform outputs require nonzero active/inactive timing, frequency, and
 watchdog bounds.
+
+Limits, probes, motor/FOC faults, E-stops, and safety interlocks additionally
+require a finite nonzero sample-gap watchdog. Their active/inactive timing fields
+are exact debounce intervals and may be zero for an immediate transition.
+E-stop and safety-interlock records must carry `required-interlock`; that flag is
+rejected on ordinary bindings. Pull selection, polarity, debounce bounds,
+watchdog, physical resource, role, and logical instance are retained in the
+core-1-only executable profile. Up to 32 such inputs have stable slots in one
+per-MCU configuration. The conservative first-release arm gate requires every
+fault-class input, including limits and motor/FOC faults, to be clear; a probe is
+the sole role not implicitly arm-blocking unless its record explicitly sets the
+required flag. Later homing/probing modes must replace that fallback with an
+equally bounded operation-specific policy.
 
 ### Exact scalar
 
@@ -133,11 +146,11 @@ requires unique U/V/W and enable resources plus pole pairs, current/voltage
 limits, carrier/dead-time, and control rate. Position minimum must compare
 exactly below maximum.
 
-Motion policy requires at least one complete stepper or FOC axis and a local
-E-stop or safety-interlock binding. The FOC policy bit is present exactly when a
-FOC axis exists. The header's realtime-record count must equal the independently
-derived count. These are structural admission rules, not claims that the board
-or machine has passed HIL.
+Motion policy requires at least one complete stepper or FOC axis and a local,
+arm-required E-stop or safety-interlock binding. The FOC policy bit is present
+exactly when a FOC axis exists. The header's realtime-record count must equal the
+independently derived count. These are structural admission rules, not claims
+that the board or machine has passed HIL.
 
 ## Storage selection requests
 
@@ -228,7 +241,10 @@ selector and likewise remains closed until revalidation finishes.
 
 The canonical format, SD publication reader, dual independent validators, core
 framing, authenticated firmware routing, boot recovery, safe-state transitions,
-job-identity handoff, and raw-media two-phase selection journal are implemented.
+executable safety-input profile, job-identity handoff, and raw-media two-phase
+selection journal are implemented. The portable monitor consumes that profile
+with exact-cycle debounce, polarity, first-stale-cycle watchdogs, arming facts,
+and typed transitions; target GPIO sampling remains a later hardware gate.
 Activation, abort, and clear replay as complete fail-closed states across every
 injected write/sync cut. Both current board packages remain explicitly
 non-armable pending physical qualification, so a successfully committed
