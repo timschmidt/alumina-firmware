@@ -183,6 +183,12 @@ under nominal and saturated Wi-Fi before any synchronization-tolerance claim.
 Both first board packages remain non-armable; no board was connected, flashed,
 or energized for this checkpoint.
 
+Subsequent checkpoint
+[`M7-OBSERVED-START-REPLAY.md`](M7-OBSERVED-START-REPLAY.md) implements the
+canonical portable telemetry and browser replay portion of that open item. It
+does not change this checkpoint's physical qualification boundary: qualified
+two-board peripheral captures remain open.
+
 New code is independently authored under `MIT OR Apache-2.0`. No GPL-family
 implementation source, Synthetos implementation source, or SimpleFOC
 implementation source was introduced or consulted.

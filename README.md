@@ -167,12 +167,19 @@ rendered worker-ready state in Chromium. That production worker now exchanges
 real authenticated browser HTTP/CORS heartbeat traffic with a deterministic
 host MCU fixture, recovers from response loss, a finite outage, and reboot, and
 refuses an excessive causal interval. Physical radio and timing qualification
-remain closed. See the
+remain closed. The same coordinator now consumes canonical first-output
+observations, maps their exact device-cycle bounds back through the boot-scoped
+affine clock envelopes, preserves whether their authority is a simulator,
+peripheral latch, or software bracket, and displays conservative cross-device
+spread and target error. Missing, foreign, overwide, erased, or replaced
+evidence fails closed; the two-device simulator proves each known edge remains
+inside its reconstructed interval. See the
 [global-job packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and
 [browser cache-delivery evidence](docs/evidence/M7-BROWSER-CACHE-DELIVERY.md),
-plus the
 [browser clock/coordinator evidence](docs/evidence/M7-BROWSER-CLOCK-COORDINATOR.md)
-and [authenticated browser/HTTP evidence](docs/evidence/M7-BROWSER-AUTH-HTTP-SIM.md).
+and [authenticated browser/HTTP evidence](docs/evidence/M7-BROWSER-AUTH-HTTP-SIM.md),
+and the
+[observed-start replay evidence](docs/evidence/M7-OBSERVED-START-REPLAY.md).
 
 `alumina-config` defines canonical content-addressed resource bindings and
 reduced exact machine facts, validates them against the immutable board package,
@@ -210,11 +217,13 @@ timeline acceptance, and physical latch observation on an exact output lattice;
 its motion-to-PCM-to-wire simulator retains ownership through output-free dwell
 and terminal disable. See the
 [scheduled-output evidence](docs/evidence/M6-SCHEDULED-OUTPUT-HORIZON.md).
-Firmware now adopts that owner structurally and schedule wire version 2 requires
-a board-qualified `Priming → Primed` output-horizon acknowledgement before
-local start. TinyBee's safe-prefilled PCM-short HAL composition is compile-only;
-both board adapters still reject streaming, so armability remains closed. See
-the [prestart priming evidence](docs/evidence/M7-PRESTART-HARDWARE-PRIMING.md).
+Firmware now adopts that owner structurally: commit/reference wire version 2
+requires a board-qualified `Priming → Primed` output-horizon acknowledgement
+before local start, while schedule-report version 3 retains the first correlated
+output edge and refuses completion without it. TinyBee's safe-prefilled
+PCM-short HAL composition is compile-only; both board adapters still reject
+streaming, so armability and all physical edge claims remain closed. See the
+[prestart priming evidence](docs/evidence/M7-PRESTART-HARDWARE-PRIMING.md).
 The next portable slice models exact circular-DMA slot release/refill ownership,
 requires an accepted dense frame before extending the sealed horizon, and keeps
 descriptor progress distinct from physical latch authority. Final disable is

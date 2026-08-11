@@ -370,9 +370,10 @@ uses the same bare eight-byte prepare ID as its native body. The reviewed defaul
 runtime boundary occupies 13,120 bytes; together with the core-1 stack its
 45,888-byte requirement remains below the 64 KiB internal-memory budget.
 
-`JobCommit` is an exact 240-byte `ALMJCOM2` body. Version 2 is an intentional
-greenfield break: version-1 schedule bodies and reports are rejected rather
-than translated.
+`JobCommit` is an exact 240-byte `ALMJCOM2` body. Commit and reference version 2
+are intentional greenfield breaks: version-1 bodies are rejected rather than
+translated. Schedule reports and combined status have their own independently
+versioned wire images below; there is no legacy decoder or shim between them.
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
@@ -425,25 +426,48 @@ timeline releases from the MCU clock at the exact epoch. The later `Start`
 action is one-shot software/safety-state reconciliation, not a Wi-Fi trigger or
 the source of the physical edge.
 
-The 64-byte `ALMJSCH2` schedule report uses a strict union. Its header holds
-version 2, state, fault, and commit/policy/start flags in bytes `8..16`. In
-`Prepared`, bytes `16..48` are the prepared token and `48..64` are zero. After
+The 96-byte `ALMJSCH3` schedule report uses a strict union. Its header holds
+version 3, state, fault, and commit/policy/start flags in bytes `8..16`. In
+`Prepared`, bytes `16..48` are the prepared token and `48..96` are zero. After
 commit, bytes `16..48` are start/confirmation/abort/lease cycles and `48..64`
-is the commit ID. A committed report never carries a prepared token. State
-codes are `Prepared=1`, `Installed=2`, `Confirmed=3`, `Priming=4`, `Primed=5`,
-`Running=6`, `Aborted=7`, `Expired=8`, `Complete=9`, and `Faulted=10`.
-
-`JobStatus` has an empty request body and a fixed 304-byte response:
+is the commit ID. A committed report never carries a prepared token. Bytes
+`64..96` are either all zero or the immutable first-output observation:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMJST01` |
-| 8 | 2 | exact status version (`1`) |
+| 64 | 1 | source: absent (`0`), simulated latch (`1`), peripheral latch (`2`), or software bracket (`3`) |
+| 65 | 3 | reserved zero |
+| 68 | 4 | nonzero backend-local output correlation token |
+| 72 | 8 | scheduled first-output cycle, exactly equal to the installed start cycle |
+| 80 | 8 | conservative earliest observed cycle |
+| 88 | 8 | conservative latest observed cycle |
+
+The observation is valid only after the one-shot start action. Its earliest
+cycle cannot precede the scheduled cycle and its latest cannot precede its
+earliest. Simulator and peripheral-latch sources name one exact captured cycle;
+only the explicitly weaker software-bracket source may carry a nonzero interval.
+The first accepted observation is idempotent and immutable. A conflicting
+replacement is rejected, and completing a schedule before an observation is
+impossible. If the latest observed cycle exceeds the installed synchronization
+tolerance, core 1 retains the evidence and latches `Faulted/StartObservation`
+instead of hiding the violating edge.
+
+State codes are `Prepared=1`, `Installed=2`, `Confirmed=3`, `Priming=4`,
+`Primed=5`, `Running=6`, `Aborted=7`, `Expired=8`, `Complete=9`, and
+`Faulted=10`. Fault code `5` is `StartObservation`; the earlier fault codes are
+unchanged.
+
+`JobStatus` has an empty request body and a fixed 336-byte response:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMJST02` |
+| 8 | 2 | exact status version (`2`) |
 | 10 | 1 | bits 0/1/2: service, realtime, and schedule reports present |
 | 11 | 5 | reserved zero |
 | 16 | 96 | `ALMJSV01` core-0 report, or all zero |
 | 112 | 128 | `ALMJRT01` core-1 report, or all zero |
-| 240 | 64 | `ALMJSCH2` core-1 schedule report, or all zero |
+| 240 | 96 | `ALMJSCH3` core-1 schedule report, or all zero |
 
 The service report carries state, axis width, validated/sent/total block counts,
 verified storage-chunk count, current ring credits/depth, and a terminal
@@ -454,7 +478,10 @@ optional fields are zero-filled. Embedded stream reports must name the same nonz
 prepare ID and block count; if both are complete, their independently derived
 terminal tick and block digest must also agree. Core 0 admits schedule reports
 only when their prepared token or every committed field matches its exact local
-descriptor/commit.
+descriptor/commit. While `Running`, it accepts exactly one monotonic
+no-observation-to-observation enrichment; it rejects later reports that erase or
+replace retained evidence. The browser's authenticated participant controller
+applies the same rule independently.
 
 The current target images route prepare/commit/confirm/abort and independently
 enforce these contracts on both cores. Core 1 now binds the descriptor's exact
@@ -464,9 +491,11 @@ commit, and permits `Arm`/`Start` only with fresh interlocks, an admitted block,
 healthy deadlines, an armable package, and a qualified output backend. TinyBee
 contains only an unqualified blocking bootstrap writer; T-Deck Pro has no
 machine-output backend. Both packages therefore keep `JobPrepare` closed and
-remain non-armable. Hold degrades to a safe stop; constrained hold/resume, lease
-renewal, observed-edge reconciliation, and cached-autonomous authorization remain
-later operations.
+remain non-armable. The target motion path is wired to publish the first
+qualified backend latch token and cycle, but neither first board can reach that
+path until its physical output backend is qualified. Hold degrades to a safe
+stop; constrained hold/resume, lease renewal, cached-autonomous authorization,
+and physical observed-edge qualification remain later operations.
 
 ## Real-time motion report
 

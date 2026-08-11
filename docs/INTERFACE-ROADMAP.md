@@ -313,9 +313,16 @@ classification, and read-only transition reconciliation. Worker
 creation/supervision, live multi-device clock-session ownership, redacted
 history panels, and authenticated Chromium-to-host-MCU HTTP clock tests are now
 implemented. Those tests cover response loss, a finite outage, reboot, bounded
-delay, and conservative excessive-delay rejection. Live cache/job driving,
-attended-policy controls, broader network/storage faults, observed edges, and
-physical qualification remain open.
+delay, and conservative excessive-delay rejection. The headless coordinator now
+also consumes immutable authenticated first-output observations, exactly
+inverts their boot-scoped cycle intervals into browser monotonic time, preserves
+their simulator/peripheral/software authority, and displays conservative
+participant spread and shared-epoch error. Its two-device simulation proves
+known edges are contained and rejects missing or regressed evidence. Live
+cache/job driving, attended-policy controls, broader network/storage faults,
+worker integration for the full job lifecycle, and physical qualification
+remain open. See the
+[observed-start replay evidence](evidence/M7-OBSERVED-START-REPLAY.md).
 
 Exit:
 

@@ -108,6 +108,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M7-BROWSER-AUTH-HTTP-SIM.md`](M7-BROWSER-AUTH-HTTP-SIM.md) — production
   worker-to-host authenticated HTTP/CORS clock traffic, finite-outage and reboot
   recovery, bounded-delay admission, and conservative excessive-delay rejection.
+- [`M7-OBSERVED-START-REPLAY.md`](M7-OBSERVED-START-REPLAY.md) — canonical typed
+  first-output evidence, retained tolerance faults, exact device-cycle-to-browser
+  inversion, authenticated monotonic reconciliation, and two-MCU simulated replay.
 - [`M7-PRESTART-HARDWARE-PRIMING.md`](M7-PRESTART-HARDWARE-PRIMING.md) — schedule
   wire version 2, abort-guard hardware priming, explicit prestart horizon
   acknowledgement, scheduled firmware ownership, and compile-only TinyBee

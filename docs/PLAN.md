@@ -422,9 +422,11 @@ Work:
 Implementation checkpoint: fixed heartbeat/RT-deadline wire formats, an exact
 causal host estimator, boot-bound prepare receipts, participant-bound
 install/confirm/abort state, dual-core firmware routing, and adversarial two-MCU
-simulation are present. Schedule wire version 2 adds board-qualified prime lead,
-one-shot local hardware priming at the abort guard, an explicit `Primed`
-acknowledgement, and fail-closed missed-start behavior. The target binds that
+simulation are present. Commit/reference wire version 2 adds board-qualified
+prime lead, one-shot local hardware priming at the abort guard, an explicit
+`Primed` acknowledgement, and fail-closed missed-start behavior. Schedule
+report version 3 adds immutable typed first-output observations and a dedicated
+retained tolerance fault. The target binds that
 future horizon and confirmed local start to the exact scheduled step executor
 behind configuration, interlock, deadline, cached-work, package, and
 physical-output qualification gates. The interface now produces the canonical
@@ -437,9 +439,14 @@ precommit cancellation, and ambiguous-mutation status reconciliation. Worker
 lifecycle/UI integration and production-worker authenticated browser/HTTP
 qualification now cover nominal sampling, response loss, a finite outage,
 reboot, bounded delay, and conservative excessive-delay rejection. Live
-cache/schedule ownership, observed-edge reconciliation, broader packet-stress
-and background-throttling cases, HIL runs, a qualified I²S/DMA backend, and the
-physical exit gate remain open; current board packages are non-armable.
+cache/schedule ownership, broader packet-stress and background-throttling cases,
+HIL runs, a qualified I²S/DMA backend, and the physical exit gate remain open;
+current board packages are non-armable. Firmware-to-browser observed-start
+reconciliation is implemented in the portable path: exact affine inversion
+maps each authenticated cycle observation to a conservative browser-time
+interval, refuses missing/regressed/foreign evidence, and the deterministic
+two-MCU simulator proves its known edges are contained. See the
+[observed-start replay evidence](evidence/M7-OBSERVED-START-REPLAY.md).
 
 Exit gate:
 

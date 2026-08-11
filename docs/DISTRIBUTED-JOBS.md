@@ -177,7 +177,17 @@ bootstrap writer plus an unreachable compile-only PCM-short composition, and
 T-Deck Pro has no machine-output backend. Both first packages therefore remain
 non-armable and target preparation is fail-closed. Hold currently degrades to a
 safe stop; constrained hold/resume, lease renewal, target-timed refill, and
-observed-edge capture remain open.
+physical observed-edge qualification remain open.
+
+The portable and target control boundaries now retain a canonical first-output
+observation before a schedule may complete. The record binds the installed
+start cycle, a nonzero output-owner token, conservative earliest/latest device
+cycles, and an explicit source authority. Simulator latches, peripheral latches,
+and software brackets remain different wire values. An edge outside the
+installed local tolerance is retained in a dedicated schedule fault rather than
+discarded. Core 0 and the authenticated browser client accept the brief
+`Running`-without-observation state followed by exactly one evidence enrichment,
+but reject any later attempt to erase or replace it.
 
 ## Deterministic prepare/commit start
 
@@ -214,8 +224,13 @@ The UI orchestrates a bounded two-phase procedure:
 7. **Execute:** a primed timeline releases from each MCU's hardware clock at the
    mapped local epoch without another network packet. The schedule's one-shot
    `Start` transition reconciles software and safety state with that already
-   clocked boundary. Telemetry later reconciles observed start edges and sync
-   error.
+   clocked boundary. The first job-owned complete-image latch is correlated to
+   that epoch and reported before completion. The browser independently inverts
+   each boot-scoped exact affine clock envelope to map the reported device-cycle
+   interval back into browser monotonic time. It reports the conservative outer
+   participant spread and maximum shared-epoch error while preserving the
+   source authority; stale clocks, missing participants, changed boots, foreign
+   commits, overwide mappings, or missing observations produce no aggregate.
 
 This produces deterministic scheduled starts within a measured tolerance, not a
 mathematically atomic distributed transaction. Loss of confirm or abort delivery
@@ -228,6 +243,14 @@ harmless GPIO pulses and capture equipment. A machine whose safety depends on
 all MCUs starting or stopping together needs a hardwired, appropriately rated
 safety chain/interlock; Wi-Fi start reconciliation and stop/cancel are
 supplementary.
+
+The two-device deterministic simulator now exercises that complete replay. Both
+participants report typed simulated-latch observations, every known simulated
+edge is proved to lie inside its reconstructed browser-time interval, and the
+aggregate retains a conservative upper bound on cross-device spread. This is
+software evidence only. The TinyBee and T-Deck Pro adapters still reject motion
+streaming, so no physical latch or synchronization-tolerance claim follows from
+the simulation.
 
 ## Operation after network loss
 
