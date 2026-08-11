@@ -115,11 +115,23 @@ bound rather than being folded into an approximate nominal.
 
 ## Cross-record admission
 
-A stepper axis requires unique step, direction, and enable bindings plus full
-steps, microsteps, gearing, travel/revolution, calibration, position range,
-velocity, acceleration, and jerk facts. A FOC axis requires unique U/V/W and
-enable resources plus pole pairs, current/voltage limits, carrier/dead-time, and
-control rate. Position minimum must compare exactly below maximum.
+A stepper axis requires unique step and direction bindings plus exactly one
+driver-control binding: `AxisEnable` means its active level enables the driver,
+while `AxisDisable` means its active level disables the driver. Keeping those
+roles distinct avoids interpreting an active-high StepStick disable line as an
+enable with inverted intent. Step active/inactive timing means minimum pulse
+high/low time; direction and driver-control active/inactive timing means setup
+before the next rising step edge and hold after the preceding falling edge.
+Each value is expressed in the declared device-cycle domain and must be nonzero.
+One per-MCU step stream is limited to eight dense logical axes, matching the
+canonical machine-IR mask and record width; a higher step-axis instance rejects
+during configuration validation rather than disappearing from execution state.
+
+The axis also requires full steps, microsteps, gearing, travel/revolution,
+calibration, position range, velocity, acceleration, and jerk facts. A FOC axis
+requires unique U/V/W and enable resources plus pole pairs, current/voltage
+limits, carrier/dead-time, and control rate. Position minimum must compare
+exactly below maximum.
 
 Motion policy requires at least one complete stepper or FOC axis and a local
 E-stop or safety-interlock binding. The FOC policy bit is present exactly when a

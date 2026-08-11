@@ -591,6 +591,25 @@ The motion stack is layered:
    bounded local hold/stop fallback for asynchronous safety events.
 7. Hardware backend: GPIO timer, RMT/DMA, or I²S static/stream.
 
+The portable `alumina-motion` executor now implements the first step-only part
+of layers 5–7 without owning hardware. It validates a dense stepper profile
+derived from the exact active configuration, rejects overflow/rate/pulse/
+direction/enable timing violations before installing a segment, and emits
+allocation-free logical transactions at exact `DeviceCycle` deadlines. For
+`steps = n`, duration `d`, and zero-based event `k`, the rising-edge offset is
+the nearest integer to `(2k + 1)d/(2n)`. Therefore every accepted edge carries
+a conservative one-half-device-tick quantization bound and the final lattice
+position/count is exact.
+
+A separate complete-image mapper binds those logical transactions to configured
+I²S bit resources, respects active-high/active-low enable or disable semantics,
+and preserves every unrelated shifted output. It accepts only a fully defined
+safe image and rejects duplicate routes, an active safe-state step, an enabled
+safe-state driver, out-of-width/conflicting events, and impossible step-level
+history without mutating the retained image. This is not yet an ESP32 I²S DMA
+backend or a hardware qualification: TinyBee remains non-armable until serializer
+word/WS phase, timing, safe-image, and load behavior are measured on the board.
+
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The
 interface compiler and firmware executor implement their respective underlying

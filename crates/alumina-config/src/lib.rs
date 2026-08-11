@@ -26,6 +26,8 @@ pub const CONFIGURATION_RECORD_BYTES: usize = 64;
 pub const MAX_CONFIGURATION_RECORDS: usize = 256;
 /// Initial maximum logical motion-axis index plus one.
 pub const MAX_AXIS_INSTANCES: usize = 16;
+/// Maximum step/direction axes in one executable per-MCU stream.
+pub const MAX_EXECUTABLE_STEPPER_AXES: usize = 8;
 
 const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG01";
 const RECORD_KIND_BINDING: u16 = 1;
@@ -387,6 +389,9 @@ pub enum BindingRole {
     CaptureInput = 35,
     WaveformOutput = 36,
     FittedDevice = 37,
+    /// Active level disables the stepper driver. This is distinct from an
+    /// active-level `AxisEnable` and prevents silent polarity inversion.
+    AxisDisable = 38,
 }
 
 impl BindingRole {
@@ -429,6 +434,7 @@ impl BindingRole {
             35 => Self::CaptureInput,
             36 => Self::WaveformOutput,
             37 => Self::FittedDevice,
+            38 => Self::AxisDisable,
             _ => return None,
         })
     }
@@ -463,6 +469,7 @@ impl BindingRole {
             Self::AxisStep
                 | Self::AxisDirection
                 | Self::AxisEnable
+                | Self::AxisDisable
                 | Self::DigitalOutput
                 | Self::PwmOutput
                 | Self::FocPhaseU
@@ -514,6 +521,7 @@ impl BindingRole {
             Self::AxisStep
                 | Self::AxisDirection
                 | Self::AxisEnable
+                | Self::AxisDisable
                 | Self::FocPhaseU
                 | Self::FocPhaseV
                 | Self::FocPhaseW
@@ -528,6 +536,7 @@ impl BindingRole {
             Self::AxisStep
                 | Self::AxisDirection
                 | Self::AxisEnable
+                | Self::AxisDisable
                 | Self::AxisLimitMinimum
                 | Self::AxisLimitMaximum
                 | Self::AxisEncoderA
@@ -977,7 +986,7 @@ impl ConfigurationRecord {
 
 #[derive(Clone, Copy)]
 struct AxisState {
-    binding_mask: u32,
+    binding_mask: u64,
     scalar_mask: u32,
     minimum: Option<Rational>,
     maximum: Option<Rational>,
@@ -992,6 +1001,67 @@ impl AxisState {
     };
 }
 
+#[derive(Clone, Copy)]
+struct StepperProfileState {
+    step: Option<ResourceBinding>,
+    direction: Option<ResourceBinding>,
+    driver_control: Option<ResourceBinding>,
+    driver_control_action: AxisDriverControl,
+}
+
+impl StepperProfileState {
+    const EMPTY: Self = Self {
+        step: None,
+        direction: None,
+        driver_control: None,
+        driver_control_action: AxisDriverControl::Enable,
+    };
+}
+
+/// Whether the configured driver-control resource asserts enable or disable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AxisDriverControl {
+    Enable,
+    Disable,
+}
+
+/// Exact resource and cycle-timing facts needed by a step/direction backend.
+///
+/// For `step`, the active/inactive fields are pulse-high and pulse-low time.
+/// For `direction` and `driver_control`, they are setup-before-step and
+/// hold-after-step time. This role-specific interpretation is part of
+/// configuration V1.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StepperAxisProfile {
+    pub instance: u16,
+    pub step: ResourceBinding,
+    pub direction: ResourceBinding,
+    pub driver_control: ResourceBinding,
+    pub driver_control_action: AxisDriverControl,
+}
+
+/// Allocation-free executable facts retained from the exact configuration.
+/// Empty slots remain distinguishable from configured logical-axis instances.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeConfigurationProfile {
+    stepper_axes: [Option<StepperAxisProfile>; MAX_EXECUTABLE_STEPPER_AXES],
+}
+
+impl RealtimeConfigurationProfile {
+    const EMPTY: Self = Self {
+        stepper_axes: [None; MAX_EXECUTABLE_STEPPER_AXES],
+    };
+
+    /// Profile for one logical stepper-axis instance.
+    pub const fn stepper_axis(&self, instance: usize) -> Option<StepperAxisProfile> {
+        if instance < MAX_EXECUTABLE_STEPPER_AXES {
+            self.stepper_axes[instance]
+        } else {
+            None
+        }
+    }
+}
+
 /// Allocation-free semantic validator for a complete ordered record stream.
 pub struct ConfigurationValidator<'a, const MAX_BINDINGS: usize> {
     package: &'a BoardPackage<'a>,
@@ -1002,6 +1072,7 @@ pub struct ConfigurationValidator<'a, const MAX_BINDINGS: usize> {
     claimed: [Option<ResourceId>; MAX_BINDINGS],
     claimed_len: usize,
     axes: [AxisState; MAX_AXIS_INSTANCES],
+    steppers: [StepperProfileState; MAX_EXECUTABLE_STEPPER_AXES],
     safety_binding: bool,
 }
 
@@ -1026,6 +1097,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             claimed: [None; MAX_BINDINGS],
             claimed_len: 0,
             axes: [AxisState::EMPTY; MAX_AXIS_INSTANCES],
+            steppers: [StepperProfileState::EMPTY; MAX_EXECUTABLE_STEPPER_AXES],
             safety_binding: false,
         })
     }
@@ -1054,6 +1126,15 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
 
     /// Completes cross-record policy and count validation.
     pub fn finish(self) -> Result<ConfigurationSummary, ConfigurationError> {
+        self.finish_with_profile().map(|(summary, _)| summary)
+    }
+
+    /// Completes validation while retaining the exact executable resource and
+    /// cycle-timing profile. Both cores derive this from the same canonical
+    /// bytes; only the real-time owner may later use it to construct outputs.
+    pub fn finish_with_profile(
+        self,
+    ) -> Result<(ConfigurationSummary, RealtimeConfigurationProfile), ConfigurationError> {
         if self.seen_records != self.header.record_count
             || self.realtime_records != self.header.realtime_record_count
         {
@@ -1061,15 +1142,20 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         }
         let mut stepper_axes = 0_u8;
         let mut foc_axes = 0_u8;
-        for axis in self.axes {
+        let mut profile = RealtimeConfigurationProfile::EMPTY;
+        for (instance, axis) in self.axes.into_iter().enumerate() {
             let has_step = axis.binding_mask & role_bit(BindingRole::AxisStep) != 0;
             let has_foc = axis.binding_mask & role_bit(BindingRole::FocPhaseU) != 0
                 || axis.binding_mask & role_bit(BindingRole::FocPhaseV) != 0
                 || axis.binding_mask & role_bit(BindingRole::FocPhaseW) != 0;
             if has_step {
-                let bindings = role_bit(BindingRole::AxisStep)
-                    | role_bit(BindingRole::AxisDirection)
-                    | role_bit(BindingRole::AxisEnable);
+                if instance >= MAX_EXECUTABLE_STEPPER_AXES {
+                    return Err(ConfigurationError::AxisCount);
+                }
+                let required_bindings =
+                    role_bit(BindingRole::AxisStep) | role_bit(BindingRole::AxisDirection);
+                let has_enable = axis.binding_mask & role_bit(BindingRole::AxisEnable) != 0;
+                let has_disable = axis.binding_mask & role_bit(BindingRole::AxisDisable) != 0;
                 let scalars = fact_bit(ScalarFact::AxisFullStepsPerTurn)
                     | fact_bit(ScalarFact::AxisMicrosteps)
                     | fact_bit(ScalarFact::AxisMotorTurnsPerOutputTurn)
@@ -1080,10 +1166,35 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     | fact_bit(ScalarFact::AxisVelocityLimitMetresPerSecond)
                     | fact_bit(ScalarFact::AxisAccelerationLimitMetresPerSecondSquared)
                     | fact_bit(ScalarFact::AxisJerkLimitMetresPerSecondCubed);
-                if axis.binding_mask & bindings != bindings || axis.scalar_mask & scalars != scalars
+                if axis.binding_mask & required_bindings != required_bindings
+                    || has_enable == has_disable
+                    || axis.scalar_mask & scalars != scalars
                 {
                     return Err(ConfigurationError::IncompleteAxis);
                 }
+                let retained = self.steppers[instance];
+                let step = retained.step.ok_or(ConfigurationError::IncompleteAxis)?;
+                let direction = retained
+                    .direction
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let driver_control = retained
+                    .driver_control
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let driver_control_action = retained.driver_control_action;
+                if direction.minimum_active_cycles == 0
+                    || direction.minimum_inactive_cycles == 0
+                    || driver_control.minimum_active_cycles == 0
+                    || driver_control.minimum_inactive_cycles == 0
+                {
+                    return Err(ConfigurationError::Timing);
+                }
+                profile.stepper_axes[instance] = Some(StepperAxisProfile {
+                    instance: u16::try_from(instance).map_err(|_| ConfigurationError::AxisCount)?,
+                    step,
+                    direction,
+                    driver_control,
+                    driver_control_action,
+                });
                 stepper_axes = stepper_axes
                     .checked_add(1)
                     .ok_or(ConfigurationError::AxisCount)?;
@@ -1137,7 +1248,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             flags: self.header.flags,
         };
         summary.validate()?;
-        Ok(summary)
+        Ok((summary, profile))
     }
 
     fn validate_binding(&mut self, binding: ResourceBinding) -> Result<(), ConfigurationError> {
@@ -1174,7 +1285,24 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         self.claimed_len += 1;
 
         if binding.role.axis_role() {
-            self.axes[usize::from(binding.instance)].binding_mask |= role_bit(binding.role);
+            let instance = usize::from(binding.instance);
+            let axis = &mut self.axes[instance];
+            axis.binding_mask |= role_bit(binding.role);
+            if let Some(stepper) = self.steppers.get_mut(instance) {
+                match binding.role {
+                    BindingRole::AxisStep => stepper.step = Some(binding),
+                    BindingRole::AxisDirection => stepper.direction = Some(binding),
+                    BindingRole::AxisEnable => {
+                        stepper.driver_control = Some(binding);
+                        stepper.driver_control_action = AxisDriverControl::Enable;
+                    }
+                    BindingRole::AxisDisable => {
+                        stepper.driver_control = Some(binding);
+                        stepper.driver_control_action = AxisDriverControl::Disable;
+                    }
+                    _ => {}
+                }
+            }
         }
         if matches!(
             binding.role,
@@ -1303,6 +1431,14 @@ pub struct ConfigurationIdentity {
     pub byte_len: u32,
     pub capability_digest: Digest,
     pub summary: ConfigurationSummary,
+}
+
+/// Core-1-only executable facts paired with the compact identity of the exact
+/// document from which they were independently derived.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RealtimeConfiguration {
+    pub identity: ConfigurationIdentity,
+    pub profile: RealtimeConfigurationProfile,
 }
 
 /// Fixed command prefix before an optional core-to-core configuration byte chunk.
@@ -2297,8 +2433,8 @@ pub struct RealtimeConfigurationService<'a, const MAX_BINDINGS: usize> {
     digest: Digest,
     total_bytes: u32,
     consumed_bytes: u32,
-    candidate: Option<ConfigurationIdentity>,
-    active: Option<ConfigurationIdentity>,
+    candidate: Option<RealtimeConfiguration>,
+    active: Option<RealtimeConfiguration>,
     active_authorized: bool,
     cleared: bool,
     last_fault: ConfigurationFaultCode,
@@ -2385,9 +2521,9 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 let Some(validator) = self.receiving.take() else {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 };
-                match validator.finish() {
-                    Ok(identity) => {
-                        self.candidate = Some(identity);
+                match validator.finish_with_profile() {
+                    Ok((identity, profile)) => {
+                        self.candidate = Some(RealtimeConfiguration { identity, profile });
                         self.last_fault = ConfigurationFaultCode::None;
                         self.report()
                     }
@@ -2401,7 +2537,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 if !self.matches(command)
                     || self
                         .candidate
-                        .is_none_or(|candidate| !identity_matches(candidate, command))
+                        .as_ref()
+                        .is_none_or(|candidate| !identity_matches(candidate.identity, command))
                 {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
@@ -2415,7 +2552,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             CoreConfigurationAction::Clear => {
                 if self
                     .active
-                    .is_some_and(|active| !identity_matches(active, command))
+                    .as_ref()
+                    .is_some_and(|active| !identity_matches(active.identity, command))
                 {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
@@ -2456,7 +2594,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             CoreConfigurationAction::Authorize => {
                 if self
                     .active
-                    .is_none_or(|active| !identity_matches(active, command))
+                    .as_ref()
+                    .is_none_or(|active| !identity_matches(active.identity, command))
                     || self.candidate.is_some()
                     || self.receiving.is_some()
                 {
@@ -2471,16 +2610,16 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
 
     /// Latest state suitable for periodic replay after lossy telemetry.
     pub fn report(&self) -> RealtimeConfigurationReport {
-        if let Some(candidate) = self.candidate {
+        if let Some(candidate) = self.candidate.as_ref() {
             return identity_report(
                 RealtimeConfigurationState::CandidateValid,
                 self.transaction_id,
-                candidate,
-                self.active,
+                candidate.identity,
+                self.active_identity(),
                 self.active_authorized,
             );
         }
-        let (active_digest, active_bytes) = active_fields(self.active);
+        let (active_digest, active_bytes) = active_fields(self.active_identity());
         if self.cleared {
             return RealtimeConfigurationReport {
                 state: RealtimeConfigurationState::Cleared,
@@ -2523,12 +2662,12 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 active_authorized: self.active_authorized,
             };
         }
-        if let Some(active) = self.active {
+        if let Some(active) = self.active.as_ref() {
             return identity_report(
                 RealtimeConfigurationState::Active,
                 self.transaction_id,
-                active,
-                Some(active),
+                active.identity,
+                Some(active.identity),
                 self.active_authorized,
             );
         }
@@ -2536,23 +2675,37 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
     }
 
     /// Exact identity independently active on core 1.
-    pub const fn active_identity(&self) -> Option<ConfigurationIdentity> {
+    pub fn active_identity(&self) -> Option<ConfigurationIdentity> {
         self.active
+            .as_ref()
+            .map(|configuration| configuration.identity)
     }
 
     /// Active identity admitted to other core-1 actors only after durable
     /// service-core confirmation.
-    pub const fn authorized_identity(&self) -> Option<ConfigurationIdentity> {
+    pub fn authorized_identity(&self) -> Option<ConfigurationIdentity> {
         if self.active_authorized {
-            self.active
+            self.active_identity()
+        } else {
+            None
+        }
+    }
+
+    /// Active executable profile admitted to other core-1 actors only after
+    /// durable service-core confirmation of the paired exact identity.
+    pub fn authorized_configuration(&self) -> Option<&RealtimeConfiguration> {
+        if self.active_authorized {
+            self.active.as_ref()
         } else {
             None
         }
     }
 
     /// Exact independently validated but inactive candidate.
-    pub const fn candidate_identity(&self) -> Option<ConfigurationIdentity> {
+    pub fn candidate_identity(&self) -> Option<ConfigurationIdentity> {
         self.candidate
+            .as_ref()
+            .map(|configuration| configuration.identity)
     }
 
     fn matches(&self, command: CoreConfigurationCommand) -> bool {
@@ -2582,8 +2735,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             consumed_bytes: self.consumed_bytes,
             summary: None,
             fault,
-            active_digest: active_fields(self.active).0,
-            active_bytes: active_fields(self.active).1,
+            active_digest: active_fields(self.active_identity()).0,
+            active_bytes: active_fields(self.active_identity()).1,
             active_authorized: self.active_authorized,
         }
     }
@@ -2721,6 +2874,14 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
 
     /// Requires exact completion, semantic validity, and final SHA-256 identity.
     pub fn finish(self) -> Result<ConfigurationIdentity, ConfigurationError> {
+        self.finish_with_profile().map(|(identity, _)| identity)
+    }
+
+    /// Requires the same exact completion as [`Self::finish`] while retaining
+    /// the executable profile for its sole real-time owner.
+    pub fn finish_with_profile(
+        self,
+    ) -> Result<(ConfigurationIdentity, RealtimeConfigurationProfile), ConfigurationError> {
         if self.consumed != self.expected_bytes
             || self.header_used != CONFIGURATION_HEADER_BYTES
             || self.record_used != 0
@@ -2729,7 +2890,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
         }
         let validator = self.validator.ok_or(ConfigurationError::Length)?;
         let capability_digest = validator.header.capability_digest;
-        let summary = validator.finish()?;
+        let (summary, realtime_profile) = validator.finish_with_profile()?;
         let hash = self.hasher.finalize();
         let mut digest = [0_u8; 32];
         digest.copy_from_slice(&hash);
@@ -2737,12 +2898,15 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
         if digest != self.expected_digest {
             return Err(ConfigurationError::ConfigurationIdentity);
         }
-        Ok(ConfigurationIdentity {
-            digest,
-            byte_len: self.expected_bytes,
-            capability_digest,
-            summary,
-        })
+        Ok((
+            ConfigurationIdentity {
+                digest,
+                byte_len: self.expected_bytes,
+                capability_digest,
+                summary,
+            },
+            realtime_profile,
+        ))
     }
 }
 
@@ -3029,6 +3193,7 @@ const fn role_accepts_resource(role: BindingRole, resource: ResourceId) -> bool 
         ),
         BindingRole::AxisDirection
         | BindingRole::AxisEnable
+        | BindingRole::AxisDisable
         | BindingRole::DigitalOutput
         | BindingRole::FocEnable
         | BindingRole::ProcessOutput => matches!(
@@ -3106,9 +3271,9 @@ const fn owner_from_wire(value: u8) -> Option<OwnerDomain> {
     }
 }
 
-const fn role_bit(role: BindingRole) -> u32 {
+const fn role_bit(role: BindingRole) -> u64 {
     let bit = (role as u16).saturating_sub(1);
-    if bit < 32 { 1_u32 << bit } else { 0 }
+    if bit < 64 { 1_u64 << bit } else { 0 }
 }
 
 const fn fact_bit(fact: ScalarFact) -> u32 {
@@ -3292,23 +3457,23 @@ mod tests {
             binding(
                 0,
                 BindingRole::AxisStep,
-                ResourceId::I2sOut { engine: 0, bit: 2 },
+                ResourceId::I2sOut { engine: 0, bit: 1 },
                 SignalPolarity::ActiveHigh,
                 true,
             ),
             binding(
                 0,
                 BindingRole::AxisDirection,
-                ResourceId::I2sOut { engine: 0, bit: 1 },
+                ResourceId::I2sOut { engine: 0, bit: 2 },
                 SignalPolarity::ActiveHigh,
-                false,
+                true,
             ),
             binding(
                 0,
-                BindingRole::AxisEnable,
+                BindingRole::AxisDisable,
                 ResourceId::I2sOut { engine: 0, bit: 0 },
                 SignalPolarity::ActiveHigh,
-                false,
+                true,
             ),
             binding(
                 0,
@@ -3487,12 +3652,78 @@ mod tests {
             for chunk in bytes.chunks(chunk_bytes) {
                 validator.push(chunk).unwrap();
             }
-            let identity = validator.finish().unwrap();
+            let (identity, realtime_profile) = validator.finish_with_profile().unwrap();
             assert_eq!(identity.digest, digest);
             assert_eq!(identity.summary.stepper_axes, 1);
             assert_eq!(identity.summary.foc_axes, 0);
             assert!(identity.summary.safety_binding);
+            let axis = realtime_profile.stepper_axis(0).unwrap();
+            assert_eq!(axis.instance, 0);
+            assert_eq!(axis.step.resource, ResourceId::I2sOut { engine: 0, bit: 1 });
+            assert_eq!(axis.step.minimum_active_cycles, 48);
+            assert_eq!(axis.step.minimum_inactive_cycles, 48);
+            assert_eq!(axis.direction.minimum_active_cycles, 48);
+            assert_eq!(axis.direction.minimum_inactive_cycles, 48);
+            assert_eq!(axis.driver_control.minimum_active_cycles, 48);
+            assert_eq!(axis.driver_control.minimum_inactive_cycles, 48);
+            assert_eq!(axis.driver_control_action, AxisDriverControl::Disable);
+            assert!(realtime_profile.stepper_axis(1).is_none());
         }
+    }
+
+    #[test]
+    fn executable_stepper_profile_requires_direction_and_enable_timing() {
+        let mut records = tinybee_motion_records();
+        for record in &mut records {
+            if let ConfigurationRecord::Binding(binding) = record
+                && binding.role == BindingRole::AxisDirection
+            {
+                binding.minimum_inactive_cycles = 0;
+            }
+        }
+        let (bytes, digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &records,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &board_mks_tinybee::PACKAGE,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::Timing));
+    }
+
+    #[test]
+    fn executable_stepper_profile_rejects_axis_outside_machine_ir_width() {
+        let mut records = tinybee_motion_records();
+        for record in &mut records {
+            match record {
+                ConfigurationRecord::Binding(binding) if binding.role.axis_role() => {
+                    binding.instance = u16::try_from(MAX_EXECUTABLE_STEPPER_AXES).unwrap();
+                }
+                ConfigurationRecord::Scalar(scalar) if scalar.fact.axis_fact() => {
+                    scalar.instance = u16::try_from(MAX_EXECUTABLE_STEPPER_AXES).unwrap();
+                }
+                ConfigurationRecord::Binding(_) | ConfigurationRecord::Scalar(_) => {}
+            }
+        }
+        records.sort_by_key(|record| record.key());
+        let (bytes, digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &records,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &board_mks_tinybee::PACKAGE,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::AxisCount));
     }
 
     #[test]
@@ -3924,6 +4155,7 @@ mod tests {
         assert_eq!(report.state, RealtimeConfigurationState::Active);
         assert_eq!(service.active_identity().unwrap().digest, digest);
         assert!(service.authorized_identity().is_none());
+        assert!(service.authorized_configuration().is_none());
         assert!(!report.active_authorized);
         let report = service.apply(
             CoreConfigurationCommand::authorize(41, digest, total).unwrap(),
@@ -3932,6 +4164,11 @@ mod tests {
         assert_eq!(report.state, RealtimeConfigurationState::Active);
         assert!(report.active_authorized);
         assert_eq!(service.authorized_identity().unwrap().digest, digest);
+        let executable = service.authorized_configuration().unwrap();
+        assert_eq!(executable.identity.digest, digest);
+        let axis = executable.profile.stepper_axis(0).unwrap();
+        assert_eq!(axis.driver_control_action, AxisDriverControl::Disable);
+        assert_eq!(axis.step.resource, ResourceId::I2sOut { engine: 0, bit: 1 });
 
         let rejected = service.apply(
             CoreConfigurationCommand::begin(42, Digest([0x77; 32]), total).unwrap(),
@@ -3943,6 +4180,7 @@ mod tests {
         assert_eq!(rejected.active_bytes, total);
         assert!(rejected.active_authorized);
         assert_eq!(service.active_identity().unwrap().digest, digest);
+        assert!(service.authorized_configuration().is_some());
 
         let wrong_clear = service.apply(
             CoreConfigurationCommand::clear(43, Digest([0x55; 32]), total).unwrap(),
@@ -3958,6 +4196,7 @@ mod tests {
         assert_eq!(cleared.state, RealtimeConfigurationState::Cleared);
         assert!(service.active_identity().is_none());
         assert!(service.authorized_identity().is_none());
+        assert!(service.authorized_configuration().is_none());
         assert_eq!(service.report().state, RealtimeConfigurationState::Cleared);
         let already_empty = service.apply(
             CoreConfigurationCommand::clear(44, digest, total).unwrap(),

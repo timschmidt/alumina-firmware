@@ -8,6 +8,7 @@ members = [
     "crates/alumina-clock",
     "crates/alumina-config",
     "crates/alumina-machine-ir",
+    "crates/alumina-motion",
     "crates/alumina-job",
     "crates/alumina-net",
     "crates/alumina-protocol",
@@ -39,6 +40,7 @@ default-members = [
     "crates/alumina-clock",
     "crates/alumina-config",
     "crates/alumina-machine-ir",
+    "crates/alumina-motion",
     "crates/alumina-job",
     "crates/alumina-net",
     "crates/alumina-protocol",
@@ -67,6 +69,7 @@ alumina-capability = { path = "crates/alumina-capability" }
 alumina-clock = { path = "crates/alumina-clock" }
 alumina-config = { path = "crates/alumina-config" }
 alumina-machine-ir = { path = "crates/alumina-machine-ir" }
+alumina-motion = { path = "crates/alumina-motion" }
 alumina-job = { path = "crates/alumina-job" }
 alumina-net = { path = "crates/alumina-net" }
 alumina-protocol = { path = "crates/alumina-protocol" }

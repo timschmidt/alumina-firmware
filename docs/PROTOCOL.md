@@ -370,6 +370,40 @@ immediately to a latched execution/safety fault rather than driving an output.
 Hold, resume, lease renewal, observed-edge reconciliation, and cached-autonomous
 authorization remain later operations.
 
+## Real-time motion report
+
+The portable executor defines one canonical 128-byte `ALMMOT01` report for the
+future motion telemetry path. It is currently exercised by host and simulator
+tests but is not yet published by the non-armable target images.
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMMOT01` |
+| 8 | 2 | exact report version (`1`) |
+| 10 | 1 | executor state: idle `0`, ready `1`, segment `2`, complete `3`, faulted `4` |
+| 11 | 1 | axis count (`1..=8`) |
+| 12 | 2 | bit 0: next deadline present; all other bits zero |
+| 14 | 2 | reserved zero |
+| 16 | 8 | absolute job epoch in local device cycles |
+| 24 | 8 | next contiguous stream-relative tick |
+| 32 | 8 | exact next local deadline, or zero when absent |
+| 40 | 4 | completed segment count |
+| 44 | 4 | maximum accepted software lateness in cycles |
+| 48 | 8 | deadline-miss count |
+| 56 | 2 | logically enabled axis mask |
+| 58 | 2 | currently high step mask |
+| 60 | 2 | axes with known direction |
+| 62 | 2 | known positive directions |
+| 64 | 64 | eight signed `i64` lattice positions |
+
+Only the segment state carries a next deadline. Bits above the declared axis
+width and positions above it are zero; high steps must be enabled, and positive
+direction bits must also be direction-known. Decoding re-encodes and compares
+the complete value, rejecting alternate or reserved representations. A missed
+edge is never returned to the backend: the executor faults, removes all future
+deadlines, retains current output masks for the immediate fail-safe transaction,
+and increments the miss count.
+
 The 112-byte storage-status body is canonical little-endian:
 
 | Offset | Bytes | Meaning |

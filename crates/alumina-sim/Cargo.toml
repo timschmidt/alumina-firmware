@@ -12,6 +12,7 @@ publish.workspace = true
 alumina-clock.workspace = true
 alumina-job.workspace = true
 alumina-machine-ir.workspace = true
+alumina-motion.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-storage.workspace = true

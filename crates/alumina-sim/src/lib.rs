@@ -860,7 +860,8 @@ mod tests {
         BlockError, BlockValidationLimits, ExecutionBlock, ExecutionSegment, PartitionAssembler,
         StreamId, StreamTick, ValidationLimits,
     };
-    use alumina_protocol::Digest;
+    use alumina_motion::{AxisTiming, MotionPoll, StepperExecutor, StepperTiming};
+    use alumina_protocol::{DeviceCycle, Digest};
     use alumina_runtime::IntercoreBoundary;
     use alumina_storage::media::{CacheMedia, MediaAvailability, MediaId, MediaRegion};
     use alumina_storage::provisioning::{CacheProvisionRequest, ProvisionedCache};
@@ -1117,6 +1118,22 @@ mod tests {
         type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
         let boundary = Box::leak(Box::new(Boundary::new()));
         let (mut service, mut realtime) = boundary.split();
+        let mut motion = StepperExecutor::new(StepperTiming {
+            axes: [AxisTiming {
+                pulse_high_cycles: 1,
+                pulse_low_cycles: 1,
+                direction_setup_cycles: 2,
+                direction_hold_cycles: 2,
+                enable_setup_cycles: 2,
+                enable_hold_cycles: 2,
+                maximum_step_frequency_hz: 100_000,
+            }; 3],
+            device_cycle_hz: 1_000_000,
+            maximum_lateness_cycles: 0,
+        })
+        .unwrap();
+        motion.start_job(DeviceCycle(1_000), [0; 3]).unwrap();
+        let mut emitted_rises = [0_u64; 3];
 
         assert_eq!(
             block_on(prefetch.step(&mut cache, &mut service))
@@ -1143,7 +1160,25 @@ mod tests {
                 loop {
                     match realtime_job.poll(&mut realtime).unwrap() {
                         RealtimePoll::Block(admitted) => {
-                            let _segments: Vec<_> = admitted.segments().unwrap().collect();
+                            for segment in admitted.segments().unwrap() {
+                                motion.load_segment(segment).unwrap();
+                                loop {
+                                    let deadline = motion.next_deadline().unwrap();
+                                    match motion.poll(deadline).unwrap() {
+                                        MotionPoll::Event { event, .. } => {
+                                            for (axis, count) in
+                                                emitted_rises.iter_mut().enumerate()
+                                            {
+                                                *count += u64::from(event.step_high.contains(axis));
+                                            }
+                                        }
+                                        MotionPoll::SegmentComplete(_) => break,
+                                        MotionPoll::Idle | MotionPoll::Future { .. } => {
+                                            panic!("exact-deadline simulator cannot be idle/future")
+                                        }
+                                    }
+                                }
+                            }
                             let complete = admitted.progress().complete;
                             realtime_job.acknowledge(admitted).unwrap();
                             if complete {
@@ -1176,7 +1211,11 @@ mod tests {
         let realtime_progress = realtime_status.completed_progress.unwrap();
         assert_eq!(service_progress, realtime_progress);
         assert_eq!(service_progress.position, [6, -3, 0]);
+        assert_eq!(motion.status().position, service_progress.position);
+        assert_eq!(emitted_rises, [6, 3, 0]);
         assert_eq!(service_progress.end_tick, StreamTick(300));
+        let disable = motion.finish_job(DeviceCycle(1_300)).unwrap();
+        assert_eq!(disable.disable.bits(), 0b011);
         assert_eq!(completion.status.storage_chunks_read, 3);
         assert_eq!(service.work_free_capacity(), 2);
         let status = JobStatusReport {

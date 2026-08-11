@@ -57,6 +57,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — power-cut-safe active selection and explicit clear/abort replay.
 - [`M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md`](M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md)
   — authenticated dual-core validate/activate/durable-commit/authorize wiring.
+- [`M6-EXACT-STEPPER-CORE.md`](M6-EXACT-STEPPER-CORE.md) — exact centered
+  integer step interpolation, configuration-derived electrical timing,
+  complete shifted-image mapping, canonical status, and cached-block simulation.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed

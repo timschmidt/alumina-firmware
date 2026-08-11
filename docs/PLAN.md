@@ -290,6 +290,15 @@ Work:
 - Execute the selected exact-contour → simulator → TinyBee SD → pen/air-cut
   workflow and produce trace/certificate correlation in the UI.
 
+Implementation checkpoint: the allocation-free exact step-event executor,
+configuration-derived role/polarity/timing profile, full TinyBee-style shifted
+image mapper, fixed canonical execution report, and cached-block simulator trace
+are present. Exact count/position, half-tick interpolation, overflow, configured
+rate, pulse/setup/hold, normal disable, deadline-fault, malformed-report, and
+image-integrity tests pass. The hardware serializer, endstop/E-stop sampling,
+bounded hold/stop fallback, arm transition, browser planner, and physical
+workflow remain closed; both first board packages remain non-armable.
+
 Exit gate:
 
 - Captured pulses meet board/machine timing and count requirements at the

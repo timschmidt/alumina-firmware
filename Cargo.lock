@@ -112,6 +112,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-motion"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-config",
+ "alumina-machine-ir",
+ "alumina-protocol",
+]
+
+[[package]]
 name = "alumina-net"
 version = "0.1.0"
 dependencies = [
@@ -173,6 +183,7 @@ dependencies = [
  "alumina-clock",
  "alumina-job",
  "alumina-machine-ir",
+ "alumina-motion",
  "alumina-protocol",
  "alumina-runtime",
  "alumina-storage",
