@@ -437,6 +437,29 @@ pub struct ClockInstantEstimate {
     pub accepted_samples: u32,
 }
 
+/// Conservative browser-time interval obtained by inverting a device-cycle interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClockUiEstimate {
+    /// Boot identity owning every retained causal sample.
+    pub boot_id: BootId,
+    /// Newest heartbeat identity contributing the affine envelope.
+    pub latest_probe_id: u64,
+    /// Earliest device cycle supplied by the observation source.
+    pub earliest_cycle: DeviceCycle,
+    /// Latest device cycle supplied by the observation source.
+    pub latest_cycle: DeviceCycle,
+    /// Earliest possible browser monotonic nanosecond for the observed interval.
+    pub earliest_ui_ns: u64,
+    /// Integer midpoint used only as a representative display value.
+    pub midpoint_ui_ns: u64,
+    /// Latest possible browser monotonic nanosecond for the observed interval.
+    pub latest_ui_ns: u64,
+    /// Maximum distance from the midpoint to either exact interval endpoint.
+    pub uncertainty_ns: u64,
+    /// Number of intersecting causal samples in this estimate.
+    pub accepted_samples: u32,
+}
+
 /// Allocation-free exact interval estimator. It assumes only a bounded rate
 /// drift and causal request/response ordering; it does not assume symmetric
 /// Wi-Fi delay.
@@ -705,6 +728,64 @@ impl ClockEstimator {
         })
     }
 
+    /// Inverts one device-cycle interval into conservative browser time.
+    ///
+    /// `now_ui_ns` is used only to prove that the retained boot-scoped model is
+    /// still fresh and healthy when reconciliation occurs. The observed cycles
+    /// may be in the past. Both endpoints are rounded outward, so a target or
+    /// captured edge inside the affine envelope cannot be excluded by integer
+    /// division.
+    pub fn estimate_ui_for_cycle_interval(
+        &self,
+        now_ui_ns: u64,
+        earliest_cycle: DeviceCycle,
+        latest_cycle: DeviceCycle,
+        maximum_uncertainty_ns: u64,
+    ) -> Result<ClockUiEstimate, ClockEstimateError> {
+        let boot_id = self
+            .boot_id
+            .ok_or(ClockEstimateError::InsufficientSamples)?;
+        if self.accepted_samples < u32::from(self.policy.minimum_samples) {
+            return Err(ClockEstimateError::InsufficientSamples);
+        }
+        if !self.latest_flags.contains(ClockFlags::DEADLINE_HEALTHY) {
+            return Err(ClockEstimateError::Unhealthy);
+        }
+        let age = now_ui_ns
+            .checked_sub(self.latest_ui_receive_ns)
+            .ok_or(ClockEstimateError::UiOrder)?;
+        if age > self.policy.maximum_sample_age_ns {
+            return Err(ClockEstimateError::Stale);
+        }
+        if latest_cycle < earliest_cycle {
+            return Err(ClockEstimateError::Inconsistent);
+        }
+        let earliest_ui_ns = self.earliest_ui_for_cycle(earliest_cycle.0)?;
+        let latest_ui_ns = self.latest_ui_for_cycle(latest_cycle.0)?;
+        if latest_ui_ns < earliest_ui_ns {
+            return Err(ClockEstimateError::Inconsistent);
+        }
+        let width = latest_ui_ns - earliest_ui_ns;
+        let midpoint_ui_ns = earliest_ui_ns
+            .checked_add(width / 2)
+            .ok_or(ClockEstimateError::Arithmetic)?;
+        let uncertainty_ns = (midpoint_ui_ns - earliest_ui_ns).max(latest_ui_ns - midpoint_ui_ns);
+        if uncertainty_ns > maximum_uncertainty_ns {
+            return Err(ClockEstimateError::Uncertainty);
+        }
+        Ok(ClockUiEstimate {
+            boot_id,
+            latest_probe_id: self.latest_probe_id,
+            earliest_cycle,
+            latest_cycle,
+            earliest_ui_ns,
+            midpoint_ui_ns,
+            latest_ui_ns,
+            uncertainty_ns,
+            accepted_samples: self.accepted_samples,
+        })
+    }
+
     /// Number of samples retained in the exact intersection.
     pub const fn accepted_samples(&self) -> u32 {
         self.accepted_samples
@@ -748,6 +829,37 @@ impl ClockEstimator {
         let latest = u64::try_from(div_ceil(high_scaled, denominator))
             .map_err(|_| ClockEstimateError::Range)?;
         Ok((earliest, latest))
+    }
+
+    fn earliest_ui_for_cycle(&self, cycle: u64) -> Result<u64, ClockEstimateError> {
+        let cycle = i128::try_from(
+            u128::from(cycle)
+                .checked_mul(RATE_DENOMINATOR)
+                .ok_or(ClockEstimateError::Arithmetic)?,
+        )
+        .map_err(|_| ClockEstimateError::Arithmetic)?;
+        let rate_high =
+            i128::try_from(self.rate_high).map_err(|_| ClockEstimateError::Arithmetic)?;
+        let numerator = cycle
+            .checked_sub(self.offset_high_scaled)
+            .ok_or(ClockEstimateError::Arithmetic)?;
+        let earliest = div_ceil(numerator, rate_high).max(0);
+        u64::try_from(earliest).map_err(|_| ClockEstimateError::Range)
+    }
+
+    fn latest_ui_for_cycle(&self, cycle: u64) -> Result<u64, ClockEstimateError> {
+        let cycle = i128::try_from(
+            u128::from(cycle)
+                .checked_mul(RATE_DENOMINATOR)
+                .ok_or(ClockEstimateError::Arithmetic)?,
+        )
+        .map_err(|_| ClockEstimateError::Arithmetic)?;
+        let rate_low = i128::try_from(self.rate_low).map_err(|_| ClockEstimateError::Arithmetic)?;
+        let numerator = cycle
+            .checked_sub(self.offset_low_scaled)
+            .ok_or(ClockEstimateError::Arithmetic)?;
+        let latest = div_floor(numerator, rate_low);
+        u64::try_from(latest).map_err(|_| ClockEstimateError::Range)
     }
 }
 
@@ -953,6 +1065,56 @@ mod tests {
         assert!(current.earliest_cycle.0 <= exact_now);
         assert!(current.latest_cycle.0 >= exact_now);
         assert!(current.uncertainty_cycles <= 1_000);
+
+        let observed_cycle = DeviceCycle(exact_now);
+        let inverse = estimator
+            .estimate_ui_for_cycle_interval(
+                2_000_500_000,
+                observed_cycle,
+                observed_cycle,
+                2_000_000,
+            )
+            .unwrap();
+        assert_eq!(inverse.boot_id, BOOT);
+        assert_eq!(inverse.earliest_cycle, observed_cycle);
+        assert_eq!(inverse.latest_cycle, observed_cycle);
+        assert!(inverse.earliest_ui_ns <= current.ui_ns);
+        assert!(current.ui_ns <= inverse.latest_ui_ns);
+        assert!(inverse.uncertainty_ns <= 2_000_000);
+    }
+
+    #[test]
+    fn inverse_cycle_mapping_rejects_reversed_or_overwide_evidence() {
+        let mut estimator = ClockEstimator::new(policy()).unwrap();
+        for (probe, send, receive, transmit, browser_receive) in [
+            (1, 1_000_000_000, 1_050_200, 1_050_250, 1_000_700_000),
+            (2, 2_000_000_000, 2_050_120, 2_050_180, 2_000_500_000),
+        ] {
+            estimator
+                .observe(ClockObservation {
+                    response: response(probe, send, receive, transmit),
+                    ui_receive_ns: browser_receive,
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            estimator.estimate_ui_for_cycle_interval(
+                2_000_500_000,
+                DeviceCycle(2_051_000),
+                DeviceCycle(2_050_000),
+                u64::MAX,
+            ),
+            Err(ClockEstimateError::Inconsistent)
+        );
+        assert_eq!(
+            estimator.estimate_ui_for_cycle_interval(
+                2_000_500_000,
+                DeviceCycle(2_050_000),
+                DeviceCycle(2_051_000),
+                1,
+            ),
+            Err(ClockEstimateError::Uncertainty)
+        );
     }
 
     #[test]

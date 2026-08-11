@@ -28,7 +28,10 @@ use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
-use alumina_job::{JobScheduleAction, JobScheduleReport, RealtimeJobReport, RealtimeJobState};
+use alumina_job::{
+    JobScheduleAction, JobScheduleReport, JobScheduleState, JobStartObservation,
+    JobStartObservationSource, RealtimeJobReport, RealtimeJobState,
+};
 use alumina_protocol::{DeviceCycle, Digest, FrameKind};
 use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
@@ -1009,6 +1012,20 @@ fn service_realtime_motion(
                 return Ok(false);
             }
             MotionAction::OutputCommitted => {}
+            MotionAction::StartOutputCommitted(committed) => {
+                let observation = JobStartObservation {
+                    source: JobStartObservationSource::PeripheralLatch,
+                    output_token: committed.token.value(),
+                    scheduled_cycle: committed.update.at,
+                    earliest_cycle: committed.committed_at,
+                    latest_cycle: committed.committed_at,
+                };
+                if jobs.record_start_observation(endpoint, now, observation)?
+                    == JobScheduleState::Faulted
+                {
+                    return Err(());
+                }
+            }
             MotionAction::WaitingForHardware => return Ok(false),
             MotionAction::BlockComplete(admitted) => {
                 match jobs.acknowledge_executed(endpoint, now, admitted)? {

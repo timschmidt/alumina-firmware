@@ -4,9 +4,9 @@ use alumina_clock::BootId;
 use alumina_job::{
     AdmittedBlock, CoreJobCommand, JobCancelRequest, JobCommitRequest, JobDescriptor, JobError,
     JobNetworkPolicy, JobScheduleAction, JobScheduleAdmission, JobScheduleReference,
-    JobScheduleReferenceAction, JobScheduleReport, JobScheduleState, JobStatusReport, RealtimeJob,
-    RealtimeJobReport, RealtimeJobState, RealtimePoll, ServiceJobReport, ServiceJobState,
-    ServicePrefetch,
+    JobScheduleReferenceAction, JobScheduleReport, JobScheduleState, JobStartObservation,
+    JobStatusReport, RealtimeJob, RealtimeJobReport, RealtimeJobState, RealtimePoll,
+    ServiceJobReport, ServiceJobState, ServicePrefetch,
 };
 use alumina_protocol::{DeviceCycle, Digest, FrameKind, Operation, StatusCode};
 use alumina_runtime::{DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame};
@@ -991,6 +991,24 @@ impl RealtimeJobService {
         self.publish_report(endpoint, now)
     }
 
+    /// Retains and publishes the first backend-observed output latch for this start.
+    pub fn record_start_observation(
+        &mut self,
+        endpoint: &mut DefaultRealtimeEndpoint,
+        now: DeviceCycle,
+        observation: JobStartObservation,
+    ) -> Result<JobScheduleState, ()> {
+        let state = self
+            .schedule
+            .as_mut()
+            .ok_or(())?
+            .record_start_observation(observation)
+            .map_err(|_| ())?
+            .state;
+        self.publish_report(endpoint, now)?;
+        Ok(state)
+    }
+
     /// Current local schedule lifecycle for safety-state reconciliation.
     pub fn schedule_state(&self) -> Option<JobScheduleState> {
         self.schedule.map(|schedule| schedule.report().state)
@@ -1179,6 +1197,15 @@ fn schedule_matches_commit(report: JobScheduleReport, commit: JobCommitRequest) 
 fn schedule_report_advances(previous: JobScheduleReport, next: JobScheduleReport) -> bool {
     if previous == next {
         return true;
+    }
+    if previous.state == JobScheduleState::Running
+        && next.state == JobScheduleState::Running
+        && previous.start_observation.is_none()
+        && next.start_observation.is_some()
+    {
+        let mut without_observation = next;
+        without_observation.start_observation = None;
+        return without_observation == previous;
     }
     match previous.state {
         JobScheduleState::Prepared => next.state != JobScheduleState::Prepared,

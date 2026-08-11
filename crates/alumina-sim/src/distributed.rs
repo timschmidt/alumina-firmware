@@ -149,7 +149,8 @@ mod tests {
     use alumina_job::{
         JOB_COMMIT_ID_BYTES, JobCommitId, JobCommitRequest, JobDescriptor, JobNetworkPolicy,
         JobScheduleAction, JobScheduleAdmission, JobScheduleError, JobScheduleReference,
-        JobScheduleReferenceAction, JobScheduleState, PreparedJobSchedule,
+        JobScheduleReferenceAction, JobScheduleState, JobStartObservation,
+        JobStartObservationSource, PreparedJobSchedule,
     };
     use alumina_machine_ir::{
         BlockValidationLimits, EXECUTION_BLOCK_BYTES, StreamId, StreamTick, ValidationLimits,
@@ -383,6 +384,34 @@ mod tests {
             schedule_b.advance(commit_b.local_start_cycle),
             JobScheduleAction::Start { .. }
         ));
+        let observed_a = JobStartObservation {
+            source: JobStartObservationSource::SimulatedLatch,
+            output_token: 1,
+            scheduled_cycle: commit_a.local_start_cycle,
+            earliest_cycle: commit_a.local_start_cycle,
+            latest_cycle: commit_a.local_start_cycle,
+        };
+        let observed_b = JobStartObservation {
+            output_token: 2,
+            scheduled_cycle: commit_b.local_start_cycle,
+            earliest_cycle: commit_b.local_start_cycle,
+            latest_cycle: commit_b.local_start_cycle,
+            ..observed_a
+        };
+        assert_eq!(
+            schedule_a
+                .record_start_observation(observed_a)
+                .unwrap()
+                .start_observation,
+            Some(observed_a)
+        );
+        assert_eq!(
+            schedule_b
+                .record_start_observation(observed_b)
+                .unwrap()
+                .start_observation,
+            Some(observed_b)
+        );
 
         let actual_start_a = clock_a
             .ui_ns_at_or_after_cycle(commit_a.local_start_cycle)

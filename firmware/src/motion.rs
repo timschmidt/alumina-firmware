@@ -3,7 +3,8 @@
 use alumina_config::RealtimeConfiguration;
 use alumina_job::{AdmittedBlock, JobDescriptor};
 use alumina_motion::{
-    ExecutorState, ScheduledShiftPlan, ScheduledShiftedStepper, StepperExecutionProfile,
+    CommittedShiftOutput, ExecutorState, ScheduledShiftPlan, ScheduledShiftedStepper,
+    StepperExecutionProfile,
 };
 use alumina_protocol::{DeviceCycle, Digest};
 use embassy_time::TICK_HZ;
@@ -26,9 +27,13 @@ struct PipelinePlan {
 )]
 pub enum MotionAction {
     Idle,
-    Future { at: DeviceCycle },
+    Future {
+        at: DeviceCycle,
+    },
     WaitingForHardware,
     OutputCommitted,
+    /// First job-owned complete image physically committed at the start epoch.
+    StartOutputCommitted(CommittedShiftOutput),
     BlockComplete(OwnedBlock),
     JobComplete,
 }
@@ -58,6 +63,7 @@ pub struct MotionService {
     finish_requested: bool,
     finish_preplanned: bool,
     finish_committed: bool,
+    start_observation_recorded: bool,
 }
 
 impl MotionService {
@@ -75,6 +81,7 @@ impl MotionService {
             finish_requested: false,
             finish_preplanned: false,
             finish_committed: false,
+            start_observation_recorded: false,
         }
     }
 
@@ -96,6 +103,7 @@ impl MotionService {
         self.finish_requested = false;
         self.finish_preplanned = false;
         self.finish_committed = false;
+        self.start_observation_recorded = false;
         let summary = configuration.identity.summary;
         if summary.stepper_axes == 0 {
             self.configuration_digest = configuration.identity.digest;
@@ -137,6 +145,7 @@ impl MotionService {
         self.finish_requested = false;
         self.finish_preplanned = false;
         self.finish_committed = false;
+        self.start_observation_recorded = false;
     }
 
     /// Whether the selected package and active mapping can enter arm authority.
@@ -229,6 +238,7 @@ impl MotionService {
         self.finish_requested = false;
         self.finish_preplanned = finish_preplanned;
         self.finish_committed = false;
+        self.start_observation_recorded = false;
         Ok(())
     }
 
@@ -287,19 +297,30 @@ impl MotionService {
             self.finish_requested = false;
             self.finish_preplanned = false;
             self.finish_committed = false;
+            self.start_observation_recorded = false;
             return Ok(MotionAction::JobComplete);
         }
         if let Some((token, committed_at)) = resources
             .take_motion_commit()
             .map_err(|_| MotionServiceError::Output)?
         {
-            runner
+            let committed = runner
                 .commit_output(token, committed_at)
                 .map_err(|_| MotionServiceError::Commit)?;
+            let action = if !self.start_observation_recorded {
+                let epoch = self.primed_epoch.ok_or(MotionServiceError::State)?;
+                if committed.update.at != epoch {
+                    return Err(MotionServiceError::Commit);
+                }
+                self.start_observation_recorded = true;
+                MotionAction::StartOutputCommitted(committed)
+            } else {
+                MotionAction::OutputCommitted
+            };
             if runner.take_job_complete() {
                 self.finish_committed = true;
             }
-            return Ok(MotionAction::OutputCommitted);
+            return Ok(action);
         }
         let mut known_writable_horizon = None;
         if self.final_block_planned && !self.finish_preplanned && runner.block_completion_planned()
@@ -446,6 +467,7 @@ impl MotionService {
         self.finish_requested = false;
         self.finish_preplanned = false;
         self.finish_committed = false;
+        self.start_observation_recorded = false;
         if selected::motion_shift_contract().map(|contract| contract.safe_image)
             != Some(update.image)
         {

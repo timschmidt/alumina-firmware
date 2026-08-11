@@ -11,14 +11,16 @@ pub const JOB_COMMIT_WIRE_BYTES: usize = 240;
 /// Exact authenticated `JobConfirm`/`JobAbort` reference body.
 pub const JOB_SCHEDULE_REFERENCE_WIRE_BYTES: usize = 88;
 /// Exact schedule section appended to combined job status.
-pub const JOB_SCHEDULE_REPORT_WIRE_BYTES: usize = 64;
+pub const JOB_SCHEDULE_REPORT_WIRE_BYTES: usize = 96;
 /// Nonzero UI-selected commit identity bytes.
 pub const JOB_COMMIT_ID_BYTES: usize = 16;
 
 const COMMIT_MAGIC: [u8; 8] = *b"ALMJCOM2";
 const REFERENCE_MAGIC: [u8; 8] = *b"ALMJREF2";
-const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH2";
-const SCHEDULE_VERSION: u16 = 2;
+const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH3";
+const COMMIT_VERSION: u16 = 2;
+const REFERENCE_VERSION: u16 = 2;
+const REPORT_VERSION: u16 = 3;
 const PREPARED_TOKEN_DOMAIN: [u8; 16] = *b"ALM-PREPARED-V2\0";
 const REFERENCE_CONFIRM: u8 = 1;
 const REFERENCE_ABORT: u8 = 2;
@@ -127,7 +129,7 @@ impl JobCommitRequest {
         self.validate()?;
         let mut encoded = [0_u8; JOB_COMMIT_WIRE_BYTES];
         encoded[0..8].copy_from_slice(&COMMIT_MAGIC);
-        encoded[8..10].copy_from_slice(&SCHEDULE_VERSION.to_le_bytes());
+        encoded[8..10].copy_from_slice(&COMMIT_VERSION.to_le_bytes());
         encoded[10] = self.policy as u8;
         // Bytes 11..16 are reserved zero.
         encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
@@ -155,7 +157,7 @@ impl JobCommitRequest {
         if encoded[0..8] != COMMIT_MAGIC {
             return Err(JobScheduleWireError::Magic);
         }
-        if read_u16(encoded, 8) != SCHEDULE_VERSION {
+        if read_u16(encoded, 8) != COMMIT_VERSION {
             return Err(JobScheduleWireError::Version);
         }
         if encoded[11..16].iter().any(|byte| *byte != 0) {
@@ -279,7 +281,7 @@ impl JobScheduleReference {
         self.validate()?;
         let mut encoded = [0_u8; JOB_SCHEDULE_REFERENCE_WIRE_BYTES];
         encoded[0..8].copy_from_slice(&REFERENCE_MAGIC);
-        encoded[8..10].copy_from_slice(&SCHEDULE_VERSION.to_le_bytes());
+        encoded[8..10].copy_from_slice(&REFERENCE_VERSION.to_le_bytes());
         encoded[10] = self.action as u8;
         // Bytes 11..16 are reserved zero.
         encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
@@ -296,7 +298,7 @@ impl JobScheduleReference {
         if encoded[0..8] != REFERENCE_MAGIC {
             return Err(JobScheduleWireError::Magic);
         }
-        if read_u16(encoded, 8) != SCHEDULE_VERSION {
+        if read_u16(encoded, 8) != REFERENCE_VERSION {
             return Err(JobScheduleWireError::Version);
         }
         if encoded[11..16].iter().any(|byte| *byte != 0) {
@@ -380,6 +382,8 @@ pub enum JobScheduleFault {
     LeaseExpired = 2,
     Execution = 3,
     SafetyStop = 4,
+    /// The first backend-observed output edge conflicted with its start certificate.
+    StartObservation = 5,
 }
 
 impl JobScheduleFault {
@@ -390,8 +394,66 @@ impl JobScheduleFault {
             2 => Some(Self::LeaseExpired),
             3 => Some(Self::Execution),
             4 => Some(Self::SafetyStop),
+            5 => Some(Self::StartObservation),
             _ => None,
         }
+    }
+}
+
+/// Authority that produced one bounded start-edge observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum JobStartObservationSource {
+    /// Deterministic bit-level simulator latch; never physical evidence.
+    SimulatedLatch = 1,
+    /// Board backend observation of the physical output latch domain.
+    PeripheralLatch = 2,
+    /// Software bracketing around a peripheral launch call; not a latch claim.
+    SoftwareBracket = 3,
+}
+
+impl JobStartObservationSource {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::SimulatedLatch),
+            2 => Some(Self::PeripheralLatch),
+            3 => Some(Self::SoftwareBracket),
+            _ => None,
+        }
+    }
+}
+
+/// Canonical evidence for the first job-owned complete-image output at start.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct JobStartObservation {
+    /// Explicit simulator, peripheral, or software authority.
+    pub source: JobStartObservationSource,
+    /// Nonzero output-owner correlation token.
+    pub output_token: u32,
+    /// Exact cycle at which the first output was scheduled to latch.
+    pub scheduled_cycle: DeviceCycle,
+    /// Conservative lower cycle bound reported by the observation source.
+    pub earliest_cycle: DeviceCycle,
+    /// Conservative upper cycle bound reported by the observation source.
+    pub latest_cycle: DeviceCycle,
+}
+
+impl JobStartObservation {
+    fn validate(self) -> Result<(), JobScheduleWireError> {
+        if self.output_token == 0
+            || self.earliest_cycle < self.scheduled_cycle
+            || self.latest_cycle < self.earliest_cycle
+        {
+            return Err(JobScheduleWireError::Observation);
+        }
+        if matches!(
+            self.source,
+            JobStartObservationSource::SimulatedLatch | JobStartObservationSource::PeripheralLatch
+        ) && self.earliest_cycle != self.latest_cycle
+        {
+            return Err(JobScheduleWireError::Observation);
+        }
+        Ok(())
     }
 }
 
@@ -443,6 +505,7 @@ pub struct PreparedJobSchedule {
     fault: JobScheduleFault,
     commit: Option<JobCommitRequest>,
     start_emitted: bool,
+    start_observation: Option<JobStartObservation>,
 }
 
 impl PreparedJobSchedule {
@@ -461,6 +524,7 @@ impl PreparedJobSchedule {
             fault: JobScheduleFault::None,
             commit: None,
             start_emitted: false,
+            start_observation: None,
         })
     }
 
@@ -658,9 +722,43 @@ impl PreparedJobSchedule {
         Ok(self.report())
     }
 
+    /// Records the first job-owned output latch after start authority emitted.
+    ///
+    /// A valid observation is retained even when its latest bound exceeds the
+    /// installed synchronization tolerance. That violation changes the
+    /// schedule to `Faulted/StartObservation` so telemetry preserves the
+    /// evidence that caused the fail-closed outcome.
+    pub fn record_start_observation(
+        &mut self,
+        observation: JobStartObservation,
+    ) -> Result<JobScheduleReport, JobScheduleError> {
+        if let Some(existing) = self.start_observation {
+            return if existing == observation {
+                Ok(self.report())
+            } else {
+                Err(JobScheduleError::Conflict)
+            };
+        }
+        if self.state != JobScheduleState::Running || !self.start_emitted {
+            return Err(JobScheduleError::State);
+        }
+        observation.validate().map_err(JobScheduleError::Wire)?;
+        let commit = self.commit.ok_or(JobScheduleError::State)?;
+        if observation.scheduled_cycle != commit.local_start_cycle {
+            return Err(JobScheduleError::Identity);
+        }
+        self.start_observation = Some(observation);
+        let lateness = observation.latest_cycle.0 - observation.scheduled_cycle.0;
+        if lateness > commit.required_sync_tolerance_cycles {
+            self.state = JobScheduleState::Faulted;
+            self.fault = JobScheduleFault::StartObservation;
+        }
+        Ok(self.report())
+    }
+
     /// Marks exact terminal execution before the finite lease expires.
     pub fn complete(&mut self, now: DeviceCycle) -> Result<JobScheduleReport, JobScheduleError> {
-        if self.state != JobScheduleState::Running {
+        if self.state != JobScheduleState::Running || self.start_observation.is_none() {
             return Err(JobScheduleError::State);
         }
         let commit = self.commit.ok_or(JobScheduleError::State)?;
@@ -730,6 +828,7 @@ impl PreparedJobSchedule {
             policy,
             prepared_token,
             start_emitted: self.start_emitted,
+            start_observation: self.start_observation,
             local_start_cycle: DeviceCycle(start),
             confirm_deadline_cycle: DeviceCycle(confirm),
             abort_guard_cycle: DeviceCycle(abort),
@@ -777,6 +876,8 @@ pub struct JobScheduleReport {
     /// Present only before commit; this is the browser's boot-bound prepare receipt.
     pub prepared_token: Option<PreparedJobToken>,
     pub start_emitted: bool,
+    /// First job-owned output latch evidence, absent until the backend reports it.
+    pub start_observation: Option<JobStartObservation>,
     pub local_start_cycle: DeviceCycle,
     pub confirm_deadline_cycle: DeviceCycle,
     pub abort_guard_cycle: DeviceCycle,
@@ -789,7 +890,7 @@ impl JobScheduleReport {
         self.validate()?;
         let mut encoded = [0_u8; JOB_SCHEDULE_REPORT_WIRE_BYTES];
         encoded[0..8].copy_from_slice(&REPORT_MAGIC);
-        encoded[8..10].copy_from_slice(&SCHEDULE_VERSION.to_le_bytes());
+        encoded[8..10].copy_from_slice(&REPORT_VERSION.to_le_bytes());
         encoded[10] = self.state as u8;
         encoded[11] = self.fault as u8;
         let mut flags = 0_u16;
@@ -815,6 +916,15 @@ impl JobScheduleReport {
             encoded[40..48].copy_from_slice(&self.lease_expiry_cycle.0.to_le_bytes());
             encoded[48..64].copy_from_slice(&self.commit_id);
         }
+        if let Some(observation) = self.start_observation {
+            observation.validate()?;
+            encoded[64] = observation.source as u8;
+            // Bytes 65..68 remain reserved zero.
+            encoded[68..72].copy_from_slice(&observation.output_token.to_le_bytes());
+            encoded[72..80].copy_from_slice(&observation.scheduled_cycle.0.to_le_bytes());
+            encoded[80..88].copy_from_slice(&observation.earliest_cycle.0.to_le_bytes());
+            encoded[88..96].copy_from_slice(&observation.latest_cycle.0.to_le_bytes());
+        }
         Ok(encoded)
     }
 
@@ -825,7 +935,7 @@ impl JobScheduleReport {
         if encoded[0..8] != REPORT_MAGIC {
             return Err(JobScheduleWireError::Magic);
         }
-        if read_u16(encoded, 8) != SCHEDULE_VERSION {
+        if read_u16(encoded, 8) != REPORT_VERSION {
             return Err(JobScheduleWireError::Version);
         }
         if encoded[14..16].iter().any(|byte| *byte != 0) {
@@ -887,6 +997,24 @@ impl JobScheduleReport {
             policy,
             prepared_token,
             start_emitted: flags & REPORT_FLAG_START_EMITTED != 0,
+            start_observation: if encoded[64] == 0 {
+                if encoded[65..96].iter().any(|byte| *byte != 0) {
+                    return Err(JobScheduleWireError::Reserved);
+                }
+                None
+            } else {
+                if encoded[65..68].iter().any(|byte| *byte != 0) {
+                    return Err(JobScheduleWireError::Reserved);
+                }
+                Some(JobStartObservation {
+                    source: JobStartObservationSource::from_wire(encoded[64])
+                        .ok_or(JobScheduleWireError::Observation)?,
+                    output_token: read_u32(encoded, 68),
+                    scheduled_cycle: DeviceCycle(read_u64(encoded, 72)),
+                    earliest_cycle: DeviceCycle(read_u64(encoded, 80)),
+                    latest_cycle: DeviceCycle(read_u64(encoded, 88)),
+                })
+            },
             local_start_cycle,
             confirm_deadline_cycle,
             abort_guard_cycle,
@@ -911,6 +1039,7 @@ impl JobScheduleReport {
             if !valid_state
                 || self.prepared_token.is_none()
                 || self.start_emitted
+                || self.start_observation.is_some()
                 || self.local_start_cycle.0 != 0
                 || self.confirm_deadline_cycle.0 != 0
                 || self.abort_guard_cycle.0 != 0
@@ -926,6 +1055,12 @@ impl JobScheduleReport {
         }
         if self.prepared_token.is_some() {
             return Err(JobScheduleWireError::StateShape);
+        }
+        if let Some(observation) = self.start_observation {
+            observation.validate()?;
+            if !self.start_emitted || observation.scheduled_cycle != self.local_start_cycle {
+                return Err(JobScheduleWireError::StateShape);
+            }
         }
         if !matches!(
             self.state,
@@ -954,7 +1089,9 @@ impl JobScheduleReport {
         ) || self.state == JobScheduleState::Faulted
             && matches!(
                 self.fault,
-                JobScheduleFault::LeaseExpired | JobScheduleFault::Execution
+                JobScheduleFault::LeaseExpired
+                    | JobScheduleFault::Execution
+                    | JobScheduleFault::StartObservation
             );
         if self.fault != JobScheduleFault::SafetyStop && self.start_emitted != start_required {
             return Err(JobScheduleWireError::StateShape);
@@ -963,6 +1100,11 @@ impl JobScheduleReport {
             return Err(JobScheduleWireError::StateShape);
         }
         if self.state != JobScheduleState::Faulted && self.fault != JobScheduleFault::None {
+            return Err(JobScheduleWireError::StateShape);
+        }
+        if self.state == JobScheduleState::Complete && self.start_observation.is_none()
+            || self.fault == JobScheduleFault::StartObservation && self.start_observation.is_none()
+        {
             return Err(JobScheduleWireError::StateShape);
         }
         Ok(())
@@ -990,6 +1132,7 @@ pub enum JobScheduleWireError {
     State,
     Fault,
     StateShape,
+    Observation,
     Descriptor(JobDescriptorWireError),
 }
 
@@ -1018,6 +1161,15 @@ const fn bytes_nonzero<const N: usize>(bytes: &[u8; N]) -> bool {
 
 const fn read_u16(encoded: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([encoded[offset], encoded[offset + 1]])
+}
+
+const fn read_u32(encoded: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        encoded[offset],
+        encoded[offset + 1],
+        encoded[offset + 2],
+        encoded[offset + 3],
+    ])
 }
 
 const fn read_u64(encoded: &[u8], offset: usize) -> u64 {
@@ -1116,6 +1268,16 @@ mod tests {
         }
     }
 
+    fn start_observation(lateness: u64) -> JobStartObservation {
+        JobStartObservation {
+            source: JobStartObservationSource::SimulatedLatch,
+            output_token: 17,
+            scheduled_cycle: DeviceCycle(10_000),
+            earliest_cycle: DeviceCycle(10_000 + lateness),
+            latest_cycle: DeviceCycle(10_000 + lateness),
+        }
+    }
+
     #[test]
     fn commit_reference_token_and_report_are_canonical() {
         let commit = commit();
@@ -1152,8 +1314,8 @@ mod tests {
         let report = schedule.report();
         let encoded = report.encode().unwrap();
         assert_eq!(encoded.len(), JOB_SCHEDULE_REPORT_WIRE_BYTES);
-        assert_eq!(&encoded[..8], b"ALMJSCH2");
-        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
+        assert_eq!(&encoded[..8], b"ALMJSCH3");
+        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
         assert_eq!(JobScheduleReport::decode(&encoded), Ok(report));
         let mut legacy = encoded;
         legacy[..8].copy_from_slice(b"ALMJSCH1");
@@ -1216,8 +1378,61 @@ mod tests {
             JobScheduleFault::Execution
         );
         assert_eq!(
+            schedule
+                .record_start_observation(start_observation(3))
+                .unwrap()
+                .start_observation,
+            Some(start_observation(3))
+        );
+        assert_eq!(
             schedule.complete(DeviceCycle(15_000)).unwrap().state,
             JobScheduleState::Complete
+        );
+        let encoded = schedule.report().encode().unwrap();
+        assert_eq!(
+            JobScheduleReport::decode(&encoded)
+                .unwrap()
+                .start_observation,
+            Some(start_observation(3))
+        );
+    }
+
+    #[test]
+    fn start_observation_is_correlated_and_tolerance_fault_is_retained() {
+        let commit = commit();
+        let mut schedule = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
+        schedule.install(commit, admission(1_000)).unwrap();
+        let confirm =
+            JobScheduleReference::for_commit(JobScheduleReferenceAction::Confirm, commit).unwrap();
+        schedule.confirm(confirm, DeviceCycle(7_000)).unwrap();
+        assert!(matches!(
+            schedule.advance(commit.abort_guard_cycle),
+            JobScheduleAction::PrimeHardware { .. }
+        ));
+        schedule
+            .mark_primed(DeviceCycle(commit.abort_guard_cycle.0 + 1))
+            .unwrap();
+        assert!(matches!(
+            schedule.advance(commit.local_start_cycle),
+            JobScheduleAction::Start { .. }
+        ));
+
+        let late = start_observation(commit.required_sync_tolerance_cycles + 1);
+        let report = schedule.record_start_observation(late).unwrap();
+        assert_eq!(report.state, JobScheduleState::Faulted);
+        assert_eq!(report.fault, JobScheduleFault::StartObservation);
+        assert_eq!(report.start_observation, Some(late));
+        assert_eq!(
+            JobScheduleReport::decode(&report.encode().unwrap()),
+            Ok(report)
+        );
+        assert_eq!(schedule.record_start_observation(late), Ok(report));
+
+        let mut conflicting = late;
+        conflicting.output_token += 1;
+        assert_eq!(
+            schedule.record_start_observation(conflicting),
+            Err(JobScheduleError::Conflict)
         );
     }
 
