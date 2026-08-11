@@ -57,6 +57,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — power-cut-safe active selection and explicit clear/abort replay.
 - [`M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md`](M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md)
   — authenticated dual-core validate/activate/durable-commit/authorize wiring.
+- [`M5-INTERFACE-EXACT-BASELINE.md`](M5-INTERFACE-EXACT-BASELINE.md) — greenfield
+  exact/UI value boundaries, current sibling CSGRS/Hyper source enforcement,
+  Hypergraphics ownership, canonical client/simulator bytes, and native/WASM
+  production-build evidence.
 - [`M6-EXACT-STEPPER-CORE.md`](M6-EXACT-STEPPER-CORE.md) — exact centered
   integer step interpolation, configuration-derived electrical timing,
   complete shifted-image mapping, canonical status, and cached-block simulation.

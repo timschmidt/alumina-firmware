@@ -238,9 +238,11 @@ Exit gate:
 
 Work:
 
-- Move `alumina-interface` from CSGRS 0.20.1/legacy mesh/sketch APIs to the pinned
-  current CSGRS/Hyper set. Use `TriangleMesh`, `CurveRegion2`/Hypercurve paths,
-  exact `Real` transforms, Hyperpath, and Hypersolve.
+- Move `alumina-interface` from its legacy mesh/sketch APIs to an explicitly
+  recorded set of the current sibling CSGRS/Hyper working trees. Never use a
+  published CSGRS package as a fallback merely because its manifest version
+  matches. Use `TriangleMesh`, `CurveRegion2`/Hypercurve paths, exact `Real`
+  transforms, Hyperpath, and Hypersolve.
 - Extend Hypergraphics (or one narrow adapter) to own exact mesh/curve scenes,
   camera/projection, grids, axes, overlays, selection, picking, and checked GPU
   conversion. Delete interface-owned vertex/normal/edge/camera rendering paths.
@@ -268,6 +270,15 @@ Exit gate:
 - Identical source/config/policy produces byte-identical job bytes and digests.
 - No old CSGRS type, hand renderer, silent float tolerance, or renderer-to-CAM
   path remains.
+
+Implementation checkpoint: the legacy application has been replaced by a
+greenfield exact core, canonical protocol/simulator client, and minimal
+Hypergraphics native/WASM shell. The build rejects registry substitutes for the
+current sibling CSGRS/Hyper stack and structurally separates exact, measured,
+canonical machine, and display values. A checked CSGRS/Hypermesh adapter now
+lives in Hypergraphics. The moving Hypercurve/Hyperphysics sources prevent a
+release pin, and the authoritative curve-to-job compiler remains open. See the
+[M5/I0 evidence](evidence/M5-INTERFACE-EXACT-BASELINE.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
 

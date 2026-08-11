@@ -17,6 +17,16 @@ auxiliaries, licensed-photo overlays, and explicit HIL promotion gates. There ar
 no deployed clients and no compatibility requirement: the old Alumina firmware
 and interface are functional references, not APIs to preserve.
 
+The coordinated interface now has a committed greenfield I0 baseline: exact and
+measured source values, canonical firmware values, and lossy display values are
+separate Rust domains; the real protocol/machine-IR types drive headless
+simulator fixtures; and CSGRS geometry reaches the GPU only through a checked
+Hypergraphics adapter. Native and WASM tests, strict lint, sibling-source and
+license policy, and the compressed production bundle pass. The live Hypercurve
+and Hyperphysics trees were still under concurrent development, so this is not
+yet a reproducible compiler release. See the
+[interface baseline evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md).
+
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
 publication checkpoints, and a deterministic reboot/cache/prefetch simulator.

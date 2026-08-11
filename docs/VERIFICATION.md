@@ -251,6 +251,11 @@ modes actually qualified with its sensing and power stage.
 
 ### 10. Interface, graphics, and dataflow tests
 
+The first development checkpoint and its exact source caveat are recorded in
+[`evidence/M5-INTERFACE-EXACT-BASELINE.md`](evidence/M5-INTERFACE-EXACT-BASELINE.md).
+It proves the native/WASM type and production-artifact baseline; it does not
+replace the browser, visual, exact-CAM, or hardware evidence below.
+
 - native/WASM unit tests for exact graph evaluation, forward migration among new
   released schemas (not the old interface), unknown-node round trip, type/unit
   errors, and capability reconciliation;

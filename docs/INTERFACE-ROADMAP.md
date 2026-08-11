@@ -24,9 +24,12 @@ migration for the old firmware/interface.
 
 Work:
 
-- Pin one mutually compatible set of CSGRS 0.23.0, Hyperreal, Hyperlattice,
-  Hyperlimit, Hypertri, Hypermesh, Hypercurve, Hyperpath, Hypersolve, and
-  Hypergraphics revisions. Add optional Hyper crates only for a concrete use.
+- Select and record one mutually compatible set from the current sibling CSGRS,
+  Hyperreal, Hyperlattice, Hyperlimit, Hypertri, Hypermesh, Hypercurve,
+  Hyperpath, Hyperphysics, Hypersolve, and Hypergraphics working trees. A
+  manifest version such as CSGRS 0.23.0 is only a package label; no published
+  CSGRS release may substitute for the workspace source. Add optional Hyper
+  crates only for a concrete use.
 - Establish native unit/property tests, WASM checks, Trunk production builds,
   headless protocol/compiler fixtures, and browser integration tests.
 - Split crates/modules so exact geometry/CAM and protocol/simulation tests do not
@@ -43,6 +46,14 @@ Exit:
   Hypergraphics scene build natively and for WASM with independent tests.
 - Type construction prevents an `f32` renderer value from satisfying an exact
   CAM or machine-job input.
+
+Implementation checkpoint: the greenfield workspace, four disjoint value
+domains, real protocol/machine-IR client fixtures, current sibling-stack source
+gate, native CSGRS mesh, checked Hypergraphics adapter, and validated production
+WASM bundle are implemented. The captured Hypercurve/Hyperphysics trees contain
+concurrent development edits, so release pinning and browser integration remain
+open. See the
+[M5/I0 evidence](evidence/M5-INTERFACE-EXACT-BASELINE.md).
 
 ## I1 — Current exact geometry and Hypergraphics
 
