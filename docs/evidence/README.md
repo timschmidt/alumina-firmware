@@ -78,6 +78,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M6-CIRCULAR-DMA-HORIZON.md`](M6-CIRCULAR-DMA-HORIZON.md) — allocation-free
   circular-ring release/refill ownership, two-phase dense-frame acceptance,
   independent physical-latch authority, and final-disable lead simulation.
+- [`M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md`](M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md)
+  — isolated build-only safe-image TinyBee capture artifact, bounded refill/stop
+  procedure, and explicit disconnected-load/physical-review gate.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed

@@ -86,6 +86,10 @@ or arm path can construct this owner. Descriptor EOF still does not identify the
 physical FIFO/WS phase; logic-analyzer capture and a qualified independent
 observation source remain mandatory.
 
+The subsequent
+[safe capture harness](M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md) makes that manual
+gate executable without changing any physical claim in this document.
+
 ## Reproduced checks
 
 Run from the repository root:

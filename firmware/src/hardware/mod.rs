@@ -11,7 +11,10 @@ pub struct RuntimeResources {
 
 #[cfg(feature = "board-mks-tinybee")]
 pub mod mks_tinybee;
-#[cfg(feature = "board-mks-tinybee")]
+#[cfg(all(
+    feature = "board-mks-tinybee",
+    not(feature = "hil-mks-tinybee-pcm-short-safe")
+))]
 pub use mks_tinybee as selected;
 
 #[cfg(feature = "board-t-deck-pro")]

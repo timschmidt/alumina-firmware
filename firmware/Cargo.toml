@@ -15,6 +15,13 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "alumina-hil-mks-tinybee-pcm-short-safe"
+path = "src/hil_mks_tinybee_pcm_short_safe.rs"
+test = false
+bench = false
+required-features = ["hil-mks-tinybee-pcm-short-safe"]
+
 [features]
 default = []
 board-mks-tinybee = [
@@ -37,6 +44,7 @@ board-t-deck-pro = [
     "esp-rtos/esp32s3",
     "esp-rtos/esp-radio",
 ]
+hil-mks-tinybee-pcm-short-safe = ["board-mks-tinybee"]
 
 [dependencies]
 alumina-board.workspace = true

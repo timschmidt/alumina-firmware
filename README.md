@@ -173,6 +173,12 @@ legal cycle follows the last step image. A four-slot circular-ring simulation
 exercises release, refill, serial reconstruction, and terminal disable without
 claiming TinyBee phase or timing. See the
 [circular-DMA evidence](docs/evidence/M6-CIRCULAR-DMA-HORIZON.md).
+An isolated TinyBee safe-image HIL artifact now makes the first physical capture
+repeatable without enabling Wi-Fi, storage, motion, process commands, or the
+second core. Its repository command builds but never flashes, and its successful
+refill result is explicitly not a waveform verdict. See the
+[HIL procedure](docs/HIL.md) and
+[harness evidence](docs/evidence/M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md).
 
 ## Developer checks
 
@@ -212,6 +218,8 @@ cargo xtask check --board mks-tinybee
 cargo xtask check --board t-deck-pro
 cargo xtask build --board mks-tinybee --profile release
 cargo xtask build --board t-deck-pro --profile release
+cargo xtask hil list
+cargo xtask hil build mks-tinybee-pcm-short-safe
 ```
 
 Both current packages remain intentionally non-armable. “Compiles” means the
@@ -219,7 +227,10 @@ typed package and complete release image build for the declared chip; it is not
 bench, safe-state, peripheral-smoke, or timing qualification. See the
 [dual-core compile evidence](docs/evidence/M2-DUAL-CORE-RUNTIME.md) and the
 [expanded board-metadata evidence](docs/evidence/M2-BOARD-METADATA.md). The
-network foundation can be built with `ALUMINA_AP_PASSWORD` supplied outside the
+HIL command only builds a separate safe-image capture artifact; it never
+flashes. Running it still requires the disconnected-load checklist in
+[HIL.md](docs/HIL.md). The network foundation can be built with
+`ALUMINA_AP_PASSWORD` supplied outside the
 repository, but build-provisioned credentials still do not satisfy the planned
 unique device-stored production credential gate.
 

@@ -32,7 +32,7 @@ use super::safety_inputs::{
 use crate::storage::EspSdSpiBus;
 
 #[path = "mks_tinybee_pcm_short.rs"]
-mod pcm_short;
+pub(crate) mod pcm_short;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
 pub type StorageBackend = ProvisionedCache<StorageCard>;

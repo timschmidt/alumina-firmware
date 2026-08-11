@@ -84,6 +84,13 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             let board = find_board(&boards, id)?;
             run_board_cargo(root, board, command, Some(profile))
         }
+        [group, command] if group == "hil" && command == "list" => {
+            println!("mks-tinybee-pcm-short-safe  mks-tinybee-v1  build-only, disconnected-load");
+            Ok(())
+        }
+        [group, command, id] if group == "hil" && command == "build" => {
+            run_hil_build(root, &boards, id)
+        }
         [] => {
             print_help();
             Ok(())
@@ -104,6 +111,8 @@ fn print_help() {
     println!("  cargo xtask capabilities --board <board-id> [--json]");
     println!("  cargo xtask check --board <board-id>");
     println!("  cargo xtask build --board <board-id> [--profile <name>]");
+    println!("  cargo xtask hil list");
+    println!("  cargo xtask hil build mks-tinybee-pcm-short-safe");
 }
 
 fn repository_registry(root: &Path) -> PathBuf {
@@ -504,6 +513,51 @@ fn run_board_cargo(
             board.id
         ));
     }
+    Ok(())
+}
+
+fn run_hil_build(root: &Path, boards: &[Board], id: &str) -> Result<(), String> {
+    if id != "mks-tinybee-pcm-short-safe" {
+        return Err(format!(
+            "unknown HIL fixture `{id}`; run `cargo xtask hil list`"
+        ));
+    }
+    let board = find_board(boards, "mks-tinybee-v1")?;
+    validate_board(board)?;
+    println!(
+        "building release-only safe-image capture for {}; this command never flashes hardware",
+        board.id
+    );
+    println!(
+        "the resulting binary still requires all motor and process loads to be physically disconnected"
+    );
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(root)
+        .arg("+esp")
+        .arg("build")
+        .args([
+            "-p",
+            "alumina-firmware",
+            "--bin",
+            "alumina-hil-mks-tinybee-pcm-short-safe",
+        ])
+        .arg("--no-default-features")
+        .args(["--features", "hil-mks-tinybee-pcm-short-safe"])
+        .args(["--target", &board.target])
+        .args(["--profile", "release"])
+        .args(["--locked", "--offline"]);
+    configure_esp_linker_path(&mut command, board)?;
+    let status = command
+        .status()
+        .map_err(|error| format!("failed to start Cargo: {error}"))?;
+    if !status.success() {
+        return Err(format!("HIL build failed for `{id}` with {status}"));
+    }
+    println!(
+        "artifact: target/{}/release/alumina-hil-mks-tinybee-pcm-short-safe",
+        board.target
+    );
     Ok(())
 }
 

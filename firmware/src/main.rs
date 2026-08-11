@@ -10,6 +10,8 @@
 compile_error!("select exactly one board feature through `cargo xtask build --board <id>`");
 #[cfg(all(feature = "board-mks-tinybee", feature = "board-t-deck-pro"))]
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
+#[cfg(feature = "hil-mks-tinybee-pcm-short-safe")]
+compile_error!("the HIL feature is isolated to `--bin alumina-hil-mks-tinybee-pcm-short-safe`");
 
 mod capability;
 mod clock;

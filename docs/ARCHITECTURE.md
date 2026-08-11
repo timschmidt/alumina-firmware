@@ -741,6 +741,16 @@ proves circular ownership and ordering in software; it does not equate a DMA
 descriptor EOF with WS, qualify an ESP32 interrupt, or solve cross-block
 lookahead.
 
+The first target-facing fixture is a separate TinyBee safe-image-only binary,
+not a feature path through production firmware. It establishes the static safe
+transaction first, never initializes Wi-Fi/storage/motion/the second core,
+brackets the I²S start call in the local cycle domain, refills 50,000 exact safe
+frames through the portable owner, explicitly stops the transfer, rewrites two
+safe samples, and parks. Its `xtask` command is build-only. Because the unknown
+first-frame phase is the subject of the capture, disconnected loads and manual
+waveform review remain mandatory; a successful software report cannot promote
+the board.
+
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The
 interface compiler and firmware executor implement their respective underlying

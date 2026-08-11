@@ -349,6 +349,13 @@ before block acknowledgement. The TinyBee HAL surface uses one four-byte DMA
 descriptor per modeled frame, but remains compile-only and unreachable. FIFO/WS
 phase, refill interrupt/wake policy, static-to-stream handoff, safe reclaim,
 multi-block cross-prefill, and all physical claims remain open.
+An isolated release-only `mks-tinybee-pcm-short-safe` HIL artifact now turns the
+first physical gate into a reproducible procedure. It establishes the blocking
+safe image before timekeeping or I²S setup, retains all service/second-core
+tokens inert, streams and refills only that same safe image, stops DMA, rewrites
+two safe samples, and parks. The `xtask` command builds but cannot flash. This
+adds no capture result: disconnected loads, raw logic-analyzer evidence, phase
+review, and explicit promotion remain required.
 
 Exit gate:
 
