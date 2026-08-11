@@ -1,6 +1,8 @@
 use alumina_board::BoardPackage;
 use alumina_config::RealtimeConfigurationProfile;
-use alumina_motion::{ShiftImageContract, ShiftImageUpdate};
+use alumina_motion::{
+    OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
+};
 use alumina_protocol::DeviceCycle;
 use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
@@ -39,6 +41,12 @@ pub const MOTION_OUTPUT_QUALIFIED: bool = false;
 pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;
 /// No physical commit-lateness claim exists.
 pub const MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES: u32 = 0;
+/// This board exposes no machine-output horizon to prime.
+pub const MOTION_MINIMUM_PRIME_LEAD_CYCLES: u64 = u64::MAX;
+/// Fixed portable generated-image capacity; no T-Deck hardware consumes it.
+pub const MOTION_OUTPUT_RING_IMAGES: usize = 64;
+/// Structural placeholder only; this board exposes no motion output.
+pub const MOTION_PRIME_HORIZON_CYCLES: u64 = 20_000;
 
 /// T-Deck Pro has no shifted machine-output contract.
 pub const fn motion_shift_contract() -> Option<ShiftImageContract> {
@@ -252,7 +260,39 @@ impl EstablishedRealtimeResources {
     }
 
     /// Rejects every machine-output update on this non-motion board.
+    #[allow(dead_code, reason = "keeps the board backend shape explicit")]
     pub fn apply_motion_image(&mut self, _update: ShiftImageUpdate) -> Result<(), SafeOutputError> {
+        Err(SafeOutputError::MotionUnsupported)
+    }
+
+    /// Rejects every future machine-output capacity query on this controller.
+    pub fn motion_output_writable_horizon(
+        &self,
+        _observed: DeviceCycle,
+    ) -> Result<DeviceCycle, SafeOutputError> {
+        Err(SafeOutputError::MotionUnsupported)
+    }
+
+    /// Rejects every ordered future machine-output image.
+    pub fn stage_motion_output(
+        &mut self,
+        _output: ScheduledShiftOutput,
+    ) -> Result<(), SafeOutputError> {
+        Err(SafeOutputError::MotionUnsupported)
+    }
+
+    /// Rejects every continuous machine-output horizon seal.
+    pub fn seal_motion_output_horizon(
+        &mut self,
+        _through: DeviceCycle,
+    ) -> Result<DeviceCycle, SafeOutputError> {
+        Err(SafeOutputError::MotionUnsupported)
+    }
+
+    /// Rejects physical output observations because no backend exists.
+    pub fn take_motion_commit(
+        &mut self,
+    ) -> Result<Option<(OutputCommitToken, DeviceCycle)>, SafeOutputError> {
         Err(SafeOutputError::MotionUnsupported)
     }
 }

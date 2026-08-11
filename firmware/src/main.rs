@@ -743,6 +743,22 @@ async fn realtime_task(
         };
         let schedule_fault = match schedule_action {
             JobScheduleAction::None | JobScheduleAction::AbortUnconfirmed => None,
+            JobScheduleAction::PrimeHardware {
+                scheduled_cycle, ..
+            } => match prime_realtime_motion(
+                &mut resources,
+                &mut motion,
+                &mut jobs,
+                &safety,
+                &mut endpoint,
+                scheduled_cycle,
+                now,
+                safety_input_status,
+                probe.misses() == 0,
+            ) {
+                Ok(()) => None,
+                Err(()) => Some(FaultCode::Driver),
+            },
             JobScheduleAction::Start {
                 scheduled_cycle, ..
             } => match start_realtime_motion(
@@ -896,10 +912,10 @@ fn start_realtime_motion(
     if safety.state() != SafetyState::Armed || !safety_inputs.ready_to_arm() || !deadline_healthy {
         return Err(());
     }
-    let descriptor = jobs.descriptor().ok_or(())?;
-    motion.start(descriptor, scheduled_cycle).map_err(|_| ())?;
-    let admitted = jobs.take_admitted().ok_or(())?;
-    motion.admit(admitted).map_err(|_| ())?;
+    if jobs.schedule_state() != Some(alumina_job::JobScheduleState::Running) {
+        return Err(());
+    }
+    motion.start(scheduled_cycle).map_err(|_| ())?;
     safety
         .apply(
             SafetyEvent::Start,
@@ -913,6 +929,29 @@ fn start_realtime_motion(
         )
         .map_err(|_| ())?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prime_realtime_motion(
+    resources: &mut selected::EstablishedRealtimeResources,
+    motion: &mut MotionService,
+    jobs: &mut RealtimeJobService,
+    safety: &SafetyMachine,
+    endpoint: &mut DefaultRealtimeEndpoint,
+    scheduled_cycle: DeviceCycle,
+    observed: DeviceCycle,
+    safety_inputs: SafetyInputStatus,
+    deadline_healthy: bool,
+) -> Result<(), ()> {
+    if safety.state() != SafetyState::Armed || !safety_inputs.ready_to_arm() || !deadline_healthy {
+        return Err(());
+    }
+    let descriptor = jobs.descriptor().ok_or(())?;
+    let admitted = jobs.take_admitted().ok_or(())?;
+    motion
+        .prime(resources, descriptor, scheduled_cycle, admitted, observed)
+        .map_err(|_| ())?;
+    jobs.mark_hardware_primed(endpoint, observed)
 }
 
 fn minimum_wake_cycle(
@@ -960,6 +999,7 @@ fn service_realtime_motion(
                 return Ok(false);
             }
             MotionAction::OutputCommitted => {}
+            MotionAction::WaitingForHardware => return Ok(false),
             MotionAction::BlockComplete(admitted) => {
                 match jobs.acknowledge_executed(endpoint, now, admitted)? {
                     RealtimeJobState::Complete => motion.request_finish().map_err(|_| ())?,
@@ -1020,7 +1060,10 @@ fn reconcile_arm_state(
         && !matches!(
             jobs.schedule_state(),
             Some(
-                alumina_job::JobScheduleState::Installed | alumina_job::JobScheduleState::Confirmed
+                alumina_job::JobScheduleState::Installed
+                    | alumina_job::JobScheduleState::Confirmed
+                    | alumina_job::JobScheduleState::Priming
+                    | alumina_job::JobScheduleState::Primed
             )
         )
     {

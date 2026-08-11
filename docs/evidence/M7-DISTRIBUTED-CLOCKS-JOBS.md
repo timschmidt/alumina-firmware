@@ -7,6 +7,11 @@ boot-bound cached schedules, firmware service/real-time authority separation,
 and adversarial two-MCU simulation are implemented. This is software evidence,
 not a physical timing, atomic-start, armability, or motion-output claim.
 
+This file records the version-1 checkpoint as reproduced on its date. Schedule
+wire version 2 and the later `Priming`/`Primed` hardware-horizon boundary are
+documented in `M7-PRESTART-HARDWARE-PRIMING.md`; no version-1 compatibility path
+is retained.
+
 ## Implemented boundary
 
 The portable `alumina-clock` crate defines allocation-free, canonical clock

@@ -332,12 +332,14 @@ uses the same bare eight-byte prepare ID as its native body. The reviewed defaul
 runtime boundary occupies 13,120 bytes; together with the core-1 stack its
 45,888-byte requirement remains below the 64 KiB internal-memory budget.
 
-`JobCommit` is an exact 240-byte `ALMJCOM1` body:
+`JobCommit` is an exact 240-byte `ALMJCOM2` body. Version 2 is an intentional
+greenfield break: version-1 schedule bodies and reports are rejected rather
+than translated.
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | magic `ALMJCOM1` |
-| 8 | 2 | exact version (`1`) |
+| 0 | 8 | magic `ALMJCOM2` |
+| 8 | 2 | exact version (`2`) |
 | 10 | 1 | attended (`1`) or cached-autonomous (`2`) policy |
 | 11 | 5 | reserved zero |
 | 16 | 8 | nonzero prepare ID |
@@ -356,27 +358,42 @@ runtime boundary occupies 13,120 bytes; together with the core-1 stack its
 | 224 | 16 | nonzero UI-selected commit ID |
 
 The canonical order is `now < confirm deadline < abort guard < start < lease
-expiry`; uncertainty may not exceed the required tolerance. The commit identity
-used by later actions is SHA-256 over all 240 bytes. `JobConfirm` and `JobAbort`
-each use an 88-byte `ALMJREF1` body: version/action/reserved at `8..16`, prepare
-ID at 16, boot ID at 24, commit ID at 40, and complete commit digest at 56.
+expiry`; uncertainty may not exceed the required tolerance. Admission also
+requires `start - abort guard` to meet the selected board backend's nonzero
+hardware-prime lead. The commit identity used by later actions is SHA-256 over
+all 240 bytes. `JobConfirm` and `JobAbort` each use an 88-byte `ALMJREF2` body:
+version/action/reserved at `8..16`, prepare ID at 16, boot ID at 24, commit ID at
+40, and complete commit digest at 56.
 Confirm is deliberately a distinct `0x0509` operation; merely delivering commit
 never grants start authority.
 
-Core 1 owns `Prepared → Installed → Confirmed → Running → Complete/Faulted` plus
-safe `Aborted` and unconfirmed `Expired` terminals. Installation requires the
-exact active configuration, boot token, cached first block, local safety state,
-fresh deadline health, lead/horizon/lease bounds, and policy. Confirmation must
-arrive before both earlier guards and requires the realtime safety machine to
-already be `Armed`. Missing confirmation self-expires at the confirmation
-deadline; abort remains possible until the later abort guard. Start is emitted
-at most once and a start later than its synchronization tolerance faults.
+Core 1 owns `Prepared → Installed → Confirmed → Priming → Primed →
+Running → Complete/Faulted` plus safe `Aborted` and unconfirmed `Expired`
+terminals. Installation requires the exact active configuration, boot token,
+cached first block, local safety state, fresh deadline health,
+lead/prime/horizon/lease bounds, and policy. Confirmation must arrive before
+both earlier guards and requires the realtime safety machine to already be
+`Armed`. Missing confirmation self-expires at the confirmation deadline; abort
+remains possible until, but not at or after, the later abort guard.
 
-The 64-byte `ALMJSCH1` schedule report uses a strict union. Its header holds
-version, state, fault, and commit/policy/start flags in bytes `8..16`. In
+At the abort guard, a confirmed schedule enters `Priming` and emits exactly one
+local `PrimeHardware` action. The sole realtime output owner must transfer the
+admitted block, construct the required continuous future hardware horizon, and
+acknowledge it before the local start cycle. Only that acknowledgement enters
+`Primed`. Reaching start while still `Confirmed` or `Priming`, acknowledging at
+or after start, or reaching start outside the synchronization tolerance latches
+`MissedStart`; no late best-effort output is emitted. A `Primed` hardware
+timeline releases from the MCU clock at the exact epoch. The later `Start`
+action is one-shot software/safety-state reconciliation, not a Wi-Fi trigger or
+the source of the physical edge.
+
+The 64-byte `ALMJSCH2` schedule report uses a strict union. Its header holds
+version 2, state, fault, and commit/policy/start flags in bytes `8..16`. In
 `Prepared`, bytes `16..48` are the prepared token and `48..64` are zero. After
 commit, bytes `16..48` are start/confirmation/abort/lease cycles and `48..64`
-is the commit ID. A committed report never carries a prepared token.
+is the commit ID. A committed report never carries a prepared token. State
+codes are `Prepared=1`, `Installed=2`, `Confirmed=3`, `Priming=4`, `Primed=5`,
+`Running=6`, `Aborted=7`, `Expired=8`, `Complete=9`, and `Faulted=10`.
 
 `JobStatus` has an empty request body and a fixed 304-byte response:
 
@@ -388,7 +405,7 @@ is the commit ID. A committed report never carries a prepared token.
 | 11 | 5 | reserved zero |
 | 16 | 96 | `ALMJSV01` core-0 report, or all zero |
 | 112 | 128 | `ALMJRT01` core-1 report, or all zero |
-| 240 | 64 | `ALMJSCH1` core-1 schedule report, or all zero |
+| 240 | 64 | `ALMJSCH2` core-1 schedule report, or all zero |
 
 The service report carries state, axis width, validated/sent/total block counts,
 verified storage-chunk count, current ring credits/depth, and a terminal

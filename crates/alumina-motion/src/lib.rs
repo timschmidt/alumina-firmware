@@ -2686,6 +2686,16 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         self.cached.status()
     }
 
+    /// Next exact logical generation deadline. Physical latch wakeups remain
+    /// the target timeline's separate responsibility.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        if self.output_faulted {
+            None
+        } else {
+            self.cached.next_deadline()
+        }
+    }
+
     fn push_output(&mut self, output: ScheduledShiftOutput) -> Result<(), ()> {
         if self.len == OUTPUTS || OUTPUTS == 0 {
             return Err(());

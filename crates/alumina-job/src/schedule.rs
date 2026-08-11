@@ -15,11 +15,11 @@ pub const JOB_SCHEDULE_REPORT_WIRE_BYTES: usize = 64;
 /// Nonzero UI-selected commit identity bytes.
 pub const JOB_COMMIT_ID_BYTES: usize = 16;
 
-const COMMIT_MAGIC: [u8; 8] = *b"ALMJCOM1";
-const REFERENCE_MAGIC: [u8; 8] = *b"ALMJREF1";
-const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH1";
-const SCHEDULE_VERSION: u16 = 1;
-const PREPARED_TOKEN_DOMAIN: [u8; 16] = *b"ALM-PREPARED-V1\0";
+const COMMIT_MAGIC: [u8; 8] = *b"ALMJCOM2";
+const REFERENCE_MAGIC: [u8; 8] = *b"ALMJREF2";
+const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH2";
+const SCHEDULE_VERSION: u16 = 2;
+const PREPARED_TOKEN_DOMAIN: [u8; 16] = *b"ALM-PREPARED-V2\0";
 const REFERENCE_CONFIRM: u8 = 1;
 const REFERENCE_ABORT: u8 = 2;
 const REPORT_FLAG_COMMIT: u16 = 1 << 0;
@@ -342,11 +342,15 @@ pub enum JobScheduleState {
     Prepared = 1,
     Installed = 2,
     Confirmed = 3,
-    Running = 4,
-    Aborted = 5,
-    Expired = 6,
-    Complete = 7,
-    Faulted = 8,
+    /// Remote abort is closed and the hardware owner must build its horizon.
+    Priming = 4,
+    /// The hardware owner proved the required future start horizon is staged.
+    Primed = 5,
+    Running = 6,
+    Aborted = 7,
+    Expired = 8,
+    Complete = 9,
+    Faulted = 10,
 }
 
 impl JobScheduleState {
@@ -355,11 +359,13 @@ impl JobScheduleState {
             1 => Some(Self::Prepared),
             2 => Some(Self::Installed),
             3 => Some(Self::Confirmed),
-            4 => Some(Self::Running),
-            5 => Some(Self::Aborted),
-            6 => Some(Self::Expired),
-            7 => Some(Self::Complete),
-            8 => Some(Self::Faulted),
+            4 => Some(Self::Priming),
+            5 => Some(Self::Primed),
+            6 => Some(Self::Running),
+            7 => Some(Self::Aborted),
+            8 => Some(Self::Expired),
+            9 => Some(Self::Complete),
+            10 => Some(Self::Faulted),
             _ => None,
         }
     }
@@ -398,6 +404,9 @@ pub struct JobScheduleAdmission {
     pub maximum_start_horizon_cycles: u64,
     pub maximum_lease_cycles: u64,
     pub maximum_sync_tolerance_cycles: u64,
+    /// Minimum irrevocable interval from abort guard through local start in
+    /// which the hardware owner can construct and verify its output horizon.
+    pub minimum_prime_lead_cycles: u64,
     pub cache_ready: bool,
     pub safety_ready: bool,
     pub autonomous_allowed: bool,
@@ -408,6 +417,12 @@ pub struct JobScheduleAdmission {
 pub enum JobScheduleAction {
     None,
     AbortUnconfirmed,
+    /// Remote abort is no longer legal; construct the immutable hardware
+    /// horizon and acknowledge it with [`PreparedJobSchedule::mark_primed`].
+    PrimeHardware {
+        scheduled_cycle: DeviceCycle,
+        lease_expiry_cycle: DeviceCycle,
+    },
     Start {
         scheduled_cycle: DeviceCycle,
         lease_expiry_cycle: DeviceCycle,
@@ -460,7 +475,10 @@ impl PreparedJobSchedule {
             if commit == request
                 && matches!(
                     self.state,
-                    JobScheduleState::Installed | JobScheduleState::Confirmed
+                    JobScheduleState::Installed
+                        | JobScheduleState::Confirmed
+                        | JobScheduleState::Priming
+                        | JobScheduleState::Primed
                 )
             {
                 return Ok(self.report());
@@ -488,6 +506,7 @@ impl PreparedJobSchedule {
             || admission.maximum_start_horizon_cycles < admission.minimum_lead_cycles
             || admission.maximum_lease_cycles == 0
             || admission.maximum_sync_tolerance_cycles == 0
+            || admission.minimum_prime_lead_cycles == 0
             || request.required_sync_tolerance_cycles > admission.maximum_sync_tolerance_cycles
         {
             return Err(JobScheduleError::Policy);
@@ -502,10 +521,16 @@ impl PreparedJobSchedule {
             .0
             .checked_sub(request.local_start_cycle.0)
             .ok_or(JobScheduleError::Deadline)?;
+        let prime_lead = request
+            .local_start_cycle
+            .0
+            .checked_sub(request.abort_guard_cycle.0)
+            .ok_or(JobScheduleError::Deadline)?;
         if request.confirm_deadline_cycle.0 <= admission.now.0
             || lead < admission.minimum_lead_cycles
             || lead > admission.maximum_start_horizon_cycles
             || lease > admission.maximum_lease_cycles
+            || prime_lead < admission.minimum_prime_lead_cycles
         {
             return Err(JobScheduleError::Deadline);
         }
@@ -521,7 +546,10 @@ impl PreparedJobSchedule {
         now: DeviceCycle,
     ) -> Result<JobScheduleReport, JobScheduleError> {
         self.match_reference(reference, JobScheduleReferenceAction::Confirm)?;
-        if self.state == JobScheduleState::Confirmed {
+        if matches!(
+            self.state,
+            JobScheduleState::Confirmed | JobScheduleState::Priming | JobScheduleState::Primed
+        ) {
             return Ok(self.report());
         }
         if self.state != JobScheduleState::Installed {
@@ -573,6 +601,23 @@ impl PreparedJobSchedule {
             return JobScheduleAction::AbortUnconfirmed;
         }
         if self.state == JobScheduleState::Confirmed && now.0 >= commit.local_start_cycle.0 {
+            self.state = JobScheduleState::Faulted;
+            self.fault = JobScheduleFault::MissedStart;
+            return JobScheduleAction::MissedStart;
+        }
+        if self.state == JobScheduleState::Confirmed && now.0 >= commit.abort_guard_cycle.0 {
+            self.state = JobScheduleState::Priming;
+            return JobScheduleAction::PrimeHardware {
+                scheduled_cycle: commit.local_start_cycle,
+                lease_expiry_cycle: commit.lease_expiry_cycle,
+            };
+        }
+        if self.state == JobScheduleState::Priming && now.0 >= commit.local_start_cycle.0 {
+            self.state = JobScheduleState::Faulted;
+            self.fault = JobScheduleFault::MissedStart;
+            return JobScheduleAction::MissedStart;
+        }
+        if self.state == JobScheduleState::Primed && now.0 >= commit.local_start_cycle.0 {
             let lateness = now.0 - commit.local_start_cycle.0;
             if lateness > commit.required_sync_tolerance_cycles {
                 self.state = JobScheduleState::Faulted;
@@ -592,6 +637,25 @@ impl PreparedJobSchedule {
             return JobScheduleAction::LeaseExpired;
         }
         JobScheduleAction::None
+    }
+
+    /// Acknowledges that the sole local hardware owner has staged and checked
+    /// the required future output horizon after the abort guard closed.
+    pub fn mark_primed(&mut self, now: DeviceCycle) -> Result<JobScheduleReport, JobScheduleError> {
+        if self.state == JobScheduleState::Primed {
+            return Ok(self.report());
+        }
+        if self.state != JobScheduleState::Priming {
+            return Err(JobScheduleError::State);
+        }
+        let commit = self.commit.ok_or(JobScheduleError::State)?;
+        if now.0 >= commit.local_start_cycle.0 {
+            self.state = JobScheduleState::Faulted;
+            self.fault = JobScheduleFault::MissedStart;
+            return Err(JobScheduleError::Deadline);
+        }
+        self.state = JobScheduleState::Primed;
+        Ok(self.report())
     }
 
     /// Marks exact terminal execution before the finite lease expires.
@@ -863,6 +927,20 @@ impl JobScheduleReport {
         if self.prepared_token.is_some() {
             return Err(JobScheduleWireError::StateShape);
         }
+        if !matches!(
+            self.state,
+            JobScheduleState::Installed
+                | JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
+                | JobScheduleState::Running
+                | JobScheduleState::Aborted
+                | JobScheduleState::Expired
+                | JobScheduleState::Complete
+                | JobScheduleState::Faulted
+        ) {
+            return Err(JobScheduleWireError::StateShape);
+        }
         JobCommitId::new(self.commit_id)?;
         if self.confirm_deadline_cycle.0 >= self.abort_guard_cycle.0
             || self.abort_guard_cycle.0 >= self.local_start_cycle.0
@@ -1031,6 +1109,7 @@ mod tests {
             maximum_start_horizon_cycles: 20_000,
             maximum_lease_cycles: 20_000,
             maximum_sync_tolerance_cycles: 100,
+            minimum_prime_lead_cycles: 500,
             cache_ready: true,
             safety_ready: true,
             autonomous_allowed: false,
@@ -1042,24 +1121,51 @@ mod tests {
         let commit = commit();
         let encoded = commit.encode().unwrap();
         assert_eq!(encoded.len(), JOB_COMMIT_WIRE_BYTES);
+        assert_eq!(&encoded[..8], b"ALMJCOM2");
+        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
         assert_eq!(JobCommitRequest::decode(&encoded), Ok(commit));
         assert!(!commit.identity().unwrap().is_zero());
+        let mut legacy = encoded;
+        legacy[..8].copy_from_slice(b"ALMJCOM1");
+        legacy[8..10].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            JobCommitRequest::decode(&legacy),
+            Err(JobScheduleWireError::Magic)
+        );
 
         let confirm =
             JobScheduleReference::for_commit(JobScheduleReferenceAction::Confirm, commit).unwrap();
         let encoded = confirm.encode().unwrap();
         assert_eq!(encoded.len(), JOB_SCHEDULE_REFERENCE_WIRE_BYTES);
+        assert_eq!(&encoded[..8], b"ALMJREF2");
+        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
         assert_eq!(JobScheduleReference::decode(&encoded), Ok(confirm));
+        let mut legacy = encoded;
+        legacy[..8].copy_from_slice(b"ALMJREF1");
+        legacy[8..10].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            JobScheduleReference::decode(&legacy),
+            Err(JobScheduleWireError::Magic)
+        );
 
         let schedule = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
         let report = schedule.report();
         let encoded = report.encode().unwrap();
         assert_eq!(encoded.len(), JOB_SCHEDULE_REPORT_WIRE_BYTES);
+        assert_eq!(&encoded[..8], b"ALMJSCH2");
+        assert_eq!(&encoded[8..10], &2_u16.to_le_bytes());
         assert_eq!(JobScheduleReport::decode(&encoded), Ok(report));
+        let mut legacy = encoded;
+        legacy[..8].copy_from_slice(b"ALMJSCH1");
+        legacy[8..10].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            JobScheduleReport::decode(&legacy),
+            Err(JobScheduleWireError::Magic)
+        );
     }
 
     #[test]
-    fn install_confirm_start_and_complete_are_strictly_ordered() {
+    fn install_confirm_prime_start_and_complete_are_strictly_ordered() {
         let commit = commit();
         let mut schedule = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
         assert_eq!(schedule.prepared_token(), commit.prepared_token);
@@ -1074,8 +1180,24 @@ mod tests {
             JobScheduleState::Confirmed
         );
         assert_eq!(
-            schedule.advance(DeviceCycle(9_999)),
+            schedule.advance(DeviceCycle(8_999)),
             JobScheduleAction::None
+        );
+        assert_eq!(
+            schedule.advance(DeviceCycle(9_000)),
+            JobScheduleAction::PrimeHardware {
+                scheduled_cycle: DeviceCycle(10_000),
+                lease_expiry_cycle: DeviceCycle(20_000),
+            }
+        );
+        assert_eq!(schedule.report().state, JobScheduleState::Priming);
+        assert_eq!(
+            schedule.mark_primed(DeviceCycle(9_001)).unwrap().state,
+            JobScheduleState::Primed
+        );
+        assert_eq!(
+            schedule.mark_primed(DeviceCycle(9_002)).unwrap().state,
+            JobScheduleState::Primed
         );
         assert_eq!(
             schedule.advance(DeviceCycle(10_000)),
@@ -1118,6 +1240,13 @@ mod tests {
         let confirm =
             JobScheduleReference::for_commit(JobScheduleReferenceAction::Confirm, commit).unwrap();
         running.confirm(confirm, DeviceCycle(7_000)).unwrap();
+        assert!(matches!(
+            running.advance(commit.abort_guard_cycle),
+            JobScheduleAction::PrimeHardware { .. }
+        ));
+        running
+            .mark_primed(DeviceCycle(commit.abort_guard_cycle.0 + 1))
+            .unwrap();
         assert!(matches!(
             running.advance(commit.local_start_cycle),
             JobScheduleAction::Start { .. }
@@ -1183,6 +1312,13 @@ mod tests {
         leased.install(commit, admission(1_000)).unwrap();
         leased.confirm(confirm, DeviceCycle(7_000)).unwrap();
         assert!(matches!(
+            leased.advance(commit.abort_guard_cycle),
+            JobScheduleAction::PrimeHardware { .. }
+        ));
+        leased
+            .mark_primed(DeviceCycle(commit.abort_guard_cycle.0 + 1))
+            .unwrap();
+        assert!(matches!(
             leased.advance(commit.local_start_cycle),
             JobScheduleAction::Start { .. }
         ));
@@ -1196,6 +1332,42 @@ mod tests {
             JobScheduleReport::decode(&lease_report.encode().unwrap()),
             Ok(lease_report)
         );
+    }
+
+    #[test]
+    fn hardware_priming_is_irrevocable_bounded_and_required_before_start() {
+        let commit = commit();
+        let confirm =
+            JobScheduleReference::for_commit(JobScheduleReferenceAction::Confirm, commit).unwrap();
+        let mut schedule = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
+        schedule.install(commit, admission(1_000)).unwrap();
+        assert_eq!(
+            schedule.mark_primed(DeviceCycle(8_999)),
+            Err(JobScheduleError::State)
+        );
+        schedule.confirm(confirm, DeviceCycle(7_000)).unwrap();
+        assert_eq!(
+            schedule.advance(commit.abort_guard_cycle),
+            JobScheduleAction::PrimeHardware {
+                scheduled_cycle: commit.local_start_cycle,
+                lease_expiry_cycle: commit.lease_expiry_cycle,
+            }
+        );
+
+        let mut late_acknowledgement = schedule;
+        assert_eq!(
+            late_acknowledgement.mark_primed(commit.local_start_cycle),
+            Err(JobScheduleError::Deadline)
+        );
+        assert_eq!(
+            late_acknowledgement.report().fault,
+            JobScheduleFault::MissedStart
+        );
+        assert_eq!(
+            schedule.advance(commit.local_start_cycle),
+            JobScheduleAction::MissedStart
+        );
+        assert!(!schedule.report().start_emitted);
     }
 
     #[test]
@@ -1223,6 +1395,14 @@ mod tests {
         assert_eq!(
             schedule.install(autonomous, admission(1_000)),
             Err(JobScheduleError::Policy)
+        );
+        assert_eq!(schedule, base);
+
+        let mut insufficient_prime_lead = admission(1_000);
+        insufficient_prime_lead.minimum_prime_lead_cycles = 1_001;
+        assert_eq!(
+            schedule.install(commit(), insufficient_prime_lead),
+            Err(JobScheduleError::Deadline)
         );
         assert_eq!(schedule, base);
 

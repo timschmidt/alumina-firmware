@@ -294,6 +294,7 @@ mod tests {
             maximum_start_horizon_cycles: clock.maximum_schedule_horizon_cycles,
             maximum_lease_cycles: 10_000_000,
             maximum_sync_tolerance_cycles: 2_000,
+            minimum_prime_lead_cycles: 100_000,
             cache_ready: true,
             safety_ready: true,
             autonomous_allowed: false,
@@ -359,6 +360,20 @@ mod tests {
                 confirm_b,
                 DeviceCycle(commit_b.confirm_deadline_cycle.0 - 1),
             )
+            .unwrap();
+        assert!(matches!(
+            schedule_a.advance(commit_a.abort_guard_cycle),
+            JobScheduleAction::PrimeHardware { .. }
+        ));
+        assert!(matches!(
+            schedule_b.advance(commit_b.abort_guard_cycle),
+            JobScheduleAction::PrimeHardware { .. }
+        ));
+        schedule_a
+            .mark_primed(DeviceCycle(commit_a.abort_guard_cycle.0 + 1))
+            .unwrap();
+        schedule_b
+            .mark_primed(DeviceCycle(commit_b.abort_guard_cycle.0 + 1))
             .unwrap();
         assert!(matches!(
             schedule_a.advance(commit_a.local_start_cycle),

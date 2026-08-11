@@ -537,9 +537,13 @@ monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and
 validate its own partition. Exact causal clock intervals map one future UI epoch
 to each local counter. Commit installs but cannot start; a separate confirmation
 is accepted only after all install acknowledgements and before an earlier
-deadline, leaving a later abort guard for reconciliation. This is deterministic
-within a certified uncertainty, not an atomic Wi-Fi transaction. Details and
-failure semantics are normative in `DISTRIBUTED-JOBS.md`.
+deadline, leaving a later abort guard for reconciliation. At that guard, core 1
+irrevocably primes a continuous board-qualified output horizon and must report
+`Primed` before start. The hardware timeline releases at the exact MCU epoch;
+the schedule's later `Start` action only reconciles software and safety state.
+This is deterministic within a certified uncertainty, not an atomic Wi-Fi
+transaction. Details and failure semantics are normative in
+`DISTRIBUTED-JOBS.md`.
 
 ## T-Deck integration
 

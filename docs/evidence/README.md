@@ -79,3 +79,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed
   hardware-output gates.
+- [`M7-PRESTART-HARDWARE-PRIMING.md`](M7-PRESTART-HARDWARE-PRIMING.md) — schedule
+  wire version 2, abort-guard hardware priming, explicit prestart horizon
+  acknowledgement, scheduled firmware ownership, and compile-only TinyBee
+  PCM-short HAL composition with physical claims kept closed.

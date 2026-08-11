@@ -1,6 +1,8 @@
 use alumina_board::{BoardPackage, ResourceId};
 use alumina_config::RealtimeConfigurationProfile;
-use alumina_motion::{ShiftImageContract, ShiftImageUpdate};
+use alumina_motion::{
+    OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
+};
 use alumina_protocol::DeviceCycle;
 use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
@@ -29,6 +31,9 @@ use super::safety_inputs::{
 };
 use crate::storage::EspSdSpiBus;
 
+#[path = "mks_tinybee_pcm_short.rs"]
+mod pcm_short;
+
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
 pub type StorageBackend = ProvisionedCache<StorageCard>;
 /// Initial canonical motion-stream width for the three exposed XYZ axes.
@@ -45,6 +50,14 @@ pub const MOTION_OUTPUT_QUALIFIED: bool = false;
 pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;
 /// No nonzero commit-lateness claim is made before serializer qualification.
 pub const MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES: u32 = 0;
+/// No prestart lead is qualified. The impossible value reinforces the closed
+/// package/serializer arm gates until target DMA timing is measured.
+pub const MOTION_MINIMUM_PRIME_LEAD_CYCLES: u64 = u64::MAX;
+/// Fixed portable generated-image capacity compiled into the future owner.
+pub const MOTION_OUTPUT_RING_IMAGES: usize = 64;
+/// Structural prefill request used only after a qualified target backend
+/// replaces the currently unreachable streaming methods.
+pub const MOTION_PRIME_HORIZON_CYCLES: u64 = 20_000;
 
 /// Exact full-width shifted-output mapping consumed by the portable executor.
 pub const fn motion_shift_contract() -> Option<ShiftImageContract> {
@@ -208,6 +221,8 @@ pub enum SafeOutputError {
     Timing(TimingError),
     /// Fixed board safety-input routes were internally inconsistent.
     SafetyInput(SafetyInputBackendError),
+    /// No qualified continuous output timeline is reachable in this package.
+    MotionStreamingUnsupported,
 }
 
 impl RealtimeResources {
@@ -305,6 +320,10 @@ impl EstablishedRealtimeResources {
     /// Applies one complete mapped image through the bootstrap transport.
     /// This path exists for compile-time integration and eventual low-rate HIL;
     /// [`MOTION_OUTPUT_QUALIFIED`] keeps it outside arm authority.
+    #[allow(
+        dead_code,
+        reason = "retained only for disconnected-load static-image HIL"
+    )]
     pub fn apply_motion_image(&mut self, update: ShiftImageUpdate) -> Result<(), SafeOutputError> {
         infallible_pins(self.safe_shift.write_complete(
             CompleteImage {
@@ -313,6 +332,41 @@ impl EstablishedRealtimeResources {
             },
             Timing::CONSERVATIVE_100NS,
         ))
+    }
+
+    /// Rejects future-timeline capacity queries until the compile-only
+    /// PCM-short owner has physical phase, refill, observation, and stop
+    /// evidence.
+    pub fn motion_output_writable_horizon(
+        &self,
+        _observed: DeviceCycle,
+    ) -> Result<DeviceCycle, SafeOutputError> {
+        Err(SafeOutputError::MotionStreamingUnsupported)
+    }
+
+    /// Rejects ordered future-plan staging on the retained static GPIO owner.
+    pub fn stage_motion_output(
+        &mut self,
+        _output: ScheduledShiftOutput,
+    ) -> Result<(), SafeOutputError> {
+        Err(SafeOutputError::MotionStreamingUnsupported)
+    }
+
+    /// Rejects continuous-horizon sealing on the retained static GPIO owner.
+    /// A qualified implementation must make every changed and unchanged frame
+    /// through `through` hardware-owned before returning success.
+    pub fn seal_motion_output_horizon(
+        &mut self,
+        _through: DeviceCycle,
+    ) -> Result<DeviceCycle, SafeOutputError> {
+        Err(SafeOutputError::MotionStreamingUnsupported)
+    }
+
+    /// Rejects commit observation because DMA/WS is not the active owner.
+    pub fn take_motion_commit(
+        &mut self,
+    ) -> Result<Option<(OutputCommitToken, DeviceCycle)>, SafeOutputError> {
+        Err(SafeOutputError::MotionStreamingUnsupported)
     }
 }
 

@@ -218,11 +218,16 @@ impl JobService {
             .lease_expiry_cycle
             .0
             .checked_sub(request.local_start_cycle.0);
+        let prime_lead = request
+            .local_start_cycle
+            .0
+            .checked_sub(request.abort_guard_cycle.0);
         if request.confirm_deadline_cycle.0 <= now.0
             || !lead.is_some_and(|lead| {
                 (MINIMUM_START_LEAD_CYCLES..=MAXIMUM_START_HORIZON_CYCLES).contains(&lead)
             })
             || lease.is_none_or(|lease| lease > MAXIMUM_JOB_LEASE_CYCLES)
+            || prime_lead.is_none_or(|lead| lead < selected::MOTION_MINIMUM_PRIME_LEAD_CYCLES)
         {
             return self.respond(endpoint, native, now, StatusCode::Deadline, false);
         }
@@ -291,7 +296,11 @@ impl JobService {
         };
         if matches!(
             schedule.state,
-            JobScheduleState::Confirmed | JobScheduleState::Running | JobScheduleState::Complete
+            JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
+                | JobScheduleState::Running
+                | JobScheduleState::Complete
         ) {
             return self.respond(endpoint, native, now, StatusCode::Ok, true);
         }
@@ -348,7 +357,11 @@ impl JobService {
         if self.schedule.is_some_and(|schedule| {
             matches!(
                 schedule.state,
-                JobScheduleState::Running | JobScheduleState::Complete | JobScheduleState::Faulted
+                JobScheduleState::Priming
+                    | JobScheduleState::Primed
+                    | JobScheduleState::Running
+                    | JobScheduleState::Complete
+                    | JobScheduleState::Faulted
             )
         }) {
             return self.respond(endpoint, native, now, StatusCode::ForbiddenState, true);
@@ -538,11 +551,17 @@ impl JobService {
             JobScheduleState::Prepared
                 | JobScheduleState::Installed
                 | JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
                 | JobScheduleState::Running
         );
         let committed = matches!(
             schedule.state,
-            JobScheduleState::Installed | JobScheduleState::Confirmed | JobScheduleState::Running
+            JobScheduleState::Installed
+                | JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
+                | JobScheduleState::Running
         );
         ClockJobFacts {
             prepared,
@@ -797,6 +816,7 @@ impl RealtimeJobService {
                     maximum_start_horizon_cycles: MAXIMUM_START_HORIZON_CYCLES,
                     maximum_lease_cycles: MAXIMUM_JOB_LEASE_CYCLES,
                     maximum_sync_tolerance_cycles: MAXIMUM_SYNC_TOLERANCE_CYCLES,
+                    minimum_prime_lead_cycles: selected::MOTION_MINIMUM_PRIME_LEAD_CYCLES,
                     cache_ready,
                     safety_ready: matches!(
                         safety_state,
@@ -920,6 +940,21 @@ impl RealtimeJobService {
         self.publish_report(endpoint, now)
     }
 
+    /// Records that the sole physical owner accepted the required future
+    /// horizon after the distributed abort guard closed.
+    pub fn mark_hardware_primed(
+        &mut self,
+        endpoint: &mut DefaultRealtimeEndpoint,
+        now: DeviceCycle,
+    ) -> Result<(), ()> {
+        self.schedule
+            .as_mut()
+            .ok_or(())?
+            .mark_primed(now)
+            .map_err(|_| ())?;
+        self.publish_report(endpoint, now)
+    }
+
     /// Current local schedule lifecycle for safety-state reconciliation.
     pub fn schedule_state(&self) -> Option<JobScheduleState> {
         self.schedule.map(|schedule| schedule.report().state)
@@ -930,7 +965,8 @@ impl RealtimeJobService {
         let report = self.schedule?.report();
         match report.state {
             JobScheduleState::Installed => Some(report.confirm_deadline_cycle),
-            JobScheduleState::Confirmed => Some(report.local_start_cycle),
+            JobScheduleState::Confirmed => Some(report.abort_guard_cycle),
+            JobScheduleState::Priming | JobScheduleState::Primed => Some(report.local_start_cycle),
             JobScheduleState::Running => Some(report.lease_expiry_cycle),
             JobScheduleState::Prepared
             | JobScheduleState::Aborted
@@ -1072,6 +1108,8 @@ impl RealtimeJobService {
                 JobScheduleState::Prepared
                     | JobScheduleState::Installed
                     | JobScheduleState::Confirmed
+                    | JobScheduleState::Priming
+                    | JobScheduleState::Primed
                     | JobScheduleState::Running
             )
         });
@@ -1109,6 +1147,8 @@ fn schedule_report_advances(previous: JobScheduleReport, next: JobScheduleReport
         JobScheduleState::Installed => matches!(
             next.state,
             JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
                 | JobScheduleState::Running
                 | JobScheduleState::Aborted
                 | JobScheduleState::Expired
@@ -1116,7 +1156,19 @@ fn schedule_report_advances(previous: JobScheduleReport, next: JobScheduleReport
         ),
         JobScheduleState::Confirmed => matches!(
             next.state,
-            JobScheduleState::Running | JobScheduleState::Aborted | JobScheduleState::Faulted
+            JobScheduleState::Priming
+                | JobScheduleState::Primed
+                | JobScheduleState::Running
+                | JobScheduleState::Aborted
+                | JobScheduleState::Faulted
+        ),
+        JobScheduleState::Priming => matches!(
+            next.state,
+            JobScheduleState::Primed | JobScheduleState::Running | JobScheduleState::Faulted
+        ),
+        JobScheduleState::Primed => matches!(
+            next.state,
+            JobScheduleState::Running | JobScheduleState::Faulted
         ),
         JobScheduleState::Running => matches!(
             next.state,

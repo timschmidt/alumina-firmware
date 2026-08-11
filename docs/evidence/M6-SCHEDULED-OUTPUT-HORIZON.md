@@ -108,11 +108,18 @@ implementation-source/header/manifest license-header scan is clear. The local
 environment does not have `cargo-deny` installed; CI remains configured to run
 its bans, licenses, and sources checks.
 
-The current firmware still instantiates the synchronous one-pending-image
-`ShiftedCachedStepper`. TinyBee's `MOTION_OUTPUT_QUANTUM_CYCLES = 1` is explicitly
-an inert placeholder for that unqualified static path, not a hardware fact. A
-target adapter must establish a common cycle/frame epoch, prefill internal-SRAM
-DMA descriptors with continuous safe frames, correlate a completion source to
-the physical WS/latch edge, make starvation and stop fail safe, and demonstrate
-the phase on a logic analyzer with motor/process loads disconnected. Until that
+Firmware now instantiates `ScheduledShiftedStepper` and exposes the structural
+target calls needed to query writable capacity, stage exact sparse images, seal
+every changed and unchanged frame through a continuous hardware horizon, and
+consume physical commit observations. A full sparse ring or a first block that
+ends before the required prime boundary cannot satisfy that seal. Both selected
+board implementations reject these calls. TinyBee's
+`MOTION_OUTPUT_QUANTUM_CYCLES = 1` is still an inert placeholder, not a hardware
+fact. A compile-only HAL module can compose original-ESP32
+PCM-short TX and a safe-prefilled internal-SRAM circular buffer, but no boot,
+arm, or motion path can reach it. A target adapter must still establish a common
+cycle/frame epoch, prove complete dense-frame materialization through the
+reported horizon, correlate a completion source to the physical WS/latch edge,
+make static/stream handoff, starvation, and stop fail safe, and demonstrate the
+phase on a logic analyzer with motor/process loads disconnected. Until that
 evidence exists, `MOTION_OUTPUT_QUALIFIED` and board armability stay false.

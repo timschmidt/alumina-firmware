@@ -322,16 +322,21 @@ image from all 64 modeled wire bits and latches sequence, timing, contract, and
 horizon-starvation faults. Target DMA ownership, physical latch observation,
 motion lookahead production, safe stop/reclaim, and HIL qualification remain
 open; this software checkpoint does not alter either board's armability.
-The next portable checkpoint adds an exact backend output lattice and a bounded
+The scheduled checkpoint adds an exact backend output lattice and a bounded
 scheduled-image owner that separates future generation, hardware-timeline
 acceptance, and ordered latch observation. It stops cleanly at ring capacity,
 retains the admitted block through every physical image and any output-free
 terminal dwell, and routes normal disable through the same commit path. A host
 integration drives its images through the PCM-short timeline and independent
-64-bit wire observer at a four-cycle fixture quantum. Firmware still uses the
-single-image static path: target circular DMA, a qualified cycle/frame epoch,
-cross-block prefill, safe peripheral reclaim, and logic-analyzer evidence remain
-open, and both boards remain non-armable.
+64-bit wire observer at a four-cycle fixture quantum. Firmware now instantiates
+that future-image owner and requires an explicit `Priming → Primed` hardware
+horizon acknowledgement between the distributed abort guard and local start.
+Both board adapters reject every streaming-horizon call, and TinyBee's
+safe-prefilled PCM-short circular-DMA composition remains compile-only and
+unreachable. Target frame materialization, a qualified cycle/frame epoch,
+cross-block prefill, safe peripheral reclaim, interrupt-backed commit
+observation, and logic-analyzer evidence remain open; both boards remain
+non-armable.
 
 Exit gate:
 
@@ -366,9 +371,12 @@ Work:
 Implementation checkpoint: fixed heartbeat/RT-deadline wire formats, an exact
 causal host estimator, boot-bound prepare receipts, participant-bound
 install/confirm/abort state, dual-core firmware routing, and adversarial two-MCU
-simulation are present. The target now binds confirmed local starts to the exact
-step executor behind configuration, interlock, deadline, cached-work, package,
-and physical-output qualification gates. The browser-worker implementation,
+simulation are present. Schedule wire version 2 adds board-qualified prime lead,
+one-shot local hardware priming at the abort guard, an explicit `Primed`
+acknowledgement, and fail-closed missed-start behavior. The target binds that
+future horizon and confirmed local start to the exact scheduled step executor
+behind configuration, interlock, deadline, cached-work, package, and
+physical-output qualification gates. The browser-worker implementation,
 observed-edge reconciliation, packet-stress/HIL runs, qualified I²S/DMA backend,
 and physical exit gate remain open; current board packages are non-armable.
 

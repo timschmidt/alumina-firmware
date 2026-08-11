@@ -159,8 +159,12 @@ portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;
 its motion-to-PCM-to-wire simulator retains ownership through output-free dwell
 and terminal disable. See the
-[scheduled-output evidence](docs/evidence/M6-SCHEDULED-OUTPUT-HORIZON.md). The
-firmware target has not adopted that backend yet, so armability remains closed.
+[scheduled-output evidence](docs/evidence/M6-SCHEDULED-OUTPUT-HORIZON.md).
+Firmware now adopts that owner structurally and schedule wire version 2 requires
+a board-qualified `Priming → Primed` output-horizon acknowledgement before
+local start. TinyBee's safe-prefilled PCM-short HAL composition is compile-only;
+both board adapters still reject streaming, so armability remains closed. See
+the [prestart priming evidence](docs/evidence/M7-PRESTART-HARDWARE-PRIMING.md).
 
 ## Developer checks
 

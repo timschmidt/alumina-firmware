@@ -135,14 +135,18 @@ exact tick/digest progress. `JobCancel` remains the precommit/aborted cleanup
 operation and drains queued ownership.
 
 The admitted first block remains outstanding while the exact motion owner holds
-its unique token. Core 1 now installs a descriptor-bound lattice origin and
+its unique token. Core 1 installs a descriptor-bound lattice origin and
 scheduled epoch, preflights the block, and returns it only after each generated
-complete image has a matching target-confirmed commit. Fresh interlocks, deadline
-health, cached work, an armable package, and a qualified output backend jointly
-gate the local `Arm`/`Start` transitions. TinyBee has only an unqualified
-blocking bootstrap writer and T-Deck Pro has no machine-output backend, so both
-first packages remain non-armable and target preparation is still fail-closed.
-Hold currently degrades to a safe stop; constrained hold/resume, lease renewal,
+complete image has a matching target-confirmed commit. At the abort guard it
+must additionally build and verify a continuous immutable hardware horizon
+through a board-qualified interval beyond start. A separate `Primed` report is
+required before the start epoch. Fresh interlocks, deadline health, cached work,
+an armable package, and a qualified output backend jointly gate the local
+`Arm`/prime/`Start` transitions. TinyBee has only an unqualified blocking
+bootstrap writer plus an unreachable compile-only PCM-short composition, and
+T-Deck Pro has no machine-output backend. Both first packages therefore remain
+non-armable and target preparation is fail-closed. Hold currently degrades to a
+safe stop; constrained hold/resume, cross-block hardware prefill, lease renewal,
 and observed-edge capture remain open.
 
 ## Deterministic prepare/commit start
@@ -170,18 +174,29 @@ The UI orchestrates a bounded two-phase procedure:
    reachable participants before the later abort guard. An unconfirmed MCU
    self-expires at the confirmation deadline; the lease bounds a job after it
    actually starts.
-6. **Execute:** after the boundary, each committed MCU starts from its local
-   hardware clock without another network packet. Telemetry later reconciles the
-   observed start edges and sync error.
+6. **Prime locally:** at the abort guard, remote abort authority closes and each
+   confirmed MCU emits one local hardware-prime action. Core 1 transfers the
+   already-admitted block into its sole output owner, stages the continuous
+   future timeline, and reports `Primed`. It must finish before its exact local
+   start cycle; otherwise it latches `MissedStart` and remains safe. No packet
+   triggers this transition.
+7. **Execute:** a primed timeline releases from each MCU's hardware clock at the
+   mapped local epoch without another network packet. The schedule's one-shot
+   `Start` transition reconciles software and safety state with that already
+   clocked boundary. Telemetry later reconciles observed start edges and sync
+   error.
 
 This produces deterministic scheduled starts within a measured tolerance, not a
 mathematically atomic distributed transaction. Loss of confirm or abort delivery
 can leave participants in different local states; the explicit gap between
 confirmation deadline and abort guard is the bounded reconciliation window, not
-an atomicity proof. The initial qualification uses
+an atomicity proof. A local hardware-prime failure after that guard can likewise
+fault one participant while an already-primed peer proceeds. It cannot be fixed
+with a last-moment Wi-Fi message. The initial qualification therefore uses
 harmless GPIO pulses and capture equipment. A machine whose safety depends on
-all MCUs stopping simultaneously needs a hardwired, appropriately rated safety
-chain; Wi-Fi stop/cancel is supplementary.
+all MCUs starting or stopping together needs a hardwired, appropriately rated
+safety chain/interlock; Wi-Fi start reconciliation and stop/cancel are
+supplementary.
 
 ## Operation after network loss
 
