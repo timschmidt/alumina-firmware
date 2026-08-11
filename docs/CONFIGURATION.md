@@ -150,10 +150,18 @@ canonical machine-IR mask and record width; a higher step-axis instance rejects
 during configuration validation rather than disappearing from execution state.
 
 The axis also requires full steps, microsteps, gearing, travel/revolution,
-calibration, position range, velocity, acceleration, and jerk facts. A FOC axis
-requires unique U/V/W and enable resources plus pole pairs, current/voltage
-limits, carrier/dead-time, and control rate. Position minimum must compare
-exactly below maximum.
+calibration, position range, velocity, acceleration, and jerk facts. In the
+current version, a FOC axis requires unique U/V/W and `FocEnable` resources plus
+pole pairs, current/voltage limits, carrier/dead-time, and control rate. Position
+minimum must compare exactly below maximum.
+
+That dedicated-enable rule is intentionally too strict for the MKS ESP32 FOC
+V1.0 schematic, which establishes no independent enable. The board remains
+non-armable and rejects FOC configuration. A future configuration version must
+replace the mandatory enable with an explicit, board-qualified shutdown
+contract: either a dedicated disable/enable path or a measured phase-input safe
+state with named reset, latency, and fault behavior. It must not preserve the
+old shape through a fake pin, alias, or compatibility shim.
 
 Motion policy requires at least one complete stepper or FOC axis and a local,
 arm-required E-stop or safety-interlock binding. The FOC policy bit is present

@@ -81,9 +81,10 @@ status = "reference-only"
 
 [[source]]
 id = "mks-esp32-foc-v1"
-kind = "hardware-and-behavior-reference-only"
+kind = "hardware-reference-only"
 url = "https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0"
 revision = "unselected"
 license = "not established for copying"
-destination = "boards/mks-esp32-foc-v1/board.toml facts only"
+destination = "independently authored boards/mks-esp32-foc-v1 facts and safe target only; no vendor asset or source copied"
 status = "reference-only"
+notes = "Only official schematic/manual and component-datasheet hardware facts were consulted for the compile-only target. Vendor test code and third-party FOC implementation source were not inspected or used."

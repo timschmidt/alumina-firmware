@@ -812,14 +812,28 @@ datasheets, independently written behavioral tests, ESP-specific MCPWM/ADC
 synchronization, measured execution budgets, fixed memory, and Alumina’s safety
 state machine.
 
-The first power profile is MKS ESP32 FOC V1.0, not TinyBee. Vendor examples give
-the initial facts to reconcile against the V1.0 schematic and bench: dual 3-PWM
-stages on GPIOs `32/33/25` with enable `22` and `26/27/14` with enable `12`;
-AS5600 buses on SDA/SCL `19/18` and `23/5`; and inline current inputs `39/36`
-and `35/34` with example 10 mΩ shunts and gain 50. These are ADC1 pins on the
-classic ESP32, avoiding its ADC2/Wi-Fi conflict, but polarity, gain, sampling
-topology, ratings, dead time, and shutdown behavior remain unqualified until
-schematic review and measurement.
+The first power profile is MKS ESP32 FOC V1.0, not TinyBee. Its V1.0 schematic
+establishes dual 3-PWM stages on GPIOs `32/33/25` and `26/27/14`, AS5600 buses
+on SDA/SCL `19/18` and `23/5`, encoder auxiliary/index inputs `15` and `13`, and
+inline current inputs `39/36` and `35/34`. The current inputs are ADC1 pins on
+classic ESP32, avoiding its ADC2/Wi-Fi conflict. The same schematic marks
+GPIO22 and GPIO12 unconnected: no independent inverter enable is established,
+and no such resource may be invented from example code. It also establishes no
+fitted mutable cache medium. Polarity, analog gain, sample topology, ratings,
+dead time, reset behavior, and physical shutdown remain unqualified until
+measurement. Each phase signal drives a paired EG2133 active-high HIN and
+active-low LIN-bar input. Its primary truth table says a driven low selects the
+low side and a driven high selects the high side; the internal HIN pull-down and
+LIN-bar pull-up make high impedance the only documented both-off candidate.
+
+The compile-only target consequently owns MCPWM0/1, ADC1, both encoder buses,
+and all six phase pins exclusively on core 1, makes the six pins no-pull inputs
+before the first await, and exposes no FOC commit path. GPIO2 is tied into the
+USB auto-programming/strap circuit and remains service-owned. Core 0 owns Wi-Fi
+and reports an unavailable cache transport. The current configuration IR
+requires a dedicated `FocEnable`, so this board cannot admit a FOC axis until
+the IR is deliberately extended to encode and validate a board-qualified
+shutdown contract. A fake enable binding or implicit GPIO alias is prohibited.
 
 ## Exact CAD-to-motor boundary
 

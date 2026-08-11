@@ -493,6 +493,22 @@ angle generation/alignment, other torque modes, cascaded motion loops, safety
 monitors, synchronized MCPWM/ADC, WCET, and all bench qualification remain open.
 See the [portable FOC evidence](evidence/M8-PORTABLE-FOC-FOUNDATION.md).
 
+Safe-target checkpoint: a typed MKS ESP32 FOC V1.0 package and classic-ESP32
+firmware feature now compile and link. Schematic reconciliation replaces the
+earlier example-derived enable assumption: GPIO22/GPIO12 are unconnected, no
+independent inverter enable or fitted cache medium is established, and neither
+is advertised. Core 1 owns both MCPWM units, ADC1, both encoder buses, and six
+phase inputs. The EG2133 truth table shows that driven low and driven high each
+select a bridge device, so its only implemented transition instead makes all
+six pins no-pull inputs before the first await. All motion/FOC operations
+reject, storage is explicitly unavailable, and the target remains non-armable.
+See the [safe-target evidence](evidence/M8-MKS-FOC-SAFE-TARGET.md).
+
+The next target slice extends configuration with a qualified shutdown-contract
+variant, implements exact angle reduction/generation and rotor observation,
+then composes one power stage behind a compile-time-closed energization gate.
+MCPWM/ADC synchronization and any nonzero duty remain separate reviewed work.
+
 Exit gate:
 
 - PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,

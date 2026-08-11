@@ -34,6 +34,16 @@ board-mks-tinybee = [
     "esp-rtos/esp32",
     "esp-rtos/esp-radio",
 ]
+board-mks-esp32-foc-v1 = [
+    "dep:board-mks-esp32-foc-v1",
+    "esp-alloc/esp32",
+    "esp-bootloader-esp-idf/esp32",
+    "esp-hal/esp32",
+    "esp-radio/esp32",
+    "esp-rtos/esp-alloc",
+    "esp-rtos/esp32",
+    "esp-rtos/esp-radio",
+]
 board-t-deck-pro = [
     "dep:board-t-deck-pro",
     "esp-alloc/esp32s3",
@@ -51,6 +61,7 @@ alumina-board.workspace = true
 alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-config.workspace = true
+alumina-foc.workspace = true
 alumina-job.workspace = true
 alumina-motion.workspace = true
 alumina-net.workspace = true
@@ -62,6 +73,7 @@ alumina-shift-register.workspace = true
 alumina-service.workspace = true
 alumina-storage.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }
+board-mks-esp32-foc-v1 = { workspace = true, optional = true }
 board-t-deck-pro = { workspace = true, optional = true }
 defmt.workspace = true
 embassy-executor.workspace = true

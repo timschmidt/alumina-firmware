@@ -1,23 +1,51 @@
 schema = 1
 id = "mks-esp32-foc-v1"
 display_name = "MKS ESP32 FOC V1.0"
-revision = "V1.0; physical reconciliation pending"
+revision = "V1.0; physical module and assembly reconciliation pending"
 chip = "esp32"
 target = "xtensa-esp32-none-elf"
 cores = 2
-flash_bytes = 0
+flash_bytes = 4194304
 psram_bytes = 0
-qualification = "described"
-implementation = "planned"
+qualification = "compiles"
+implementation = "implemented"
 hardware_available = false
 service_core = 0
 realtime_core = 1
+firmware_feature = "board-mks-esp32-foc-v1"
 armable = false
 
 [provenance]
 primary = "https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0"
+schematic = "https://github.com/makerbase-motor/MKS-ESP32FOC/blob/MKS-ESP32-FOC-V1.0/Hardware/MKS%20ESP32%20FOC%20V1.0%20schematic.pdf"
+manual = "https://github.com/makerbase-motor/MKS-ESP32FOC/blob/MKS-ESP32-FOC-V1.0/User%20Manual/MKS%20ESP32%20FOC%20V1.0%20Manual.pdf"
+module = "https://www.espressif.com/sites/default/files/documentation/esp32-wroom-32d_esp32-wroom-32u_datasheet_en.pdf"
+gate_driver = "https://www.egmicro.com/static/doc/%E5%8A%9F%E7%8E%87%E9%A9%B1%E5%8A%A8%E8%8A%AF%E7%89%87/%E5%A4%9A%E7%9B%B8%E5%8D%8A%E6%A1%A5/EG2133%E4%B8%AD%E5%8E%8B300V1.2A%E4%B8%89%E7%9B%B8%E5%8D%8A%E6%A1%A5%E9%A9%B1%E5%8A%A8%E8%8A%AF%E7%89%87%E6%95%B0%E6%8D%AE%E6%89%8BV1.0.pdf"
 
 [safe_state]
-motor_0_enable = false
-motor_1_enable = false
-phase_pwm = 0
+phase_inputs_high_impedance = true
+independent_gate_disable = false
+bench_verified = false
+
+[storage]
+fitted = false
+backend = "unavailable"
+note = "V1.0 schematic and manual establish no fitted SD or other mutable job-cache medium"
+
+[[power_stage]]
+id = 0
+phase_gpio = [32, 33, 25]
+current_gpio = [39, 36]
+encoder_sda_gpio = 19
+encoder_scl_gpio = 18
+encoder_index_gpio = 15
+support = "described"
+
+[[power_stage]]
+id = 1
+phase_gpio = [26, 27, 14]
+current_gpio = [35, 34]
+encoder_sda_gpio = 23
+encoder_scl_gpio = 5
+encoder_index_gpio = 13
+support = "described"

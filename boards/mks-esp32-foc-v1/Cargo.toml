@@ -1,6 +1,6 @@
 [package]
-name = "xtask"
-description = "Repository-local board, build, schema, and verification commands"
+name = "board-mks-esp32-foc-v1"
+description = "Typed compile-time MKS ESP32 FOC V1.0 board package"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,11 +10,10 @@ publish.workspace = true
 
 [dependencies]
 alumina-board.workspace = true
+alumina-protocol.workspace = true
+
+[dev-dependencies]
 alumina-capability.workspace = true
-board-mks-tinybee.workspace = true
-board-mks-esp32-foc-v1.workspace = true
-board-t-deck-pro.workspace = true
-sha2.workspace = true
 
 [lints]
 workspace = true

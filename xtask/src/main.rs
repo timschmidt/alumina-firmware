@@ -442,6 +442,7 @@ fn validate_visual_assets(board: &Board, package: &BoardPackage<'_>) -> Result<(
 
 fn expected_feature_for(id: &str) -> Option<&'static str> {
     match id {
+        board_mks_esp32_foc_v1::BOARD_ID => Some("board-mks-esp32-foc-v1"),
         board_mks_tinybee::BOARD_ID => Some("board-mks-tinybee"),
         board_t_deck_pro::BOARD_ID => Some("board-t-deck-pro"),
         _ => None,
@@ -450,6 +451,7 @@ fn expected_feature_for(id: &str) -> Option<&'static str> {
 
 fn package_for(id: &str) -> Option<&'static BoardPackage<'static>> {
     match id {
+        board_mks_esp32_foc_v1::BOARD_ID => Some(&board_mks_esp32_foc_v1::PACKAGE),
         board_mks_tinybee::BOARD_ID => Some(&board_mks_tinybee::PACKAGE),
         board_t_deck_pro::BOARD_ID => Some(&board_t_deck_pro::PACKAGE),
         _ => None,

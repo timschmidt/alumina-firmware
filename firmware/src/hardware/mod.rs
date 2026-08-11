@@ -9,6 +9,11 @@ pub struct RuntimeResources {
     pub software_interrupt: SW_INTERRUPT<'static>,
 }
 
+#[cfg(feature = "board-mks-esp32-foc-v1")]
+pub mod mks_esp32_foc_v1;
+#[cfg(feature = "board-mks-esp32-foc-v1")]
+pub use mks_esp32_foc_v1 as selected;
+
 #[cfg(feature = "board-mks-tinybee")]
 pub mod mks_tinybee;
 #[cfg(all(

@@ -119,3 +119,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   point/interval arithmetic, certified transforms and modulation, widened
   dq-current PI control, digest-bound commands, and deterministic functional
   plant replay with every hardware claim kept closed.
+- [`M8-MKS-FOC-SAFE-TARGET.md`](M8-MKS-FOC-SAFE-TARGET.md) — reconciled V1.0
+  schematic facts, typed resources and canonical capability identity, explicit
+  absent enable/storage capabilities, six-phase-high-impedance boot composition,
+  and
+  classic-ESP32 linked-image evidence with all energization paths closed.

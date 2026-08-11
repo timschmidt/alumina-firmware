@@ -1,6 +1,6 @@
 # Boards and hardware strategy
 
-Research snapshot: 2026-08-10.
+Research snapshot: 2026-08-11.
 
 ## Support levels
 
@@ -23,7 +23,7 @@ upstream FluidNC profile makes a board electrically or operationally qualified.
 | --- | --- | --- | --- | --- |
 | MKS TinyBee V1.x | ESP32-WROOM-32U, 8 MiB flash, 520 KiB SRAM, dual core | Requested target with official hardware and FluidNC configuration | I²S shift-register step/heater/fan output, limits, SD, Wi-Fi, XYZ coordinated motion | Tight internal RAM; virtual outputs are not GPIO/PWM; no native FOC power stage/current sensing |
 | LILYGO T-Deck Pro | ESP32-S3, 16 MiB flash, 8 MiB PSRAM, dual core | Existing Embassy drivers and integrated UI/radio hardware | Service-core peripheral parity, web UI, async bus ownership, telemetry | Shared buses and EPD latency require bounded/coalesced service tasks; PSRAM is not real-time memory |
-| MKS ESP32 FOC V1.0 | classic dual-core ESP32; exact module/memory to confirm from received board | Named first servo target with official schematic, manual, and dual-motor examples | Clean-room dual 3-PWM FOC, dual magnetic sensors, inline current sensing | Power/current/thermal claims and sampling/shutdown topology require schematic and bench qualification |
+| MKS ESP32 FOC V1.0 | ESP32-WROOM-32D, 4 MiB standard module flash, 520 KiB on-chip SRAM, dual core; received assembly still to confirm | Named first servo target with official schematic and manual | Clean-room dual 3-PWM FOC, dual magnetic sensors, inline current sensing | No fitted cache medium or independent inverter enable is established; phase pins must float for the EG2133 both-off input state, and all shutdown behavior requires bench qualification |
 
 Recommended order:
 
@@ -155,35 +155,61 @@ through separate reviewed drivers and the revision-specific peripheral suite.
 
 ## MKS ESP32 FOC V1.0 model
 
-The selected vendor branch describes a dual-motor integrated board based on a
-classic dual-core ESP32. Its schematic, manual, and test programs are hardware
-evidence and functional references; SimpleFOC implementation source is not an
-Alumina source dependency.
+The selected vendor branch describes a dual-motor integrated board based on an
+ESP32-WROOM-32D. The official module datasheet establishes 4 MiB as the normal
+flash capacity for that module, while custom capacities and the received
+assembly remain physical checks. Only the V1.0 schematic/manual and the module
+and EG2133 datasheets were used for this target; vendor example and third-party
+FOC source were not inspected or used.
 
-Initial facts from the vendor's dual-motor/current-control examples:
+Revision-specific facts reconciled from the V1.0 schematic:
 
 | Function | Motor 0 | Motor 1 |
 | --- | --- | --- |
 | 3-PWM phase outputs | GPIO32, GPIO33, GPIO25 | GPIO26, GPIO27, GPIO14 |
-| Driver enable | GPIO22 | GPIO12 |
+| Independent inverter enable | none established; GPIO22 is marked unconnected | none established; GPIO12 is marked unconnected |
 | AS5600 I²C SDA/SCL | GPIO19 / GPIO18 | GPIO23 / GPIO5 |
+| Encoder index/auxiliary input | GPIO15 | GPIO13 |
 | Inline current ADC inputs | GPIO39 / GPIO36 | GPIO35 / GPIO34 |
-| Example current-sense parameters | 10 mΩ, gain 50, both gains inverted in software | 10 mΩ, gain 50, both gains inverted in software |
+
+Each phase signal is tied to a paired EG2133 active-high HIN and active-low
+LIN-bar input. The component truth table therefore makes a driven low select
+the low-side MOSFET and a driven high select the high-side MOSFET. High
+impedance is the documented both-off candidate because the driver internally
+biases HIN low and LIN-bar high. The firmware must never call a driven-low
+phase state “disabled.” Board-level power-on, reset, watchdog, and high-Z
+behavior remain physical qualification gates.
+
+The schematic/manual establish no fitted SD card or other mutable cache medium.
+The board package therefore reports storage as unavailable instead of
+advertising cached-job execution. An external storage design can be added later
+as an explicit board variant; it is not inferred from unused GPIOs.
 
 The four current pins are ADC1-class on classic ESP32, which is favorable for
 simultaneous Wi-Fi, but that observation does not prove PWM-synchronized sample
 quality. Before any torque mode is advertised, reconcile the exact board
 revision/module, MOSFET/gate-driver topology, shunts/amplifiers, polarity,
-current range, bus/temperature sensing, enable/fault path, PWM frequency/dead
+current range, bus/temperature sensing, shutdown/fault path, PWM frequency/dead
 time, ADC attenuation/calibration, connector pinout, power input, and cooling.
 Vendor current and voltage figures remain unqualified claims until measured.
 
 The board capability record must expose distinct physical power stages,
-current-sense channels, sensor buses, timer/ADC relationships, and safe disable;
+current-sense channels, sensor buses, timer/ADC relationships, and safe shutdown;
 it must not expose six unrelated generic PWM pins. Runtime configuration adds
 motor pole pairs, phase order, resistance/inductance/flux or KV facts, sensor
 direction/resolution, current/voltage/speed limits, control rates/tuning, and
 calibration uncertainty.
+
+The typed package and firmware feature now compile for
+`xtensa-esp32-none-elf`. Core 1 takes sole ownership of MCPWM0/1, ADC1, both I²C
+buses, and all motor routes, and synchronously makes all six phase pins no-pull
+inputs before its first await. GPIO2, which participates in the USB
+auto-programming/strap circuit, belongs to core 0 rather than being exposed as
+an auxiliary realtime input. Core 0 also owns Wi-Fi and service UART resources
+and exposes a permanently faulted non-fitted cache backend. This is a
+`compiles`, non-armable safe composition: reset behavior, inverter both-off
+behavior, MCPWM/ADC operation, sensor traffic, current measurement, safety
+inputs, and energization remain unverified.
 
 ## T-LoRa Pager late target
 

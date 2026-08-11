@@ -8,6 +8,11 @@ struct BoardSelection {
 
 const BOARDS: &[BoardSelection] = &[
     BoardSelection {
+        feature_env: "CARGO_FEATURE_BOARD_MKS_ESP32_FOC_V1",
+        id: "mks-esp32-foc-v1",
+        target: "xtensa-esp32-none-elf",
+    },
+    BoardSelection {
         feature_env: "CARGO_FEATURE_BOARD_MKS_TINYBEE",
         id: "mks-tinybee-v1",
         target: "xtensa-esp32-none-elf",
@@ -32,7 +37,7 @@ fn main() {
     let board = selected.next().unwrap_or_else(|| {
         panic!(
             "select exactly one board feature; use `cargo xtask build --board \
-             mks-tinybee-v1` or `cargo xtask build --board t-deck-pro`"
+             mks-tinybee-v1`, `mks-esp32-foc-v1`, or `t-deck-pro`"
         )
     });
     if selected.next().is_some() {

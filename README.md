@@ -251,6 +251,18 @@ parameter/vector rejection. MKS board reconciliation, PWM/ADC adapters, motor
 identification, deadlines, shutdown measurement, and every energization claim
 remain open. See the [portable FOC evidence](docs/evidence/M8-PORTABLE-FOC-FOUNDATION.md).
 
+The MKS ESP32 FOC V1.0 now also has an independently authored typed board
+package and linked `xtensa-esp32-none-elf` safe target. The revision schematic,
+not example code, is authoritative: GPIO22/GPIO12 are unconnected, no
+independent inverter enable or fitted cache medium is established, and the
+capability record exposes neither. Core 1 owns all six phase inputs and drives
+them to no-pull input mode synchronously before its first await. This matters:
+each signal drives paired active-high/active-low EG2133 inputs, so either driven
+level selects one MOSFET while high impedance is the documented both-off
+candidate. Every FOC/motion operation still rejects. This is compile evidence
+only, not a reset-state, shutdown, timing, or energization claim. See the
+[MKS safe-target evidence](docs/evidence/M8-MKS-FOC-SAFE-TARGET.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:
@@ -262,6 +274,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo xtask board list
 cargo xtask board check mks-tinybee-v1
 cargo xtask board check t-deck-pro
+cargo xtask board check mks-esp32-foc-v1
 cargo xtask capabilities --board mks-tinybee --json
 ```
 

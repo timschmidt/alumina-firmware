@@ -100,12 +100,23 @@ compatibility.
   and [V1.0 user-manual directory](https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0/User%20Manual)
   — schematic/PCB/manual evidence that must be pinned and reconciled with the
   received board.
-- [V1.0 test-code directory](https://github.com/makerbase-motor/MKS-ESP32FOC/tree/MKS-ESP32-FOC-V1.0/Test%20Code)
-  — functional examples for open/closed loop, dual AS5600, current sensing and
-  current control; used to derive independent requirements, never copied as the
-  Alumina FOC implementation.
-- [V1.0 dual current-control example](https://github.com/makerbase-motor/MKS-ESP32FOC/blob/MKS-ESP32-FOC-V1.0/Test%20Code/7_current_control_example/7_current_control_example.ino)
-  — initial dual 3-PWM/enable, I²C sensor, and inline-current pin/gain facts.
+- [ESP32-WROOM-32D/32U datasheet](https://www.espressif.com/sites/default/files/documentation/esp32-wroom-32d_esp32-wroom-32u_datasheet_en.pdf)
+  — official module identity, memory, electrical, and strapping reference. The
+  schematic identifies the normal ESP32-WROOM-32D module, whose standard flash
+  capacity is 4 MiB; the received module must still be read and queried.
+- [EG2133 V1.0 datasheet](https://www.egmicro.com/static/doc/%E5%8A%9F%E7%8E%87%E9%A9%B1%E5%8A%A8%E8%8A%AF%E7%89%87/%E5%A4%9A%E7%9B%B8%E5%8D%8A%E6%A1%A5/EG2133%E4%B8%AD%E5%8E%8B300V1.2A%E4%B8%89%E7%9B%B8%E5%8D%8A%E6%A1%A5%E9%A9%B1%E5%8A%A8%E8%8A%AF%E7%89%87%E6%95%B0%E6%8D%AE%E6%89%8BV1.0.pdf)
+  — official gate-driver input/output truth table and input-bias reference. On
+  this board each phase net drives an active-high HIN and active-low LIN-bar
+  together: driven low selects the low-side MOSFET, driven high selects the
+  high-side MOSFET, and only high impedance permits the internal opposing input
+  biases to select both-off.
+
+Only the V1.0 hardware artifacts, manual, and official component datasheets
+were consulted for the compile-only board target. Vendor test-code and
+third-party FOC implementation sources were not inspected or used. In
+particular, the schematic marks GPIO22 and GPIO12 unconnected, establishes no
+independent inverter enable, and establishes no fitted SD/cache medium; example
+code cannot override those revision-specific hardware facts.
 - [LILYGO LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) and
   [current T-LoRa Pager hardware page](https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/master/docs/hardware/lilygo-t-lora-pager.md)
   — current ESP32-S3/flash/PSRAM/device/pin source for the late board stub and
