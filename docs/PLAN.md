@@ -293,11 +293,15 @@ Work:
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
-are present. Exact count/position, half-tick interpolation, overflow, configured
-rate, pulse/setup/hold, normal disable, deadline-fault, malformed-report, and
-image-integrity tests pass. The hardware serializer, endstop/E-stop sampling,
-bounded hold/stop fallback, arm transition, browser planner, and physical
-workflow remain closed; both first board packages remain non-armable.
+are present. Cached-block admission now preflights every segment in bounded
+record/axis work, preserves live state on rejection, retains unique ownership
+through exact execution, and permits acknowledgement only after independently
+correlated terminal progress. Exact count/position, half-tick interpolation,
+overflow, configured rate, pulse/setup/hold, normal disable, deadline-fault,
+malformed-report, ownership, and image-integrity tests pass. The hardware
+serializer, endstop/E-stop sampling, bounded hold/stop fallback, arm transition,
+browser planner, and physical workflow remain closed; both first board packages
+remain non-armable.
 
 Exit gate:
 

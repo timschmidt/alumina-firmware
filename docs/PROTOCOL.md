@@ -242,6 +242,11 @@ fixed-credit channel. Core 1 hashes and validates the same bytes independently
 before extending its admitted horizon. Unknown kinds, flags, versions, padding,
 identity changes, skipped/duplicate/wrapped sequences, time gaps, digest-chain
 changes, limit violations, and cumulative position overflow fail closed.
+Before the portable step executor accepts that ownership token, it analytically
+preflights every segment against its current electrical and lattice state. The
+token is returned for acknowledgement only after the emitted trace reaches the
+same terminal tick and cumulative position; rejection returns it unchanged, and
+a mid-execution fault makes it unacknowledgeable.
 
 ## Cached-job preparation bodies
 

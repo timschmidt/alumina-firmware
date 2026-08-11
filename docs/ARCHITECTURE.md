@@ -508,10 +508,13 @@ independent `RealtimeJob` actor. An authenticated `JobPrepare` descriptor binds
 one exact publication, stream, capability/configuration identities, axis width,
 block count, and machine limits. Core 0 reads at most one verified storage chunk
 per executor pass and stops on ring backpressure. Core 1 revalidates and retains
-at most the first block. It deliberately does not acknowledge or execute that
-block. Boot-bound prepare plus participant-bound install/confirm/abort and exact
-absolute epoch state are implemented, while interlock-qualified arming, the
-motor scheduler, hold/resume, and hardware output remain later gates.
+at most the first block. The portable motion composition preflights every
+segment, retains that unique block token throughout exact execution, and returns
+it to the job actor for acknowledgement only after terminal tick and cumulative
+lattice position independently agree. The non-armable target images do not yet
+install this executor. Boot-bound prepare plus participant-bound
+install/confirm/abort and exact absolute epoch state are implemented, while
+interlock-qualified arming, hold/resume, and hardware output remain later gates.
 Cancellation clears core-0 partial state, invalidates the core-1 ownership
 token, and drains queued work. Core-0 local job ownership vetoes storage
 mutation immediately, without waiting for periodic safety telemetry.
@@ -600,6 +603,17 @@ allocation-free logical transactions at exact `DeviceCycle` deadlines. For
 the nearest integer to `(2k + 1)d/(2n)`. Therefore every accepted edge carries
 a conservative one-half-device-tick quantization bound and the final lattice
 position/count is exact.
+
+`CachedStepperExecutor` closes the ownership gap between the independently
+validated job actor and that event engine. Before accepting a block it advances
+a private logical snapshot analytically through every segment, proving timing,
+ordering, counter, and final-position constraints in work bounded by segment
+count times axis count rather than requested step count. The live executor is
+unchanged on rejection. Once accepted, the unique `AdmittedBlock` remains with
+the event engine until the final segment completion matches the block's
+independent progress certificate. Faulted work cannot be acknowledged and is
+released only after the immediate safe logical transaction has been issued;
+physical application remains a separate backend fact.
 
 A separate complete-image mapper binds those logical transactions to configured
 I²S bit resources, respects active-high/active-low enable or disable semantics,

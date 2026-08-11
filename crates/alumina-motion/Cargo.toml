@@ -11,8 +11,12 @@ description = "Allocation-free exact integer event execution for Alumina motion 
 [dependencies]
 alumina-board.workspace = true
 alumina-config.workspace = true
+alumina-job.workspace = true
 alumina-machine-ir.workspace = true
 alumina-protocol.workspace = true
+
+[dev-dependencies]
+alumina-storage.workspace = true
 
 [lints]
 workspace = true

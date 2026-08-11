@@ -117,8 +117,10 @@ version = "0.1.0"
 dependencies = [
  "alumina-board",
  "alumina-config",
+ "alumina-job",
  "alumina-machine-ir",
  "alumina-protocol",
+ "alumina-storage",
 ]
 
 [[package]]

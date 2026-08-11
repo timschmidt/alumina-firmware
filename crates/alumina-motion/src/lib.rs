@@ -6,7 +6,8 @@ use alumina_config::{
     AxisDriverControl, ConfigurationIdentity, RealtimeConfigurationProfile, SignalPolarity,
     StepperAxisProfile,
 };
-use alumina_machine_ir::{ExecutionSegment, MAX_EXECUTION_AXES, StreamTick};
+use alumina_job::AdmittedBlock;
+use alumina_machine_ir::{BlockError, ExecutionSegment, MAX_EXECUTION_AXES, StreamTick};
 use alumina_protocol::DeviceCycle;
 
 /// Maximum number of axes representable by the fixed logical event mask.
@@ -1148,6 +1149,83 @@ impl<const AXES: usize> StepperExecutor<AXES> {
         }
     }
 
+    /// Private logical-state copy used only to prove an entire cached block
+    /// before its unique ownership token crosses into the live executor. The
+    /// executor deliberately owns no hardware resources, but keeping this
+    /// operation private prevents a second public event producer from being
+    /// created accidentally.
+    fn preflight_snapshot(&self) -> Self {
+        Self {
+            timing: self.timing,
+            state: self.state,
+            epoch: self.epoch,
+            next_tick: self.next_tick,
+            position: self.position,
+            direction_known: self.direction_known,
+            direction_positive: self.direction_positive,
+            enabled: self.enabled,
+            step_high: self.step_high,
+            last_fall: self.last_fall,
+            last_rise: self.last_rise,
+            active: self.active,
+            completed_segments: self.completed_segments,
+            emitted_steps: self.emitted_steps,
+            maximum_lateness_cycles: self.maximum_lateness_cycles,
+            deadline_misses: self.deadline_misses,
+        }
+    }
+
+    /// Advances one already validated segment in time proportional to the axis
+    /// count, not the number of emitted steps. This is only used on the private
+    /// admission snapshot; live execution must still emit every edge.
+    fn preflight_complete_segment(&mut self) -> Result<(), MotionError> {
+        if self.state != ExecutorState::Segment || !self.step_high.is_empty() {
+            return Err(MotionError::State);
+        }
+        let active = self.active.ok_or(MotionError::State)?;
+        self.direction_known = self.direction_known.union(active.direction_change);
+        self.direction_positive = active.direction_positive;
+        self.enabled = self.enabled.union(active.enable);
+
+        let duration = active.segment.end_tick.0 - active.segment.start_tick.0;
+        let mut axis = 0;
+        while axis < AXES {
+            let count = active.steps[axis];
+            if count != 0 {
+                self.position[axis] = self.position[axis]
+                    .checked_add(active.segment.delta_steps[axis])
+                    .ok_or(MotionError::PositionOverflow { axis })?;
+                self.emitted_steps[axis] = self.emitted_steps[axis]
+                    .checked_add(count)
+                    .ok_or(MotionError::Arithmetic)?;
+                let last_offset = centered_step_offset(duration, count, count - 1)?;
+                let rise = DeviceCycle(
+                    active
+                        .start
+                        .0
+                        .checked_add(last_offset)
+                        .ok_or(MotionError::EpochOverflow)?,
+                );
+                let fall = DeviceCycle(
+                    rise.0
+                        .checked_add(u64::from(self.timing.axes[axis].pulse_high_cycles))
+                        .ok_or(MotionError::EpochOverflow)?,
+                );
+                self.last_rise[axis] = Some(rise);
+                self.last_fall[axis] = Some(fall);
+            }
+            axis += 1;
+        }
+        self.next_tick = active.segment.end_tick;
+        self.completed_segments = self
+            .completed_segments
+            .checked_add(1)
+            .ok_or(MotionError::Arithmetic)?;
+        self.active = None;
+        self.state = ExecutorState::Ready;
+        Ok(())
+    }
+
     fn pop_output_event(
         &mut self,
         mut active: ActiveSegment<AXES>,
@@ -1274,6 +1352,386 @@ impl<const AXES: usize> StepperExecutor<AXES> {
             maximum_half_tick_error: u8::from(active.steps.iter().any(|steps| *steps != 0)),
         }))
     }
+}
+
+/// Owns one independently admitted cached block until every segment has
+/// produced its exact logical event trace. The block token is returned only
+/// after its terminal tick and cumulative lattice position agree with the
+/// independent stream validator.
+pub struct CachedStepperExecutor<const AXES: usize> {
+    stepper: StepperExecutor<AXES>,
+    admitted: Option<AdmittedBlock<AXES>>,
+    next_segment: u32,
+    segment_count: u32,
+    origin: [i64; AXES],
+    faulted: bool,
+    safe_transaction_issued: bool,
+}
+
+impl<const AXES: usize> CachedStepperExecutor<AXES> {
+    /// Constructs an inert cached-stream runner with the same electrical
+    /// validation contract as [`StepperExecutor`].
+    pub fn new(timing: StepperTiming<AXES>) -> Result<Self, MotionError> {
+        Ok(Self {
+            stepper: StepperExecutor::new(timing)?,
+            admitted: None,
+            next_segment: 0,
+            segment_count: 0,
+            origin: [0; AXES],
+            faulted: false,
+            safe_transaction_issued: false,
+        })
+    }
+
+    /// Installs the deterministic local epoch and current absolute lattice
+    /// position before any cached block is accepted.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), MotionError> {
+        if self.admitted.is_some() || self.faulted {
+            return Err(MotionError::State);
+        }
+        self.stepper.start_job(epoch, position)?;
+        self.origin = position;
+        self.next_segment = 0;
+        self.segment_count = 0;
+        self.safe_transaction_issued = false;
+        Ok(())
+    }
+
+    /// Preflights every segment and retains one admitted block, installing only
+    /// its first segment in the live executor. A rejection returns ownership of
+    /// the unchanged block and leaves the live executor exactly as it was
+    /// before this call.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection must return the unique inline-owned block without allocation or aliasing"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedMotionBlock<AXES>> {
+        let (first, segment_count) = match self.validate_block(&admitted) {
+            Ok(validated) => validated,
+            Err(error) => return Err(RejectedMotionBlock { error, admitted }),
+        };
+        if let Err(error) = self.stepper.load_segment(first) {
+            return Err(RejectedMotionBlock {
+                error: CachedMotionError::Motion(error),
+                admitted,
+            });
+        }
+        self.admitted = Some(admitted);
+        self.next_segment = 1;
+        self.segment_count = segment_count;
+        Ok(())
+    }
+
+    /// Polls one exact deadline. Segment boundaries are internal; when two
+    /// contiguous segments meet, the next boundary transaction may be returned
+    /// from this same call. The admitted token leaves this owner only after the
+    /// complete block trace matches its independently validated progress.
+    pub fn poll(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Result<CachedMotionPoll<AXES>, CachedMotionError> {
+        if self.faulted {
+            return Err(CachedMotionError::State);
+        }
+        loop {
+            let polled = match self.stepper.poll(observed) {
+                Ok(polled) => polled,
+                Err(error) => {
+                    self.faulted = true;
+                    return Err(CachedMotionError::Motion(error));
+                }
+            };
+            match polled {
+                MotionPoll::Idle => {
+                    if self.admitted.is_some() {
+                        self.faulted = true;
+                        return Err(CachedMotionError::State);
+                    }
+                    return Ok(CachedMotionPoll::Idle);
+                }
+                MotionPoll::Future { at } => return Ok(CachedMotionPoll::Future { at }),
+                MotionPoll::Event {
+                    event,
+                    lateness_cycles,
+                } => {
+                    return Ok(CachedMotionPoll::Event {
+                        event,
+                        lateness_cycles,
+                    });
+                }
+                MotionPoll::SegmentComplete(completion) => {
+                    if self.next_segment < self.segment_count {
+                        let segment = match self.segment(self.next_segment) {
+                            Ok(segment) => segment,
+                            Err(error) => {
+                                self.faulted = true;
+                                return Err(error);
+                            }
+                        };
+                        if let Err(error) = self.stepper.load_segment(segment) {
+                            self.faulted = true;
+                            return Err(CachedMotionError::Motion(error));
+                        }
+                        self.next_segment = match self.next_segment.checked_add(1) {
+                            Some(next) => next,
+                            None => {
+                                self.faulted = true;
+                                return Err(CachedMotionError::Arithmetic);
+                            }
+                        };
+                        continue;
+                    }
+                    if self.next_segment != self.segment_count {
+                        self.faulted = true;
+                        return Err(CachedMotionError::SegmentCount);
+                    }
+                    let admitted = match self.admitted.as_ref() {
+                        Some(admitted) => admitted,
+                        None => {
+                            self.faulted = true;
+                            return Err(CachedMotionError::State);
+                        }
+                    };
+                    let progress = admitted.progress();
+                    let expected_position = match absolute_position(self.origin, progress.position)
+                    {
+                        Ok(position) => position,
+                        Err(error) => {
+                            self.faulted = true;
+                            return Err(error);
+                        }
+                    };
+                    if completion.end_tick != progress.end_tick
+                        || completion.position != expected_position
+                        || self.stepper.status().next_tick != progress.end_tick
+                    {
+                        self.faulted = true;
+                        return Err(CachedMotionError::Progress);
+                    }
+                    let admitted = match self.admitted.take() {
+                        Some(admitted) => admitted,
+                        None => {
+                            self.faulted = true;
+                            return Err(CachedMotionError::State);
+                        }
+                    };
+                    self.next_segment = 0;
+                    self.segment_count = 0;
+                    return Ok(CachedMotionPoll::BlockComplete {
+                        admitted,
+                        completion,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Exact next event or segment-horizon deadline.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        if self.faulted {
+            None
+        } else {
+            self.stepper.next_deadline()
+        }
+    }
+
+    /// Completes a job only after the admitted block token has been returned to
+    /// its job actor and the configured driver hold time has elapsed.
+    pub fn finish_job(&mut self, at: DeviceCycle) -> Result<StepperEvent, MotionError> {
+        if self.admitted.is_some() || self.faulted {
+            return Err(MotionError::State);
+        }
+        self.stepper.finish_job(at)
+    }
+
+    /// Latches the runner and returns the immediate logical safe transaction.
+    /// The caller must apply this transaction to the hardware backend before
+    /// reporting safe outputs.
+    pub fn fault(&mut self, at: DeviceCycle) -> StepperEvent {
+        self.faulted = true;
+        self.safe_transaction_issued = true;
+        self.stepper.fault(at)
+    }
+
+    /// Releases an unacknowledgeable block only after [`Self::fault`] has issued
+    /// the safe output transaction. The caller remains responsible for applying
+    /// that returned transaction before calling this method and for faulting the
+    /// corresponding job actor rather than acknowledging this block.
+    pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
+        if self.faulted
+            && self.safe_transaction_issued
+            && self.stepper.status().state == ExecutorState::Faulted
+        {
+            self.admitted.take()
+        } else {
+            None
+        }
+    }
+
+    /// Bounded exact executor status.
+    pub const fn status(&self) -> StepperStatus<AXES> {
+        self.stepper.status()
+    }
+
+    /// Whether this owner currently holds a block that the job actor must not
+    /// acknowledge or replace.
+    pub const fn has_admitted_block(&self) -> bool {
+        self.admitted.is_some()
+    }
+
+    /// Canonical logical executor snapshot. Backend telemetry must separately
+    /// prove whether a returned output transaction was physically applied.
+    pub fn report(&self) -> Result<RealtimeMotionReport, MotionReportError> {
+        RealtimeMotionReport::from_executor(&self.stepper)
+    }
+
+    fn validate_block(
+        &self,
+        admitted: &AdmittedBlock<AXES>,
+    ) -> Result<(ExecutionSegment<AXES>, u32), CachedMotionError> {
+        if self.faulted
+            || self.admitted.is_some()
+            || self.stepper.status().state != ExecutorState::Ready
+        {
+            return Err(CachedMotionError::State);
+        }
+        let header = admitted.header();
+        let progress = admitted.progress();
+        if header.segment_count == 0
+            || header.start_tick != self.stepper.status().next_tick
+            || header.end_tick != progress.end_tick
+        {
+            return Err(CachedMotionError::Progress);
+        }
+        let mut segments = admitted.segments().map_err(CachedMotionError::Block)?;
+        let first = segments.next().ok_or(CachedMotionError::SegmentCount)?;
+        let mut preflight = self.stepper.preflight_snapshot();
+        let mut count = 1_u32;
+        preflight_segment(&mut preflight, first)?;
+        for segment in segments {
+            preflight_segment(&mut preflight, segment)?;
+            count = count.checked_add(1).ok_or(CachedMotionError::Arithmetic)?;
+        }
+        let cumulative = absolute_position(self.origin, progress.position)?;
+        let preflight_status = preflight.status();
+        if count != header.segment_count
+            || preflight_status.next_tick != progress.end_tick
+            || preflight_status.position != cumulative
+        {
+            return Err(CachedMotionError::Progress);
+        }
+        Ok((first, count))
+    }
+
+    fn segment(&self, index: u32) -> Result<ExecutionSegment<AXES>, CachedMotionError> {
+        let admitted = self.admitted.as_ref().ok_or(CachedMotionError::State)?;
+        let index = usize::try_from(index).map_err(|_| CachedMotionError::Arithmetic)?;
+        admitted
+            .segments()
+            .map_err(CachedMotionError::Block)?
+            .nth(index)
+            .ok_or(CachedMotionError::SegmentCount)
+    }
+}
+
+fn preflight_segment<const AXES: usize>(
+    executor: &mut StepperExecutor<AXES>,
+    segment: ExecutionSegment<AXES>,
+) -> Result<(), CachedMotionError> {
+    executor
+        .load_segment(segment)
+        .map_err(CachedMotionError::Motion)?;
+    executor
+        .preflight_complete_segment()
+        .map_err(CachedMotionError::Motion)
+}
+
+/// A block rejected before ownership entered the cached executor.
+pub struct RejectedMotionBlock<const AXES: usize> {
+    error: CachedMotionError,
+    admitted: AdmittedBlock<AXES>,
+}
+
+impl<const AXES: usize> RejectedMotionBlock<AXES> {
+    pub const fn error(&self) -> CachedMotionError {
+        self.error
+    }
+
+    pub fn into_block(self) -> AdmittedBlock<AXES> {
+        self.admitted
+    }
+}
+
+impl<const AXES: usize> core::fmt::Debug for RejectedMotionBlock<AXES> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RejectedMotionBlock")
+            .field("error", &self.error)
+            .field("header", &self.admitted.header())
+            .finish()
+    }
+}
+
+/// Nonblocking result from executing one independently admitted cached block.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "completion transfers the unique inline-owned block back to its job actor"
+)]
+pub enum CachedMotionPoll<const AXES: usize> {
+    Idle,
+    Future {
+        at: DeviceCycle,
+    },
+    Event {
+        event: StepperEvent,
+        lateness_cycles: u32,
+    },
+    BlockComplete {
+        admitted: AdmittedBlock<AXES>,
+        completion: SegmentCompletion<AXES>,
+    },
+}
+
+/// Cached-block/executor correlation failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CachedMotionError {
+    State,
+    Block(BlockError),
+    Motion(MotionError),
+    SegmentCount,
+    Progress,
+    PositionOverflow { axis: usize },
+    Arithmetic,
+}
+
+fn apply_delta<const AXES: usize>(
+    position: &mut [i64; AXES],
+    delta: [i64; AXES],
+) -> Result<(), CachedMotionError> {
+    let mut axis = 0;
+    while axis < AXES {
+        position[axis] = position[axis]
+            .checked_add(delta[axis])
+            .ok_or(CachedMotionError::PositionOverflow { axis })?;
+        axis += 1;
+    }
+    Ok(())
+}
+
+fn absolute_position<const AXES: usize>(
+    origin: [i64; AXES],
+    displacement: [i64; AXES],
+) -> Result<[i64; AXES], CachedMotionError> {
+    let mut position = origin;
+    apply_delta(&mut position, displacement)?;
+    Ok(position)
 }
 
 fn centered_step_offset(duration: u64, steps: u64, index: u64) -> Result<u64, MotionError> {
@@ -1411,6 +1869,11 @@ mod tests {
 
     use alumina_board::OwnerDomain;
     use alumina_config::{BindingFlags, BindingRole, ResourceBinding};
+    use alumina_job::{
+        AdmittedBlock, JobDescriptor, RealtimeJob, RealtimeJobState, RealtimePoll, WorkSource,
+    };
+    use alumina_machine_ir::{BlockValidationLimits, ExecutionBlock, StreamId, ValidationLimits};
+    use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
     use std::vec::Vec;
 
     use super::*;
@@ -1500,6 +1963,65 @@ mod tests {
         }
     }
 
+    struct OneBlock(Option<ExecutionBlock>);
+
+    impl WorkSource for OneBlock {
+        fn try_receive(&mut self) -> Option<ExecutionBlock> {
+            self.0.take()
+        }
+
+        fn depth(&self) -> usize {
+            usize::from(self.0.is_some())
+        }
+    }
+
+    fn admitted_block(segments: &[ExecutionSegment<3>]) -> (RealtimeJob<3>, AdmittedBlock<3>) {
+        let stream_id = StreamId::new([0x11; 16]).unwrap();
+        let capability_digest = alumina_protocol::Digest([0x22; 32]);
+        let config_digest = alumina_protocol::Digest([0x33; 32]);
+        let block = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            alumina_protocol::Digest::ZERO,
+            segments,
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 7,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(alumina_protocol::Digest([0x44; 32])),
+                    byte_len: 512,
+                },
+                manifest: ContentId::from_sha256(alumina_protocol::Digest([0x55; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 3,
+            block_count: 1,
+            first_tick: StreamTick(0),
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 1_000,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 1_000,
+                    maximum_steps_per_segment: 100,
+                },
+            },
+        };
+        let mut job = RealtimeJob::prepare(descriptor).unwrap();
+        let admitted = match job.poll(&mut OneBlock(Some(block))).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("one validated block must be admitted")
+            }
+        };
+        (job, admitted)
+    }
+
     fn drain_segment<const AXES: usize>(
         executor: &mut StepperExecutor<AXES>,
     ) -> (Vec<StepperEvent>, SegmentCompletion<AXES>) {
@@ -1548,6 +2070,128 @@ mod tests {
         assert_eq!(completion.maximum_half_tick_error, 1);
         assert_eq!(executor.status().emitted_steps, [4, 2, 1]);
         assert!(executor.status().step_high.is_empty());
+    }
+
+    #[test]
+    fn cached_runner_returns_token_only_after_exact_block_progress() {
+        let (mut job, admitted) =
+            admitted_block(&[segment(0, 10, [1, 0, 0]), segment(10, 20, [1, -1, 0])]);
+        let mut runner = CachedStepperExecutor::new(timing::<3>(0)).unwrap();
+        runner.start_job(DeviceCycle(100), [5, 7, -2]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert!(runner.has_admitted_block());
+        assert_eq!(job.status().state, RealtimeJobState::Admitted);
+
+        let mut rises = [0_u64; 3];
+        let admitted = loop {
+            let deadline = runner.next_deadline().unwrap();
+            match runner.poll(deadline).unwrap() {
+                CachedMotionPoll::Event { event, .. } => {
+                    for (axis, count) in rises.iter_mut().enumerate() {
+                        *count += u64::from(event.step_high.contains(axis));
+                    }
+                }
+                CachedMotionPoll::BlockComplete {
+                    admitted,
+                    completion,
+                } => {
+                    assert_eq!(completion.end_tick, StreamTick(20));
+                    assert_eq!(completion.position, [7, 6, -2]);
+                    break admitted;
+                }
+                CachedMotionPoll::Idle | CachedMotionPoll::Future { .. } => {
+                    panic!("exact-deadline runner cannot be idle or future")
+                }
+            }
+        };
+        assert!(!runner.has_admitted_block());
+        assert_eq!(job.status().state, RealtimeJobState::Admitted);
+        assert_eq!(rises, [2, 1, 0]);
+        let status = job.acknowledge(admitted).unwrap();
+        assert_eq!(status.state, RealtimeJobState::Complete);
+        assert_eq!(status.completed_progress.unwrap().position, [2, -1, 0]);
+        assert_eq!(runner.status().position, [7, 6, -2]);
+        assert_eq!(
+            runner.finish_job(DeviceCycle(120)).unwrap().disable.bits(),
+            0b011
+        );
+    }
+
+    #[test]
+    fn cached_runner_preflights_later_segments_without_live_state_change() {
+        let (mut job, admitted) =
+            admitted_block(&[segment(0, 10, [1, 0, 0]), segment(10, 20, [6, 0, 0])]);
+        let mut runner = CachedStepperExecutor::new(timing::<3>(0)).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        let before = runner.status();
+        let rejected = runner.admit_block(admitted).unwrap_err();
+        assert_eq!(
+            rejected.error(),
+            CachedMotionError::Motion(MotionError::Rate { axis: 0 })
+        );
+        assert_eq!(runner.status(), before);
+        assert!(!runner.has_admitted_block());
+        assert_eq!(rejected.into_block().header().sequence, 0);
+        assert_eq!(job.status().state, RealtimeJobState::Admitted);
+        job.cancel();
+        assert_eq!(job.status().state, RealtimeJobState::Cancelled);
+    }
+
+    #[test]
+    fn block_preflight_cost_does_not_scale_with_emitted_step_count() {
+        let mut live = StepperExecutor::new(timing::<3>(0)).unwrap();
+        live.start_job(DeviceCycle(100), [7, -9, 2]).unwrap();
+        let mut preflight = live.preflight_snapshot();
+        preflight
+            .load_segment(segment(0, 4_000_000_004, [1_000_000_000, -500_000_000, 0]))
+            .unwrap();
+        preflight.preflight_complete_segment().unwrap();
+
+        assert_eq!(live.status().position, [7, -9, 2]);
+        assert_eq!(live.status().next_tick, StreamTick(0));
+        assert_eq!(
+            preflight.status().position,
+            [1_000_000_007, -500_000_009, 2]
+        );
+        assert_eq!(
+            preflight.status().emitted_steps,
+            [1_000_000_000, 500_000_000, 0]
+        );
+        assert_eq!(preflight.status().next_tick, StreamTick(4_000_000_004));
+        assert_eq!(preflight.status().state, ExecutorState::Ready);
+    }
+
+    #[test]
+    fn cached_runner_retains_faulted_block_until_safe_transaction_is_requested() {
+        let (mut job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut runner = CachedStepperExecutor::new(timing::<3>(2)).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert!(matches!(
+            runner.poll(DeviceCycle(100)).unwrap(),
+            CachedMotionPoll::Event { .. }
+        ));
+        let rise = runner.next_deadline().unwrap();
+        match runner.poll(DeviceCycle(rise.0 + 3)) {
+            Err(CachedMotionError::Motion(MotionError::Deadline {
+                scheduled,
+                observed,
+                maximum_lateness_cycles,
+            })) => {
+                assert_eq!(scheduled, rise);
+                assert_eq!(observed, DeviceCycle(rise.0 + 3));
+                assert_eq!(maximum_lateness_cycles, 2);
+            }
+            _ => panic!("late cached edge must fault without returning an event"),
+        }
+        assert!(runner.has_admitted_block());
+        assert!(runner.take_faulted_block().is_none());
+        let safe = runner.fault(DeviceCycle(rise.0 + 3));
+        assert_eq!(safe.disable.bits(), 1);
+        let faulted = runner.take_faulted_block().unwrap();
+        assert_eq!(faulted.header().sequence, 0);
+        job.cancel();
+        assert_eq!(job.status().state, RealtimeJobState::Cancelled);
     }
 
     #[test]

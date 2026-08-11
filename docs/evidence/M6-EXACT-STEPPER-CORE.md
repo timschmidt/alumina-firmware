@@ -1,12 +1,12 @@
 # M6 exact stepper core evidence
 
-Date: 2026-08-10
+Date: 2026-08-11
 
 Status: the portable allocation-free integer executor, independently derived
 configuration profile, complete shifted-image mapper, canonical motion report,
-and cached-block simulator integration are implemented. This is software
-evidence, not an armability, I²S DMA, physical pulse, motion, safety-chain, or
-machine qualification claim.
+and ownership-safe cached-block simulator integration are implemented. This is
+software evidence, not an armability, I²S DMA, physical pulse, motion,
+safety-chain, or machine qualification claim.
 
 ## Implemented boundary
 
@@ -20,6 +20,17 @@ it checks:
 - pulse containment within the segment horizon;
 - direction setup/hold and driver enable setup/hold across segments; and
 - cumulative step and segment counters.
+
+`CachedStepperExecutor` preflights every segment against a private logical
+snapshot before accepting the unique `AdmittedBlock`. The proof advances each
+segment analytically in work bounded by record count times axis count, rather
+than replaying every requested pulse; a test admits a 1,000,000,000-step axis
+through this path. A failure in any later segment returns the unchanged token
+and leaves the live executor logically unchanged. After admission, only an
+independently correlated final tick and absolute lattice position return the
+token for job acknowledgement. A runtime fault retains it until an immediate
+safe logical transaction is issued, after which the job must be faulted or
+cancelled rather than acknowledged.
 
 For `n` steps in duration `d`, rising edge `k` is scheduled at the nearest
 integer to `(2k + 1)d/(2n)`. Tests exhaust a bounded range of durations, counts,
@@ -53,9 +64,10 @@ lateness, and 64-bit miss count. Unused axis fields and reserved bytes must be
 zero, and decoding requires a byte-identical re-encoding.
 
 Finally, the existing provisioned-cache simulator now passes both independently
-validated cached work blocks through this executor. Its logical trace ends at
-position `[6, -3, 0]` with rising-edge totals `[6, 3, 0]`, agreeing with the
-machine-stream validator rather than acknowledging unexecuted blocks.
+validated cached work blocks through the ownership wrapper. Its logical trace
+ends at position `[6, -3, 0]` with rising-edge totals `[6, 3, 0]`, agreeing with
+the machine-stream validator; each token is acknowledged only after that exact
+trace completes.
 
 ## Reproduced checks
 
@@ -89,8 +101,8 @@ cargo tree -p alumina-firmware --target xtensa-esp32s3-none-elf \
 git diff --check
 ```
 
-The complete default workspace has 193 passing unit tests. Focused suites have
-14 configuration, 11 motion, and 14 simulator tests. Host, both ESP firmware,
+The complete default workspace has 197 passing unit tests. Focused suites have
+14 configuration, 15 motion, and 14 simulator tests. Host, both ESP firmware,
 and both ESP motion-crate strict Clippy gates pass, and both optimized images
 link. `llvm-size` reports:
 
