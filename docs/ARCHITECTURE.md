@@ -669,6 +669,26 @@ invalidates pending logical tokens and outstanding work. TinyBee currently uses
 the static bootstrap shift writer solely as a compile/HIL staging path with a
 zero qualification claim, so it cannot satisfy arm authority.
 
+The next serializer layer is now explicit and portable. `PcmShortMonoFrame`
+encodes one full, already composed image into a 32-bit mono sample repeated in
+both fixed slots; the final chain-width suffix before each rising frame-sync
+edge is therefore complete in the modeled wire order. `PcmShortFrameGrid`
+accepts only an integer relationship between the device counter and frame rate,
+and every scheduled image must be aligned to a future latch boundary with one
+whole transmit-frame lead. `PcmShortTimeline` expands sparse future image
+updates into a continuous dense stream, repeating the prior complete image in
+every unchanged frame. It never rounds a cycle, emits a partial image, or plans
+an update after its transmit frame has passed.
+
+`alumina-sim` independently shifts all 64 modeled serial bits and reconstructs
+the image observed at the following latch. Wrong frame index/timing/contract,
+wire-versus-metadata disagreement, and a missing frame at its boundary latch a
+fault without inventing further motion. This proves the software frame and
+pipeline contract only. It does not prove DMA memory order, FIFO phase, the
+original ESP32 startup clocks, GPIO-matrix handoff, descriptor completion versus
+physical WS observation, underrun behavior, or a safe stop. Those facts keep the
+target backend and arm gate closed until logic-analyzer HIL.
+
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The
 interface compiler and firmware executor implement their respective underlying

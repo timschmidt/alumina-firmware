@@ -314,7 +314,14 @@ publishes exact status masks/deadlines, and synchronously reapplies the safe
 image before invalidating job ownership on a fault. T-Deck Pro exposes an empty
 machine-safety bank. Hold degrades to Stop until constrained deceleration is
 qualified. None of this closes electrical, response-time, safe-output, or HIL
-evidence.
+evidence. A portable PCM-short layer now encodes each complete image into a
+duplicated two-slot frame, rejects fractional device-cycle/frame relationships,
+requires exact boundary alignment and one-frame lead, and expands sparse updates
+into a continuous fixed-capacity horizon. The simulator reconstructs every
+image from all 64 modeled wire bits and latches sequence, timing, contract, and
+horizon-starvation faults. Target DMA ownership, physical latch observation,
+motion lookahead production, safe stop/reclaim, and HIL qualification remain
+open; this software checkpoint does not alter either board's armability.
 
 Exit gate:
 

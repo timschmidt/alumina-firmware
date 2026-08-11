@@ -55,6 +55,9 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
 - multiple boot-scoped MCU cycle counters, heartbeat delay/asymmetry, affine
   clock fitting, cached partitions, prepare/commit/abort, and partial readiness;
 - SD block latency, corruption, full media, power loss, and prefetch starvation;
+- exact PCM-short frame grids, complete-image suffix reconstruction, one-frame
+  latch delay, sparse-to-dense horizon fill, wrong phase/order, and starvation
+  before any target I²S/DMA timing claim;
 - flash-stall and delayed-service events without pretending to prove hardware
   timing; and
 - trace/replay of every command, state transition, scheduled event, output, sample,
@@ -134,7 +137,10 @@ and LoRa driver plus coalesced display updates under network load.
 
 TinyBee-specific tests capture every I²S output bit, safe image, motor pulse,
 direction setup/hold, limit response, heater/fan watchdog behavior, and combined
-output-stream arbitration.
+output-stream arbitration. Capture must identify initial peripheral-start clocks,
+the first and steady-state WS/latch phase, BCLK/data setup and hold, DMA refill
+boundaries, the relationship between software completion and the physical latch,
+and safe behavior for starvation, stop, reset, and static-to-stream handoff.
 
 ### 6. Core-isolation and load tests
 

@@ -69,6 +69,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M6-TARGET-MOTION-COMMIT.md`](M6-TARGET-MOTION-COMMIT.md) — descriptor-bound
   target step execution, two-phase complete-image physical acknowledgement,
   qualified arm/start gates, and fail-closed terminal disable coordination.
+- [`M6-I2S-PCM-SHORT-MODEL.md`](M6-I2S-PCM-SHORT-MODEL.md) — exact continuous
+  PCM-short frame grid, full-image one-frame pipeline, bounded sparse-to-dense
+  planning, and independent bit-level latch/starvation simulation.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed

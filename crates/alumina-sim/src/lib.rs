@@ -1,6 +1,7 @@
 #![doc = "Deterministic host models for Alumina storage and service/RT boundaries."]
 
 pub mod distributed;
+pub mod shift_register;
 
 use core::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

@@ -16,6 +16,7 @@ alumina-motion.workspace = true
 alumina-protocol.workspace = true
 alumina-runtime.workspace = true
 alumina-storage.workspace = true
+alumina-shift-register.workspace = true
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }

@@ -1,6 +1,6 @@
 [package]
 name = "alumina-shift-register"
-description = "Complete-image static shift-register transport for Alumina safe-output bootstrap"
+description = "Complete-image static and scheduled shift-register transports for Alumina"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

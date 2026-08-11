@@ -140,6 +140,20 @@ compatibility.
   [complete ESP32 API index](https://docs.espressif.com/projects/rust/esp-hal/1.1.0/esp32/esp_hal/all.html)
   — supported chip families, current peripheral surface, stability caveat, and
   source for a generated rather than handwritten capability matrix.
+- [Espressif ESP32 I²S programming guide](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/peripherals/i2s.html)
+  — primary description of two-slot standard mode, 8/16/24/32-bit slot widths,
+  the one-BCLK PCM-short frame-sync pulse, BCLK/WS clock relationships, and DMA
+  frame boundaries. Alumina uses these as functional facts, not ESP-IDF code.
+- [ESP32 Technical Reference Manual](https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf),
+  chapter 22 — primary register/FIFO/DMA and original-ESP32 I²S behavior
+  reference. The implementation is pinned to `esp-hal` 1.0.0; its locally
+  cached crate source is reviewed for the exact Rust API and chip workaround in
+  use, while signal order and startup behavior remain HIL-gated.
+- [`esp-hal` 1.0.0 PCM-short documentation](https://docs.espressif.com/projects/rust/esp-hal/1.0.0/esp32s2/esp_hal/i2s/master/index.html)
+  — selected HAL API's PCM-short timing model and circular-DMA surface. The
+  original ESP32 target has different conditional implementation paths, so the
+  local locked source and physical capture, not this cross-chip diagram alone,
+  determine target acceptance.
 - [Rust on ESP ancillary crates](https://docs.espressif.com/projects/rust/book/introduction/ancillary-crates.html)
   — `esp-radio` coverage of Wi-Fi, BLE, ESP-NOW, and low-level IEEE 802.15.4 plus
   its scheduler/background-runtime requirements and per-driver maturity caveat.

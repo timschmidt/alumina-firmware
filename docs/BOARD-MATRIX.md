@@ -107,9 +107,11 @@ This mapping has consequences:
    driver enables, and output-chain reset behavior.
 2. Boot with a known all-safe I²S image before Wi-Fi or configuration parsing.
 3. Confirm every shifted bit with a logic analyzer and disconnected loads.
-4. Measure sustained I²S/DMA behavior while Wi-Fi and asset serving are saturated.
-5. Verify hard-limit latency and controlled-stop/emergency-disable paths.
-6. Verify heater/fan watchdog and thermal-fault shutdown with representative
+4. Confirm the complete duplicated-sample PCM-short model, first-frame phase,
+   startup clocks, static-to-stream handoff, and DMA starvation behavior.
+5. Measure sustained I²S/DMA behavior while Wi-Fi and asset serving are saturated.
+6. Verify hard-limit latency and controlled-stop/emergency-disable paths.
+7. Verify heater/fan watchdog and thermal-fault shutdown with representative
    loads before exposing those capabilities in the UI.
 
 ## T-Deck Pro model

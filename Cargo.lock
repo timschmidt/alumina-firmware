@@ -194,6 +194,7 @@ dependencies = [
  "alumina-motion",
  "alumina-protocol",
  "alumina-runtime",
+ "alumina-shift-register",
  "alumina-storage",
  "critical-section",
  "embassy-futures",
