@@ -17,6 +17,7 @@ alumina-storage.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+board-mks-esp32-foc-v1.workspace = true
 board-mks-tinybee.workspace = true
 board-t-deck-pro.workspace = true
 embassy-futures.workspace = true

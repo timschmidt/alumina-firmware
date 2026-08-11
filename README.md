@@ -263,6 +263,15 @@ candidate. Every FOC/motion operation still rejects. This is compile evidence
 only, not a reset-state, shutdown, timing, or energization claim. See the
 [MKS safe-target evidence](docs/evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
+Canonical machine configuration is now deliberately V2: it removes the old
+`FocEnable` selector and makes shutdown a separate qualified topology contract
+for dedicated enable, dedicated disable, or phase high impedance. Both cores
+validate the same fixed bytes, and core 1 retains complete U/V/W and shutdown
+ownership for an admitted FOC axis. Board-package qualification remains the
+authority, so configuration cannot promote the MKS stages beyond `Described`;
+the real target still rejects every FOC axis and exposes no energization path.
+See the [shutdown-contract evidence](docs/evidence/M8-FOC-SHUTDOWN-CONTRACT.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

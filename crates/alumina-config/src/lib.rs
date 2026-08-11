@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use alumina_board::{
     BoardPackage, BusKind, ElectricalConstraintKind, OwnerDomain, ResourceDescriptor, ResourceId,
-    SafeValue,
+    SafeValue, SupportLevel,
 };
 use alumina_capability::{
     CapabilityError, decode_resource_id, encode_resource_id, verify_declared_identity,
@@ -20,10 +20,10 @@ use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
 use sha2::{Digest as ShaDigest, Sha256};
 
 /// Exact machine-configuration schema version.
-pub const CONFIGURATION_VERSION: u16 = 1;
+pub const CONFIGURATION_VERSION: u16 = 2;
 /// Bytes in the fixed canonical document header.
 pub const CONFIGURATION_HEADER_BYTES: usize = 80;
-/// Bytes in every V1 configuration record.
+/// Bytes in every V2 configuration record.
 pub const CONFIGURATION_RECORD_BYTES: usize = 64;
 /// Schema-wide bound independent of a board's smaller admission budget.
 pub const MAX_CONFIGURATION_RECORDS: usize = 256;
@@ -31,10 +31,13 @@ pub const MAX_CONFIGURATION_RECORDS: usize = 256;
 pub const MAX_AXIS_INSTANCES: usize = 16;
 /// Maximum step/direction axes in one executable per-MCU stream.
 pub const MAX_EXECUTABLE_STEPPER_AXES: usize = 8;
+/// Maximum FOC axes whose complete hardware contract is retained on core 1.
+pub const MAX_EXECUTABLE_FOC_AXES: usize = 4;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG01";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG02";
 const RECORD_KIND_BINDING: u16 = 1;
 const RECORD_KIND_SCALAR: u16 = 2;
+const RECORD_KIND_FOC_SHUTDOWN: u16 = 3;
 const PUBLICATION_MAGIC: [u8; 8] = *b"ALMCFQ01";
 const SELECTION_MAGIC: [u8; 8] = *b"ALMCFS01";
 const COORDINATOR_STATUS_MAGIC: [u8; 8] = *b"ALMCST01";
@@ -76,7 +79,7 @@ impl ConfigurationPublication {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V1 SHA-256/configuration representation.
+    /// Decodes only the exact V2 SHA-256/configuration representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationRequestError> {
         if encoded.len() != CONFIGURATION_PUBLICATION_BYTES {
             return Err(ConfigurationRequestError::Length);
@@ -237,7 +240,7 @@ impl ConfigurationFlags {
     pub const FIELD_ORIENTED_CONTROL: u32 = 1 << 2;
     /// Configuration contains non-motion laboratory/control resources.
     pub const LAB_CONTROL: u32 = 1 << 3;
-    /// All V1 flags.
+    /// All V2 flags.
     pub const ALLOWED: u32 =
         Self::MOTION | Self::CACHED_AUTONOMOUS | Self::FIELD_ORIENTED_CONTROL | Self::LAB_CONTROL;
 
@@ -275,7 +278,7 @@ impl ConfigurationHeader {
             .ok_or(ConfigurationError::Length)
     }
 
-    /// Encodes the exact V1 header.
+    /// Encodes the exact V2 header.
     pub fn encode(self) -> Result<[u8; CONFIGURATION_HEADER_BYTES], ConfigurationError> {
         self.validate()?;
         let mut encoded = [0_u8; CONFIGURATION_HEADER_BYTES];
@@ -295,7 +298,7 @@ impl ConfigurationHeader {
         Ok(encoded)
     }
 
-    /// Decodes only the exact canonical V1 header.
+    /// Decodes only the exact canonical V2 header.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_HEADER_BYTES {
             return Err(ConfigurationError::Length);
@@ -382,7 +385,6 @@ pub enum BindingRole {
     FocCurrentC = 25,
     FocBusVoltage = 26,
     FocEncoder = 27,
-    FocEnable = 28,
     FocFault = 29,
     ProcessOutput = 30,
     Storage = 31,
@@ -427,7 +429,6 @@ impl BindingRole {
             25 => Self::FocCurrentC,
             26 => Self::FocBusVoltage,
             27 => Self::FocEncoder,
-            28 => Self::FocEnable,
             29 => Self::FocFault,
             30 => Self::ProcessOutput,
             31 => Self::Storage,
@@ -478,7 +479,6 @@ impl BindingRole {
                 | Self::FocPhaseU
                 | Self::FocPhaseV
                 | Self::FocPhaseW
-                | Self::FocEnable
                 | Self::ProcessOutput
                 | Self::WaveformOutput
         )
@@ -528,7 +528,6 @@ impl BindingRole {
                 | Self::FocPhaseU
                 | Self::FocPhaseV
                 | Self::FocPhaseW
-                | Self::FocEnable
                 | Self::ProcessOutput
         )
     }
@@ -554,7 +553,6 @@ impl BindingRole {
                 | Self::FocCurrentC
                 | Self::FocBusVoltage
                 | Self::FocEncoder
-                | Self::FocEnable
                 | Self::FocFault
         )
     }
@@ -794,11 +792,52 @@ pub struct ExactScalar {
     pub evidence: FactEvidence,
 }
 
+/// Physically distinct ways a real-time owner can remove inverter drive.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(u16)]
+pub enum FocShutdownStrategy {
+    /// The inactive level of a dedicated enable input turns the stage off.
+    DedicatedEnable = 1,
+    /// The active level of a dedicated disable input turns the stage off.
+    DedicatedDisable = 2,
+    /// Releasing every phase pin lets board-local bias select both-off.
+    PhaseHighImpedance = 3,
+}
+
+impl FocShutdownStrategy {
+    const fn from_wire(value: u16) -> Option<Self> {
+        match value {
+            1 => Some(Self::DedicatedEnable),
+            2 => Some(Self::DedicatedDisable),
+            3 => Some(Self::PhaseHighImpedance),
+            _ => None,
+        }
+    }
+}
+
+/// Qualified, axis-local inverter shutdown contract.
+///
+/// `power_stage` identifies the fitted device whose qualified topology contains
+/// the axis phase resources. Dedicated strategies additionally own `control`.
+/// `maximum_transition_cycles` is an inclusive device-cycle bound from the
+/// shutdown request until the stage reaches its measured off state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocShutdownContract {
+    pub instance: u16,
+    pub strategy: FocShutdownStrategy,
+    pub power_stage: ResourceId,
+    pub control: Option<ResourceId>,
+    pub control_polarity: SignalPolarity,
+    pub maximum_transition_cycles: u32,
+    pub evidence: FactEvidence,
+}
+
 /// One fixed-width canonical configuration record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigurationRecord {
     Binding(ResourceBinding),
     Scalar(ExactScalar),
+    FocShutdown(FocShutdownContract),
 }
 
 impl ConfigurationRecord {
@@ -839,11 +878,21 @@ impl ConfigurationRecord {
                 encoded[40] = scalar.evidence as u8;
                 // Bytes 41..64 are reserved zero.
             }
+            Self::FocShutdown(shutdown) => {
+                encoded[8..12].copy_from_slice(&encode_resource_id(shutdown.power_stage));
+                if let Some(control) = shutdown.control {
+                    encoded[12..16].copy_from_slice(&encode_resource_id(control));
+                }
+                encoded[16..20].copy_from_slice(&shutdown.maximum_transition_cycles.to_le_bytes());
+                encoded[20] = shutdown.control_polarity as u8;
+                encoded[21] = shutdown.evidence as u8;
+                // Bytes 22..64 are reserved zero.
+            }
         }
         Ok(encoded)
     }
 
-    /// Decodes only an exact fixed-width V1 record.
+    /// Decodes only an exact fixed-width V2 record.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_RECORD_BYTES
             || usize::from(read_u16(encoded, 2)) != CONFIGURATION_RECORD_BYTES
@@ -893,6 +942,32 @@ impl ConfigurationRecord {
                         .ok_or(ConfigurationError::Evidence)?,
                 })
             }
+            RECORD_KIND_FOC_SHUTDOWN => {
+                if encoded[22..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                let control = if encoded[12..16].iter().all(|byte| *byte == 0) {
+                    None
+                } else {
+                    Some(
+                        decode_resource_id(&encoded[12..16])
+                            .map_err(|_| ConfigurationError::ResourceEncoding)?,
+                    )
+                };
+                Self::FocShutdown(FocShutdownContract {
+                    instance,
+                    strategy: FocShutdownStrategy::from_wire(selector)
+                        .ok_or(ConfigurationError::Selector)?,
+                    power_stage: decode_resource_id(&encoded[8..12])
+                        .map_err(|_| ConfigurationError::ResourceEncoding)?,
+                    control,
+                    control_polarity: SignalPolarity::from_wire(encoded[20])
+                        .ok_or(ConfigurationError::Polarity)?,
+                    maximum_transition_cycles: read_u32(encoded, 16),
+                    evidence: FactEvidence::from_wire(encoded[21])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
             _ => return Err(ConfigurationError::RecordKind),
         };
         record.validate_shape()?;
@@ -915,6 +990,7 @@ impl ConfigurationRecord {
                             | ScalarFact::TimerTickHertz
                     )
             }
+            Self::FocShutdown(_) => true,
         }
     }
 
@@ -922,6 +998,11 @@ impl ConfigurationRecord {
         match self {
             Self::Binding(binding) => (RECORD_KIND_BINDING, binding.instance, binding.role as u16),
             Self::Scalar(scalar) => (RECORD_KIND_SCALAR, scalar.instance, scalar.fact as u16),
+            Self::FocShutdown(shutdown) => (
+                RECORD_KIND_FOC_SHUTDOWN,
+                shutdown.instance,
+                shutdown.strategy as u16,
+            ),
         }
     }
 
@@ -1008,6 +1089,38 @@ impl ConfigurationRecord {
                     return Err(ConfigurationError::Scalar);
                 }
             }
+            Self::FocShutdown(shutdown) => {
+                if usize::from(shutdown.instance) >= MAX_EXECUTABLE_FOC_AXES
+                    || !matches!(shutdown.power_stage, ResourceId::Device(_))
+                    || shutdown.maximum_transition_cycles == 0
+                    || shutdown.evidence != FactEvidence::Qualified
+                {
+                    return Err(ConfigurationError::ShutdownContract);
+                }
+                match shutdown.strategy {
+                    FocShutdownStrategy::PhaseHighImpedance => {
+                        if shutdown.control.is_some()
+                            || shutdown.control_polarity != SignalPolarity::NotApplicable
+                        {
+                            return Err(ConfigurationError::ShutdownContract);
+                        }
+                    }
+                    FocShutdownStrategy::DedicatedEnable
+                    | FocShutdownStrategy::DedicatedDisable => {
+                        if !matches!(
+                            shutdown.control,
+                            Some(
+                                ResourceId::Gpio(_)
+                                    | ResourceId::I2sOut { .. }
+                                    | ResourceId::TimedOutput { .. }
+                            )
+                        ) || shutdown.control_polarity == SignalPolarity::NotApplicable
+                        {
+                            return Err(ConfigurationError::ShutdownContract);
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1047,6 +1160,23 @@ impl StepperProfileState {
     };
 }
 
+#[derive(Clone, Copy)]
+struct FocProfileState {
+    phase_u: Option<ResourceBinding>,
+    phase_v: Option<ResourceBinding>,
+    phase_w: Option<ResourceBinding>,
+    shutdown: Option<FocShutdownContract>,
+}
+
+impl FocProfileState {
+    const EMPTY: Self = Self {
+        phase_u: None,
+        phase_v: None,
+        phase_w: None,
+        shutdown: None,
+    };
+}
+
 /// Whether the configured driver-control resource asserts enable or disable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AxisDriverControl {
@@ -1059,7 +1189,7 @@ pub enum AxisDriverControl {
 /// For `step`, the active/inactive fields are pulse-high and pulse-low time.
 /// For `direction` and `driver_control`, they are setup-before-step and
 /// hold-after-step time. This role-specific interpretation is part of
-/// configuration V1.
+/// configuration V2.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StepperAxisProfile {
     pub instance: u16,
@@ -1069,11 +1199,23 @@ pub struct StepperAxisProfile {
     pub driver_control_action: AxisDriverControl,
 }
 
+/// Complete resource and shutdown ownership retained for one admitted FOC axis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocAxisProfile {
+    pub instance: u16,
+    pub phase_u: ResourceBinding,
+    pub phase_v: ResourceBinding,
+    pub phase_w: ResourceBinding,
+    pub shutdown: FocShutdownContract,
+}
+
 /// Allocation-free executable facts retained from the exact configuration.
 /// Empty slots remain distinguishable from configured logical-axis instances.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RealtimeConfigurationProfile {
     stepper_axes: [Option<StepperAxisProfile>; MAX_EXECUTABLE_STEPPER_AXES],
+    foc_axes: [Option<FocAxisProfile>; MAX_EXECUTABLE_FOC_AXES],
+    foc_axis_count: u8,
     safety_inputs: [Option<SafetyInputSpec>; MAX_SAFETY_INPUTS],
     safety_input_count: u8,
 }
@@ -1081,6 +1223,8 @@ pub struct RealtimeConfigurationProfile {
 impl RealtimeConfigurationProfile {
     const EMPTY: Self = Self {
         stepper_axes: [None; MAX_EXECUTABLE_STEPPER_AXES],
+        foc_axes: [None; MAX_EXECUTABLE_FOC_AXES],
+        foc_axis_count: 0,
         safety_inputs: [None; MAX_SAFETY_INPUTS],
         safety_input_count: 0,
     };
@@ -1092,6 +1236,28 @@ impl RealtimeConfigurationProfile {
         } else {
             None
         }
+    }
+
+    /// Count of compact, instance-ordered FOC profiles retained for core 1.
+    pub const fn foc_axis_count(&self) -> usize {
+        self.foc_axis_count as usize
+    }
+
+    /// One compact FOC profile slot; the profile retains its logical instance.
+    pub const fn foc_axis(&self, slot: usize) -> Option<FocAxisProfile> {
+        if slot < self.foc_axis_count as usize {
+            self.foc_axes[slot]
+        } else {
+            None
+        }
+    }
+
+    /// Iterates admitted FOC axes in ascending logical-instance order.
+    pub fn foc_axes(&self) -> impl Iterator<Item = FocAxisProfile> + '_ {
+        self.foc_axes[..self.foc_axis_count as usize]
+            .iter()
+            .copied()
+            .flatten()
     }
 
     /// Count of canonical safety-input slots retained for core-1 sampling.
@@ -1128,6 +1294,7 @@ pub struct ConfigurationValidator<'a, const MAX_BINDINGS: usize> {
     claimed_len: usize,
     axes: [AxisState; MAX_AXIS_INSTANCES],
     steppers: [StepperProfileState; MAX_EXECUTABLE_STEPPER_AXES],
+    foc: [FocProfileState; MAX_EXECUTABLE_FOC_AXES],
     safety_inputs: [Option<SafetyInputSpec>; MAX_SAFETY_INPUTS],
     safety_input_count: usize,
     safety_binding: bool,
@@ -1155,6 +1322,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             claimed_len: 0,
             axes: [AxisState::EMPTY; MAX_AXIS_INSTANCES],
             steppers: [StepperProfileState::EMPTY; MAX_EXECUTABLE_STEPPER_AXES],
+            foc: [FocProfileState::EMPTY; MAX_EXECUTABLE_FOC_AXES],
             safety_inputs: [None; MAX_SAFETY_INPUTS],
             safety_input_count: 0,
             safety_binding: false,
@@ -1174,6 +1342,9 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         match record {
             ConfigurationRecord::Binding(binding) => self.validate_binding(binding)?,
             ConfigurationRecord::Scalar(scalar) => self.validate_scalar(scalar),
+            ConfigurationRecord::FocShutdown(shutdown) => {
+                self.validate_foc_shutdown(shutdown)?;
+            }
         }
         self.last_key = Some(key);
         self.seen_records += 1;
@@ -1202,11 +1373,14 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         let mut stepper_axes = 0_u8;
         let mut foc_axes = 0_u8;
         let mut profile = RealtimeConfigurationProfile::EMPTY;
-        for (instance, axis) in self.axes.into_iter().enumerate() {
+        for (instance, axis) in self.axes.iter().copied().enumerate() {
             let has_step = axis.binding_mask & role_bit(BindingRole::AxisStep) != 0;
             let has_foc = axis.binding_mask & role_bit(BindingRole::FocPhaseU) != 0
                 || axis.binding_mask & role_bit(BindingRole::FocPhaseV) != 0
                 || axis.binding_mask & role_bit(BindingRole::FocPhaseW) != 0;
+            if has_step && has_foc {
+                return Err(ConfigurationError::AxisKind);
+            }
             if has_step {
                 if instance >= MAX_EXECUTABLE_STEPPER_AXES {
                     return Err(ConfigurationError::AxisCount);
@@ -1259,10 +1433,12 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     .ok_or(ConfigurationError::AxisCount)?;
             }
             if has_foc {
+                if instance >= MAX_EXECUTABLE_FOC_AXES {
+                    return Err(ConfigurationError::AxisCount);
+                }
                 let bindings = role_bit(BindingRole::FocPhaseU)
                     | role_bit(BindingRole::FocPhaseV)
-                    | role_bit(BindingRole::FocPhaseW)
-                    | role_bit(BindingRole::FocEnable);
+                    | role_bit(BindingRole::FocPhaseW);
                 let scalars = fact_bit(ScalarFact::MotorPolePairs)
                     | fact_bit(ScalarFact::MotorCurrentLimitAmperes)
                     | fact_bit(ScalarFact::MotorVoltageLimitVolts)
@@ -1273,9 +1449,26 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                 {
                     return Err(ConfigurationError::IncompleteAxis);
                 }
+                let retained = self.foc[instance];
+                let phase_u = retained.phase_u.ok_or(ConfigurationError::IncompleteAxis)?;
+                let phase_v = retained.phase_v.ok_or(ConfigurationError::IncompleteAxis)?;
+                let phase_w = retained.phase_w.ok_or(ConfigurationError::IncompleteAxis)?;
+                let shutdown = retained
+                    .shutdown
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                self.validate_foc_shutdown_topology(phase_u, phase_v, phase_w, shutdown)?;
+                profile.foc_axes[usize::from(foc_axes)] = Some(FocAxisProfile {
+                    instance: u16::try_from(instance).map_err(|_| ConfigurationError::AxisCount)?,
+                    phase_u,
+                    phase_v,
+                    phase_w,
+                    shutdown,
+                });
                 foc_axes = foc_axes
                     .checked_add(1)
                     .ok_or(ConfigurationError::AxisCount)?;
+            } else if instance < MAX_EXECUTABLE_FOC_AXES && self.foc[instance].shutdown.is_some() {
+                return Err(ConfigurationError::IncompleteAxis);
             }
             if let (Some(minimum), Some(maximum)) = (axis.minimum, axis.maximum)
                 && minimum.exact_cmp(maximum) != Ordering::Less
@@ -1297,6 +1490,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             return Err(ConfigurationError::MotionPolicy);
         }
         profile.safety_inputs = self.safety_inputs;
+        profile.foc_axis_count = foc_axes;
         profile.safety_input_count = u8::try_from(self.safety_input_count)
             .map_err(|_| ConfigurationError::SafetyInputCapacity)?;
         let summary = ConfigurationSummary {
@@ -1369,15 +1563,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         } else {
             None
         };
-        if self.claimed[..self.claimed_len].contains(&Some(binding.resource)) {
-            return Err(ConfigurationError::DuplicateResource(binding.resource));
-        }
-        let slot = self
-            .claimed
-            .get_mut(self.claimed_len)
-            .ok_or(ConfigurationError::BindingCapacity)?;
-        *slot = Some(binding.resource);
-        self.claimed_len += 1;
+        self.claim_resource(binding.resource)?;
 
         if let Some(spec) = safety_spec {
             self.safety_inputs[self.safety_input_count] = Some(spec);
@@ -1403,12 +1589,173 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     _ => {}
                 }
             }
+            if let Some(foc) = self.foc.get_mut(instance) {
+                match binding.role {
+                    BindingRole::FocPhaseU => foc.phase_u = Some(binding),
+                    BindingRole::FocPhaseV => foc.phase_v = Some(binding),
+                    BindingRole::FocPhaseW => foc.phase_w = Some(binding),
+                    _ => {}
+                }
+            }
         }
         if matches!(
             binding.role,
             BindingRole::EmergencyStop | BindingRole::SafetyInterlock
         ) {
             self.safety_binding = true;
+        }
+        Ok(())
+    }
+
+    fn claim_resource(&mut self, resource: ResourceId) -> Result<(), ConfigurationError> {
+        self.claim_resources(&[resource])
+    }
+
+    fn claim_resources(&mut self, resources: &[ResourceId]) -> Result<(), ConfigurationError> {
+        for (index, resource) in resources.iter().copied().enumerate() {
+            if self.claimed[..self.claimed_len].contains(&Some(resource))
+                || resources[..index].contains(&resource)
+            {
+                return Err(ConfigurationError::DuplicateResource(resource));
+            }
+        }
+        let end = self
+            .claimed_len
+            .checked_add(resources.len())
+            .ok_or(ConfigurationError::BindingCapacity)?;
+        if end > self.claimed.len() {
+            return Err(ConfigurationError::BindingCapacity);
+        }
+        for resource in resources {
+            self.claimed[self.claimed_len] = Some(*resource);
+            self.claimed_len += 1;
+        }
+        Ok(())
+    }
+
+    fn validate_foc_shutdown(
+        &mut self,
+        shutdown: FocShutdownContract,
+    ) -> Result<(), ConfigurationError> {
+        let instance = usize::from(shutdown.instance);
+        let state = self
+            .foc
+            .get(instance)
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.shutdown.is_some() {
+            return Err(ConfigurationError::ShutdownContract);
+        }
+        let stage_resource = find_resource(self.package, shutdown.power_stage)
+            .ok_or(ConfigurationError::UnknownResource(shutdown.power_stage))?;
+        let stage = self
+            .package
+            .devices
+            .iter()
+            .find(|device| device.resource == shutdown.power_stage)
+            .ok_or(ConfigurationError::ShutdownContract)?;
+        if stage_resource.owner != OwnerDomain::Realtime
+            || !stage_resource.hazardous_output
+            || stage.owner != OwnerDomain::Realtime
+            || stage.support != SupportLevel::Qualified
+        {
+            return Err(ConfigurationError::ShutdownUnqualified);
+        }
+        if let Some(control) = shutdown.control {
+            let descriptor = find_resource(self.package, control)
+                .ok_or(ConfigurationError::UnknownResource(control))?;
+            if descriptor.owner != OwnerDomain::Realtime || !descriptor.hazardous_output {
+                return Err(ConfigurationError::ShutdownContract);
+            }
+            for constraint in self.package.electrical_constraints {
+                if !constraint
+                    .resources
+                    .iter()
+                    .any(|resource| constraint_applies(*resource, control))
+                {
+                    continue;
+                }
+                match constraint.kind {
+                    ElectricalConstraintKind::InputOnly => {
+                        return Err(ConfigurationError::ShutdownContract);
+                    }
+                    ElectricalConstraintKind::ActiveHigh
+                        if shutdown.control_polarity != SignalPolarity::ActiveHigh =>
+                    {
+                        return Err(ConfigurationError::Polarity);
+                    }
+                    ElectricalConstraintKind::ActiveLow
+                        if shutdown.control_polarity != SignalPolarity::ActiveLow =>
+                    {
+                        return Err(ConfigurationError::Polarity);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if let Some(control) = shutdown.control {
+            self.claim_resources(&[shutdown.power_stage, control])?;
+        } else {
+            self.claim_resource(shutdown.power_stage)?;
+        }
+        self.foc[instance].shutdown = Some(shutdown);
+        Ok(())
+    }
+
+    fn validate_foc_shutdown_topology(
+        &self,
+        phase_u: ResourceBinding,
+        phase_v: ResourceBinding,
+        phase_w: ResourceBinding,
+        shutdown: FocShutdownContract,
+    ) -> Result<(), ConfigurationError> {
+        let stage = self
+            .package
+            .devices
+            .iter()
+            .find(|device| device.resource == shutdown.power_stage)
+            .ok_or(ConfigurationError::ShutdownContract)?;
+        let phases = [phase_u.resource, phase_v.resource, phase_w.resource];
+        if phases
+            .iter()
+            .any(|phase| !stage.auxiliary_resources.contains(phase))
+        {
+            return Err(ConfigurationError::ShutdownContract);
+        }
+        match shutdown.strategy {
+            FocShutdownStrategy::PhaseHighImpedance => {
+                let stage_resource = find_resource(self.package, shutdown.power_stage)
+                    .ok_or(ConfigurationError::UnknownResource(shutdown.power_stage))?;
+                if stage_resource.safe_value != SafeValue::HighImpedance
+                    || phases.iter().any(|phase| {
+                        find_resource(self.package, *phase)
+                            .is_none_or(|resource| resource.safe_value != SafeValue::HighImpedance)
+                    })
+                {
+                    return Err(ConfigurationError::ShutdownContract);
+                }
+            }
+            FocShutdownStrategy::DedicatedEnable | FocShutdownStrategy::DedicatedDisable => {
+                let control = shutdown
+                    .control
+                    .ok_or(ConfigurationError::ShutdownContract)?;
+                if !stage.auxiliary_resources.contains(&control) {
+                    return Err(ConfigurationError::ShutdownContract);
+                }
+                let descriptor = find_resource(self.package, control)
+                    .ok_or(ConfigurationError::UnknownResource(control))?;
+                let safe_is_active = match (descriptor.safe_value, shutdown.control_polarity) {
+                    (SafeValue::High, SignalPolarity::ActiveHigh)
+                    | (SafeValue::Low, SignalPolarity::ActiveLow) => true,
+                    (SafeValue::Low, SignalPolarity::ActiveHigh)
+                    | (SafeValue::High, SignalPolarity::ActiveLow) => false,
+                    _ => return Err(ConfigurationError::ShutdownContract),
+                };
+                if safe_is_active
+                    != matches!(shutdown.strategy, FocShutdownStrategy::DedicatedDisable)
+                {
+                    return Err(ConfigurationError::ShutdownContract);
+                }
+            }
         }
         Ok(())
     }
@@ -1553,7 +1900,7 @@ pub const CORE_CONFIGURATION_REPORT_BYTES: usize = 128;
 
 const CORE_COMMAND_MAGIC: [u8; 4] = *b"ALCC";
 const CORE_REPORT_MAGIC: [u8; 4] = *b"ALCR";
-const CORE_WIRE_VERSION: u16 = 1;
+const CORE_WIRE_VERSION: u16 = 2;
 
 /// Ordered action transferring or activating one independently validated configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1914,6 +2261,7 @@ pub enum ConfigurationFaultCode {
     Completeness = 9,
     Capacity = 10,
     ForbiddenState = 11,
+    Shutdown = 12,
 }
 
 impl ConfigurationFaultCode {
@@ -1931,6 +2279,7 @@ impl ConfigurationFaultCode {
             9 => Some(Self::Completeness),
             10 => Some(Self::Capacity),
             11 => Some(Self::ForbiddenState),
+            12 => Some(Self::Shutdown),
             _ => None,
         }
     }
@@ -1952,12 +2301,16 @@ impl ConfigurationFaultCode {
             ConfigurationError::Polarity | ConfigurationError::ElectricalConstraint => {
                 Self::Electrical
             }
+            ConfigurationError::ShutdownContract | ConfigurationError::ShutdownUnqualified => {
+                Self::Shutdown
+            }
             ConfigurationError::Timing | ConfigurationError::Frequency => Self::Timing,
             ConfigurationError::Rational
             | ConfigurationError::Uncertainty
             | ConfigurationError::Scalar
             | ConfigurationError::Evidence => Self::ExactFact,
             ConfigurationError::IncompleteAxis
+            | ConfigurationError::AxisKind
             | ConfigurationError::AxisCount
             | ConfigurationError::AxisRange
             | ConfigurationError::MotionPolicy => Self::Completeness,
@@ -2314,7 +2667,7 @@ pub struct ConfigurationCoordinatorStatus {
 }
 
 impl ConfigurationCoordinatorStatus {
-    /// Encodes the exact 264-byte V1 status body.
+    /// Encodes the exact 264-byte V2 status body.
     pub fn encode(
         self,
     ) -> Result<[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES], ConfigurationCoordinatorStatusError>
@@ -2354,7 +2707,7 @@ impl ConfigurationCoordinatorStatus {
         Ok(encoded)
     }
 
-    /// Decodes and re-encodes to require the unique V1 representation.
+    /// Decodes and re-encodes to require the unique V2 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationCoordinatorStatusError> {
         if encoded.len() != CONFIGURATION_COORDINATOR_STATUS_BYTES {
             return Err(ConfigurationCoordinatorStatusError::Length);
@@ -3277,8 +3630,11 @@ pub enum ConfigurationError {
     CapabilityIdentity,
     ConfigurationIdentity,
     IncompleteAxis,
+    AxisKind,
     AxisCount,
     AxisRange,
+    ShutdownContract,
+    ShutdownUnqualified,
     MotionPolicy,
     Internal,
 }
@@ -3305,7 +3661,6 @@ const fn role_accepts_resource(role: BindingRole, resource: ResourceId) -> bool 
         | BindingRole::AxisEnable
         | BindingRole::AxisDisable
         | BindingRole::DigitalOutput
-        | BindingRole::FocEnable
         | BindingRole::ProcessOutput => matches!(
             resource,
             ResourceId::Gpio(_) | ResourceId::I2sOut { .. } | ResourceId::TimedOutput { .. }
@@ -3446,6 +3801,7 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::vec;
     use alloc::vec::Vec;
+    use alumina_capability::calculate_identity;
     use alumina_safety::SafetyInputMonitor;
     use alumina_storage::media::{
         ConfigurationTransition, DurableConfigurationSelection, MEDIA_BLOCK_BYTES, MediaBlock,
@@ -3570,6 +3926,90 @@ mod tests {
             uncertainty: rational(0, 1),
             evidence: FactEvidence::Declared,
         })
+    }
+
+    fn foc_shutdown(
+        strategy: FocShutdownStrategy,
+        control: Option<ResourceId>,
+        control_polarity: SignalPolarity,
+    ) -> ConfigurationRecord {
+        ConfigurationRecord::FocShutdown(FocShutdownContract {
+            instance: 0,
+            strategy,
+            power_stage: ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_0),
+            control,
+            control_polarity,
+            maximum_transition_cycles: 2_400,
+            evidence: FactEvidence::Qualified,
+        })
+    }
+
+    fn mks_foc_records(shutdown: ConfigurationRecord) -> Vec<ConfigurationRecord> {
+        let mut records = Vec::from([
+            binding(
+                0,
+                BindingRole::FocPhaseU,
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 0,
+                },
+                SignalPolarity::ActiveHigh,
+                true,
+            ),
+            binding(
+                0,
+                BindingRole::FocPhaseV,
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 1,
+                },
+                SignalPolarity::ActiveHigh,
+                true,
+            ),
+            binding(
+                0,
+                BindingRole::FocPhaseW,
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 2,
+                },
+                SignalPolarity::ActiveHigh,
+                true,
+            ),
+            binding(
+                0,
+                BindingRole::EmergencyStop,
+                ResourceId::Gpio(15),
+                SignalPolarity::ActiveLow,
+                false,
+            ),
+            shutdown,
+        ]);
+        records.extend([
+            scalar(0, ScalarFact::MotorPolePairs, rational(7, 1)),
+            scalar(0, ScalarFact::MotorCurrentLimitAmperes, rational(1, 2)),
+            scalar(0, ScalarFact::MotorVoltageLimitVolts, rational(6, 1)),
+            scalar(0, ScalarFact::PwmCarrierHertz, rational(20_000, 1)),
+            scalar(0, ScalarFact::PwmDeadTimeSeconds, rational(1, 10_000_000)),
+            scalar(0, ScalarFact::ControlRateHertz, rational(20_000, 1)),
+        ]);
+        records.sort_by_key(|record| record.key());
+        records
+    }
+
+    fn qualified_mks_package<'a>(
+        devices: &'a [alumina_board::DeviceDescriptor<'a>; 2],
+    ) -> BoardPackage<'a> {
+        reidentified_package(BoardPackage {
+            devices,
+            ..board_mks_esp32_foc_v1::PACKAGE
+        })
+    }
+
+    fn reidentified_package(mut package: BoardPackage<'_>) -> BoardPackage<'_> {
+        package.board.capability_digest = Digest([1; 32]);
+        package.board.capability_digest = calculate_identity(&package).unwrap().digest;
+        package
     }
 
     fn tinybee_motion_records() -> Vec<ConfigurationRecord> {
@@ -3758,6 +4198,262 @@ mod tests {
     }
 
     #[test]
+    fn foc_shutdown_record_is_canonical_and_has_no_v1_enable_selector() {
+        let record = foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        );
+        let encoded = record.encode().unwrap();
+        assert_eq!(ConfigurationRecord::decode(&encoded), Ok(record));
+        assert_eq!(read_u16(&encoded, 0), RECORD_KIND_FOC_SHUTDOWN);
+        assert_eq!(read_u16(&encoded, 6), 3);
+
+        let mut reserved = encoded;
+        reserved[63] = 1;
+        assert_eq!(
+            ConfigurationRecord::decode(&reserved),
+            Err(ConfigurationError::Reserved)
+        );
+
+        let mut removed_enable = binding(
+            0,
+            BindingRole::AxisDirection,
+            ResourceId::Gpio(32),
+            SignalPolarity::ActiveHigh,
+            true,
+        )
+        .encode()
+        .unwrap();
+        removed_enable[6..8].copy_from_slice(&28_u16.to_le_bytes());
+        assert_eq!(
+            ConfigurationRecord::decode(&removed_enable),
+            Err(ConfigurationError::Selector)
+        );
+
+        let ConfigurationRecord::FocShutdown(mut unqualified) = record else {
+            unreachable!();
+        };
+        unqualified.evidence = FactEvidence::Measured;
+        assert_eq!(
+            ConfigurationRecord::FocShutdown(unqualified).encode(),
+            Err(ConfigurationError::ShutdownContract)
+        );
+        unqualified.strategy = FocShutdownStrategy::DedicatedEnable;
+        unqualified.evidence = FactEvidence::Qualified;
+        unqualified.control_polarity = SignalPolarity::ActiveHigh;
+        assert_eq!(
+            ConfigurationRecord::FocShutdown(unqualified).encode(),
+            Err(ConfigurationError::ShutdownContract)
+        );
+    }
+
+    #[test]
+    fn resource_claim_batches_are_transactional() {
+        let header = ConfigurationHeader {
+            capability_digest: board_mks_esp32_foc_v1::PACKAGE.board.capability_digest,
+            record_count: 1,
+            realtime_record_count: 0,
+            flags: ConfigurationFlags::default(),
+        };
+        let gpio = ResourceId::Gpio(32);
+        let stage_0 = ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_0);
+        let stage_1 = ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_1);
+
+        let mut duplicate =
+            ConfigurationValidator::<3>::new(&board_mks_esp32_foc_v1::PACKAGE, header).unwrap();
+        duplicate.claim_resource(gpio).unwrap();
+        assert_eq!(
+            duplicate.claim_resources(&[stage_0, gpio]),
+            Err(ConfigurationError::DuplicateResource(gpio))
+        );
+        assert_eq!(duplicate.claimed_len, 1);
+        assert_eq!(duplicate.claimed[0], Some(gpio));
+        duplicate.claim_resource(stage_0).unwrap();
+
+        let mut capacity =
+            ConfigurationValidator::<2>::new(&board_mks_esp32_foc_v1::PACKAGE, header).unwrap();
+        capacity.claim_resource(gpio).unwrap();
+        assert_eq!(
+            capacity.claim_resources(&[stage_0, stage_1]),
+            Err(ConfigurationError::BindingCapacity)
+        );
+        assert_eq!(capacity.claimed_len, 1);
+        assert_eq!(capacity.claimed[0], Some(gpio));
+        capacity.claim_resource(stage_0).unwrap();
+    }
+
+    #[test]
+    fn mks_high_impedance_shutdown_requires_qualified_stage_evidence() {
+        let shutdown = foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        );
+        let records = mks_foc_records(shutdown);
+        let realtime_record_count = u16::try_from(
+            records
+                .iter()
+                .filter(|record| record.realtime_relevant())
+                .count(),
+        )
+        .unwrap();
+        let header = ConfigurationHeader {
+            capability_digest: board_mks_esp32_foc_v1::PACKAGE.board.capability_digest,
+            record_count: u16::try_from(records.len()).unwrap(),
+            realtime_record_count,
+            flags: ConfigurationFlags(
+                ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+            ),
+        };
+        let mut validator =
+            ConfigurationValidator::<32>::new(&board_mks_esp32_foc_v1::PACKAGE, header).unwrap();
+        for record in &records[..records.len() - 1] {
+            validator.push(*record).unwrap();
+        }
+        assert_eq!(
+            validator.push(records[records.len() - 1]),
+            Err(ConfigurationError::ShutdownUnqualified)
+        );
+    }
+
+    #[test]
+    fn qualified_high_impedance_shutdown_is_retained_exactly_on_core1() {
+        let mut devices = [
+            board_mks_esp32_foc_v1::PACKAGE.devices[0],
+            board_mks_esp32_foc_v1::PACKAGE.devices[1],
+        ];
+        for device in &mut devices {
+            device.support = SupportLevel::Qualified;
+        }
+        let package = qualified_mks_package(&devices);
+        let shutdown = foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        );
+        let records = mks_foc_records(shutdown);
+        let flags = ConfigurationFlags(
+            ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+        );
+        let (bytes, digest) = document(&package, &records, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        let (identity, profile) = validator.finish_with_profile().unwrap();
+        assert_eq!(identity.summary.foc_axes, 1);
+        assert_eq!(profile.foc_axis_count(), 1);
+        assert_eq!(
+            profile.foc_axis(0).unwrap().shutdown,
+            match shutdown {
+                ConfigurationRecord::FocShutdown(shutdown) => shutdown,
+                _ => unreachable!(),
+            }
+        );
+        assert_eq!(profile.foc_axes().count(), 1);
+    }
+
+    #[test]
+    fn dedicated_shutdown_polarity_must_match_the_board_safe_level() {
+        let control = ResourceId::Gpio(21);
+        let mut resources = Vec::from(board_mks_esp32_foc_v1::PACKAGE.board.resources);
+        resources.push(ResourceDescriptor {
+            id: control,
+            owner: OwnerDomain::Realtime,
+            safe_value: SafeValue::Low,
+            hazardous_output: true,
+        });
+        let mut stage_auxiliary =
+            Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices[0].auxiliary_resources);
+        stage_auxiliary.push(control);
+        let devices = [
+            alumina_board::DeviceDescriptor {
+                auxiliary_resources: &stage_auxiliary,
+                support: SupportLevel::Qualified,
+                ..board_mks_esp32_foc_v1::PACKAGE.devices[0]
+            },
+            alumina_board::DeviceDescriptor {
+                support: SupportLevel::Qualified,
+                ..board_mks_esp32_foc_v1::PACKAGE.devices[1]
+            },
+        ];
+        let mut board = board_mks_esp32_foc_v1::PACKAGE.board;
+        board.resources = &resources;
+        let package = reidentified_package(BoardPackage {
+            board,
+            devices: &devices,
+            ..board_mks_esp32_foc_v1::PACKAGE
+        });
+        let records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::DedicatedEnable,
+            Some(control),
+            SignalPolarity::ActiveHigh,
+        ));
+        let flags = ConfigurationFlags(
+            ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+        );
+        let (bytes, digest) = document(&package, &records, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(
+            validator
+                .finish_with_profile()
+                .unwrap()
+                .1
+                .foc_axis(0)
+                .unwrap()
+                .shutdown
+                .strategy,
+            FocShutdownStrategy::DedicatedEnable
+        );
+
+        resources.last_mut().unwrap().safe_value = SafeValue::High;
+        let mut board = board_mks_esp32_foc_v1::PACKAGE.board;
+        board.resources = &resources;
+        let unsafe_package = reidentified_package(BoardPackage {
+            board,
+            devices: &devices,
+            ..board_mks_esp32_foc_v1::PACKAGE
+        });
+        let (bytes, digest) = document(&unsafe_package, &records, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &unsafe_package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(
+            validator.finish(),
+            Err(ConfigurationError::ShutdownContract)
+        );
+
+        let disable_records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::DedicatedDisable,
+            Some(control),
+            SignalPolarity::ActiveHigh,
+        ));
+        let (bytes, digest) = document(&unsafe_package, &disable_records, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &unsafe_package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish().unwrap().summary.foc_axes, 1);
+    }
+
+    #[test]
     fn tinybee_motion_document_validates_at_every_chunk_split() {
         assert!(
             core::mem::size_of::<RealtimeConfigurationProfile>() <= 2_048,
@@ -3891,7 +4587,9 @@ mod tests {
                 ConfigurationRecord::Scalar(scalar) if scalar.fact.axis_fact() => {
                     scalar.instance = u16::try_from(MAX_EXECUTABLE_STEPPER_AXES).unwrap();
                 }
-                ConfigurationRecord::Binding(_) | ConfigurationRecord::Scalar(_) => {}
+                ConfigurationRecord::Binding(_)
+                | ConfigurationRecord::Scalar(_)
+                | ConfigurationRecord::FocShutdown(_) => {}
             }
         }
         records.sort_by_key(|record| record.key());

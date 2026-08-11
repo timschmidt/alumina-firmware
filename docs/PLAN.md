@@ -504,10 +504,18 @@ six pins no-pull inputs before the first await. All motion/FOC operations
 reject, storage is explicitly unavailable, and the target remains non-armable.
 See the [safe-target evidence](evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
-The next target slice extends configuration with a qualified shutdown-contract
-variant, implements exact angle reduction/generation and rotor observation,
-then composes one power stage behind a compile-time-closed energization gate.
-MCPWM/ADC synchronization and any nonzero duty remain separate reviewed work.
+Configuration V2 now removes the obsolete `FocEnable` selector and adds a
+canonical axis-local shutdown contract for dedicated enable, dedicated disable,
+or phase high impedance. Core 1 retains the exact strategy, stage/control
+resources, polarity, qualified evidence, and transition-cycle bound. Validation
+requires a `Qualified` stage topology and matching board safe values, so the
+current MKS `Described` stages still reject. See the
+[shutdown-contract evidence](evidence/M8-FOC-SHUTDOWN-CONTRACT.md).
+
+The next target slice implements exact angle reduction/generation and rotor
+observation, then composes one power stage behind a compile-time-closed
+energization gate. MCPWM/ADC synchronization and any nonzero duty remain
+separate reviewed work.
 
 Exit gate:
 

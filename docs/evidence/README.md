@@ -122,5 +122,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M8-MKS-FOC-SAFE-TARGET.md`](M8-MKS-FOC-SAFE-TARGET.md) — reconciled V1.0
   schematic facts, typed resources and canonical capability identity, explicit
   absent enable/storage capabilities, six-phase-high-impedance boot composition,
-  and
-  classic-ESP32 linked-image evidence with all energization paths closed.
+  and classic-ESP32 linked-image evidence with all energization paths closed.
+- [`M8-FOC-SHUTDOWN-CONTRACT.md`](M8-FOC-SHUTDOWN-CONTRACT.md) — canonical
+  configuration V2 shutdown strategies, immutable qualification and topology
+  gates, core-1 FOC profiles, and renewed multi-target linked-image evidence.

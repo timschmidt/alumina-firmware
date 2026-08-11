@@ -1,6 +1,6 @@
-# Canonical machine configuration V1
+# Canonical machine configuration V2
 
-`ALMCFG01` is the content-addressed machine/resource authority emitted by the
+`ALMCFG02` is the content-addressed machine/resource authority emitted by the
 browser/WASM compiler and independently validated on both ESP cores. It is not
 JSON, FluidNC configuration, G-code, a Rust memory image, or executable code.
 The complete bytes are uploaded as storage object kind `MachineConfiguration`
@@ -16,14 +16,15 @@ between revisions or capability/qualification changes.
 Integers are little-endian. Reserved bytes are zero. Unknown flags, record
 kinds, roles, facts, owners, polarities, or evidence values reject. Records are
 fixed-width and strictly ordered by `(kind, instance, selector)`; duplicate keys
-are consequently impossible. V1 admits 1–256 records and no trailing data.
+are consequently impossible. V2 admits 1–256 records and no trailing data. V1
+is not accepted; firmware and UI are updated together.
 
 The fixed 80-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCFG01` |
-| 8 | 2 | exact schema version `1` |
+| 0 | 8 | ASCII `ALMCFG02` |
+| 8 | 2 | exact schema version `2` |
 | 10 | 2 | header bytes, exactly `80` |
 | 12 | 4 | total bytes, exactly `80 + record_count × 64` |
 | 16 | 32 | required canonical board-capability SHA-256 |
@@ -43,7 +44,7 @@ Every record is exactly 64 bytes. Its common prefix is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 2 | kind: resource binding `1`, exact scalar `2` |
+| 0 | 2 | kind: resource binding `1`, exact scalar `2`, FOC shutdown contract `3` |
 | 2 | 2 | record bytes, exactly `64` |
 | 4 | 2 | logical instance; axis index for axis/motor facts |
 | 6 | 2 | kind-specific role or scalar-fact selector |
@@ -68,7 +69,9 @@ Binding-role values are:
 | --- | --- |
 | 1–9 | axis step, direction, enable, minimum limit, maximum limit, encoder A, encoder B, encoder index, motor fault |
 | 10–19 | probe, E-stop, safety interlock, digital input, digital output, analog input, PWM output, serial port, timer, counter |
-| 20–29 | FOC phase U/V/W, current A/B/C, bus voltage, encoder, enable, fault |
+| 20–27 | FOC phase U/V/W, current A/B/C, bus voltage, encoder |
+| 28 | removed V1 `FocEnable` selector; always invalid |
+| 29 | FOC fault |
 | 30–38 | process output, storage, I2C bus, SPI bus, TWAI bus, capture input, waveform output, fitted device, axis disable |
 
 The validator resolves the resource only in the advertised typed namespace. It
@@ -135,6 +138,34 @@ retain Hyper exact values through CAM and emit a reduced rational only at this
 explicit hardware boundary; measured uncertainty remains a separate exact
 bound rather than being folded into an approximate nominal.
 
+### FOC shutdown contract
+
+Kind `3` is a mandatory, axis-local shutdown record for every FOC axis:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 4 | fitted power-stage `Device` resource |
+| 12 | 4 | dedicated control resource, or four zero bytes when absent |
+| 16 | 4 | inclusive maximum transition-to-off device cycles |
+| 20 | 1 | control polarity, or not-applicable for phase high impedance |
+| 21 | 1 | evidence, exactly qualified `3` |
+| 22 | 42 | reserved zero |
+
+The common selector is the strategy: dedicated enable `1`, dedicated disable
+`2`, or phase high impedance `3`. Dedicated enable means the control's inactive
+level is safe; dedicated disable means its active level is safe. The validator
+checks that polarity against the control resource's board safe value. Phase
+high impedance permits no control resource or polarity and requires the power
+stage plus all three bound phase resources to advertise `HighImpedance`.
+
+The stage must be a realtime-owned hazardous fitted device at
+`SupportLevel::Qualified`. Its topology must contain all three phase resources
+and, for a dedicated strategy, the control resource. The contract claims the
+stage/control exclusively, applies board electrical constraints, requires a
+nonzero cycle bound, and is always independently streamed to core 1. A UI claim
+of qualified evidence cannot promote a `Described`, `Compiles`, or `Bench`
+stage. Qualification is immutable board-package evidence.
+
 ## Cross-record admission
 
 A stepper axis requires unique step and direction bindings plus exactly one
@@ -150,18 +181,18 @@ canonical machine-IR mask and record width; a higher step-axis instance rejects
 during configuration validation rather than disappearing from execution state.
 
 The axis also requires full steps, microsteps, gearing, travel/revolution,
-calibration, position range, velocity, acceleration, and jerk facts. In the
-current version, a FOC axis requires unique U/V/W and `FocEnable` resources plus
-pole pairs, current/voltage limits, carrier/dead-time, and control rate. Position
+calibration, position range, velocity, acceleration, and jerk facts. A FOC axis
+requires unique U/V/W resources, exactly one qualified shutdown contract, and
+pole-pair, current/voltage-limit, carrier/dead-time, and control-rate facts.
+Stepper and FOC bindings cannot describe the same logical axis. At most four
+FOC profiles are retained in compact logical-instance order on core 1. Position
 minimum must compare exactly below maximum.
 
-That dedicated-enable rule is intentionally too strict for the MKS ESP32 FOC
-V1.0 schematic, which establishes no independent enable. The board remains
-non-armable and rejects FOC configuration. A future configuration version must
-replace the mandatory enable with an explicit, board-qualified shutdown
-contract: either a dedicated disable/enable path or a measured phase-input safe
-state with named reset, latency, and fault behavior. It must not preserve the
-old shape through a fake pin, alias, or compatibility shim.
+MKS ESP32 FOC V1.0 structurally selects phase-high-impedance shutdown, but its
+current `Described` power-stage evidence deliberately rejects configuration.
+Only the later board package produced from measured both-off/reset/fault timing
+may mark the stage `Qualified`; no fake pin, implicit alias, or compatibility
+shim can bypass that gate.
 
 Motion policy requires at least one complete stepper or FOC axis and a local,
 arm-required E-stop or safety-interlock binding. The FOC policy bit is present
@@ -187,7 +218,8 @@ validation alone never changes outputs or active configuration.
 
 Core 0 opens the exact typed publication, verifies each storage chunk, hashes
 and semantically validates the complete document, and emits ordered core
-commands. Every command has a 64-byte `ALCC` prefix containing version, action,
+commands. Every command has a 64-byte `ALCC` prefix containing core-wire version
+`2`, action,
 transaction ID, digest, total bytes, exact offset, and data length. `Data`
 carries 1–192 bytes within the runtime's 336-byte command payload; the larger
 boundary also carries a boot-bound cached-job prepare without changing this

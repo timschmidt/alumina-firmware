@@ -42,6 +42,7 @@ dependencies = [
  "alumina-protocol",
  "alumina-safety",
  "alumina-storage",
+ "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "board-t-deck-pro",
  "embassy-futures",

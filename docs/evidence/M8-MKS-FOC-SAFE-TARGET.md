@@ -80,9 +80,10 @@ Every step-image, writable-horizon, stage, seal, and commit operation returns
 `MotionUnsupported`. There are no configured safety inputs, no FOC power-stage
 trait implementation, and no code that programs MCPWM, samples ADC, talks to an
 encoder, or emits nonzero duty. The current configuration IR also requires a
-dedicated `FocEnable`; because the V1.0 schematic has none, it cannot admit an
-MKS FOC axis. A later schema must represent a measured shutdown contract rather
-than fabricating a compatibility binding.
+qualified shutdown contract. V2 has no `FocEnable` selector and structurally
+supports the MKS phase-high-impedance strategy, but deliberately rejects this
+board's `Described` power stages. Physical evidence must promote the immutable
+stage capability to `Qualified`; no compatibility binding is fabricated.
 
 ## Reproduced build evidence
 
@@ -101,17 +102,17 @@ cargo xtask build --board mks-esp32-foc-v1 --profile release
 ```
 
 The focused board/xtask run has 11 passing tests: five board-package tests and
-six xtask tests. The complete portable workspace has 270 passing tests. Strict
+six xtask tests. The complete portable workspace has 275 passing tests. Strict
 host and target Clippy pass. The release firmware links
 for `xtensa-esp32-none-elf`; its ELF SHA-256 is:
 
 ```text
-2bdc3747f5c967e137f09ead4c073a80139556f49accdb487c84c7c88557511b
+e9b5da06c1cd39f8b1babddc70d59683a10890cc0f0c976aa6735b703d18df11
 ```
 
-The all-feature dependency inventory has 844 nonempty package/license records,
+The all-feature dependency inventory has 845 nonempty package/license records,
 no missing license expression, and no GPL/AGPL/LGPL/SSPL-family expression.
-`llvm-size` reports 821,328 bytes of text, 10,704 bytes of data, and 251,440
+`llvm-size` reports 824,024 bytes of text, 10,704 bytes of data, and 251,440
 bytes of BSS for the linked image. These are reproducibility facts, not
 flash-fit or runtime-memory qualification; the ESP image layout and
 stack/high-water behavior still require target evidence.
@@ -129,8 +130,8 @@ The following gates remain open:
 - review and measure reset/boot levels, phase-pin impedance, EG2133 outputs, and
   whether the both-off candidate survives reset, brownout, panic, and watchdog
   paths;
-- establish local E-stop/interlock inputs and measured shutdown latency;
-- extend configuration with a qualified shutdown-contract variant;
+- establish local E-stop/interlock inputs and measured shutdown latency, then
+  promote the exact phase-high-impedance contract and board package;
 - decide and implement an explicit cache medium/board variant before cached
   autonomous or synchronized jobs are advertised;
 - implement exact electrical-angle generation and alignment, sensor ownership,

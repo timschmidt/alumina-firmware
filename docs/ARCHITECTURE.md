@@ -338,7 +338,7 @@ control route. This document, not `xtask` JSON formatting or Rust memory layout,
 is the browser's immutable board authority.
 
 `alumina-config` consumes that exact capability identity and streams canonical
-`ALMCFG01` bytes from an inert, content-addressed SD publication. Fixed resource
+`ALMCFG02` bytes from an inert, content-addressed SD publication. Fixed resource
 bindings and reduced exact nominal/uncertainty facts cover stepper, FOC,
 process, safety, serial/bus, timer/capture, and general I/O configuration. Core 0
 and core 1 hash and run the same semantic validator; only a later durable
@@ -830,10 +830,12 @@ The compile-only target consequently owns MCPWM0/1, ADC1, both encoder buses,
 and all six phase pins exclusively on core 1, makes the six pins no-pull inputs
 before the first await, and exposes no FOC commit path. GPIO2 is tied into the
 USB auto-programming/strap circuit and remains service-owned. Core 0 owns Wi-Fi
-and reports an unavailable cache transport. The current configuration IR
-requires a dedicated `FocEnable`, so this board cannot admit a FOC axis until
-the IR is deliberately extended to encode and validate a board-qualified
-shutdown contract. A fake enable binding or implicit GPIO alias is prohibited.
+and reports an unavailable cache transport. Configuration V2 removes the old
+`FocEnable` selector and requires a separate qualified shutdown contract. The
+MKS topology selects phase high impedance, but its `Described` stage cannot
+validate that contract until physical evidence promotes the immutable board
+package to `Qualified`. A fake enable binding or implicit GPIO alias is
+prohibited.
 
 ## Exact CAD-to-motor boundary
 
