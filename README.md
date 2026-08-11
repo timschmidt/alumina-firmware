@@ -154,7 +154,13 @@ qualification, so both packages remain non-armable. See the
 [stepper evidence](docs/evidence/M6-EXACT-STEPPER-CORE.md) and
 [portable safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md), plus the
 [target safety-input evidence](docs/evidence/M6-TARGET-SAFETY-INPUTS.md) and
-[target motion-commit evidence](docs/evidence/M6-TARGET-MOTION-COMMIT.md).
+[target motion-commit evidence](docs/evidence/M6-TARGET-MOTION-COMMIT.md). The
+portable scheduled backend further separates future generation, immutable
+timeline acceptance, and physical latch observation on an exact output lattice;
+its motion-to-PCM-to-wire simulator retains ownership through output-free dwell
+and terminal disable. See the
+[scheduled-output evidence](docs/evidence/M6-SCHEDULED-OUTPUT-HORIZON.md). The
+firmware target has not adopted that backend yet, so armability remains closed.
 
 ## Developer checks
 

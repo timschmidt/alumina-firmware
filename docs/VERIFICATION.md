@@ -58,6 +58,10 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
 - exact PCM-short frame grids, complete-image suffix reconstruction, one-frame
   latch delay, sparse-to-dense horizon fill, wrong phase/order, and starvation
   before any target I²S/DMA timing claim;
+- exact event-grid quantization and the complete scheduled-output ownership
+  chain: future generation, bounded timeline acceptance, dense frame emission,
+  independently reconstructed physical latch, output-free terminal dwell, and
+  separately acknowledged terminal disable;
 - flash-stall and delayed-service events without pretending to prove hardware
   timing; and
 - trace/replay of every command, state transition, scheduled event, output, sample,

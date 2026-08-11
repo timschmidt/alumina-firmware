@@ -188,7 +188,9 @@ dependencies = [
 name = "alumina-sim"
 version = "0.1.0"
 dependencies = [
+ "alumina-board",
  "alumina-clock",
+ "alumina-config",
  "alumina-job",
  "alumina-machine-ir",
  "alumina-motion",

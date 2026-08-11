@@ -1131,6 +1131,7 @@ mod tests {
                 maximum_step_frequency_hz: 100_000,
             }; 3],
             device_cycle_hz: 1_000_000,
+            output_quantum_cycles: 1,
             maximum_lateness_cycles: 0,
         })
         .unwrap();

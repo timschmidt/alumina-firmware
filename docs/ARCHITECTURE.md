@@ -632,11 +632,15 @@ The portable `alumina-motion` executor now implements the first step-only part
 of layers 5–7 without owning hardware. It validates a dense stepper profile
 derived from the exact active configuration, rejects overflow/rate/pulse/
 direction/enable timing violations before installing a segment, and emits
-allocation-free logical transactions at exact `DeviceCycle` deadlines. For
-`steps = n`, duration `d`, and zero-based event `k`, the rising-edge offset is
-the nearest integer to `(2k + 1)d/(2n)`. Therefore every accepted edge carries
-a conservative one-half-device-tick quantization bound and the final lattice
-position/count is exact.
+allocation-free logical transactions at exact `DeviceCycle` deadlines. Each
+backend declares a nonzero integer output quantum `q`; the epoch and segment
+boundaries must lie on that lattice. For `steps = n`, a duration of `d/q`
+output quanta, and zero-based event `k`, the rising-edge quantum is the nearest
+integer to `(2k + 1)(d/q)/(2n)`. Therefore every accepted edge remains within
+`q/2` device cycles of the unquantized centered edge, every physical edge is
+representable by the backend, and the final step count/lattice position remains
+exact. The report carries this bound in half-device-cycle units without a
+floating-point conversion.
 
 `CachedStepperExecutor` closes the ownership gap between the independently
 validated job actor and that event engine. Before accepting a block it advances
@@ -669,6 +673,17 @@ invalidates pending logical tokens and outstanding work. TinyBee currently uses
 the static bootstrap shift writer solely as a compile/HIL staging path with a
 zero qualification claim, so it cannot satisfy arm authority.
 
+`ScheduledShiftedStepper` is the portable successor for a continuously timed
+backend. It has a fixed allocation-free ring and treats generation, acceptance
+into the sole immutable hardware timeline, and physical latch observation as
+three different ordered states. A full ring stops planning without discarding
+the next event; a staging mismatch, reordered token, early latch, or late latch
+is terminal. Logical block completion retains the unique admitted block until
+the ring is empty *and* its exact terminal cycle has been observed, including an
+output-free tail or dwell. Terminal driver disable is scheduled and physically
+acknowledged through the same ring. Only one block is currently planned at a
+time, so cross-block prefill is still an open target integration boundary.
+
 The next serializer layer is now explicit and portable. `PcmShortMonoFrame`
 encodes one full, already composed image into a 32-bit mono sample repeated in
 both fixed slots; the final chain-width suffix before each rising frame-sync
@@ -688,6 +703,15 @@ pipeline contract only. It does not prove DMA memory order, FIFO phase, the
 original ESP32 startup clocks, GPIO-matrix handoff, descriptor completion versus
 physical WS observation, underrun behavior, or a safe stop. Those facts keep the
 target backend and arm gate closed until logic-analyzer HIL.
+
+The host integration now joins these two portable layers end to end. A 1 MHz
+execution domain and 250 kHz modeled frame grid create a four-cycle output
+quantum; exact motion images are accepted one frame early, reconstructed from
+the serial wire at their latch boundaries, and only then committed to the
+motion owner. The simulator proves that draining the last image at cycle 136
+does not release a block whose output-free terminal boundary is cycle 140, and
+that the enable-hold-aligned disable at cycle 144 remains separately pending.
+Those rates are fixtures, not TinyBee configuration or physical evidence.
 
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The

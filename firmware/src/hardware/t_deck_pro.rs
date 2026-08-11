@@ -35,6 +35,8 @@ pub const CONFIGURATION_BINDINGS: usize = 64;
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
 /// No machine output can authorize arming on this board package.
 pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// Inert one-cycle value; this board currently exposes no motion output.
+pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;
 /// No physical commit-lateness claim exists.
 pub const MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES: u32 = 0;
 

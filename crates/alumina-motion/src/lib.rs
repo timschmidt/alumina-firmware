@@ -135,6 +135,9 @@ pub struct StepperTiming<const AXES: usize> {
     pub axes: [AxisTiming; AXES],
     /// Frequency of the `DeviceCycle` domain used by every stream tick.
     pub device_cycle_hz: u64,
+    /// Smallest physically addressable output interval. Every ordinary
+    /// direction, enable, and step edge must lie on this cycle lattice.
+    pub output_quantum_cycles: u32,
     /// Maximum time after a scheduled edge at which the backend may still
     /// apply it. Exceeding this value faults before returning that edge.
     pub maximum_lateness_cycles: u32,
@@ -144,11 +147,17 @@ impl<const AXES: usize> StepperTiming<AXES> {
     /// Validates the fixed axis width and every electrical timing bound.
     pub fn validate(self) -> Result<(), MotionError> {
         validate_axis_count::<AXES>()?;
-        if self.device_cycle_hz == 0 {
+        if self.device_cycle_hz == 0 || self.output_quantum_cycles == 0 {
             return Err(MotionError::Timing);
         }
         for timing in self.axes {
             timing.validate()?;
+            if !timing
+                .pulse_high_cycles
+                .is_multiple_of(self.output_quantum_cycles)
+            {
+                return Err(MotionError::Timing);
+            }
         }
         Ok(())
     }
@@ -171,6 +180,7 @@ impl<const AXES: usize> StepperExecutionProfile<AXES> {
         identity: &ConfigurationIdentity,
         realtime_profile: &RealtimeConfigurationProfile,
         device_cycle_hz: u64,
+        output_quantum_cycles: u32,
         maximum_lateness_cycles: u32,
     ) -> Result<Self, MotionError> {
         validate_axis_count::<AXES>()?;
@@ -211,6 +221,7 @@ impl<const AXES: usize> StepperExecutionProfile<AXES> {
         let timing = StepperTiming {
             axes: timing,
             device_cycle_hz,
+            output_quantum_cycles,
             maximum_lateness_cycles,
         };
         timing.validate()?;
@@ -479,7 +490,7 @@ pub struct SegmentCompletion<const AXES: usize> {
     pub position: [i64; AXES],
     /// Conservative exact timing-quantization bound. A value of one denotes
     /// one half of a device tick; zero denotes a segment with no step edges.
-    pub maximum_half_tick_error: u8,
+    pub maximum_half_tick_error: u32,
 }
 
 /// Nonblocking result from checking the next exact event deadline.
@@ -718,6 +729,11 @@ pub enum MotionError {
     },
     EpochOverflow,
     Arithmetic,
+    /// A normal output cycle was outside the backend's exact timing lattice.
+    OutputGrid {
+        cycle: u64,
+        quantum_cycles: u32,
+    },
     Rate {
         axis: usize,
     },
@@ -845,6 +861,7 @@ impl<const AXES: usize> StepperExecutor<AXES> {
         {
             return Err(MotionError::State);
         }
+        require_output_grid(epoch.0, self.timing.output_quantum_cycles)?;
         self.state = ExecutorState::Ready;
         self.epoch = epoch;
         self.next_tick = StreamTick(0);
@@ -887,6 +904,8 @@ impl<const AXES: usize> StepperExecutor<AXES> {
                 .checked_add(segment.end_tick.0)
                 .ok_or(MotionError::EpochOverflow)?,
         );
+        require_output_grid(start.0, self.timing.output_quantum_cycles)?;
+        require_output_grid(end.0, self.timing.output_quantum_cycles)?;
         let duration = segment.end_tick.0 - segment.start_tick.0;
         let mut steps = [0_u64; AXES];
         let mut next_rise = [None; AXES];
@@ -928,14 +947,24 @@ impl<const AXES: usize> StepperExecutor<AXES> {
             self.emitted_steps[axis]
                 .checked_add(count)
                 .ok_or(MotionError::Arithmetic)?;
-            let first_offset = centered_step_offset(duration, count, 0)?;
+            let first_offset = centered_step_offset_on_grid(
+                duration,
+                count,
+                0,
+                self.timing.output_quantum_cycles,
+            )?;
             let first = DeviceCycle(
                 start
                     .0
                     .checked_add(first_offset)
                     .ok_or(MotionError::EpochOverflow)?,
             );
-            let last_offset = centered_step_offset(duration, count, count - 1)?;
+            let last_offset = centered_step_offset_on_grid(
+                duration,
+                count,
+                count - 1,
+                self.timing.output_quantum_cycles,
+            )?;
             let last = start
                 .0
                 .checked_add(last_offset)
@@ -1053,7 +1082,10 @@ impl<const AXES: usize> StepperExecutor<AXES> {
             }
             axis += 1;
         }
-        Ok(DeviceCycle(ready))
+        Ok(DeviceCycle(align_up_to_output_grid(
+            ready,
+            self.timing.output_quantum_cycles,
+        )?))
     }
 
     /// Returns one event only when its cycle is due. A late event outside the
@@ -1109,6 +1141,7 @@ impl<const AXES: usize> StepperExecutor<AXES> {
         if self.state != ExecutorState::Ready || self.active.is_some() {
             return Err(MotionError::State);
         }
+        require_output_grid(at.0, self.timing.output_quantum_cycles)?;
         let mut axis = 0;
         while axis < AXES {
             if self.enabled.contains(axis)
@@ -1224,7 +1257,12 @@ impl<const AXES: usize> StepperExecutor<AXES> {
                 self.emitted_steps[axis] = self.emitted_steps[axis]
                     .checked_add(count)
                     .ok_or(MotionError::Arithmetic)?;
-                let last_offset = centered_step_offset(duration, count, count - 1)?;
+                let last_offset = centered_step_offset_on_grid(
+                    duration,
+                    count,
+                    count - 1,
+                    self.timing.output_quantum_cycles,
+                )?;
                 let rise = DeviceCycle(
                     active
                         .start
@@ -1323,7 +1361,12 @@ impl<const AXES: usize> StepperExecutor<AXES> {
                 active.next_index[axis] = next_index;
                 active.next_rise[axis] = if next_index < active.steps[axis] {
                     let duration = active.segment.end_tick.0 - active.segment.start_tick.0;
-                    let offset = centered_step_offset(duration, active.steps[axis], next_index)?;
+                    let offset = centered_step_offset_on_grid(
+                        duration,
+                        active.steps[axis],
+                        next_index,
+                        self.timing.output_quantum_cycles,
+                    )?;
                     Some(DeviceCycle(
                         active
                             .start
@@ -1375,7 +1418,11 @@ impl<const AXES: usize> StepperExecutor<AXES> {
             end_tick: active.segment.end_tick,
             delta_steps: active.segment.delta_steps,
             position: self.position,
-            maximum_half_tick_error: u8::from(active.steps.iter().any(|steps| *steps != 0)),
+            maximum_half_tick_error: if active.steps.iter().any(|steps| *steps != 0) {
+                self.timing.output_quantum_cycles
+            } else {
+                0
+            },
         }))
     }
 }
@@ -1783,6 +1830,8 @@ pub struct CommittedShiftOutput {
 pub enum ShiftedExecutorBuildError {
     Motion(MotionError),
     Image(ShiftImageError),
+    /// A scheduled backend requested no storage for its required output ring.
+    HorizonCapacity,
 }
 
 /// Fail-closed generated-output or image-mapping failure.
@@ -2106,6 +2155,551 @@ impl<const AXES: usize> ShiftedCachedStepper<AXES> {
     }
 }
 
+/// One future complete-image transaction generated on its exact schedule but
+/// not necessarily staged in or observed from a hardware timing engine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScheduledShiftOutput {
+    /// Boot-local ordered correlation token.
+    pub token: OutputCommitToken,
+    /// Exact complete image and intended physical latch cycle.
+    pub update: ShiftImageUpdate,
+}
+
+/// Result of advancing a scheduled complete-image producer toward a requested
+/// future cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledShiftPlan {
+    /// No cached block currently owns the logical executor.
+    Idle,
+    /// The requested planning boundary was reached before the next event.
+    Future { at: DeviceCycle },
+    /// The fixed output ring must be drained before generation can continue.
+    HorizonFull {
+        next_at: DeviceCycle,
+        queued: usize,
+        staged: usize,
+    },
+    /// The block's complete logical trace is planned; unique ownership remains
+    /// retained until every queued output has a physical commit observation.
+    BlockPlanned { completion_at: DeviceCycle },
+}
+
+/// A cached block whose complete-image transactions have all been physically
+/// acknowledged in order.
+pub struct ScheduledBlockCompletion<const AXES: usize> {
+    admitted: AdmittedBlock<AXES>,
+    completion: SegmentCompletion<AXES>,
+}
+
+impl<const AXES: usize> ScheduledBlockCompletion<AXES> {
+    /// Independently correlated terminal progress for the block.
+    pub const fn completion(&self) -> SegmentCompletion<AXES> {
+        self.completion
+    }
+
+    /// Returns the unique admitted block to its owning job actor.
+    pub fn into_block(self) -> AdmittedBlock<AXES> {
+        self.admitted
+    }
+
+    /// Returns both the unique token and its exact terminal progress.
+    pub fn into_parts(self) -> (AdmittedBlock<AXES>, SegmentCompletion<AXES>) {
+        (self.admitted, self.completion)
+    }
+}
+
+impl<const AXES: usize> core::fmt::Debug for ScheduledBlockCompletion<AXES> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ScheduledBlockCompletion")
+            .field("header", &self.admitted.header())
+            .field("completion", &self.completion)
+            .finish()
+    }
+}
+
+/// Failure while advancing the future logical event/image plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledShiftError {
+    State,
+    Cached(CachedMotionError),
+    Motion(MotionError),
+    Image(ShiftImageError),
+    Arithmetic,
+}
+
+/// A hardware-staging acknowledgement did not match the next generated image.
+/// Every rejection latches the scheduled backend until its safe image is
+/// requested.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutputStageError {
+    State,
+    Mismatch {
+        expected: ScheduledShiftOutput,
+        received: ScheduledShiftOutput,
+    },
+    Arithmetic,
+}
+
+/// Bounded future-output coordinator for timer/DMA-backed shift engines.
+///
+/// Logical generation, hardware staging, and physical latch observation are
+/// three distinct monotonically ordered transitions. Generation may run ahead
+/// to fill `OUTPUTS`, but a cached block never returns to its job actor until
+/// every generated image is both staged and committed. This owner is distinct
+/// from [`ShiftedCachedStepper`], whose single synchronous transaction policy is
+/// useful for GPIO/bootstrap backends but cannot maintain a DMA horizon.
+pub struct ScheduledShiftedStepper<const AXES: usize, const OUTPUTS: usize> {
+    cached: CachedStepperExecutor<AXES>,
+    mapper: ShiftImageMapper<AXES>,
+    outputs: [Option<ScheduledShiftOutput>; OUTPUTS],
+    head: usize,
+    len: usize,
+    staged: usize,
+    completed: Option<ScheduledBlockCompletion<AXES>>,
+    faulted_block: Option<AdmittedBlock<AXES>>,
+    next_token: u32,
+    maximum_commit_lateness_cycles: u32,
+    committed_updates: u64,
+    maximum_commit_lateness_observed: u32,
+    finish_token: Option<OutputCommitToken>,
+    job_completion_pending: bool,
+    output_faulted: bool,
+}
+
+impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTPUTS> {
+    /// Binds one exact executor/image profile to a nonempty future-output ring.
+    pub fn new(
+        profile: StepperExecutionProfile<AXES>,
+        contract: ShiftImageContract,
+    ) -> Result<Self, ShiftedExecutorBuildError> {
+        if OUTPUTS == 0 {
+            return Err(ShiftedExecutorBuildError::HorizonCapacity);
+        }
+        let cached = CachedStepperExecutor::new(profile.timing)
+            .map_err(ShiftedExecutorBuildError::Motion)?;
+        let mapper =
+            ShiftImageMapper::new(&profile, contract).map_err(ShiftedExecutorBuildError::Image)?;
+        Ok(Self {
+            cached,
+            mapper,
+            outputs: [None; OUTPUTS],
+            head: 0,
+            len: 0,
+            staged: 0,
+            completed: None,
+            faulted_block: None,
+            next_token: 0,
+            maximum_commit_lateness_cycles: profile.timing.maximum_lateness_cycles,
+            committed_updates: 0,
+            maximum_commit_lateness_observed: 0,
+            finish_token: None,
+            job_completion_pending: false,
+            output_faulted: false,
+        })
+    }
+
+    /// Installs one exact future local epoch while the physical image remains
+    /// under a separately established safe stream.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), ScheduledShiftError> {
+        if self.output_faulted
+            || self.len != 0
+            || self.completed.is_some()
+            || self.faulted_block.is_some()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(ScheduledShiftError::State);
+        }
+        self.cached
+            .start_job(epoch, position)
+            .map_err(ScheduledShiftError::Motion)
+    }
+
+    /// Transfers one independently admitted block into the future generator.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection preserves unique inline block ownership"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedMotionBlock<AXES>> {
+        if self.output_faulted
+            || self.len != 0
+            || self.completed.is_some()
+            || self.faulted_block.is_some()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(RejectedMotionBlock {
+                error: CachedMotionError::State,
+                admitted,
+            });
+        }
+        self.cached.admit_block(admitted)
+    }
+
+    /// Generates every exact output due no later than `through`, stopping at a
+    /// full fixed ring or the logical block boundary. Generation is evaluated
+    /// at each event's scheduled cycle and therefore records no fictitious
+    /// software lateness; the target's later commit observation is authoritative.
+    pub fn plan_through(
+        &mut self,
+        through: DeviceCycle,
+    ) -> Result<ScheduledShiftPlan, ScheduledShiftError> {
+        if self.output_faulted || self.finish_token.is_some() || self.job_completion_pending {
+            return Err(ScheduledShiftError::State);
+        }
+        if let Some(completed) = self.completed.as_ref() {
+            return Ok(ScheduledShiftPlan::BlockPlanned {
+                completion_at: completed.completion.at,
+            });
+        }
+        loop {
+            let Some(next_at) = self.cached.next_deadline() else {
+                return Ok(ScheduledShiftPlan::Idle);
+            };
+            if next_at > through {
+                return Ok(ScheduledShiftPlan::Future { at: next_at });
+            }
+            if self.len == OUTPUTS {
+                return Ok(ScheduledShiftPlan::HorizonFull {
+                    next_at,
+                    queued: self.len,
+                    staged: self.staged,
+                });
+            }
+            let polled = match self.cached.poll(next_at) {
+                Ok(polled) => polled,
+                Err(error) => {
+                    self.output_faulted = true;
+                    return Err(ScheduledShiftError::Cached(error));
+                }
+            };
+            match polled {
+                CachedMotionPoll::Idle => return Ok(ScheduledShiftPlan::Idle),
+                CachedMotionPoll::Future { at } => {
+                    if at <= next_at {
+                        self.output_faulted = true;
+                        return Err(ScheduledShiftError::State);
+                    }
+                    if at > through {
+                        return Ok(ScheduledShiftPlan::Future { at });
+                    }
+                }
+                CachedMotionPoll::Event { event, .. } => {
+                    let update = match self.mapper.apply(event) {
+                        Ok(update) => update,
+                        Err(error) => {
+                            self.output_faulted = true;
+                            return Err(ScheduledShiftError::Image(error));
+                        }
+                    };
+                    self.next_token = next_output_token(self.next_token);
+                    let output = ScheduledShiftOutput {
+                        token: OutputCommitToken(self.next_token),
+                        update,
+                    };
+                    if self.push_output(output).is_err() {
+                        self.output_faulted = true;
+                        return Err(ScheduledShiftError::Arithmetic);
+                    }
+                }
+                CachedMotionPoll::BlockComplete {
+                    admitted,
+                    completion,
+                } => {
+                    self.completed = Some(ScheduledBlockCompletion {
+                        admitted,
+                        completion,
+                    });
+                    return Ok(ScheduledShiftPlan::BlockPlanned {
+                        completion_at: completion.at,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Next generated image not yet accepted by the sole hardware timeline.
+    pub fn next_unstaged_output(&self) -> Option<ScheduledShiftOutput> {
+        if self.staged >= self.len {
+            return None;
+        }
+        let index = (self.head + self.staged) % OUTPUTS;
+        self.outputs[index]
+    }
+
+    /// Records that the exact image was accepted into the target's immutable
+    /// future hardware timeline. Tokens must be staged in generation order.
+    pub fn stage_output(
+        &mut self,
+        output: ScheduledShiftOutput,
+    ) -> Result<ScheduledShiftOutput, OutputStageError> {
+        if self.output_faulted || self.staged >= self.len {
+            self.output_faulted = true;
+            return Err(OutputStageError::State);
+        }
+        let index = (self.head + self.staged) % OUTPUTS;
+        let expected = match self.outputs[index] {
+            Some(output) => output,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputStageError::State);
+            }
+        };
+        if output != expected {
+            self.output_faulted = true;
+            return Err(OutputStageError::Mismatch {
+                expected,
+                received: output,
+            });
+        }
+        self.staged = match self.staged.checked_add(1) {
+            Some(staged) => staged,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputStageError::Arithmetic);
+            }
+        };
+        Ok(expected)
+    }
+
+    /// Retires the oldest staged image from a physical latch observation.
+    /// Commit order, token, lower bound, and maximum lateness are all exact.
+    pub fn commit_output(
+        &mut self,
+        token: OutputCommitToken,
+        committed_at: DeviceCycle,
+    ) -> Result<CommittedShiftOutput, OutputCommitError> {
+        if self.output_faulted || self.len == 0 || self.staged == 0 {
+            self.output_faulted = true;
+            return Err(OutputCommitError::State);
+        }
+        let pending = match self.outputs[self.head] {
+            Some(output) => output,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::State);
+            }
+        };
+        if token != pending.token {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Token {
+                expected: pending.token,
+                received: token,
+            });
+        }
+        if committed_at < pending.update.at {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Early {
+                scheduled: pending.update.at,
+                committed: committed_at,
+            });
+        }
+        let lateness = committed_at.0 - pending.update.at.0;
+        if lateness > u64::from(self.maximum_commit_lateness_cycles) {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Deadline {
+                scheduled: pending.update.at,
+                committed: committed_at,
+                maximum_lateness_cycles: self.maximum_commit_lateness_cycles,
+            });
+        }
+        let lateness = match u32::try_from(lateness) {
+            Ok(lateness) => lateness,
+            Err(_) => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::Arithmetic);
+            }
+        };
+        let committed_updates = match self.committed_updates.checked_add(1) {
+            Some(updates) => updates,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::Arithmetic);
+            }
+        };
+        let next_head = if self.len == 1 {
+            0
+        } else {
+            (self.head + 1) % OUTPUTS
+        };
+        self.outputs[self.head] = None;
+        self.head = next_head;
+        self.len -= 1;
+        self.staged -= 1;
+        self.committed_updates = committed_updates;
+        self.maximum_commit_lateness_observed = self.maximum_commit_lateness_observed.max(lateness);
+        if self.finish_token == Some(token) {
+            self.finish_token = None;
+            self.job_completion_pending = true;
+        }
+        Ok(CommittedShiftOutput {
+            token,
+            update: pending.update,
+            committed_at,
+            commit_lateness_cycles: lateness,
+        })
+    }
+
+    /// Returns a logically complete block only after its entire generated ring
+    /// has drained and the exact terminal cycle itself has been observed. The
+    /// latter prevents an output-free tail or dwell from completing early.
+    pub fn take_completed_block(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Option<ScheduledBlockCompletion<AXES>> {
+        let terminal_observed = self
+            .completed
+            .as_ref()
+            .is_some_and(|completed| observed >= completed.completion.at);
+        if self.output_faulted || self.len != 0 || !terminal_observed {
+            None
+        } else {
+            self.completed.take()
+        }
+    }
+
+    /// Exact earliest cycle at which normal terminal disable may be scheduled.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
+        if self.output_faulted
+            || self.len != 0
+            || self.completed.is_some()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(MotionError::State);
+        }
+        self.cached.earliest_finish_cycle()
+    }
+
+    /// Adds the normal terminal-disable image to the same generated/staged/
+    /// committed pipeline used by motion edges.
+    pub fn schedule_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledShiftError> {
+        if self.output_faulted
+            || self.len != 0
+            || self.completed.is_some()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(ScheduledShiftError::State);
+        }
+        let event = self
+            .cached
+            .finish_job(at)
+            .map_err(ScheduledShiftError::Motion)?;
+        let update = match self.mapper.apply(event) {
+            Ok(update) => update,
+            Err(error) => {
+                self.output_faulted = true;
+                return Err(ScheduledShiftError::Image(error));
+            }
+        };
+        self.next_token = next_output_token(self.next_token);
+        let output = ScheduledShiftOutput {
+            token: OutputCommitToken(self.next_token),
+            update,
+        };
+        if self.push_output(output).is_err() {
+            self.output_faulted = true;
+            return Err(ScheduledShiftError::Arithmetic);
+        }
+        self.finish_token = Some(output.token);
+        Ok(output)
+    }
+
+    /// Consumes the one-shot job-complete fact after terminal disable was
+    /// physically acknowledged.
+    pub fn take_job_complete(&mut self) -> bool {
+        let complete = self.job_completion_pending;
+        self.job_completion_pending = false;
+        complete
+    }
+
+    /// Latches logical execution, invalidates all future tokens, and returns
+    /// the complete safe image for an immediate local target transaction.
+    pub fn fault(&mut self, at: DeviceCycle) -> ShiftImageUpdate {
+        self.output_faulted = true;
+        self.outputs = [None; OUTPUTS];
+        self.head = 0;
+        self.len = 0;
+        self.staged = 0;
+        self.finish_token = None;
+        self.job_completion_pending = false;
+        let _ = self.cached.fault(at);
+        if self.faulted_block.is_none() {
+            self.faulted_block = self
+                .completed
+                .take()
+                .map(ScheduledBlockCompletion::into_block)
+                .or_else(|| self.cached.take_faulted_block());
+        }
+        self.mapper.force_safe(at)
+    }
+
+    /// Releases the unacknowledgeable cached block after [`Self::fault`] has
+    /// issued the complete logical safe transaction.
+    pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
+        if self.output_faulted {
+            self.faulted_block.take()
+        } else {
+            None
+        }
+    }
+
+    /// Generated outputs retained until physical observation.
+    pub const fn queued_outputs(&self) -> usize {
+        self.len
+    }
+
+    /// Prefix of queued outputs already accepted into the hardware timeline.
+    pub const fn staged_outputs(&self) -> usize {
+        self.staged
+    }
+
+    /// Number of target-confirmed complete-image updates.
+    pub const fn committed_updates(&self) -> u64 {
+        self.committed_updates
+    }
+
+    /// Largest exact target-reported image commit lateness.
+    pub const fn maximum_commit_lateness_observed(&self) -> u32 {
+        self.maximum_commit_lateness_observed
+    }
+
+    /// Current future logical image; physical visibility is tracked separately.
+    pub const fn image(&self) -> u32 {
+        self.mapper.image()
+    }
+
+    /// Bounded future logical executor status, not a physical output snapshot.
+    pub const fn planned_status(&self) -> StepperStatus<AXES> {
+        self.cached.status()
+    }
+
+    fn push_output(&mut self, output: ScheduledShiftOutput) -> Result<(), ()> {
+        if self.len == OUTPUTS || OUTPUTS == 0 {
+            return Err(());
+        }
+        let tail = (self.head + self.len) % OUTPUTS;
+        if self.outputs[tail].is_some() {
+            return Err(());
+        }
+        self.outputs[tail] = Some(output);
+        self.len += 1;
+        Ok(())
+    }
+}
+
 const fn next_output_token(previous: u32) -> u32 {
     let next = previous.wrapping_add(1);
     if next == 0 { 1 } else { next }
@@ -2153,6 +2747,52 @@ fn centered_step_offset(duration: u64, steps: u64, index: u64) -> Result<u64, Mo
         .ok_or(MotionError::Arithmetic)?
         / denominator;
     u64::try_from(rounded).map_err(|_| MotionError::Arithmetic)
+}
+
+fn centered_step_offset_on_grid(
+    duration: u64,
+    steps: u64,
+    index: u64,
+    quantum_cycles: u32,
+) -> Result<u64, MotionError> {
+    let quantum = u64::from(quantum_cycles);
+    if quantum == 0 || !duration.is_multiple_of(quantum) {
+        return Err(MotionError::OutputGrid {
+            cycle: duration,
+            quantum_cycles,
+        });
+    }
+    let frame_offset = centered_step_offset(duration / quantum, steps, index)?;
+    frame_offset
+        .checked_mul(quantum)
+        .ok_or(MotionError::Arithmetic)
+}
+
+fn require_output_grid(cycle: u64, quantum_cycles: u32) -> Result<(), MotionError> {
+    let quantum = u64::from(quantum_cycles);
+    if quantum == 0 || !cycle.is_multiple_of(quantum) {
+        Err(MotionError::OutputGrid {
+            cycle,
+            quantum_cycles,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn align_up_to_output_grid(cycle: u64, quantum_cycles: u32) -> Result<u64, MotionError> {
+    let quantum = u64::from(quantum_cycles);
+    if quantum == 0 {
+        return Err(MotionError::Timing);
+    }
+    let remainder = cycle % quantum;
+    if remainder == 0 {
+        Ok(cycle)
+    } else {
+        cycle
+            .checked_add(quantum - remainder)
+            .ok_or(MotionError::Arithmetic)
+    }
 }
 
 fn minimum_frequency_period(
@@ -2290,6 +2930,7 @@ mod tests {
                 maximum_step_frequency_hz: 500_000,
             }; AXES],
             device_cycle_hz: 1_000_000,
+            output_quantum_cycles: 1,
             maximum_lateness_cycles,
         }
     }
@@ -2797,6 +3438,242 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_runner_plans_future_images_but_releases_only_after_latches() {
+        let (mut job, admitted) = admitted_block(&[segment(0, 40, [2, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(2);
+        profile.timing.output_quantum_cycles = 4;
+        for axis in &mut profile.timing.axes {
+            axis.pulse_high_cycles = 4;
+            axis.pulse_low_cycles = 4;
+        }
+        let mut runner = ScheduledShiftedStepper::<3, 8>::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(140)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                completion_at: DeviceCycle(140),
+            }
+        );
+        assert_eq!(runner.queued_outputs(), 5);
+        assert_eq!(runner.staged_outputs(), 0);
+        assert_eq!(runner.planned_status().position, [2, 0, 0]);
+        assert!(runner.take_completed_block(DeviceCycle(140)).is_none());
+
+        let mut staged = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            assert_eq!(runner.stage_output(output), Ok(output));
+            staged.push(output);
+        }
+        assert_eq!(staged.len(), 5);
+        assert_eq!(runner.staged_outputs(), 5);
+        for (index, output) in staged.into_iter().enumerate() {
+            let committed_at = DeviceCycle(output.update.at.0 + u64::from(index == 4));
+            assert_eq!(
+                runner
+                    .commit_output(output.token, committed_at)
+                    .unwrap()
+                    .update,
+                output.update
+            );
+            if index != 4 {
+                assert!(runner.take_completed_block(committed_at).is_none());
+            }
+        }
+        assert_eq!(runner.committed_updates(), 5);
+        assert_eq!(runner.maximum_commit_lateness_observed(), 1);
+        assert!(runner.take_completed_block(DeviceCycle(139)).is_none());
+        let completed = runner.take_completed_block(DeviceCycle(140)).unwrap();
+        assert_eq!(completed.completion().at, DeviceCycle(140));
+        assert_eq!(completed.completion().position, [2, 0, 0]);
+        assert_eq!(completed.completion().maximum_half_tick_error, 4);
+        assert_eq!(job.status().state, RealtimeJobState::Admitted);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
+
+        assert_eq!(runner.earliest_finish_cycle(), Ok(DeviceCycle(140)));
+        let terminal = runner.schedule_finish(DeviceCycle(140)).unwrap();
+        assert_eq!(runner.next_unstaged_output(), Some(terminal));
+        runner.stage_output(terminal).unwrap();
+        runner
+            .commit_output(terminal.token, DeviceCycle(140))
+            .unwrap();
+        assert!(runner.take_job_complete());
+        assert!(!runner.take_job_complete());
+        assert_eq!(runner.planned_status().state, ExecutorState::Complete);
+        assert!(runner.planned_status().enabled.is_empty());
+    }
+
+    #[test]
+    fn output_quantum_is_an_exact_executor_lattice() {
+        let mut grid_timing = timing::<1>(0);
+        grid_timing.output_quantum_cycles = 4;
+        grid_timing.axes[0].pulse_high_cycles = 4;
+        grid_timing.axes[0].pulse_low_cycles = 4;
+        let mut executor = StepperExecutor::new(grid_timing).unwrap();
+
+        assert_eq!(
+            executor.start_job(DeviceCycle(101), [0]),
+            Err(MotionError::OutputGrid {
+                cycle: 101,
+                quantum_cycles: 4,
+            })
+        );
+        executor.start_job(DeviceCycle(100), [0]).unwrap();
+        assert_eq!(
+            executor.load_segment(segment(0, 42, [2])),
+            Err(MotionError::OutputGrid {
+                cycle: 142,
+                quantum_cycles: 4,
+            })
+        );
+        executor.load_segment(segment(0, 40, [2])).unwrap();
+        let (events, completion) = drain_segment(&mut executor);
+        assert!(events.iter().all(|event| event.at.0.is_multiple_of(4)));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| !event.step_high.is_empty())
+                .map(|event| event.at)
+                .collect::<Vec<_>>(),
+            [DeviceCycle(112), DeviceCycle(132)]
+        );
+        assert_eq!(completion.at, DeviceCycle(140));
+        assert_eq!(completion.maximum_half_tick_error, 4);
+        assert_eq!(executor.earliest_finish_cycle(), Ok(DeviceCycle(140)));
+        assert!(matches!(
+            executor.finish_job(DeviceCycle(139)),
+            Err(MotionError::OutputGrid {
+                cycle: 139,
+                quantum_cycles: 4,
+            })
+        ));
+        executor.finish_job(DeviceCycle(140)).unwrap();
+
+        grid_timing.axes[0].pulse_high_cycles = 2;
+        assert!(matches!(
+            StepperExecutor::new(grid_timing),
+            Err(MotionError::Timing)
+        ));
+    }
+
+    #[test]
+    fn scheduled_ring_stops_exactly_at_capacity_and_resumes_after_commit() {
+        let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(0);
+        let mut runner = ScheduledShiftedStepper::<3, 2>::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(120)).unwrap(),
+            ScheduledShiftPlan::HorizonFull {
+                next_at: DeviceCycle(106),
+                queued: 2,
+                staged: 0,
+            }
+        );
+        let first = runner.next_unstaged_output().unwrap();
+        runner.stage_output(first).unwrap();
+        let second = runner.next_unstaged_output().unwrap();
+        runner.stage_output(second).unwrap();
+        runner.commit_output(first.token, first.update.at).unwrap();
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(120)).unwrap(),
+            ScheduledShiftPlan::HorizonFull {
+                next_at: DeviceCycle(115),
+                queued: 2,
+                staged: 1,
+            }
+        );
+        let third = runner.next_unstaged_output().unwrap();
+        assert_eq!(third.update.at, DeviceCycle(106));
+        runner.stage_output(third).unwrap();
+        runner
+            .commit_output(second.token, second.update.at)
+            .unwrap();
+        runner.commit_output(third.token, third.update.at).unwrap();
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(114)).unwrap(),
+            ScheduledShiftPlan::Future {
+                at: DeviceCycle(115),
+            }
+        );
+        assert_eq!(runner.queued_outputs(), 0);
+    }
+
+    #[test]
+    fn scheduled_staging_mismatch_latches_and_preserves_block_for_fault() {
+        let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut runner =
+            ScheduledShiftedStepper::<3, 4>::new(shifted_profile(), shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(100)).unwrap(),
+            ScheduledShiftPlan::Future {
+                at: DeviceCycle(105),
+            }
+        );
+        let expected = runner.next_unstaged_output().unwrap();
+        let received = ScheduledShiftOutput {
+            update: ShiftImageUpdate {
+                image: expected.update.image ^ 1,
+                ..expected.update
+            },
+            ..expected
+        };
+        assert_eq!(
+            runner.stage_output(received),
+            Err(OutputStageError::Mismatch { expected, received })
+        );
+        assert_eq!(
+            runner.plan_through(DeviceCycle(120)),
+            Err(ScheduledShiftError::State)
+        );
+        assert!(runner.take_faulted_block().is_none());
+        assert_eq!(
+            runner.fault(DeviceCycle(101)),
+            ShiftImageUpdate {
+                at: DeviceCycle(101),
+                image: shifted_contract().safe_image,
+            }
+        );
+        assert_eq!(runner.queued_outputs(), 0);
+        assert_eq!(runner.take_faulted_block().unwrap().header().sequence, 0);
+    }
+
+    #[test]
+    fn scheduled_zero_capacity_and_commit_before_stage_fail_closed() {
+        assert!(matches!(
+            ScheduledShiftedStepper::<3, 0>::new(shifted_profile(), shifted_contract()),
+            Err(ShiftedExecutorBuildError::HorizonCapacity)
+        ));
+
+        let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut runner =
+            ScheduledShiftedStepper::<3, 1>::new(shifted_profile(), shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        runner.plan_through(DeviceCycle(100)).unwrap();
+        let generated = runner.next_unstaged_output().unwrap();
+        assert_eq!(
+            runner.commit_output(generated.token, generated.update.at),
+            Err(OutputCommitError::State)
+        );
+        assert_eq!(runner.staged_outputs(), 0);
+        runner.fault(DeviceCycle(101));
+        assert!(runner.take_faulted_block().is_some());
+    }
+
+    #[test]
     fn complete_shift_image_maps_enable_direction_and_steps_without_losing_other_bits() {
         let profile = shifted_profile();
         let contract = shifted_contract();
@@ -3126,6 +4003,7 @@ mod tests {
             StepperExecutor::new(StepperTiming::<0> {
                 axes: [],
                 device_cycle_hz: 1_000_000,
+                output_quantum_cycles: 1,
                 maximum_lateness_cycles: 0,
             }),
             Err(MotionError::AxisCount)

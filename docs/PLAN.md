@@ -322,6 +322,16 @@ image from all 64 modeled wire bits and latches sequence, timing, contract, and
 horizon-starvation faults. Target DMA ownership, physical latch observation,
 motion lookahead production, safe stop/reclaim, and HIL qualification remain
 open; this software checkpoint does not alter either board's armability.
+The next portable checkpoint adds an exact backend output lattice and a bounded
+scheduled-image owner that separates future generation, hardware-timeline
+acceptance, and ordered latch observation. It stops cleanly at ring capacity,
+retains the admitted block through every physical image and any output-free
+terminal dwell, and routes normal disable through the same commit path. A host
+integration drives its images through the PCM-short timeline and independent
+64-bit wire observer at a four-cycle fixture quantum. Firmware still uses the
+single-image static path: target circular DMA, a qualified cycle/frame epoch,
+cross-block prefill, safe peripheral reclaim, and logic-analyzer evidence remain
+open, and both boards remain non-armable.
 
 Exit gate:
 

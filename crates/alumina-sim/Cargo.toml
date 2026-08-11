@@ -19,6 +19,8 @@ alumina-storage.workspace = true
 alumina-shift-register.workspace = true
 
 [dev-dependencies]
+alumina-board.workspace = true
+alumina-config.workspace = true
 critical-section = { workspace = true, features = ["std"] }
 embassy-futures.workspace = true
 embassy-sync.workspace = true

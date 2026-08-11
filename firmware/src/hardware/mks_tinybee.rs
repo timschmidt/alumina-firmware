@@ -40,6 +40,9 @@ pub const CONFIGURATION_BINDINGS: usize = 64;
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = true;
 /// Physical step/dir output remains closed until I²S/DMA HIL evidence exists.
 pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// Placeholder one-cycle grid for the unqualified static target. The future
+/// I²S backend must replace this with its measured continuous frame quantum.
+pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;
 /// No nonzero commit-lateness claim is made before serializer qualification.
 pub const MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES: u32 = 0;
 

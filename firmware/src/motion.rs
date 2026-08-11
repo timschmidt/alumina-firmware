@@ -81,6 +81,7 @@ impl MotionService {
             &configuration.identity,
             &configuration.profile,
             TICK_HZ,
+            selected::MOTION_OUTPUT_QUANTUM_CYCLES,
             selected::MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES,
         )
         .map_err(|_| MotionServiceError::Configuration)?;

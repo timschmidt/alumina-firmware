@@ -251,9 +251,27 @@ const fn reverse_low_bits(bits: u32, width: u8) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use alumina_board::{OwnerDomain, ResourceId};
+    use alumina_config::{
+        AxisDriverControl, BindingFlags, BindingRole, ResourceBinding, SignalPolarity,
+        StepperAxisProfile,
+    };
+    use alumina_job::{
+        AdmittedBlock, JobDescriptor, RealtimeJob, RealtimeJobState, RealtimePoll, WorkSource,
+    };
+    use alumina_machine_ir::{
+        BlockValidationLimits, ExecutionBlock, ExecutionSegment, StreamId, StreamTick,
+        ValidationLimits,
+    };
+    use alumina_motion::{
+        AxisTiming, ScheduledShiftPlan, ScheduledShiftedStepper, ShiftImageContract,
+        StepperExecutionProfile, StepperTiming,
+    };
+    use alumina_protocol::{DeviceCycle, Digest};
     use alumina_shift_register::{
         BitOrder, CompleteImage, PcmShortFrameGrid, PcmShortTimeline, ScheduledCompleteImage,
     };
+    use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
 
     use super::*;
 
@@ -263,6 +281,137 @@ mod tests {
         bits: 0x0000_1249,
         order: BitOrder::MostSignificantFirst,
     };
+
+    fn shifted_binding(role: BindingRole, bit: u8) -> ResourceBinding {
+        ResourceBinding {
+            instance: 0,
+            role,
+            resource: ResourceId::I2sOut { engine: 0, bit },
+            owner: OwnerDomain::Realtime,
+            polarity: SignalPolarity::ActiveHigh,
+            flags: BindingFlags::default(),
+            minimum_active_cycles: 4,
+            minimum_inactive_cycles: 4,
+            maximum_frequency_hz: if role == BindingRole::AxisStep {
+                100_000
+            } else {
+                0
+            },
+            watchdog_cycles: 100_000,
+        }
+    }
+
+    fn shifted_profile() -> StepperExecutionProfile<3> {
+        StepperExecutionProfile {
+            axes: core::array::from_fn(|axis| {
+                let base = u8::try_from(axis * 3).unwrap();
+                StepperAxisProfile {
+                    instance: u16::try_from(axis).unwrap(),
+                    step: ResourceBinding {
+                        instance: u16::try_from(axis).unwrap(),
+                        ..shifted_binding(BindingRole::AxisStep, base + 1)
+                    },
+                    direction: ResourceBinding {
+                        instance: u16::try_from(axis).unwrap(),
+                        ..shifted_binding(BindingRole::AxisDirection, base + 2)
+                    },
+                    driver_control: ResourceBinding {
+                        instance: u16::try_from(axis).unwrap(),
+                        ..shifted_binding(BindingRole::AxisDisable, base)
+                    },
+                    driver_control_action: AxisDriverControl::Disable,
+                }
+            }),
+            timing: StepperTiming {
+                axes: [AxisTiming {
+                    pulse_high_cycles: 4,
+                    pulse_low_cycles: 4,
+                    direction_setup_cycles: 4,
+                    direction_hold_cycles: 4,
+                    enable_setup_cycles: 4,
+                    enable_hold_cycles: 8,
+                    maximum_step_frequency_hz: 100_000,
+                }; 3],
+                device_cycle_hz: 1_000_000,
+                output_quantum_cycles: 4,
+                maximum_lateness_cycles: 0,
+            },
+        }
+    }
+
+    const fn shifted_contract() -> ShiftImageContract {
+        ShiftImageContract {
+            engine: 0,
+            width: SAFE.width,
+            defined_mask: SAFE.defined_mask,
+            safe_image: SAFE.bits,
+        }
+    }
+
+    struct OneBlock(Option<ExecutionBlock>);
+
+    impl WorkSource for OneBlock {
+        fn try_receive(&mut self) -> Option<ExecutionBlock> {
+            self.0.take()
+        }
+
+        fn depth(&self) -> usize {
+            usize::from(self.0.is_some())
+        }
+    }
+
+    fn admitted_motion_block() -> (RealtimeJob<3>, AdmittedBlock<3>) {
+        let stream_id = StreamId::new([0x11; 16]).unwrap();
+        let capability_digest = Digest([0x22; 32]);
+        let config_digest = Digest([0x33; 32]);
+        let block = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            Digest::ZERO,
+            &[ExecutionSegment {
+                start_tick: StreamTick(0),
+                end_tick: StreamTick(40),
+                delta_steps: [2, 0, 0],
+                flags: 0,
+            }],
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 7,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(Digest([0x44; 32])),
+                    byte_len: 512,
+                },
+                manifest: ContentId::from_sha256(Digest([0x55; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 3,
+            block_count: 1,
+            first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 1_000,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 1_000,
+                    maximum_steps_per_segment: 100,
+                },
+            },
+        };
+        let mut job = RealtimeJob::prepare(descriptor).unwrap();
+        let admitted = match job.poll(&mut OneBlock(Some(block))).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("one validated block must be admitted")
+            }
+        };
+        (job, admitted)
+    }
 
     #[test]
     fn bit_level_observer_exposes_updates_only_at_following_latches() {
@@ -290,6 +439,99 @@ mod tests {
         }
         assert_eq!(observer.next_frame_deadline(), Ok(1_016));
         assert_eq!(observer.fault(), None);
+    }
+
+    #[test]
+    fn exact_motion_releases_only_after_dma_frames_and_physical_latches() {
+        let grid = PcmShortFrameGrid::new(96, 1_000_000, 250_000).unwrap();
+        assert_eq!(grid.cycles_per_frame(), 4);
+        assert_eq!(grid.bit_clock_hz(), 16_000_000);
+        let mut timeline = PcmShortTimeline::<8>::new(grid, SAFE).unwrap();
+        let mut observer = SimPcmShortLatch::new(grid, SAFE).unwrap();
+        let (mut job, admitted) = admitted_motion_block();
+        let mut runner =
+            ScheduledShiftedStepper::<3, 8>::new(shifted_profile(), shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(140)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                completion_at: DeviceCycle(140),
+            }
+        );
+
+        let mut outputs = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            timeline
+                .schedule(ScheduledCompleteImage {
+                    commit_cycle: output.update.at.0,
+                    image: CompleteImage {
+                        bits: output.update.image,
+                        ..SAFE
+                    },
+                })
+                .unwrap();
+            runner.stage_output(output).unwrap();
+            outputs.push(output);
+        }
+        assert_eq!(outputs.len(), 5);
+        assert_eq!(outputs[0].update.at, DeviceCycle(100));
+
+        let mut next_output = 0;
+        for transmit_index in 0..10 {
+            let frame = timeline.next_frame().unwrap();
+            assert_eq!(frame.transmit_index, transmit_index);
+            let observed = observer.consume_frame(frame).unwrap();
+            if next_output < outputs.len()
+                && outputs[next_output].update.at.0 == observed.latch_cycle
+            {
+                let output = outputs[next_output];
+                assert_eq!(observed.image.bits, output.update.image);
+                runner
+                    .commit_output(output.token, DeviceCycle(observed.latch_cycle))
+                    .unwrap();
+                next_output += 1;
+            }
+        }
+        assert_eq!(next_output, outputs.len());
+        assert_eq!(observer.next_frame_deadline(), Ok(140));
+        assert!(runner.take_completed_block(DeviceCycle(139)).is_none());
+
+        let terminal_dwell = observer
+            .consume_frame(timeline.next_frame().unwrap())
+            .unwrap();
+        assert_eq!(terminal_dwell.latch_cycle, 140);
+        let completed = runner.take_completed_block(DeviceCycle(140)).unwrap();
+        assert_eq!(completed.completion().at, DeviceCycle(140));
+        assert_eq!(completed.completion().position, [2, 0, 0]);
+        assert_eq!(completed.completion().maximum_half_tick_error, 4);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
+
+        assert_eq!(runner.earliest_finish_cycle(), Ok(DeviceCycle(144)));
+        let finish = runner.schedule_finish(DeviceCycle(144)).unwrap();
+        timeline
+            .schedule(ScheduledCompleteImage {
+                commit_cycle: finish.update.at.0,
+                image: CompleteImage {
+                    bits: finish.update.image,
+                    ..SAFE
+                },
+            })
+            .unwrap();
+        runner.stage_output(finish).unwrap();
+        let observed_finish = observer
+            .consume_frame(timeline.next_frame().unwrap())
+            .unwrap();
+        assert_eq!(observed_finish.latch_cycle, 144);
+        assert_eq!(observed_finish.image.bits, finish.update.image);
+        runner
+            .commit_output(finish.token, DeviceCycle(observed_finish.latch_cycle))
+            .unwrap();
+        assert!(runner.take_job_complete());
+        assert!(!runner.take_job_complete());
     }
 
     #[test]
