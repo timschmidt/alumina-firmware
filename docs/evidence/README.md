@@ -50,3 +50,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-CANONICAL-CAPABILITIES.md`](M3-CANONICAL-CAPABILITIES.md) — canonical
   complete board-package bytes/digests, bounded authenticated range retrieval,
   boot/xtask verification, and capability-versus-configuration separation.
+- [`M4-CONFIGURATION-IR.md`](M4-CONFIGURATION-IR.md) — canonical resource and
+  exact-machine facts, real published-SD streaming, and identical independent
+  core-0/core-1 candidate validation with activation still closed.

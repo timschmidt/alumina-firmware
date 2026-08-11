@@ -331,6 +331,14 @@ own declared field, is compiled into the board package, and is recomputed by
 control route. This document, not `xtask` JSON formatting or Rust memory layout,
 is the browser's immutable board authority.
 
+`alumina-config` consumes that exact capability identity and streams canonical
+`ALMCFG01` bytes from an inert, content-addressed SD publication. Fixed resource
+bindings and reduced exact nominal/uncertainty facts cover stepper, FOC,
+process, safety, serial/bus, timer/capture, and general I/O configuration. Core 0
+and core 1 hash and run the same semantic validator; only a later durable
+activation transaction may publish its digest as active. The normative format
+and current closed gate are in `CONFIGURATION.md`.
+
 Build UX:
 
 ```text

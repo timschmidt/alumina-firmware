@@ -679,26 +679,93 @@ fn write_device_route<S: ByteSink>(
 }
 
 fn write_resource<S: ByteSink>(sink: &mut S, resource: ResourceId) -> Result<(), CapabilityError> {
+    sink.write(&encode_resource_id(resource))
+}
+
+/// Encodes the shared canonical four-byte resource identifier.
+pub const fn encode_resource_id(resource: ResourceId) -> [u8; 4] {
     let (kind, first, second) = match resource {
-        ResourceId::Gpio(index) => (1, 0, u16::from(index)),
-        ResourceId::I2sOut { engine, bit } => (2, engine, u16::from(bit)),
-        ResourceId::Adc { unit, channel } => (3, unit, u16::from(channel)),
-        ResourceId::Timer { group, index } => (4, group, u16::from(index)),
-        ResourceId::I2s(index) => (5, 0, u16::from(index)),
-        ResourceId::Rmt(index) => (6, 0, u16::from(index)),
-        ResourceId::TimedOutput { engine, channel } => (7, engine, u16::from(channel)),
-        ResourceId::I2c(index) => (8, 0, u16::from(index)),
-        ResourceId::Spi(index) => (9, 0, u16::from(index)),
-        ResourceId::Uart(index) => (10, 0, u16::from(index)),
-        ResourceId::Pcnt(index) => (11, 0, u16::from(index)),
-        ResourceId::Dma(index) => (12, 0, u16::from(index)),
-        ResourceId::Twai(index) => (13, 0, u16::from(index)),
-        ResourceId::Storage(index) => (14, 0, u16::from(index)),
-        ResourceId::Radio(index) => (15, 0, u16::from(index)),
-        ResourceId::SafetyInput(index) => (16, 0, u16::from(index)),
+        ResourceId::Gpio(index) => (1, 0, index as u16),
+        ResourceId::I2sOut { engine, bit } => (2, engine, bit as u16),
+        ResourceId::Adc { unit, channel } => (3, unit, channel as u16),
+        ResourceId::Timer { group, index } => (4, group, index as u16),
+        ResourceId::I2s(index) => (5, 0, index as u16),
+        ResourceId::Rmt(index) => (6, 0, index as u16),
+        ResourceId::TimedOutput { engine, channel } => (7, engine, channel as u16),
+        ResourceId::I2c(index) => (8, 0, index as u16),
+        ResourceId::Spi(index) => (9, 0, index as u16),
+        ResourceId::Uart(index) => (10, 0, index as u16),
+        ResourceId::Pcnt(index) => (11, 0, index as u16),
+        ResourceId::Dma(index) => (12, 0, index as u16),
+        ResourceId::Twai(index) => (13, 0, index as u16),
+        ResourceId::Storage(index) => (14, 0, index as u16),
+        ResourceId::Radio(index) => (15, 0, index as u16),
+        ResourceId::SafetyInput(index) => (16, 0, index as u16),
         ResourceId::Device(index) => (17, 0, index),
     };
-    sink.write(&[kind, first, second as u8, (second >> 8) as u8])
+    [kind, first, second as u8, (second >> 8) as u8]
+}
+
+/// Decodes the shared canonical four-byte resource identifier.
+pub fn decode_resource_id(encoded: &[u8]) -> Result<ResourceId, ResourceWireError> {
+    if encoded.len() != 4 {
+        return Err(ResourceWireError::Length);
+    }
+    let first = encoded[1];
+    let second = u16::from_le_bytes([encoded[2], encoded[3]]);
+    let single = u8::try_from(second).ok();
+    let resource = match encoded[0] {
+        1 if first == 0 => ResourceId::Gpio(single.ok_or(ResourceWireError::Index)?),
+        2 => ResourceId::I2sOut {
+            engine: first,
+            bit: single.ok_or(ResourceWireError::Index)?,
+        },
+        3 => ResourceId::Adc {
+            unit: first,
+            channel: single.ok_or(ResourceWireError::Index)?,
+        },
+        4 => ResourceId::Timer {
+            group: first,
+            index: single.ok_or(ResourceWireError::Index)?,
+        },
+        5 if first == 0 => ResourceId::I2s(single.ok_or(ResourceWireError::Index)?),
+        6 if first == 0 => ResourceId::Rmt(single.ok_or(ResourceWireError::Index)?),
+        7 => ResourceId::TimedOutput {
+            engine: first,
+            channel: single.ok_or(ResourceWireError::Index)?,
+        },
+        8 if first == 0 => ResourceId::I2c(single.ok_or(ResourceWireError::Index)?),
+        9 if first == 0 => ResourceId::Spi(single.ok_or(ResourceWireError::Index)?),
+        10 if first == 0 => ResourceId::Uart(single.ok_or(ResourceWireError::Index)?),
+        11 if first == 0 => ResourceId::Pcnt(single.ok_or(ResourceWireError::Index)?),
+        12 if first == 0 => ResourceId::Dma(single.ok_or(ResourceWireError::Index)?),
+        13 if first == 0 => ResourceId::Twai(single.ok_or(ResourceWireError::Index)?),
+        14 if first == 0 => ResourceId::Storage(single.ok_or(ResourceWireError::Index)?),
+        15 if first == 0 => ResourceId::Radio(single.ok_or(ResourceWireError::Index)?),
+        16 if first == 0 => ResourceId::SafetyInput(single.ok_or(ResourceWireError::Index)?),
+        17 if first == 0 => ResourceId::Device(second),
+        1..=17 => return Err(ResourceWireError::Reserved),
+        value => return Err(ResourceWireError::Kind(value)),
+    };
+    if encode_resource_id(resource) != encoded {
+        return Err(ResourceWireError::Noncanonical);
+    }
+    Ok(resource)
+}
+
+/// Canonical resource-ID decoding rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceWireError {
+    /// Resource IDs are exactly four bytes.
+    Length,
+    /// The resource-kind byte is unknown.
+    Kind(u8),
+    /// A one-byte resource index did not fit.
+    Index,
+    /// A reserved coordinate was nonzero.
+    Reserved,
+    /// A valid value had a noncanonical representation.
+    Noncanonical,
 }
 
 const fn chip(value: Chip) -> u8 {
@@ -841,6 +908,16 @@ mod tests {
 
     #[test]
     fn request_and_response_prefixes_are_exact_and_canonical() {
+        for resource in [
+            ResourceId::Gpio(45),
+            ResourceId::I2sOut { engine: 2, bit: 31 },
+            ResourceId::Device(0x1234),
+        ] {
+            assert_eq!(
+                decode_resource_id(&encode_resource_id(resource)),
+                Ok(resource)
+            );
+        }
         let request = CapabilityReadRequest {
             expected_digest: Digest([0x55; 32]),
             offset: 240,

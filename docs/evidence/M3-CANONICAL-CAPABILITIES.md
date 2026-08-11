@@ -137,3 +137,7 @@ resource/capability validation, durable idle-only commit, boot recovery, and an
 independent core-1 active-identity update. It must remain distinct from the
 full immutable board document and must not make either board armable without its
 physical qualification gates.
+
+The portable document/validator portion of that gate is implemented by the
+later [`M4-CONFIGURATION-IR.md`](M4-CONFIGURATION-IR.md); durable firmware
+activation and recovery remain open.

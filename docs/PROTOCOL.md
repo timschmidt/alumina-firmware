@@ -87,7 +87,17 @@ own declared digest is the sole excluded field, avoiding circular identity.
 ## Storage bodies and content identity
 
 Storage V1 fixes canonical identities to SHA-256 and admits no per-connection
-algorithm negotiation. The current binary bodies are:
+algorithm negotiation.
+
+Storage object kind `6` is an inert canonical `MachineConfiguration`. The
+browser uploads it through the ordinary content-addressed transaction, then
+`ConfigurationValidate` selects its exact object/manifest identities. Resource
+bindings, reduced rational facts and uncertainty, validation rules, external
+selection bodies, and intercore transfer/report layouts are normative in
+[`CONFIGURATION.md`](CONFIGURATION.md). Validation never aliases commit and
+cannot change the active configuration.
+
+The current binary bodies are:
 
 | Operation body | Fixed bytes | Variable bytes |
 | --- | ---: | --- |

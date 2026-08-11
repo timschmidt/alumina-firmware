@@ -27,6 +27,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-config"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-capability",
+ "alumina-protocol",
+ "alumina-storage",
+ "board-mks-tinybee",
+ "board-t-deck-pro",
+ "embassy-futures",
+ "sha2",
+]
+
+[[package]]
 name = "alumina-firmware"
 version = "0.1.0"
 dependencies = [

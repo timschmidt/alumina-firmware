@@ -105,6 +105,8 @@ pub enum ObjectKind {
     UpdateBundle = 4,
     /// Explicitly non-executable user/audit bytes.
     OpaqueData = 5,
+    /// Canonical machine/resource configuration, inert until separately activated.
+    MachineConfiguration = 6,
 }
 
 impl ObjectKind {
@@ -115,6 +117,7 @@ impl ObjectKind {
             3 => Some(Self::InterfaceBundle),
             4 => Some(Self::UpdateBundle),
             5 => Some(Self::OpaqueData),
+            6 => Some(Self::MachineConfiguration),
             _ => None,
         }
     }

@@ -123,6 +123,14 @@ execution remain separate closed gates. See the
 [capability format](docs/CAPABILITIES.md) and
 [canonical-capability evidence](docs/evidence/M3-CANONICAL-CAPABILITIES.md).
 
+The next portable authority is also in place: `alumina-config` defines canonical
+content-addressed resource bindings and reduced exact machine facts, validates
+them against the immutable board package, streams a real published SD object,
+and makes both cores independently reach the same candidate identity. It does
+not yet activate anything in firmware; the active identity remains zero. See
+the [configuration format](docs/CONFIGURATION.md) and
+[portable configuration evidence](docs/evidence/M4-CONFIGURATION-IR.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:
