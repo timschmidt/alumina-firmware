@@ -115,21 +115,24 @@ acknowledging or executing it. `alumina-capability` now encodes every typed boar
 fact as an allocation-free canonical `ALMCAP01` document. Both first packages
 compile its independently recomputed SHA-256, firmware verifies it before Wi-Fi,
 identity advertises it, and authenticated `CapabilitiesGet` returns bounded
-digest-stable ranges. Preparation still returns `Unsupported` because no active
-configuration is committed and neither board is armable. Commit and hardware
-execution remain separate closed gates. See the
+digest-stable ranges. Preparation still returns `Unsupported` on both current
+images because neither board package is armable; configuration commit and
+hardware qualification remain separate closed gates. See the
 [portable lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md) and
 [firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md), plus the
 [capability format](docs/CAPABILITIES.md) and
 [canonical-capability evidence](docs/evidence/M3-CANONICAL-CAPABILITIES.md).
 
-The next portable authority is also in place: `alumina-config` defines canonical
-content-addressed resource bindings and reduced exact machine facts, validates
-them against the immutable board package, streams a real published SD object,
-and makes both cores independently reach the same candidate identity. It does
-not yet activate anything in firmware; the active identity remains zero. See
-the [configuration format](docs/CONFIGURATION.md) and
-[portable configuration evidence](docs/evidence/M4-CONFIGURATION-IR.md).
+`alumina-config` defines canonical content-addressed resource bindings and
+reduced exact machine facts, validates them against the immutable board package,
+and streams a real published SD object through independent validators on both
+cores. Authenticated firmware operations now order durable prepare, unauthorized
+core-1 activation, durable commit, and exact authorization; boot recovery
+revalidates committed bytes and discards orphan prepares. Only the resulting
+durably authorized digest reaches either job actor. See the
+[configuration format](docs/CONFIGURATION.md),
+[portable configuration evidence](docs/evidence/M4-CONFIGURATION-IR.md), and
+[firmware lifecycle evidence](docs/evidence/M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md).
 
 ## Developer checks
 

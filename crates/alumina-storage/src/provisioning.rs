@@ -693,6 +693,24 @@ where
         result.map_err(ProvisionedCacheError::Media)
     }
 
+    /// Discards one exact prepared configuration transition durably.
+    pub async fn abort_configuration_transition(
+        &mut self,
+        transition: ConfigurationTransition,
+        context: MutationContext,
+    ) -> Result<ConfigurationJournal, ProvisionedCacheError<D::Error>> {
+        let result = self
+            .media
+            .as_mut()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .abort_configuration_transition(transition, context)
+            .await;
+        if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
+            self.state = ManagerState::Faulted(fault_from_media_error(error));
+        }
+        result.map_err(ProvisionedCacheError::Media)
+    }
+
     /// Returns the retained physical adapter, including after any failure.
     pub fn into_device(mut self) -> D {
         self.release_media();

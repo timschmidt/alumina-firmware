@@ -445,6 +445,7 @@ enum RecordKind {
     Abort = 4,
     ConfigurationPrepare = 5,
     ConfigurationCommit = 6,
+    ConfigurationAbort = 7,
 }
 
 impl RecordKind {
@@ -456,6 +457,7 @@ impl RecordKind {
             4 => Some(Self::Abort),
             5 => Some(Self::ConfigurationPrepare),
             6 => Some(Self::ConfigurationCommit),
+            7 => Some(Self::ConfigurationAbort),
             _ => None,
         }
     }
@@ -766,6 +768,37 @@ where
         let ready = self.ready_mut()?;
         apply_configuration_commit(&mut ready.configuration, transition);
         Ok(ready.configuration)
+    }
+
+    /// Durably discards exactly the prepared transition without changing the
+    /// committed active selection. Retrying after a completed abort is a safe
+    /// no-op because no pending intent remains.
+    pub async fn abort_configuration_transition(
+        &mut self,
+        transition: ConfigurationTransition,
+        context: MutationContext,
+    ) -> Result<ConfigurationJournal, MediaError<D::Error>> {
+        context.validate()?;
+        transition.validate()?;
+        let ready = self.ready()?;
+        if ready.uploads.checkpoint().is_some() {
+            return Err(StorageError::ConfigurationTransition.into());
+        }
+        let current = ready.configuration;
+        match current.pending {
+            None => return Ok(current),
+            Some(pending) if pending == transition => {}
+            Some(_) => return Err(StorageError::ConfigurationTransition.into()),
+        }
+        let payload = encode_configuration_transition(transition);
+        self.append_record(
+            RecordKind::ConfigurationAbort,
+            UploadId(transition.selection.transaction_id),
+            &payload,
+        )
+        .await?;
+        self.ready_mut()?.configuration.pending = None;
+        Ok(self.ready()?.configuration)
     }
 
     /// Locates the newest publication with this exact typed object and manifest.
@@ -1625,6 +1658,18 @@ impl ReplayState {
                     return Err(MediaCorruption::Replay);
                 }
                 apply_configuration_commit(&mut self.configuration, transition);
+            }
+            RecordKind::ConfigurationAbort => {
+                if self.hashes.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
+                let transition = decode_configuration_transition(payload)?;
+                if transition.selection.transaction_id != header.upload_id.0
+                    || self.configuration.pending != Some(transition)
+                {
+                    return Err(MediaCorruption::Replay);
+                }
+                self.configuration.pending = None;
             }
         }
         Ok(())
@@ -2754,6 +2799,72 @@ mod tests {
             }
             if result.is_ok() {
                 assert_eq!(journal.active, None);
+            }
+        }
+    }
+
+    #[test]
+    fn every_transition_abort_cut_retains_active_and_pending_or_none() {
+        let (mut baseline, _) = formatted();
+        let (_, active_publication) = publish_kind(
+            &mut baseline,
+            b"active configuration before abort",
+            8,
+            ObjectKind::MachineConfiguration,
+        );
+        let active = configuration_selection(0x3001, active_publication);
+        let activation = ConfigurationTransition::activate(active);
+        block_on(
+            baseline.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        block_on(
+            baseline.commit_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        let (_, candidate_publication) = publish_kind(
+            &mut baseline,
+            b"candidate configuration to abort",
+            8,
+            ObjectKind::MachineConfiguration,
+        );
+        let pending = ConfigurationTransition::activate(configuration_selection(
+            0x3002,
+            candidate_publication,
+        ));
+        block_on(
+            baseline.prepare_configuration_transition(pending, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        let snapshot = baseline.into_device().snapshot();
+
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(snapshot.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result = block_on(
+                media.abort_configuration_transition(pending, MutationContext::DISARMED_IDLE),
+            );
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.configuration_journal().unwrap();
+            assert_eq!(journal.active, Some(active));
+            assert!(journal.pending.is_none() || journal.pending == Some(pending));
+            if result.is_ok() {
+                assert_eq!(journal.pending, None);
+                let sequence = media.status().last_sequence;
+                assert_eq!(
+                    block_on(
+                        media.abort_configuration_transition(
+                            pending,
+                            MutationContext::DISARMED_IDLE,
+                        )
+                    )
+                    .unwrap(),
+                    journal
+                );
+                assert_eq!(media.status().last_sequence, sequence);
             }
         }
     }

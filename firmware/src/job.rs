@@ -20,6 +20,7 @@ pub struct JobService {
     realtime: Option<RealtimeJobReport>,
     command_sequence: u32,
     active_config: Digest,
+    configuration_transition: bool,
 }
 
 impl JobService {
@@ -31,6 +32,7 @@ impl JobService {
             realtime: None,
             command_sequence: 0,
             active_config: Digest::ZERO,
+            configuration_transition: false,
         }
     }
 
@@ -72,6 +74,9 @@ impl JobService {
         native: NativeRequest<'_>,
         now: DeviceCycle,
     ) -> ServiceResponse {
+        if self.configuration_transition {
+            return self.respond(endpoint, native, now, StatusCode::Busy, false);
+        }
         let descriptor = match JobDescriptor::decode::<{ selected::JOB_AXES }>(native.body) {
             Ok(descriptor) => descriptor,
             Err(_) => {
@@ -231,6 +236,17 @@ impl JobService {
         self.descriptor.is_some() && !self.replaceable(endpoint)
     }
 
+    /// Installs the sole durably authorized configuration identity used for
+    /// subsequent job admission. Zero explicitly revokes admission.
+    pub fn set_active_config(&mut self, digest: Digest) {
+        self.active_config = digest;
+    }
+
+    /// Prevents a new job prepare while configuration ownership is changing.
+    pub fn set_configuration_transition(&mut self, active: bool) {
+        self.configuration_transition = active;
+    }
+
     fn replaceable(&self, endpoint: &DefaultServiceEndpoint) -> bool {
         let Some(service) = self.prefetch.as_ref().map(ServicePrefetch::status) else {
             return true;
@@ -320,6 +336,12 @@ impl RealtimeJobService {
             report_sequence: 0,
             active_config: Digest::ZERO,
         }
+    }
+
+    /// Installs only the configuration identity authorized after durable
+    /// service-core commit; zero revokes all new job admission.
+    pub fn set_active_config(&mut self, digest: Digest) {
+        self.active_config = digest;
     }
 
     /// Applies one exact ordered prepare/cancel command.

@@ -2,9 +2,10 @@
 
 Date: 2026-08-10
 
-Status: portable raw-media selection journal implemented and fault-injection
-tested. This does not claim firmware routing, boot activation, board armability,
-or physical HIL.
+Status at this checkpoint: portable raw-media selection journal implemented and
+fault-injection tested. It did not claim firmware routing, boot activation,
+board armability, or physical HIL. The later firmware integration is recorded in
+`M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md`.
 
 ## Implemented boundary
 
@@ -68,11 +69,11 @@ dependency. The repository policy admits permissive MIT/Apache-compatible
 licenses (including reviewed BSD/ISC/Zlib-style licenses) and excludes GPL,
 LGPL, AGPL, SSPL, copied implementation code, and assets from those families.
 
-## Claim boundary and next gate
+## Historical claim boundary
 
-No target image yet sends configuration commands or consumes this selector at
-boot. The next checkpoint adds authenticated firmware request/status routing,
-advances core-0 validation incrementally, observes periodic core-1 reports,
-orders prepare → core-1 activation → commit, and hands the exact committed
-digest to both job actors. Both board packages remain non-armable until their
-physical safety/output paths pass HIL.
+At this checkpoint no target image sent configuration commands or consumed this
+selector at boot. `M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md` records the subsequent
+authenticated request/status routing, boot recovery, explicit transition abort,
+prepare → unauthorized core-1 activation → durable commit → authorization
+ordering, and exact job-identity handoff. Both board packages remain non-armable
+until their physical safety/output paths pass HIL.

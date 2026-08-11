@@ -25,6 +25,8 @@ pub type StorageBackend = ProvisionedCache<StorageCard>;
 ///
 /// T-Deck Pro remains non-armable and no machine block drives this output.
 pub const JOB_AXES: usize = 1;
+/// Maximum unique resource claims retained by each configuration validator.
+pub const CONFIGURATION_BINDINGS: usize = 64;
 
 /// Semantic identity of the current RT hazard contract: GPIO2 held high-Z.
 pub const SAFE_OUTPUT_CONTRACT: SafetyContractId =

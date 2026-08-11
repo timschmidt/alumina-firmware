@@ -46,6 +46,7 @@ version = "0.1.0"
 dependencies = [
  "alumina-board",
  "alumina-capability",
+ "alumina-config",
  "alumina-job",
  "alumina-net",
  "alumina-protocol",

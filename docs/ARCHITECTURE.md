@@ -364,17 +364,22 @@ peripherals, but cannot invent a capability.
 
 Configuration lifecycle:
 
-1. Parse on core 0 with strict size/depth limits.
-2. Resolve aliases to stable typed `ResourceId` values.
-3. Check electrical mode, timing, frequency, DMA/interrupt, bus-sharing, and
-   ownership constraints.
-4. Check duplicate claims and combinations forbidden by the board package.
-5. Construct an inactive configuration in fixed storage.
-6. Send a bounded description to core 1 for independent real-time validation.
-7. Commit on both cores using a canonical digest and enter `Configured`.
-8. Persist only while safe and idle.
-9. Export exact values, bounded measurements, capability/configuration digests,
-   and timing limits needed by the UI to select CAM precision.
+1. The browser uploads an inert canonical `MachineConfiguration` object.
+2. Core 0 streams it with strict fixed bounds, resolves stable typed
+   `ResourceId` values, and validates electrical, timing, ownership, duplicate,
+   exact-fact, and board-package constraints.
+3. Core 0 transfers the exact bytes to core 1, which hashes and runs the same
+   semantic validator independently into an inactive candidate.
+4. An authenticated commit durably prepares the exact selector while safe and
+   idle.
+5. Core 1 activates the exact candidate but revokes job authorization and enters
+   `Configured`.
+6. Core 0 observes that exact state, durably commits the selector, then sends a
+   separate exact-identity authorization to core 1.
+7. Only then do both job actors receive the active digest. At boot, the same
+   object is reopened and both validators rerun before authorization.
+8. Status exports exact values, bounded measurements, capability/configuration
+   digests, and timing limits needed by the UI to select CAM precision.
 
 FluidNC configuration is research material for board facts, not a supported
 runtime format. Alumina uses one native schema and reports unsupported boards or
@@ -459,8 +464,8 @@ Current routes and reserved endpoint roles:
 | `POST /api/v1/update` | idle-only signed update staging |
 
 Only routes already present in `alumina-net` are accepted today. Capability
-ranges use `CapabilitiesGet` through `/api/v1/control`; configuration will use
-the same native route rather than creating a parallel REST representation.
+ranges use `CapabilitiesGet` through `/api/v1/control`; configuration uses the
+same native route rather than creating a parallel REST representation.
 Time, telemetry, and update endpoints remain reserved until their bounded wire
 contracts and admission policies land.
 | `/` and immutable assets | compressed Alumina interface bundle |
@@ -484,13 +489,16 @@ separate human-readable filesystem partition may be added later, but is not an
 executable job authority.
 
 Machine-configuration selection uses the same durability boundary but a
-separate prepare/commit state machine. Prepare binds a nonzero operation,
+separate prepare/commit/abort state machine. Prepare binds a nonzero operation,
 `MachineConfiguration` object digest/length, and exact chunk-manifest digest; it
 does not change the replayed active selection. A matching commit changes active
 state. Clear uses the same two records and must name the exact active
-publication. On boot, an unmatched prepare is inert, while a committed selection
-is only a candidate for reopening and independent validation on both cores.
-Thus persistence never bypasses configuration validation or safe-output startup.
+publication. On boot, an unmatched prepare is inert and is durably aborted
+before new configuration work; a committed selection is only a candidate for
+reopening and independent validation on both cores. Core-1 activation precedes
+selector commit but remains unauthorized for job admission; a separate
+post-commit command releases that exact identity. Thus persistence never
+bypasses configuration validation or safe-output startup.
 
 The first firmware job slice now gives the service task sole ownership of a
 bounded `ServicePrefetch` actor and the real-time task sole ownership of an
@@ -506,10 +514,11 @@ ownership vetoes storage mutation immediately, without waiting for periodic
 safety telemetry.
 
 Both first board packages now carry verified nonzero canonical capability
-digests and storage has a committed active-configuration authority, but firmware
-has not yet routed activation or boot recovery and both packages remain
-non-armable pending HIL. Consequently the target endpoint still rejects
-`JobPrepare` as `Unsupported`. Capability publication is discovery, not
+digests. Firmware routes authenticated configuration validation/commit/rollback,
+replays the durable selector at boot, independently revalidates on both cores,
+and hands a digest to job actors only after post-commit authorization. Both
+packages remain non-armable pending HIL, so the target endpoint still rejects
+`JobPrepare` as `Unsupported`. Capability and configuration publication are not
 authorization to run, preserving an inspectable integration path without
 creating an accidental executable path.
 

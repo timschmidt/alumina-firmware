@@ -85,11 +85,10 @@ with neither a missing-license entry nor a GPL/AGPL/LGPL/SSPL-family match.
 Repository implementation/import trees contain no GPL-family license marker or
 source header.
 
-## Claim boundary and next gate
+## Historical claim boundary
 
-No firmware image yet dispatches these commands and no physical board was
-connected. The raw-media fail-safe two-phase selector is now implemented and
-recorded separately in `M4-DURABLE-CONFIGURATION-SELECTION.md`. The next
-checkpoint wires authenticated configuration operations into core 0, receives
-periodic core-1 reports, performs boot recovery, updates both job actors only
-after exact activation, and keeps both non-armable boards closed pending HIL.
+At this checkpoint no firmware image dispatched these commands and no physical
+board was connected. The raw-media fail-safe selector was then recorded in
+`M4-DURABLE-CONFIGURATION-SELECTION.md`; authenticated firmware routing, boot
+recovery, and post-durability job authorization are recorded in
+`M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md`. Both boards remain closed pending HIL.

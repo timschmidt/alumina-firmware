@@ -33,6 +33,12 @@ The following boundary applies even when an upstream license would permit more:
 The same policy applies to Klipper architectural inspiration: no Klipper protocol
 or GPL implementation code is imported.
 
+Do not clone, vendor, or make build/test tooling fetch a GPL-, LGPL-, or
+AGPL-family source tree. Such projects may appear only as URLs and license-
+identified functional references in the research ledger. Dependency review and
+the cargo-deny allowlist remain mandatory even when a transitive package seems
+technically useful.
+
 ## Safety and scope
 
 - Core 0 owns service work; core 1 owns every hazardous or deterministic resource.

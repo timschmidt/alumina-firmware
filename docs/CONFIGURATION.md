@@ -148,7 +148,11 @@ and semantically validates the complete document, and emits ordered core
 commands. Every command has a 64-byte `ALCC` prefix containing version, action,
 transaction ID, digest, total bytes, exact offset, and data length. `Data`
 carries 1–192 bytes, filling at most the runtime's 256-byte command payload.
-Actions are begin, data, finish, activate, clear, and abort.
+Actions are begin, data, finish, activate, clear, abort, and authorize. Activate
+installs the independently validated identity on core 1 but deliberately marks
+it unauthorized. Authorize is a separate exact-identity command sent only after
+core 0 has durably committed the matching selector. Other real-time actors may
+consume only the authorized identity.
 
 Core 1 accepts only contiguous identity-stable data, feeds the same allocation-
 free stream validator, and cannot produce a candidate-valid report until exact
@@ -158,22 +162,62 @@ identity. A rejected candidate never removes an older active identity.
 
 The fixed 128-byte `ALCR` report fills one telemetry payload and carries state,
 transaction/candidate identity, consumed bytes, compact validated summary,
-fault family, plus the independent active digest/length. This allows a rejected
-or receiving replacement candidate to be reported without hiding the older
-configuration that remains active. Ordinary report loss is handled by periodic
-replay; malformed configuration data never uses the urgent safety channel as an
-activation mechanism.
+fault family, the independent active digest/length, and a one-bit durable-
+authorization state. This allows a rejected or receiving replacement candidate
+to be reported without hiding the older configuration that remains active.
+Ordinary report loss is handled by periodic replay, including persistent
+`Cleared` reporting until the next operation; malformed configuration data never
+uses the urgent safety channel as an activation mechanism.
+
+## Firmware transaction and status
+
+All configuration requests use the authenticated canonical native-control
+route. `ConfigurationGet`, successful requests, and lifecycle errors return the
+same fixed 264-byte `ALMCST01` body. It joins the core-0 phase/fault/progress,
+operation and committed identities, compact core-0 summary, durable-prepared and
+job-authorization flags, and the complete latest `ALCR` report. Reserved bytes,
+unknown flags, impossible identity shapes, and an `Active` phase without exact
+durable authorization reject canonically.
+
+Activation is ordered as follows:
+
+1. core 0 opens the exact typed publication and independently streams, hashes,
+   and validates it;
+2. core 1 receives the same bytes, independently validates them, and reports the
+   exact candidate;
+3. an authenticated commit request appends and syncs a durable prepare record;
+4. core 1 activates that candidate but revokes its job identity;
+5. core 0 observes the exact unauthorized active report and durably commits the
+   selector; and
+6. core 0 sends `Authorize`, after which both job actors receive the exact digest.
+
+Rollback of an uncommitted candidate sends `Abort` and durably removes any
+matching prepared transition without changing the old active selector. Rollback
+of the exact active publication means clear: core 0 first prepares the clear,
+core 1 clears and enters `Safe`, and only then does core 0 commit the empty
+selector. Clear is idempotent when core 1 is already empty, which permits safe
+recovery from a committed selector whose stored bytes cannot pass boot
+validation; a different nonempty core-1 active identity still rejects.
+Configuration and external storage mutations are serialized, active
+selection prevents destructive cache reprovisioning, and all lifecycle writes
+require a fresh safe/configured-and-idle observation.
+
+At boot, core 0 replays the selector journal, durably aborts an orphaned prepare,
+then reopens and streams any committed publication through both validators.
+Core 1 activates it unauthorized and receives authorization only after the
+replayed durable identity and both validation results agree. A failure after
+core-1 activation but before media commit therefore cannot admit a job; a
+failure after media commit but before authorization recovers from the committed
+selector and likewise remains closed until revalidation finishes.
 
 ## Current implementation boundary
 
-The portable canonical format, SD publication reader, dual independent
-validators, core framing, lifecycle actor, and the raw-media two-phase selection
-journal are implemented. A durable prepare record leaves the previous selection
-active; only an exact matching commit changes it. Activation and clear therefore
-replay as the complete old or new state across every injected write/sync cut.
-An orphaned prepare is inert and may be superseded after boot.
-
-Firmware routing, boot-time reopen/revalidation, safety-state transition, and
-job-service identity handoff are the next gate. Until that gate is complete,
-both firmware job services retain a zero active identity and no configuration
-can enable job preparation.
+The canonical format, SD publication reader, dual independent validators, core
+framing, authenticated firmware routing, boot recovery, safe-state transitions,
+job-identity handoff, and raw-media two-phase selection journal are implemented.
+Activation, abort, and clear replay as complete fail-closed states across every
+injected write/sync cut. Both current board packages remain explicitly
+non-armable pending physical qualification, so a successfully committed
+configuration still cannot make `JobPrepare` executable on either image. No
+physical-board lifecycle, runtime stack watermark, or Wi-Fi/SD concurrency claim
+is made by this software checkpoint.

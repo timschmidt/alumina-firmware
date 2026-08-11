@@ -7,6 +7,9 @@ license and provenance. Permissive MIT/Apache-compatible dependencies may be
 accepted after ordinary license, technical, and security review. GPL-family
 implementation dependencies, copied code, and assets are excluded. GPL projects
 may be recorded only as behavioral references within the clean-room process.
+Their source trees are not cloned, vendored, fetched by a build/test tool, or
+used as implementation input; a URL and license disposition in the research
+ledger do not import the referenced work.
 
 Motion-planning behavior inspired by Synthetos/g2 and FOC behavior inspired by
 SimpleFOC are implemented independently from functional requirements, published

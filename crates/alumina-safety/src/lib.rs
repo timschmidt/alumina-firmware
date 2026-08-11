@@ -512,8 +512,11 @@ pub struct Conditions {
 pub enum Event {
     /// Finish boot-time safe-output establishment.
     Initialize,
-    /// Commit a completely validated configuration.
+    /// Install a completely validated real-time configuration; job authority is
+    /// gated separately by durable selection.
     Configure,
+    /// Remove the active configuration after its real-time resources are safe.
+    Unconfigure,
     /// Enter the armed state.
     Arm,
     /// Begin scheduled work.
@@ -576,6 +579,8 @@ impl SafetyMachine {
             (SafetyState::Configured, Event::Configure) if conditions.configuration_valid => {
                 SafetyState::Configured
             }
+            (SafetyState::Safe, Event::Unconfigure)
+            | (SafetyState::Configured, Event::Unconfigure) => SafetyState::Safe,
             (SafetyState::Configured, Event::Arm)
                 if conditions.configuration_valid
                     && conditions.interlocks_closed
@@ -683,6 +688,30 @@ mod tests {
         assert_eq!(
             machine.apply(Event::Finish, ready()),
             Ok(SafetyState::Configured)
+        );
+    }
+
+    #[test]
+    fn unconfigure_returns_only_quiescent_states_to_safe() {
+        let mut machine = SafetyMachine::new();
+        machine.apply(Event::Initialize, ready()).unwrap();
+        assert_eq!(
+            machine.apply(Event::Unconfigure, Conditions::default()),
+            Ok(SafetyState::Safe)
+        );
+        machine.apply(Event::Configure, ready()).unwrap();
+        assert_eq!(
+            machine.apply(Event::Unconfigure, Conditions::default()),
+            Ok(SafetyState::Safe)
+        );
+
+        let mut running = running_machine();
+        assert_eq!(
+            running.apply(Event::Unconfigure, Conditions::default()),
+            Err(Error {
+                state: SafetyState::Running,
+                event: Event::Unconfigure,
+            })
         );
     }
 

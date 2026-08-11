@@ -646,6 +646,8 @@ const fn storage_error_status(error: StorageError) -> StatusCode {
 pub struct StorageServiceState {
     safety: SafetyObserver,
     service_job_active: bool,
+    configuration_active: bool,
+    configuration_transaction_active: bool,
 }
 
 impl StorageServiceState {
@@ -660,12 +662,26 @@ impl StorageServiceState {
                 maximum_age_cycles: maximum_safety_age_cycles,
             }),
             service_job_active: false,
+            configuration_active: false,
+            configuration_transaction_active: false,
         }
     }
 
     /// Applies the immediate core-0 cache-ownership veto before RT telemetry catches up.
     pub fn set_service_job_active(&mut self, active: bool) {
         self.service_job_active = active;
+    }
+
+    /// Prevents destructive cache reprovisioning while a committed machine
+    /// configuration still depends on this exact media log.
+    pub fn set_configuration_active(&mut self, active: bool) {
+        self.configuration_active = active;
+    }
+
+    /// Serializes external storage mutations against the configuration reader
+    /// and selector without preventing that coordinator's own journal writes.
+    pub fn set_configuration_transaction_active(&mut self, active: bool) {
+        self.configuration_transaction_active = active;
     }
 
     /// Dispatches one already authenticated request on the sole service owner.
@@ -724,6 +740,9 @@ impl StorageServiceState {
                 let status = self.effective_status(backend, now);
                 response_body.copy_from_slice(&status.encode());
                 (StatusCode::Ok, STORAGE_BACKEND_STATUS_WIRE_BYTES)
+            }
+            Operation::StorageProvision if self.configuration_active => {
+                (StatusCode::ForbiddenState, 0)
             }
             Operation::StorageProvision => match CacheProvisionRequest::decode(body) {
                 Ok(request) => match backend.provision(request, self.mutation_context(now)).await {
@@ -829,12 +848,24 @@ impl StorageServiceState {
         let mut status = backend.status();
         status.mutation_available = status.availability == StorageBackendAvailability::Ready
             && self.mutation_context(now).validate().is_ok();
-        status.provision_available =
-            status.provision_available && self.mutation_context(now).validate().is_ok();
+        status.provision_available = status.provision_available
+            && !self.configuration_active
+            && self.mutation_context(now).validate().is_ok();
         status
     }
 
-    fn mutation_context(&self, now: DeviceCycle) -> MutationContext {
+    /// Current fail-closed durable-mutation context shared with configuration
+    /// and future update coordinators on the same service task.
+    pub fn mutation_context(&self, now: DeviceCycle) -> MutationContext {
+        let mut context = self.configuration_mutation_context(now);
+        context.realtime_job_active |= self.configuration_transaction_active;
+        context
+    }
+
+    /// Context for the sole configuration coordinator. It includes safety and
+    /// job ownership but deliberately excludes the coordinator's own storage
+    /// serialization flag.
+    pub fn configuration_mutation_context(&self, now: DeviceCycle) -> MutationContext {
         let safety = self.safety.effective(now.0);
         let safe_for_mutation = matches!(safety.state, SafetyState::Safe | SafetyState::Configured);
         MutationContext {
@@ -1420,6 +1451,23 @@ mod tests {
         let response =
             block_on(local_service.dispatch(&mut local_backend, &begin, DeviceCycle(10)));
         assert_eq!(response_status(&response), StatusCode::Ok);
+
+        let mut configuration_service = service();
+        let mut configuration_backend = ReadyBackend::new();
+        observe(&mut configuration_service, SafetyState::Safe, 1, 10, false);
+        configuration_service.set_configuration_transaction_active(true);
+        assert!(
+            configuration_service
+                .configuration_mutation_context(DeviceCycle(10))
+                .validate()
+                .is_ok()
+        );
+        let response = block_on(configuration_service.dispatch(
+            &mut configuration_backend,
+            &begin,
+            DeviceCycle(10),
+        ));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
     }
 
     #[test]
@@ -1495,6 +1543,13 @@ mod tests {
         assert_eq!(status, StatusCode::Ok);
         assert_eq!(body.len(), STORAGE_BACKEND_STATUS_WIRE_BYTES);
         assert_eq!(backend.provisioned, Some(provision));
+
+        service.set_configuration_active(true);
+        let calls = backend.calls;
+        let response = block_on(service.dispatch(&mut backend, &native, DeviceCycle(11)));
+        assert_eq!(response_status(&response), StatusCode::ForbiddenState);
+        assert_eq!(backend.calls, calls);
+        service.set_configuration_active(false);
 
         let mut tampered = provision.encode();
         tampered[56] ^= 1;

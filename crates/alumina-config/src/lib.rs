@@ -32,11 +32,14 @@ const RECORD_KIND_BINDING: u16 = 1;
 const RECORD_KIND_SCALAR: u16 = 2;
 const PUBLICATION_MAGIC: [u8; 8] = *b"ALMCFQ01";
 const SELECTION_MAGIC: [u8; 8] = *b"ALMCFS01";
+const COORDINATOR_STATUS_MAGIC: [u8; 8] = *b"ALMCST01";
 
 /// Exact `ConfigurationValidate` body bytes.
 pub const CONFIGURATION_PUBLICATION_BYTES: usize = 96;
 /// Exact `ConfigurationCommit`/`ConfigurationRollback` selection bytes.
 pub const CONFIGURATION_SELECTION_BYTES: usize = 64;
+/// Exact authenticated `ConfigurationGet` and lifecycle response body.
+pub const CONFIGURATION_COORDINATOR_STATUS_BYTES: usize = 264;
 
 /// One published inert configuration selected for independent validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1326,6 +1329,9 @@ pub enum CoreConfigurationAction {
     Activate = 4,
     Clear = 5,
     Abort = 6,
+    /// Marks the exact active identity as durably committed and available to
+    /// other real-time actors. This always follows the core-0 media commit.
+    Authorize = 7,
 }
 
 impl CoreConfigurationAction {
@@ -1337,6 +1343,7 @@ impl CoreConfigurationAction {
             4 => Some(Self::Activate),
             5 => Some(Self::Clear),
             6 => Some(Self::Abort),
+            7 => Some(Self::Authorize),
             _ => None,
         }
     }
@@ -1445,6 +1452,21 @@ impl CoreConfigurationCommand {
     ) -> Result<Self, CoreConfigurationWireError> {
         Self::without_data(
             CoreConfigurationAction::Abort,
+            transaction_id,
+            digest,
+            total_bytes,
+            0,
+        )
+    }
+
+    /// Confirms that core 0 durably committed the exact active identity.
+    pub fn authorize(
+        transaction_id: u64,
+        digest: Digest,
+        total_bytes: u32,
+    ) -> Result<Self, CoreConfigurationWireError> {
+        Self::without_data(
+            CoreConfigurationAction::Authorize,
             transaction_id,
             digest,
             total_bytes,
@@ -1561,6 +1583,7 @@ impl CoreConfigurationCommand {
             | CoreConfigurationAction::Activate
             | CoreConfigurationAction::Clear
             | CoreConfigurationAction::Abort
+            | CoreConfigurationAction::Authorize
                 if self.offset == 0 && self.data_len == 0 =>
             {
                 Ok(())
@@ -1734,9 +1757,27 @@ pub struct RealtimeConfigurationReport {
     pub active_digest: Digest,
     /// Exact active document bytes, or zero together with `active_digest`.
     pub active_bytes: u32,
+    /// True only after core 0 confirmed the exact active identity is durable.
+    pub active_authorized: bool,
 }
 
 impl RealtimeConfigurationReport {
+    /// Canonical boot state before core 1 receives any configuration bytes.
+    pub const fn empty() -> Self {
+        Self {
+            state: RealtimeConfigurationState::Empty,
+            transaction_id: 0,
+            digest: Digest::ZERO,
+            total_bytes: 0,
+            consumed_bytes: 0,
+            summary: None,
+            fault: ConfigurationFaultCode::None,
+            active_digest: Digest::ZERO,
+            active_bytes: 0,
+            active_authorized: false,
+        }
+    }
+
     /// Encodes one canonical fixed report.
     pub fn encode(
         self,
@@ -1763,7 +1804,8 @@ impl RealtimeConfigurationReport {
         encoded[68..70].copy_from_slice(&(self.fault as u16).to_le_bytes());
         encoded[72..104].copy_from_slice(&self.active_digest.0);
         encoded[104..108].copy_from_slice(&self.active_bytes.to_le_bytes());
-        // Byte 71 and bytes 108..128 are reserved zero.
+        encoded[71] = u8::from(self.active_authorized);
+        // Bytes 108..128 are reserved zero.
         Ok(encoded)
     }
 
@@ -1779,7 +1821,7 @@ impl RealtimeConfigurationReport {
             return Err(CoreConfigurationReportError::Version);
         }
         if encoded[7] & !1 != 0
-            || encoded[71] != 0
+            || encoded[71] & !1 != 0
             || encoded[108..128].iter().any(|byte| *byte != 0)
         {
             return Err(CoreConfigurationReportError::Reserved);
@@ -1816,6 +1858,7 @@ impl RealtimeConfigurationReport {
                 .ok_or(CoreConfigurationReportError::Fault)?,
             active_digest: Digest(active_digest),
             active_bytes: read_u32(encoded, 104),
+            active_authorized: encoded[71] != 0,
         };
         report.validate()?;
         if report.encode()? != encoded {
@@ -1833,6 +1876,7 @@ impl RealtimeConfigurationReport {
         }
         if self.active_digest.is_zero() != (self.active_bytes == 0)
             || self.active_bytes != 0 && !configuration_length_valid(self.active_bytes)
+            || self.active_authorized && self.active_digest.is_zero()
         {
             return Err(CoreConfigurationReportError::ActiveIdentity);
         }
@@ -1844,7 +1888,8 @@ impl RealtimeConfigurationReport {
                     && self.consumed_bytes == 0
                     && self.summary.is_none()
                     && self.fault == ConfigurationFaultCode::None
-                    && self.active_digest.is_zero() =>
+                    && self.active_digest.is_zero()
+                    && !self.active_authorized =>
             {
                 Ok(())
             }
@@ -1917,6 +1962,333 @@ pub enum CoreConfigurationReportError {
     StateShape,
 }
 
+/// Core-0 lifecycle phase exposed by authenticated configuration status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ConfigurationCoordinatorPhase {
+    Empty = 0,
+    Recovering = 1,
+    Validating = 2,
+    CandidateValid = 3,
+    Preparing = 4,
+    Activating = 5,
+    Committing = 6,
+    Authorizing = 7,
+    Active = 8,
+    Clearing = 9,
+    Aborting = 10,
+    Rejected = 11,
+}
+
+impl ConfigurationCoordinatorPhase {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Empty),
+            1 => Some(Self::Recovering),
+            2 => Some(Self::Validating),
+            3 => Some(Self::CandidateValid),
+            4 => Some(Self::Preparing),
+            5 => Some(Self::Activating),
+            6 => Some(Self::Committing),
+            7 => Some(Self::Authorizing),
+            8 => Some(Self::Active),
+            9 => Some(Self::Clearing),
+            10 => Some(Self::Aborting),
+            11 => Some(Self::Rejected),
+            _ => None,
+        }
+    }
+}
+
+/// Stable core-0 failure family for configuration lifecycle status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u16)]
+pub enum ConfigurationCoordinatorFault {
+    None = 0,
+    Request = 1,
+    Storage = 2,
+    ServiceValidation = 3,
+    RealtimeValidation = 4,
+    SafetyState = 5,
+    Durability = 6,
+    Protocol = 7,
+    Internal = 8,
+}
+
+impl ConfigurationCoordinatorFault {
+    const fn from_wire(value: u16) -> Option<Self> {
+        match value {
+            0 => Some(Self::None),
+            1 => Some(Self::Request),
+            2 => Some(Self::Storage),
+            3 => Some(Self::ServiceValidation),
+            4 => Some(Self::RealtimeValidation),
+            5 => Some(Self::SafetyState),
+            6 => Some(Self::Durability),
+            7 => Some(Self::Protocol),
+            8 => Some(Self::Internal),
+            _ => None,
+        }
+    }
+}
+
+/// Flags in the fixed coordinator status body.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct ConfigurationCoordinatorFlags(pub u8);
+
+impl ConfigurationCoordinatorFlags {
+    /// The raw-media journal contains this operation's prepared transition.
+    pub const DURABLE_PREPARED: u8 = 1 << 0;
+    /// The operation was synthesized from a committed boot selection.
+    pub const BOOT_RECOVERY: u8 = 1 << 1;
+    /// Both job actors received the exact durably committed active digest.
+    pub const JOBS_AUTHORIZED: u8 = 1 << 2;
+    /// The status carries a core-0 independently validated summary.
+    pub const CORE0_VALID: u8 = 1 << 3;
+
+    const KNOWN: u8 =
+        Self::DURABLE_PREPARED | Self::BOOT_RECOVERY | Self::JOBS_AUTHORIZED | Self::CORE0_VALID;
+
+    /// Tests one known status bit.
+    pub const fn contains(self, flag: u8) -> bool {
+        self.0 & flag != 0
+    }
+}
+
+/// Fixed authenticated status joining core-0 progress, durable selection, and
+/// the latest independently decoded core-1 report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfigurationCoordinatorStatus {
+    pub phase: ConfigurationCoordinatorPhase,
+    pub flags: ConfigurationCoordinatorFlags,
+    pub fault: ConfigurationCoordinatorFault,
+    pub operation_transaction_id: u64,
+    pub operation_digest: Digest,
+    pub operation_bytes: u32,
+    pub validated_bytes: u32,
+    pub storage_chunks_read: u32,
+    pub active_transaction_id: u64,
+    pub active_digest: Digest,
+    pub active_bytes: u32,
+    pub summary: Option<ConfigurationSummary>,
+    pub realtime: RealtimeConfigurationReport,
+}
+
+impl ConfigurationCoordinatorStatus {
+    /// Encodes the exact 264-byte V1 status body.
+    pub fn encode(
+        self,
+    ) -> Result<[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES], ConfigurationCoordinatorStatusError>
+    {
+        self.validate()?;
+        let mut encoded = [0_u8; CONFIGURATION_COORDINATOR_STATUS_BYTES];
+        encoded[0..8].copy_from_slice(&COORDINATOR_STATUS_MAGIC);
+        encoded[8..10].copy_from_slice(&CONFIGURATION_VERSION.to_le_bytes());
+        encoded[10] = self.phase as u8;
+        encoded[11] = self.flags.0;
+        encoded[12..14].copy_from_slice(&(self.fault as u16).to_le_bytes());
+        // Bytes 14..16, 68..72, and 116..120 are reserved zero.
+        encoded[16..24].copy_from_slice(&self.operation_transaction_id.to_le_bytes());
+        encoded[24..56].copy_from_slice(&self.operation_digest.0);
+        encoded[56..60].copy_from_slice(&self.operation_bytes.to_le_bytes());
+        encoded[60..64].copy_from_slice(&self.validated_bytes.to_le_bytes());
+        encoded[64..68].copy_from_slice(&self.storage_chunks_read.to_le_bytes());
+        encoded[72..80].copy_from_slice(&self.active_transaction_id.to_le_bytes());
+        encoded[80..112].copy_from_slice(&self.active_digest.0);
+        encoded[112..116].copy_from_slice(&self.active_bytes.to_le_bytes());
+        if let Some(summary) = self.summary {
+            encoded[120..122].copy_from_slice(&summary.record_count.to_le_bytes());
+            encoded[122..124].copy_from_slice(&summary.realtime_record_count.to_le_bytes());
+            encoded[124..126].copy_from_slice(&summary.binding_count.to_le_bytes());
+            encoded[126] = summary.stepper_axes;
+            encoded[127] = summary.foc_axes;
+            encoded[128..132].copy_from_slice(&summary.flags.0.to_le_bytes());
+            encoded[132] = u8::from(summary.safety_binding);
+        }
+        // Bytes 133..136 are reserved zero.
+        encoded[136..264].copy_from_slice(
+            &self
+                .realtime
+                .encode()
+                .map_err(ConfigurationCoordinatorStatusError::Realtime)?,
+        );
+        Ok(encoded)
+    }
+
+    /// Decodes and re-encodes to require the unique V1 representation.
+    pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationCoordinatorStatusError> {
+        if encoded.len() != CONFIGURATION_COORDINATOR_STATUS_BYTES {
+            return Err(ConfigurationCoordinatorStatusError::Length);
+        }
+        if encoded[0..8] != COORDINATOR_STATUS_MAGIC {
+            return Err(ConfigurationCoordinatorStatusError::Magic);
+        }
+        if read_u16(encoded, 8) != CONFIGURATION_VERSION {
+            return Err(ConfigurationCoordinatorStatusError::Version);
+        }
+        if encoded[14..16].iter().any(|byte| *byte != 0)
+            || encoded[68..72].iter().any(|byte| *byte != 0)
+            || encoded[116..120].iter().any(|byte| *byte != 0)
+            || encoded[133..136].iter().any(|byte| *byte != 0)
+        {
+            return Err(ConfigurationCoordinatorStatusError::Reserved);
+        }
+        let flags = ConfigurationCoordinatorFlags(encoded[11]);
+        let summary = if flags.contains(ConfigurationCoordinatorFlags::CORE0_VALID) {
+            Some(ConfigurationSummary {
+                record_count: read_u16(encoded, 120),
+                realtime_record_count: read_u16(encoded, 122),
+                binding_count: read_u16(encoded, 124),
+                stepper_axes: encoded[126],
+                foc_axes: encoded[127],
+                safety_binding: encoded[132] != 0,
+                flags: ConfigurationFlags(read_u32(encoded, 128)),
+            })
+        } else {
+            if encoded[120..133].iter().any(|byte| *byte != 0) {
+                return Err(ConfigurationCoordinatorStatusError::Reserved);
+            }
+            None
+        };
+        let mut operation_digest = [0_u8; 32];
+        operation_digest.copy_from_slice(&encoded[24..56]);
+        let mut active_digest = [0_u8; 32];
+        active_digest.copy_from_slice(&encoded[80..112]);
+        let status = Self {
+            phase: ConfigurationCoordinatorPhase::from_wire(encoded[10])
+                .ok_or(ConfigurationCoordinatorStatusError::Phase)?,
+            flags,
+            fault: ConfigurationCoordinatorFault::from_wire(read_u16(encoded, 12))
+                .ok_or(ConfigurationCoordinatorStatusError::Fault)?,
+            operation_transaction_id: read_u64(encoded, 16),
+            operation_digest: Digest(operation_digest),
+            operation_bytes: read_u32(encoded, 56),
+            validated_bytes: read_u32(encoded, 60),
+            storage_chunks_read: read_u32(encoded, 64),
+            active_transaction_id: read_u64(encoded, 72),
+            active_digest: Digest(active_digest),
+            active_bytes: read_u32(encoded, 112),
+            summary,
+            realtime: RealtimeConfigurationReport::decode(&encoded[136..264])
+                .map_err(ConfigurationCoordinatorStatusError::Realtime)?,
+        };
+        status.validate()?;
+        if status.encode()? != encoded {
+            return Err(ConfigurationCoordinatorStatusError::Noncanonical);
+        }
+        Ok(status)
+    }
+
+    fn validate(self) -> Result<(), ConfigurationCoordinatorStatusError> {
+        if self.flags.0 & !ConfigurationCoordinatorFlags::KNOWN != 0 {
+            return Err(ConfigurationCoordinatorStatusError::Flags);
+        }
+        if self.summary.is_some()
+            != self
+                .flags
+                .contains(ConfigurationCoordinatorFlags::CORE0_VALID)
+            || self
+                .summary
+                .is_some_and(|summary| summary.validate().is_err())
+        {
+            return Err(ConfigurationCoordinatorStatusError::Summary);
+        }
+        let operation_empty = self.operation_transaction_id == 0
+            && self.operation_digest.is_zero()
+            && self.operation_bytes == 0
+            && self.validated_bytes == 0
+            && self.storage_chunks_read == 0;
+        let operation_valid = self.operation_transaction_id != 0
+            && !self.operation_digest.is_zero()
+            && configuration_length_valid(self.operation_bytes)
+            && self.validated_bytes <= self.operation_bytes;
+        if !operation_empty && !operation_valid {
+            return Err(ConfigurationCoordinatorStatusError::OperationIdentity);
+        }
+        let active_empty = self.active_transaction_id == 0
+            && self.active_digest.is_zero()
+            && self.active_bytes == 0;
+        let active_valid = self.active_transaction_id != 0
+            && !self.active_digest.is_zero()
+            && configuration_length_valid(self.active_bytes);
+        if !active_empty && !active_valid {
+            return Err(ConfigurationCoordinatorStatusError::ActiveIdentity);
+        }
+        if (self
+            .flags
+            .contains(ConfigurationCoordinatorFlags::DURABLE_PREPARED)
+            || self
+                .flags
+                .contains(ConfigurationCoordinatorFlags::BOOT_RECOVERY))
+            && !operation_valid
+        {
+            return Err(ConfigurationCoordinatorStatusError::Flags);
+        }
+        if self
+            .flags
+            .contains(ConfigurationCoordinatorFlags::JOBS_AUTHORIZED)
+            && (!active_valid
+                || !self.realtime.active_authorized
+                || self.realtime.active_digest != self.active_digest
+                || self.realtime.active_bytes != self.active_bytes)
+        {
+            return Err(ConfigurationCoordinatorStatusError::Authorization);
+        }
+        match self.phase {
+            ConfigurationCoordinatorPhase::Empty
+                if operation_empty
+                    && active_empty
+                    && self.fault == ConfigurationCoordinatorFault::None =>
+            {
+                Ok(())
+            }
+            ConfigurationCoordinatorPhase::Active
+                if active_valid
+                    && self
+                        .flags
+                        .contains(ConfigurationCoordinatorFlags::JOBS_AUTHORIZED)
+                    && self.fault == ConfigurationCoordinatorFault::None =>
+            {
+                Ok(())
+            }
+            ConfigurationCoordinatorPhase::Rejected
+                if self.fault != ConfigurationCoordinatorFault::None =>
+            {
+                Ok(())
+            }
+            _ if self.phase != ConfigurationCoordinatorPhase::Empty
+                && self.phase != ConfigurationCoordinatorPhase::Active
+                && self.phase != ConfigurationCoordinatorPhase::Rejected
+                && operation_valid
+                && self.fault == ConfigurationCoordinatorFault::None =>
+            {
+                Ok(())
+            }
+            _ => Err(ConfigurationCoordinatorStatusError::StateShape),
+        }
+    }
+}
+
+/// Canonical coordinator-status rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfigurationCoordinatorStatusError {
+    Length,
+    Magic,
+    Version,
+    Reserved,
+    Noncanonical,
+    Phase,
+    Fault,
+    Flags,
+    Summary,
+    OperationIdentity,
+    ActiveIdentity,
+    Authorization,
+    StateShape,
+    Realtime(CoreConfigurationReportError),
+}
+
 /// Core-1 owner of candidate bytes, independent semantic validation, and active identity.
 pub struct RealtimeConfigurationService<'a, const MAX_BINDINGS: usize> {
     package: &'a BoardPackage<'a>,
@@ -1927,6 +2299,8 @@ pub struct RealtimeConfigurationService<'a, const MAX_BINDINGS: usize> {
     consumed_bytes: u32,
     candidate: Option<ConfigurationIdentity>,
     active: Option<ConfigurationIdentity>,
+    active_authorized: bool,
+    cleared: bool,
     last_fault: ConfigurationFaultCode,
 }
 
@@ -1942,6 +2316,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             consumed_bytes: 0,
             candidate: None,
             active: None,
+            active_authorized: false,
+            cleared: false,
             last_fault: ConfigurationFaultCode::None,
         }
     }
@@ -1976,6 +2352,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 self.total_bytes = command.total_bytes;
                 self.consumed_bytes = 0;
                 self.candidate = None;
+                self.cleared = false;
                 self.last_fault = ConfigurationFaultCode::None;
                 self.report()
             }
@@ -2029,6 +2406,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
                 self.active = self.candidate.take();
+                self.active_authorized = false;
+                self.cleared = false;
                 self.receiving = None;
                 self.last_fault = ConfigurationFaultCode::None;
                 self.report()
@@ -2036,7 +2415,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             CoreConfigurationAction::Clear => {
                 if self
                     .active
-                    .is_none_or(|active| !identity_matches(active, command))
+                    .is_some_and(|active| !identity_matches(active, command))
                 {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
@@ -2050,11 +2429,18 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                     fault: ConfigurationFaultCode::None,
                     active_digest: Digest::ZERO,
                     active_bytes: 0,
+                    active_authorized: false,
                 };
                 self.receiving = None;
                 self.candidate = None;
                 self.active = None;
-                self.reset_candidate_metadata();
+                self.active_authorized = false;
+                self.transaction_id = command.transaction_id;
+                self.digest = command.digest;
+                self.total_bytes = command.total_bytes;
+                self.consumed_bytes = command.total_bytes;
+                self.last_fault = ConfigurationFaultCode::None;
+                self.cleared = true;
                 report
             }
             CoreConfigurationAction::Abort => {
@@ -2063,7 +2449,21 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 }
                 self.receiving = None;
                 self.candidate = None;
+                self.cleared = false;
                 self.last_fault = ConfigurationFaultCode::Identity;
+                self.report()
+            }
+            CoreConfigurationAction::Authorize => {
+                if self
+                    .active
+                    .is_none_or(|active| !identity_matches(active, command))
+                    || self.candidate.is_some()
+                    || self.receiving.is_some()
+                {
+                    return self.reject(command, ConfigurationFaultCode::Sequence);
+                }
+                self.active_authorized = true;
+                self.last_fault = ConfigurationFaultCode::None;
                 self.report()
             }
         }
@@ -2077,9 +2477,24 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 self.transaction_id,
                 candidate,
                 self.active,
+                self.active_authorized,
             );
         }
         let (active_digest, active_bytes) = active_fields(self.active);
+        if self.cleared {
+            return RealtimeConfigurationReport {
+                state: RealtimeConfigurationState::Cleared,
+                transaction_id: self.transaction_id,
+                digest: self.digest,
+                total_bytes: self.total_bytes,
+                consumed_bytes: self.total_bytes,
+                summary: None,
+                fault: ConfigurationFaultCode::None,
+                active_digest: Digest::ZERO,
+                active_bytes: 0,
+                active_authorized: false,
+            };
+        }
         if self.receiving.is_some() {
             return RealtimeConfigurationReport {
                 state: RealtimeConfigurationState::Receiving,
@@ -2091,6 +2506,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 fault: ConfigurationFaultCode::None,
                 active_digest,
                 active_bytes,
+                active_authorized: self.active_authorized,
             };
         }
         if self.last_fault != ConfigurationFaultCode::None {
@@ -2104,6 +2520,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 fault: self.last_fault,
                 active_digest,
                 active_bytes,
+                active_authorized: self.active_authorized,
             };
         }
         if let Some(active) = self.active {
@@ -2112,24 +2529,25 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 self.transaction_id,
                 active,
                 Some(active),
+                self.active_authorized,
             );
         }
-        RealtimeConfigurationReport {
-            state: RealtimeConfigurationState::Empty,
-            transaction_id: 0,
-            digest: Digest::ZERO,
-            total_bytes: 0,
-            consumed_bytes: 0,
-            summary: None,
-            fault: ConfigurationFaultCode::None,
-            active_digest: Digest::ZERO,
-            active_bytes: 0,
-        }
+        RealtimeConfigurationReport::empty()
     }
 
     /// Exact identity independently active on core 1.
     pub const fn active_identity(&self) -> Option<ConfigurationIdentity> {
         self.active
+    }
+
+    /// Active identity admitted to other core-1 actors only after durable
+    /// service-core confirmation.
+    pub const fn authorized_identity(&self) -> Option<ConfigurationIdentity> {
+        if self.active_authorized {
+            self.active
+        } else {
+            None
+        }
     }
 
     /// Exact independently validated but inactive candidate.
@@ -2155,6 +2573,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
         self.total_bytes = command.total_bytes;
         self.consumed_bytes = self.consumed_bytes.min(command.total_bytes);
         self.last_fault = fault;
+        self.cleared = false;
         RealtimeConfigurationReport {
             state: RealtimeConfigurationState::Rejected,
             transaction_id: self.transaction_id,
@@ -2165,15 +2584,8 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             fault,
             active_digest: active_fields(self.active).0,
             active_bytes: active_fields(self.active).1,
+            active_authorized: self.active_authorized,
         }
-    }
-
-    fn reset_candidate_metadata(&mut self) {
-        self.transaction_id = 0;
-        self.digest = Digest::ZERO;
-        self.total_bytes = 0;
-        self.consumed_bytes = 0;
-        self.last_fault = ConfigurationFaultCode::None;
     }
 }
 
@@ -2186,7 +2598,7 @@ fn configuration_length_valid(byte_len: u32) -> bool {
         (CONFIGURATION_HEADER_BYTES + CONFIGURATION_RECORD_BYTES
             ..=CONFIGURATION_HEADER_BYTES + MAX_CONFIGURATION_RECORDS * CONFIGURATION_RECORD_BYTES)
             .contains(&byte_len)
-            && (byte_len - CONFIGURATION_HEADER_BYTES) % CONFIGURATION_RECORD_BYTES == 0
+            && (byte_len - CONFIGURATION_HEADER_BYTES).is_multiple_of(CONFIGURATION_RECORD_BYTES)
     })
 }
 
@@ -2195,6 +2607,7 @@ fn identity_report(
     transaction_id: u64,
     identity: ConfigurationIdentity,
     active: Option<ConfigurationIdentity>,
+    active_authorized: bool,
 ) -> RealtimeConfigurationReport {
     let (active_digest, active_bytes) = active_fields(active);
     RealtimeConfigurationReport {
@@ -2207,6 +2620,7 @@ fn identity_report(
         fault: ConfigurationFaultCode::None,
         active_digest,
         active_bytes,
+        active_authorized,
     }
 }
 
@@ -2757,7 +3171,10 @@ mod tests {
     use alloc::rc::Rc;
     use alloc::vec;
     use alloc::vec::Vec;
-    use alumina_storage::media::{MEDIA_BLOCK_BYTES, MediaBlock, MediaId, MediaRegion};
+    use alumina_storage::media::{
+        ConfigurationTransition, DurableConfigurationSelection, MEDIA_BLOCK_BYTES, MediaBlock,
+        MediaId, MediaRegion,
+    };
     use alumina_storage::provisioning::CacheProvisionRequest;
     use alumina_storage::{
         CacheLimits, ChunkUploadHeader, FinalizeUploadRequest, ManifestHasher, MutationContext,
@@ -3288,6 +3705,7 @@ mod tests {
         assert!(CoreConfigurationCommand::activate(7, digest, total_bytes).is_ok());
         assert!(CoreConfigurationCommand::clear(7, digest, total_bytes).is_ok());
         assert!(CoreConfigurationCommand::abort(7, digest, total_bytes).is_ok());
+        assert!(CoreConfigurationCommand::authorize(7, digest, total_bytes).is_ok());
     }
 
     #[test]
@@ -3357,6 +3775,7 @@ mod tests {
             fault: ConfigurationFaultCode::None,
             active_digest: Digest::ZERO,
             active_bytes: 0,
+            active_authorized: false,
         };
         let encoded = report.encode().unwrap();
         assert_eq!(RealtimeConfigurationReport::decode(&encoded), Ok(report));
@@ -3376,6 +3795,94 @@ mod tests {
         assert_eq!(
             RealtimeConfigurationReport::decode(&rejected.encode().unwrap()),
             Ok(rejected)
+        );
+    }
+
+    #[test]
+    fn coordinator_status_is_fixed_canonical_and_requires_durable_authorization() {
+        let empty_realtime =
+            RealtimeConfigurationService::<32>::new(&board_mks_tinybee::PACKAGE).report();
+        let empty = ConfigurationCoordinatorStatus {
+            phase: ConfigurationCoordinatorPhase::Empty,
+            flags: ConfigurationCoordinatorFlags(0),
+            fault: ConfigurationCoordinatorFault::None,
+            operation_transaction_id: 0,
+            operation_digest: Digest::ZERO,
+            operation_bytes: 0,
+            validated_bytes: 0,
+            storage_chunks_read: 0,
+            active_transaction_id: 0,
+            active_digest: Digest::ZERO,
+            active_bytes: 0,
+            summary: None,
+            realtime: empty_realtime,
+        };
+        let encoded = empty.encode().unwrap();
+        assert_eq!(encoded.len(), CONFIGURATION_COORDINATOR_STATUS_BYTES);
+        assert_eq!(ConfigurationCoordinatorStatus::decode(&encoded), Ok(empty));
+
+        let total =
+            u32::try_from(CONFIGURATION_HEADER_BYTES + 14 * CONFIGURATION_RECORD_BYTES).unwrap();
+        let digest = Digest([0x44; 32]);
+        let summary = ConfigurationSummary {
+            record_count: 14,
+            realtime_record_count: 14,
+            binding_count: 4,
+            stepper_axes: 1,
+            foc_axes: 0,
+            safety_binding: true,
+            flags: ConfigurationFlags(ConfigurationFlags::MOTION),
+        };
+        let realtime = RealtimeConfigurationReport {
+            state: RealtimeConfigurationState::Active,
+            transaction_id: 77,
+            digest,
+            total_bytes: total,
+            consumed_bytes: total,
+            summary: Some(summary),
+            fault: ConfigurationFaultCode::None,
+            active_digest: digest,
+            active_bytes: total,
+            active_authorized: true,
+        };
+        let active = ConfigurationCoordinatorStatus {
+            phase: ConfigurationCoordinatorPhase::Active,
+            flags: ConfigurationCoordinatorFlags(
+                ConfigurationCoordinatorFlags::CORE0_VALID
+                    | ConfigurationCoordinatorFlags::JOBS_AUTHORIZED,
+            ),
+            fault: ConfigurationCoordinatorFault::None,
+            operation_transaction_id: 0,
+            operation_digest: Digest::ZERO,
+            operation_bytes: 0,
+            validated_bytes: 0,
+            storage_chunks_read: 0,
+            active_transaction_id: 77,
+            active_digest: digest,
+            active_bytes: total,
+            summary: Some(summary),
+            realtime,
+        };
+        let encoded = active.encode().unwrap();
+        assert_eq!(ConfigurationCoordinatorStatus::decode(&encoded), Ok(active));
+
+        let unauthorized = ConfigurationCoordinatorStatus {
+            flags: ConfigurationCoordinatorFlags(ConfigurationCoordinatorFlags::CORE0_VALID),
+            realtime: RealtimeConfigurationReport {
+                active_authorized: false,
+                ..realtime
+            },
+            ..active
+        };
+        assert_eq!(
+            unauthorized.encode(),
+            Err(ConfigurationCoordinatorStatusError::StateShape)
+        );
+        let mut reserved = encoded;
+        reserved[118] = 1;
+        assert_eq!(
+            ConfigurationCoordinatorStatus::decode(&reserved),
+            Err(ConfigurationCoordinatorStatusError::Reserved)
         );
     }
 
@@ -3416,6 +3923,15 @@ mod tests {
         );
         assert_eq!(report.state, RealtimeConfigurationState::Active);
         assert_eq!(service.active_identity().unwrap().digest, digest);
+        assert!(service.authorized_identity().is_none());
+        assert!(!report.active_authorized);
+        let report = service.apply(
+            CoreConfigurationCommand::authorize(41, digest, total).unwrap(),
+            true,
+        );
+        assert_eq!(report.state, RealtimeConfigurationState::Active);
+        assert!(report.active_authorized);
+        assert_eq!(service.authorized_identity().unwrap().digest, digest);
 
         let rejected = service.apply(
             CoreConfigurationCommand::begin(42, Digest([0x77; 32]), total).unwrap(),
@@ -3425,6 +3941,14 @@ mod tests {
         assert_eq!(rejected.fault, ConfigurationFaultCode::ForbiddenState);
         assert_eq!(rejected.active_digest, digest);
         assert_eq!(rejected.active_bytes, total);
+        assert!(rejected.active_authorized);
+        assert_eq!(service.active_identity().unwrap().digest, digest);
+
+        let wrong_clear = service.apply(
+            CoreConfigurationCommand::clear(43, Digest([0x55; 32]), total).unwrap(),
+            true,
+        );
+        assert_eq!(wrong_clear.state, RealtimeConfigurationState::Rejected);
         assert_eq!(service.active_identity().unwrap().digest, digest);
 
         let cleared = service.apply(
@@ -3433,7 +3957,13 @@ mod tests {
         );
         assert_eq!(cleared.state, RealtimeConfigurationState::Cleared);
         assert!(service.active_identity().is_none());
-        assert_eq!(service.report().state, RealtimeConfigurationState::Empty);
+        assert!(service.authorized_identity().is_none());
+        assert_eq!(service.report().state, RealtimeConfigurationState::Cleared);
+        let already_empty = service.apply(
+            CoreConfigurationCommand::clear(44, digest, total).unwrap(),
+            true,
+        );
+        assert_eq!(already_empty.state, RealtimeConfigurationState::Cleared);
     }
 
     #[test]
@@ -3526,5 +4056,139 @@ mod tests {
             realtime.report().state,
             RealtimeConfigurationState::CandidateValid
         );
+    }
+
+    #[test]
+    fn full_durable_activation_boot_recovery_authorization_and_clear_are_ordered() {
+        let records = tinybee_motion_records();
+        let (bytes, digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &records,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        let (mut cache, publication) = provisioned_configuration(&bytes, 173);
+        let mut service = block_on(ServiceConfigurationValidation::<32>::open(
+            &mut cache,
+            &board_mks_tinybee::PACKAGE,
+            publication,
+        ))
+        .unwrap();
+        let mut realtime = RealtimeConfigurationService::<32>::new(&board_mks_tinybee::PACKAGE);
+        while let Some(command) = block_on(service.next(&mut cache)).unwrap() {
+            assert_ne!(
+                realtime.apply(command, true).state,
+                RealtimeConfigurationState::Rejected
+            );
+        }
+        assert_eq!(
+            realtime.report().state,
+            RealtimeConfigurationState::CandidateValid
+        );
+
+        let durable =
+            DurableConfigurationSelection::new(publication.transaction_id, publication.publication)
+                .unwrap();
+        let activation = ConfigurationTransition::activate(durable);
+        let prepared = block_on(
+            cache.prepare_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        assert_eq!(prepared.active, None);
+        assert_eq!(prepared.pending, Some(activation));
+
+        let activated = realtime.apply(
+            CoreConfigurationCommand::activate(
+                publication.transaction_id,
+                digest,
+                u32::try_from(bytes.len()).unwrap(),
+            )
+            .unwrap(),
+            true,
+        );
+        assert_eq!(activated.state, RealtimeConfigurationState::Active);
+        assert!(!activated.active_authorized);
+        assert!(realtime.authorized_identity().is_none());
+
+        let committed = block_on(
+            cache.commit_configuration_transition(activation, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        assert_eq!(committed.active, Some(durable));
+        assert!(realtime.authorized_identity().is_none());
+        let authorized = realtime.apply(
+            CoreConfigurationCommand::authorize(
+                publication.transaction_id,
+                digest,
+                u32::try_from(bytes.len()).unwrap(),
+            )
+            .unwrap(),
+            true,
+        );
+        assert!(authorized.active_authorized);
+        assert_eq!(realtime.authorized_identity().unwrap().digest, digest);
+
+        let device = cache.into_device();
+        let mut rebooted = ProvisionedCache::new(device, TEST_CACHE_LIMITS);
+        block_on(rebooted.discover()).unwrap();
+        let replayed = rebooted.configuration_journal().unwrap();
+        assert_eq!(replayed.active, Some(durable));
+        assert_eq!(replayed.pending, None);
+        let recovery_publication = ConfigurationPublication {
+            transaction_id: durable.transaction_id(),
+            publication: durable.publication(),
+        };
+        let mut recovery = block_on(ServiceConfigurationValidation::<32>::open(
+            &mut rebooted,
+            &board_mks_tinybee::PACKAGE,
+            recovery_publication,
+        ))
+        .unwrap();
+        let mut recovered_rt = RealtimeConfigurationService::<32>::new(&board_mks_tinybee::PACKAGE);
+        while let Some(command) = block_on(recovery.next(&mut rebooted)).unwrap() {
+            recovered_rt.apply(command, true);
+        }
+        recovered_rt.apply(
+            CoreConfigurationCommand::activate(
+                durable.transaction_id(),
+                digest,
+                u32::try_from(bytes.len()).unwrap(),
+            )
+            .unwrap(),
+            true,
+        );
+        assert!(recovered_rt.authorized_identity().is_none());
+        recovered_rt.apply(
+            CoreConfigurationCommand::authorize(
+                durable.transaction_id(),
+                digest,
+                u32::try_from(bytes.len()).unwrap(),
+            )
+            .unwrap(),
+            true,
+        );
+        assert_eq!(recovered_rt.authorized_identity().unwrap().digest, digest);
+
+        let clear_selection =
+            DurableConfigurationSelection::new(0x7799, durable.publication()).unwrap();
+        let clear = ConfigurationTransition::clear(clear_selection);
+        block_on(rebooted.prepare_configuration_transition(clear, MutationContext::DISARMED_IDLE))
+            .unwrap();
+        let cleared = recovered_rt.apply(
+            CoreConfigurationCommand::clear(
+                clear_selection.transaction_id(),
+                digest,
+                u32::try_from(bytes.len()).unwrap(),
+            )
+            .unwrap(),
+            true,
+        );
+        assert_eq!(cleared.state, RealtimeConfigurationState::Cleared);
+        assert_eq!(recovered_rt.report(), cleared);
+        let journal = block_on(
+            rebooted.commit_configuration_transition(clear, MutationContext::DISARMED_IDLE),
+        )
+        .unwrap();
+        assert_eq!(journal.active, None);
+        assert_eq!(journal.pending, None);
     }
 }

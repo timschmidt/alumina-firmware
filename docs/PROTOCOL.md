@@ -19,11 +19,17 @@ Every fixed binary WebSocket/intercore-derived native frame starts with exactly
 | 8 | 4 | payload byte length |
 | 12 | 4 | stream sequence |
 | 16 | 8 | device cycle/deadline |
-| 24 | 32 | active-configuration SHA-256 digest, or zero only where allowed |
+| 24 | 32 | configuration-context SHA-256 digest, or zero only where allowed |
 
 Decoding rejects an unknown family, nonzero flag, wrong magic/version, nonexact
 header length, and payload length above the endpoint's fixed budget before a
 payload decoder runs. Golden-byte tests cover the complete header.
+
+For executable jobs, commands, and samples, the context is the exact active
+configuration. Configuration lifecycle requests bind the current active digest
+for `Get`/`Validate` and the exact selected candidate or active digest for
+`Commit`/`Rollback`; the operation body independently repeats the selected
+identity. Capability and unconfigured discovery frames require zero.
 
 ## Operation prefix
 
@@ -96,6 +102,22 @@ bindings, reduced rational facts and uncertainty, validation rules, external
 selection bodies, and intercore transfer/report layouts are normative in
 [`CONFIGURATION.md`](CONFIGURATION.md). Validation never aliases commit and
 cannot change the active configuration.
+
+Configuration V1 uses fixed bodies:
+
+| Operation | Request body | Response body |
+| --- | ---: | ---: |
+| `ConfigurationGet` | 0 | 264-byte `ALMCST01` coordinator status |
+| `ConfigurationValidate` | 96-byte `ALMCFQ01` publication | 264-byte status |
+| `ConfigurationCommit` | 64-byte `ALMCFS01` selection | 264-byte status |
+| `ConfigurationRollback` | 64-byte `ALMCFS01` selection | 264-byte status |
+
+The response shape is fixed even for lifecycle errors. Commit is asynchronous:
+the client polls status while core 0 validates, durably prepares, observes exact
+core-1 activation, commits, and separately authorizes the identity for jobs.
+Rollback aborts an uncommitted candidate or clears the exact committed active
+selection. Neither response receipt nor Wi-Fi connectivity is a real-time
+activation condition.
 
 The current binary bodies are:
 
