@@ -2,16 +2,17 @@
 
 Date: 2026-08-11
 
-Status: a worker-capable authenticated browser clock-acquisition boundary and a
-headless deterministic cached-start coordinator are implemented. This is
-native/WASM software evidence. It is not a live-browser, radio, SD-card,
-physical-start, synchronization-tolerance, or safety qualification.
+Status: a supervised live-browser worker/session boundary, authenticated clock
+acquisition, and a deterministic cached-start coordinator are implemented. The
+worker module lifecycle is browser-smoke-tested, while clock traffic remains
+native/WASM software evidence. This is not radio, SD-card, physical-start,
+synchronization-tolerance, or safety qualification.
 
 The coordinated source checkpoints are:
 
 - `aluminafw` clock contract commit `3d7671b`;
-- `alumina-interface` coordinator commit `003bafa` plus operator-fixture commit
-  `4f467c4`; and
+- `alumina-interface` coordinator commit `003bafa`, operator-fixture commit
+  `4f467c4`, and live-worker commit `84b3b97`; and
 - the current sibling CSGRS/Hyper workspace selected by the interface lockfile
   and source-policy audit. No published legacy CSGRS release is substituted.
 
@@ -37,8 +38,25 @@ interval.
 The WASM adapter supports both `Window` and `WorkerGlobalScope` fetch,
 authentication discovery, cache upload, and heartbeat acquisition. The worker
 variant keeps timer acquisition and network I/O in one monotonic realm and is
-available for isolation from rendering stalls. The shipped application does not
-yet create or supervise that worker, and no browser-throttling claim is made.
+isolated from rendering stalls. The shipped application now creates that worker
+through an explicit synchronous WASM entry, supervises its exact versioned
+messages, and renders its readiness and redacted device snapshots. No
+browser-throttling claim is made.
+
+Each worker-owned device session contains the HMAC secret, canonical origin,
+boot-nonce HTTP/native session, exact clock model, explicit sampling policy,
+bounded retry cadence, and at most 64 accepted causal records. UI commands are
+bounded before I/O. Atomic replacement/disconnect generations prevent a late
+asynchronous result from restoring an erased session. Rust-owned credential
+buffers are overwritten on drop, and no worker event schema contains a secret;
+browser-managed structured-clone/string copies remain outside that erasure
+claim.
+
+Browser-created authenticated sessions no longer restart replay counters at one.
+They use an exact epoch-prefixed integer seed covered by the HMAC. This handles
+ordinary reload/reconnect but is not yet a proof against host wall-clock rollback
+or simultaneous-session collision; browser/network qualification must resolve
+that policy before production admission.
 
 After exact cache delivery, `ParticipantCacheReady` binds the device, local
 partition publication, and identical global-manifest publication. The global
@@ -83,6 +101,20 @@ edge spread, and shared-epoch error. The panel is explicitly marked simulation
 only. It is a repeatable operator-view integration check, not a live device
 panel or physical edge observation.
 
+The live right-hand panel now accepts a labeled device origin and passphrase,
+supports immediate probe/disconnect, and displays boot, lifecycle,
+accepted/rejected observations, conservative cycle intervals, causal spans,
+device work, queue state, deadline misses, flags, and bounded history. It is
+explicitly diagnostic-only and exposes no arm, motion, energy, or safety-reset
+control.
+
+A release bundle was served from localhost and opened in headless Chromium with
+software WebGL. The document fetched the generated JavaScript, WASM, and module
+worker, and the rendered panel reached `Control worker: ready
+(http://127.0.0.1:8097)` without an application JavaScript/WASM error. This
+checks worker creation, explicit WASM entry, ready-event decoding, supervision,
+and rendering only; it did not contact simulated firmware or a physical MCU.
+
 ## Reproduced checks
 
 From `alumina-interface`:
@@ -105,19 +137,20 @@ brotli -t dist/alumina-interface_bg.wasm.br
 git diff --check
 ```
 
-All 46 native tests pass: 8 application/coordinator, 18 headless client, and 20
+All 51 native tests pass: 8 application/coordinator, 23 headless client, and 20
 exact compiler/core tests. Native and WASM strict Clippy, WASM checking,
 warnings-denied rustdoc, current-sibling source/permissive-license audit, Trunk
 release, WASM validation, and compression integrity all pass.
 
 | Interface artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `alumina-interface_bg.wasm` | 3,984,582 | `b4a00862551ac4515685e7fbf1fc07fc362a3a5d6b125c6bde831ff9041327ab` |
-| `alumina-interface_bg.wasm.br` | 1,524,339 | `36a1c4e5f09ce0f7d9101f58fa1d369a300dba6a55b1856372ff91a7eb23694f` |
-| `alumina-interface_bg.wasm.gz` | 1,858,428 | `65734ce6659e127ebb7b384ded63db01b16627b94000ea539eca42d5a95cd656` |
-| `alumina-interface.js` | 75,566 | `2b92d9e70c2ed9895b4cd361eb35f8a936f9a302a4c749762cd86c353f3ad28c` |
-| `index.html` | 1,290 | `04926872cbdf270b953f89c920cc8c3600c4bc224282e3c578be757ddeae81cb` |
-| `Cargo.lock` | - | `cd31aaadb49b3c2d537c0184fda3e2f8b24411801175ce6b85c8a3b48f3eb250` |
+| `alumina-interface_bg.wasm` | 4,277,111 | `eea64c1267439685ca5bb6cd7cfe875c8cfc8825669b36b6d5ecccb8f432e1bf` |
+| `alumina-interface_bg.wasm.br` | 1,618,026 | `6f5677790df319640beeaf1343d249f0528aceb228118991f50c4fd813126457` |
+| `alumina-interface_bg.wasm.gz` | 1,984,435 | `758b56a49edc4b7a37ed826d7c6ea0f1abe443e115b3721727cf89ef9d97574e` |
+| `alumina-interface.js` | 89,162 | `b339312fdd0741ab76f7d6d02bed9239923df487bd9c9be071683153391912e8` |
+| `alumina-worker.js` | 631 | `cfc5a142c87bab91d29697bc9af98308ff67fddf745259291f80ceb11e342a4a` |
+| `index.html` | 1,295 | `285e1728baa5b59b2d5b12b6ae42e5d89a6e7223238f50ecedcfa226de2f3d68` |
+| `Cargo.lock` | - | `30d1bc8c99384ec1b54e073b96587b932fcc842143fe12c844bb3dd041b50363` |
 
 From `aluminafw`:
 
@@ -150,11 +183,12 @@ These are linked-capacity observations, not stack watermarks or timing results.
 
 ## Remaining qualification boundary
 
-The UI still needs worker creation/supervision, live multi-device session
-ownership, clock-delay history, explicit attended-policy controls, and live
-participant/safety-chain state. Live-browser tests must cover background
-throttling, AP loss, delay spikes, reboot, corrupt/full storage, partial
-readiness, and ambiguous responses. Firmware telemetry still needs qualified
+The worker still needs authenticated simulated-HTTP fixtures, live device
+identity/capability binding, cache/schedule ownership, explicit attended-policy
+controls, and live participant/safety-chain state. Browser tests must cover
+background throttling, AP loss, delay spikes, reboot, corrupt/full storage,
+partial readiness, ambiguous responses, wall-clock rollback, and concurrent
+session-counter selection. Firmware telemetry still needs qualified
 observed-edge capture. Two simulated and then two physical boards must run
 harmless cached GPIO traces under nominal and saturated Wi-Fi before any motion
 or process-energy claim.

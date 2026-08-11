@@ -160,8 +160,11 @@ route, reconciles retry-safe cache uploads, and orders every executable
 partition before the shared manifest. It also acquires conservatively widened
 boot-scoped clock samples from window or worker contexts and coordinates exact
 prepare/install/confirm-or-abort transitions without confirming before all
-installs. Live browser/UI and physical timing qualification remain the next
-integration boundary. See the
+installs. The browser now creates a dedicated control worker that owns
+independent authenticated sessions, exact causal clock models, bounded history,
+and retry-safe redacted diagnostic panels; its module lifecycle reaches a
+rendered worker-ready state in Chromium. Authenticated simulated-device traffic
+and physical timing qualification remain the next integration boundary. See the
 [global-job packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and
 [browser cache-delivery evidence](docs/evidence/M7-BROWSER-CACHE-DELIVERY.md),
 plus the

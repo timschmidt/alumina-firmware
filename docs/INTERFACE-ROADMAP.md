@@ -146,9 +146,11 @@ native responses, reconciles ambiguous resumable uploads through publication
 inspection, and orders each participant partition before the shared global
 manifest. The production WASM build exercises the current sibling CSGRS/Hyper
 and Alumina schemas. Conservative boot-scoped heartbeat acquisition is now
-available to both window and worker scopes. Credential and device-discovery UX,
-live-browser simulated HTTP tests, panels, WLAN provisioning, and worker
-lifecycle supervision remain open. See the
+available to both window and worker scopes. The shipped browser now creates and
+supervises an explicit module worker that owns independent HMAC sessions, clock
+models, bounded histories, retry cadence, and redacted live diagnostic panels.
+Device identity/capability discovery, simulated authenticated HTTP tests, WLAN
+provisioning, and physical connections remain open. See the
 [M7 browser cache-delivery evidence](evidence/M7-BROWSER-CACHE-DELIVERY.md) and
 [clock/coordinator evidence](evidence/M7-BROWSER-CLOCK-COORDINATOR.md).
 
@@ -305,8 +307,10 @@ browser boundary. Conservative heartbeat acquisition works from a window or
 worker scope, and the headless coordinator implements boot-bound
 prepare/install/confirm-or-abort, precommit cancellation, exact deadline
 classification, and read-only transition reconciliation. Worker
-creation/supervision, live multi-device sessions, operator panels, and physical
-qualification remain open.
+creation/supervision, live multi-device clock-session ownership, redacted
+history panels, and a Chromium worker-ready smoke check are now implemented.
+Live cache/job driving, attended-policy controls, simulated authenticated HTTP,
+observed edges, and physical qualification remain open.
 
 Exit:
 
