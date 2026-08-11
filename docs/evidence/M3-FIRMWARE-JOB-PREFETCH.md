@@ -6,6 +6,11 @@ Status: authenticated firmware wiring, host simulation, strict target compile,
 and optimized link evidence. This does not claim a runnable job, deterministic
 commit, canonical board capabilities/configuration, or physical qualification.
 
+This records the firmware-prefetch checkpoint at its commit. The later
+[`M3-CANONICAL-CAPABILITIES.md`](M3-CANONICAL-CAPABILITIES.md) supersedes its
+zero-capability claim and image/test totals while preserving the closed
+configuration, commit, and output gates.
+
 ## Implemented boundary
 
 The portable cached-job actors are now instantiated by both first-target

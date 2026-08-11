@@ -111,12 +111,17 @@ facts. Firmware now compiles the crate for both boards; authenticated job
 control now routes canonical prepare/cancel/status frames through core 0, drives
 bounded verified prefetch, installs the independent core-1 validator, and
 publishes correlated status. Core 1 retains the first admitted block without
-acknowledging or executing it. Both board packages still expose a zero
-capability digest, so target preparation returns `Unsupported` until canonical
-capability and active-configuration authorities are implemented. Commit and
-hardware execution remain separate closed gates. See the
+acknowledging or executing it. `alumina-capability` now encodes every typed board
+fact as an allocation-free canonical `ALMCAP01` document. Both first packages
+compile its independently recomputed SHA-256, firmware verifies it before Wi-Fi,
+identity advertises it, and authenticated `CapabilitiesGet` returns bounded
+digest-stable ranges. Preparation still returns `Unsupported` because no active
+configuration is committed and neither board is armable. Commit and hardware
+execution remain separate closed gates. See the
 [portable lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md) and
-[firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md).
+[firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md), plus the
+[capability format](docs/CAPABILITIES.md) and
+[canonical-capability evidence](docs/evidence/M3-CANONICAL-CAPABILITIES.md).
 
 ## Developer checks
 

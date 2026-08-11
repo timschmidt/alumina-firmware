@@ -8,6 +8,7 @@ use core::fmt::Write as _;
 use core::fmt::{Debug, Display};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use alumina_capability::{CapabilityIdentity, verify_declared_identity};
 use alumina_net::{
     AUTH_COUNTER_HEADER, AUTH_NONCE_BYTES, AUTH_RESPONSE_HEADER, AUTH_TAG_HEX_BYTES,
     AccessPointProfile, AuthError, AuthHeaderAccumulator, AuthRateLimit, AuthenticatedMedia,
@@ -42,6 +43,7 @@ use esp_radio::wifi::{
 use heapless::String as FixedString;
 use static_cell::StaticCell;
 
+use crate::hardware::selected;
 use crate::service::ServiceBridge;
 
 const AP_SSID: &str = concat!("Alumina-", env!("ALUMINA_BOARD_ID"));
@@ -128,6 +130,8 @@ pub async fn start(
     service_bridge: &'static ServiceBridge,
 ) -> NetworkControl {
     assert_service_core("network initialization");
+    let capability_identity = verify_declared_identity(selected::PACKAGE)
+        .unwrap_or_else(|_| panic!("selected board capability identity is invalid"));
 
     let profile = AccessPointProfile::new(AP_SSID, AP_PASSPHRASE, CREDENTIAL_SOURCE);
     if profile.validate().is_err() || WebLimits::INITIAL.validate().is_err() {
@@ -204,6 +208,7 @@ pub async fn start(
         auth_nonce,
         auth_state,
         service_bridge,
+        capability_identity,
     ));
     spawner.must_spawn(dhcp_task(stack));
     if supervisor.access_point_ready().is_err() {
@@ -232,6 +237,7 @@ async fn http_task(
     auth_nonce: BootNonce,
     auth_state: &'static AuthState,
     service_bridge: &'static ServiceBridge,
+    capability_identity: CapabilityIdentity,
 ) -> ! {
     assert_service_core("HTTP service");
     stack.wait_config_up().await;
@@ -258,6 +264,7 @@ async fn http_task(
                 auth_nonce,
                 auth_state,
                 service_bridge,
+                capability_identity,
             },
         );
 
@@ -313,6 +320,7 @@ struct AluminaHttpHandler {
     auth_nonce: BootNonce,
     auth_state: &'static AuthState,
     service_bridge: &'static ServiceBridge,
+    capability_identity: CapabilityIdentity,
 }
 
 impl Handler for AluminaHttpHandler {
@@ -435,13 +443,28 @@ impl Handler for AluminaHttpHandler {
                 connection
                     .write_all(self.credential_source.label().as_bytes())
                     .await?;
+                connection.write_all(b"\",\"production_armable\":").await?;
                 connection
                     .write_all(if self.credential_source.production_armable() {
-                        b"\",\"production_armable\":true}"
+                        b"true"
                     } else {
-                        b"\",\"production_armable\":false}"
+                        b"false"
                     })
                     .await?;
+                connection.write_all(b",\"capability_digest\":\"").await?;
+                let mut digest = [0_u8; 64];
+                if write_lower_hex(&self.capability_identity.digest.0, &mut digest).is_err() {
+                    panic!("capability digest encoding failed");
+                }
+                connection.write_all(&digest).await?;
+                let mut tail = FixedString::<64>::new();
+                write!(
+                    tail,
+                    "\",\"capability_document_bytes\":{}}}",
+                    self.capability_identity.byte_len
+                )
+                .unwrap_or_else(|_| panic!("identity response exceeded its fixed suffix"));
+                connection.write_all(tail.as_bytes()).await?;
             }
             Route::Health => {
                 json_response(connection).await?;

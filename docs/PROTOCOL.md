@@ -72,6 +72,18 @@ The Rust enum assigns all 49 values explicitly and rejects every unassigned
 number. Operation-specific bodies are added only with fixed budgets and golden
 browser/native/firmware fixtures.
 
+## Board capabilities
+
+`CapabilitiesGet` reads the immutable canonical `ALMCAP01` board document in
+authenticated ranges of at most 240 bytes. Public identity reports its SHA-256
+and total length; every range repeats both, and the browser verifies the complete
+reassembly before decoding or caching by digest. Request/response layouts, enum
+assignments, and the complete serialization order are normative in
+[`CAPABILITIES.md`](CAPABILITIES.md). The document includes typed resources,
+aliases, buses/devices, memory/clock/electrical constraints, safe images,
+licensed visual metadata, HIL requirements, qualification, and armability. Its
+own declared digest is the sole excluded field, avoiding circular identity.
+
 ## Storage bodies and content identity
 
 Storage V1 fixes canonical identities to SHA-256 and admits no per-connection
@@ -186,10 +198,11 @@ also requires the outer frame configuration identity to equal the descriptor,
 opens the exact typed publication, and compares the capability identity with the
 selected board. Core 1 receives the complete descriptor in an independent fixed
 command, repeats those identity checks, and constructs a separate stream
-validator. The current TinyBee and T-Deck Pro packages deliberately publish a
-zero capability digest, so target firmware returns `Unsupported`; preparation
-cannot be activated until canonical capability and active-configuration
-authorities exist.
+validator. TinyBee and T-Deck Pro now publish independently recomputed nonzero
+capability identities. That alone does not enable preparation: firmware also
+requires an exact nonzero active-configuration identity and an armable board.
+Neither first board currently satisfies those later gates, so target
+`JobPrepare` still returns `Unsupported` before storage is opened.
 
 The 256-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
 and one reserved zero byte. Action `1` contains the complete descriptor at bytes

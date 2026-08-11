@@ -11,6 +11,7 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
 #[cfg(all(feature = "board-mks-tinybee", feature = "board-t-deck-pro"))]
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 
+mod capability;
 mod hardware;
 mod job;
 mod network;
@@ -38,6 +39,7 @@ use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
 
+use capability::CapabilityService;
 use hardware::selected;
 use job::{JobService, RealtimeJobService};
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
@@ -236,7 +238,9 @@ async fn service_task(
         while let Some(request) = service_bridge.try_receive() {
             storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
             let now = DeviceCycle(Instant::now().as_ticks());
-            let response = if JobService::handles(request.request()) {
+            let response = if CapabilityService::handles(request.request()) {
+                CapabilityService::dispatch(request.request(), now)
+            } else if JobService::handles(request.request()) {
                 jobs.dispatch(&mut storage_backend, &mut endpoint, request.request(), now)
                     .await
             } else {

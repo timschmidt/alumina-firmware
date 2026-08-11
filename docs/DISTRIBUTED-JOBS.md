@@ -127,9 +127,9 @@ retains one owned block. `JobStatus` reports both domains, queue credits/depth,
 and exact tick/digest progress; `JobCancel` invalidates the preparation and
 drains queued ownership. The admitted first block is intentionally left
 outstanding. No acknowledgement, epoch conversion, scheduler, or output path is
-present yet. The two first board packages also retain zero capability identities,
-so target preparation remains fail-closed until canonical capabilities and the
-active configuration can both be verified.
+present yet. Both first packages now expose verified canonical capability
+identities, but target preparation remains fail-closed because no active
+configuration is committed and neither board is armable pending HIL.
 
 ## Deterministic prepare/commit start
 

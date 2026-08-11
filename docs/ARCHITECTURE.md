@@ -253,7 +253,10 @@ aluminafw/
 ├── crates/
 │   ├── alumina-protocol/        # no_std shared wire types and schema versions
 │   ├── alumina-board/           # board capability and allocation contracts
+│   ├── alumina-capability/      # canonical board bytes, digest, bounded ranges
 │   ├── alumina-config/          # transactional resource/machine config
+│   ├── alumina-job/             # cached prepare/prefetch/admission lifecycle
+│   ├── alumina-service/         # authenticated core-0 native dispatch
 │   ├── alumina-runtime/         # core startup, queues, clocks, budgets
 │   ├── alumina-clock/           # cycle sampling and scheduled starts
 │   ├── alumina-safety/          # state machine and safe-output policies
@@ -319,6 +322,14 @@ The small Rust composition root consumes `esp_hal::Peripherals` exactly once,
 constructs owned resources, and returns separate `ServiceResources` and
 `RealtimeResources`. Adding a board should not add `cfg` branches throughout
 motion, network, or application code.
+
+`alumina-capability` serializes the same package as the canonical allocation-free
+`ALMCAP01` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
+own declared field, is compiled into the board package, and is recomputed by
+`xtask` and firmware. Public identity advertises digest/length; authenticated
+`CapabilitiesGet` reads contiguous bounded ranges through the single native
+control route. This document, not `xtask` JSON formatting or Rust memory layout,
+is the browser's immutable board authority.
 
 Build UX:
 
@@ -426,20 +437,24 @@ Every control request carries:
 
 ### API surface
 
-Proposed routes:
+Current routes and reserved endpoint roles:
 
 | Route | Purpose |
 | --- | --- |
 | `GET /api/v1/identity` | board, firmware, boot, security, schema versions |
-| `GET /api/v1/capabilities` | resources, devices, limits, clock domains, safety features |
-| `GET/PUT /api/v1/config` | inspect or transactionally stage/commit configuration |
 | `GET/POST /api/v1/network` | scan, inspect, join, leave, or recover AP/STA configuration |
-| `POST /api/v1/control` | one authenticated canonical native request across storage, job, configuration, command, and future families |
+| `POST /api/v1/control` | one authenticated canonical native request across capability, storage, job, configuration, command, and future families |
 | `GET /api/v1/storage` | bounded human-readable cache/media status |
 | `GET /api/v1/health` | state, faults, queue depths, timing and reset causes |
 | `GET /api/v1/time` | timestamped cycle-counter heartbeat samples and clock quality |
 | `GET /api/v1/telemetry` | WebSocket upgrade for binary streams/events |
 | `POST /api/v1/update` | idle-only signed update staging |
+
+Only routes already present in `alumina-net` are accepted today. Capability
+ranges use `CapabilitiesGet` through `/api/v1/control`; configuration will use
+the same native route rather than creating a parallel REST representation.
+Time, telemetry, and update endpoints remain reserved until their bounded wire
+contracts and admission policies land.
 | `/` and immutable assets | compressed Alumina interface bundle |
 
 There are no legacy routes. Textual G-code and source geometry are never accepted
@@ -473,11 +488,12 @@ invalidates the core-1 ownership token, and drains queued work. Core-0 local job
 ownership vetoes storage mutation immediately, without waiting for periodic
 safety telemetry.
 
-Both first board packages still carry a zero canonical capability digest, and
-there is not yet a committed active-configuration authority. Consequently the
-target endpoint rejects `JobPrepare` as `Unsupported`; assigning a digest alone
-must not be treated as authorization to run. This preserves a linked and
-inspectable integration path without creating an accidental executable path.
+Both first board packages now carry verified nonzero canonical capability
+digests, but there is not yet a committed active-configuration authority and
+both packages remain non-armable pending HIL. Consequently the target endpoint
+still rejects `JobPrepare` as `Unsupported`. Capability publication is discovery,
+not authorization to run, preserving an inspectable integration path without
+creating an accidental executable path.
 
 For a distributed job, the UI maintains one measured affine mapping from its
 monotonic clock to each MCU's unwrapped cycle counter. Every MCU must cache and

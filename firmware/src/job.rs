@@ -5,7 +5,7 @@ use alumina_job::{
     RealtimeJob, RealtimeJobReport, RealtimeJobState, RealtimePoll, ServiceJobReport,
     ServiceJobState, ServicePrefetch,
 };
-use alumina_protocol::{DeviceCycle, FrameKind, Operation, StatusCode};
+use alumina_protocol::{DeviceCycle, Digest, FrameKind, Operation, StatusCode};
 use alumina_runtime::{DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame};
 use alumina_service::{NativeRequest, ServiceRequest, ServiceRequestKind, ServiceResponse};
 use alumina_storage::media::MediaError;
@@ -19,6 +19,7 @@ pub struct JobService {
     prefetch: Option<ServicePrefetch<{ selected::JOB_AXES }>>,
     realtime: Option<RealtimeJobReport>,
     command_sequence: u32,
+    active_config: Digest,
 }
 
 impl JobService {
@@ -29,6 +30,7 @@ impl JobService {
             prefetch: None,
             realtime: None,
             command_sequence: 0,
+            active_config: Digest::ZERO,
         }
     }
 
@@ -80,10 +82,16 @@ impl JobService {
             return self.respond(endpoint, native, now, StatusCode::Conflict, false);
         }
         let expected_capability = selected::PACKAGE.board.capability_digest;
-        if expected_capability.is_zero() {
+        if !selected::PACKAGE.armable
+            || expected_capability.is_zero()
+            || self.active_config.is_zero()
+        {
             return self.respond(endpoint, native, now, StatusCode::Unsupported, false);
         }
         if descriptor.capability_digest != expected_capability {
+            return self.respond(endpoint, native, now, StatusCode::Conflict, false);
+        }
+        if descriptor.config_digest != self.active_config {
             return self.respond(endpoint, native, now, StatusCode::Conflict, false);
         }
 
@@ -299,6 +307,7 @@ pub struct RealtimeJobService {
     job: Option<RealtimeJob<{ selected::JOB_AXES }>>,
     admitted: Option<AdmittedBlock<{ selected::JOB_AXES }>>,
     report_sequence: u32,
+    active_config: Digest,
 }
 
 impl RealtimeJobService {
@@ -309,6 +318,7 @@ impl RealtimeJobService {
             job: None,
             admitted: None,
             report_sequence: 0,
+            active_config: Digest::ZERO,
         }
     }
 
@@ -327,6 +337,9 @@ impl RealtimeJobService {
                 if frame.header().config_digest != descriptor.config_digest
                     || descriptor.capability_digest != selected::PACKAGE.board.capability_digest
                     || descriptor.capability_digest.is_zero()
+                    || !selected::PACKAGE.armable
+                    || self.active_config.is_zero()
+                    || descriptor.config_digest != self.active_config
                 {
                     return Err(());
                 }

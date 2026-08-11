@@ -1,6 +1,6 @@
 [package]
-name = "xtask"
-description = "Repository-local board, build, schema, and verification commands"
+name = "alumina-capability"
+description = "Canonical byte-addressable board capability documents for Alumina"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,10 @@ publish.workspace = true
 
 [dependencies]
 alumina-board.workspace = true
-alumina-capability.workspace = true
+alumina-protocol.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
 board-mks-tinybee.workspace = true
 board-t-deck-pro.workspace = true
 

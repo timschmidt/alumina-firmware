@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use alumina_board::{BoardPackage, BusKind, DeviceRoute, OwnerDomain, ResourceId, SafeValue};
+use alumina_capability::{calculate_identity, verify_declared_identity};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Board {
@@ -338,6 +339,12 @@ fn validate_board(board: &Board) -> Result<(), String> {
         package
             .validate()
             .map_err(|error| format!("{}: package error: {error:?}", board.source.display()))?;
+        verify_declared_identity(package).map_err(|error| {
+            format!(
+                "{}: canonical capability identity error: {error:?}",
+                board.source.display()
+            )
+        })?;
         validate_visual_assets(board, package)?;
         if package.board.id != board.id
             || chip_name(package.board.chip) != board.chip
@@ -562,6 +569,7 @@ fn command_succeeds(program: &str, argument: &str) -> bool {
 
 fn print_capabilities(board: &Board, json: bool) {
     let package = package_for(&board.id);
+    let calculated_identity = package.and_then(|package| calculate_identity(package).ok());
     if json {
         println!("{{");
         println!("  \"schema\": 1,");
@@ -592,6 +600,24 @@ fn print_capabilities(board: &Board, json: bool) {
                 || "00".repeat(32),
                 |package| bytes_hex(&package.board.capability_digest.0)
             )
+        );
+        println!(
+            "  \"calculated_capability_digest\": \"{}\",",
+            calculated_identity
+                .map_or_else(|| "00".repeat(32), |identity| bytes_hex(&identity.digest.0))
+        );
+        println!(
+            "  \"capability_document_bytes\": {},",
+            calculated_identity.map_or(0, |identity| identity.byte_len)
+        );
+        println!(
+            "  \"capability_digest_verified\": {},",
+            package
+                .zip(calculated_identity)
+                .is_some_and(|(package, identity)| {
+                    !package.board.capability_digest.is_zero()
+                        && package.board.capability_digest == identity.digest
+                })
         );
         println!("  \"qualification\": \"{}\",", board.qualification);
         println!("  \"implementation\": \"{}\",", board.implementation);

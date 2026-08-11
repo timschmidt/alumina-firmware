@@ -12,6 +12,11 @@ use alumina_protocol::Digest;
 
 pub const BOARD_ID: &str = "t-deck-pro";
 pub const TARGET: &str = "xtensa-esp32s3-none-elf";
+/// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
+pub const CAPABILITY_DIGEST: Digest = Digest([
+    0x61, 0x7a, 0x1b, 0x62, 0xb7, 0xe7, 0xf6, 0x87, 0x62, 0xa8, 0x95, 0x0e, 0xbe, 0x58, 0x2f, 0x47,
+    0xbf, 0xd2, 0x0b, 0x66, 0xd8, 0xcd, 0x05, 0x23, 0x63, 0xa4, 0xd8, 0x41, 0xe0, 0x8e, 0xec, 0x10,
+]);
 
 pub mod device {
     pub const BATTERY_CHARGER: u16 = 0;
@@ -766,7 +771,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
         chip: Chip::Esp32S3,
         application_cores: 2,
         qualification: Qualification::Compiles,
-        capability_digest: Digest::ZERO,
+        capability_digest: CAPABILITY_DIGEST,
         resources: RESOURCES,
     },
     memory: MemoryDescriptor {

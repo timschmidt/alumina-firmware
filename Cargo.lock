@@ -16,10 +16,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-capability"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-protocol",
+ "board-mks-tinybee",
+ "board-t-deck-pro",
+ "sha2",
+]
+
+[[package]]
 name = "alumina-firmware"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
+ "alumina-capability",
  "alumina-job",
  "alumina-net",
  "alumina-protocol",
@@ -2710,6 +2722,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
+ "alumina-capability",
  "board-mks-tinybee",
  "board-t-deck-pro",
 ]

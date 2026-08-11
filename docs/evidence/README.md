@@ -47,3 +47,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M3-FIRMWARE-JOB-PREFETCH.md`](M3-FIRMWARE-JOB-PREFETCH.md) — authenticated
   canonical job control, live core-0/core-1 actor ownership, fail-closed first
   block retention, storage-mutation exclusion, and linked target evidence.
+- [`M3-CANONICAL-CAPABILITIES.md`](M3-CANONICAL-CAPABILITIES.md) — canonical
+  complete board-package bytes/digests, bounded authenticated range retrieval,
+  boot/xtask verification, and capability-versus-configuration separation.

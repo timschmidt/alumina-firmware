@@ -14,6 +14,11 @@ use alumina_protocol::Digest;
 pub const BOARD_ID: &str = "mks-tinybee-v1";
 /// ESP Rust target required by this package.
 pub const TARGET: &str = "xtensa-esp32-none-elf";
+/// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
+pub const CAPABILITY_DIGEST: Digest = Digest([
+    0x00, 0x0f, 0x15, 0x1d, 0x9a, 0x40, 0x4a, 0x94, 0xd8, 0x2b, 0x31, 0x1a, 0xb4, 0x03, 0x3d, 0xb2,
+    0x3f, 0xe6, 0x5e, 0x56, 0xc4, 0x8d, 0x8a, 0x1d, 0x43, 0xbd, 0x77, 0x36, 0x62, 0xc7, 0xc3, 0x51,
+]);
 /// Shift-register safe image inferred from active-high StepStick disable inputs.
 ///
 /// It is deliberately not bench-verified, so this package remains non-armable.
@@ -957,7 +962,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
         chip: Chip::Esp32,
         application_cores: 2,
         qualification: Qualification::Compiles,
-        capability_digest: Digest::ZERO,
+        capability_digest: CAPABILITY_DIGEST,
         resources: RESOURCES,
     },
     memory: MemoryDescriptor {

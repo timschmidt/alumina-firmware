@@ -40,6 +40,7 @@ board-t-deck-pro = [
 
 [dependencies]
 alumina-board.workspace = true
+alumina-capability.workspace = true
 alumina-job.workspace = true
 alumina-net.workspace = true
 alumina-protocol.workspace = true
