@@ -155,9 +155,12 @@ durations equal without floats; those identities feed the existing deterministic
 schedule commit directly. The interface now constructs that exact shared object
 from owned, independently replayed local cache artifacts and can give every MCU
 an independent resumable upload transaction without changing content identity.
-Authenticated browser Wi-Fi upload, cache reconciliation, and schedule
-orchestration remain the next integration boundary. See the [global-job
-packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
+The headless browser client now authenticates the exact origin-bound native
+route, reconciles retry-safe cache uploads, and orders every executable
+partition before the shared manifest. Live browser/UI qualification and
+schedule orchestration remain the next integration boundary. See the
+[global-job packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and
+[browser cache-delivery evidence](docs/evidence/M7-BROWSER-CACHE-DELIVERY.md).
 
 `alumina-config` defines canonical content-addressed resource bindings and
 reduced exact machine facts, validates them against the immutable board package,

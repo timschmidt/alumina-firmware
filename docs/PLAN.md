@@ -429,10 +429,11 @@ future horizon and confirmed local start to the exact scheduled step executor
 behind configuration, interlock, deadline, cached-work, package, and
 physical-output qualification gates. The interface now produces the canonical
 global manifest and owned participant cache packages consumed by this protocol.
-Authenticated browser upload/cache reconciliation, the browser clock/coordinator
-worker, observed-edge reconciliation, packet-stress/HIL runs, a qualified
-I²S/DMA backend, and the physical exit gate remain open; current board packages
-are non-armable.
+Origin-bound authenticated browser upload and retry-safe per-participant cache
+reconciliation are now implemented. The browser clock/coordinator worker,
+live-browser/UI qualification, observed-edge reconciliation, packet-stress/HIL
+runs, a qualified I²S/DMA backend, and the physical exit gate remain open;
+current board packages are non-armable.
 
 Exit gate:
 

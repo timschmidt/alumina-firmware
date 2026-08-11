@@ -140,6 +140,15 @@ capacity/health, immutable manifests, per-MCU partition state, audit download,
 and idle-only deletion. Raw source geometry remains browser/project data; only
 compiled job packages become executable device cache entries.
 
+Implementation checkpoint: the headless/WASM client now performs exact
+origin-bound HMAC V2 fetches, validates the fixed boot challenge and signed
+native responses, reconciles ambiguous resumable uploads through publication
+inspection, and orders each participant partition before the shared global
+manifest. The production WASM build exercises the current sibling CSGRS/Hyper
+and Alumina schemas. Credential and device-discovery UX, live-browser simulated
+HTTP tests, panels, WLAN provisioning, and clock acquisition remain open. See
+the [M7 browser cache-delivery evidence](evidence/M7-BROWSER-CACHE-DELIVERY.md).
+
 Exit:
 
 - TinyBee, T-Deck Pro, and simulator panels require no board-name branches.
@@ -286,6 +295,11 @@ Exit:
   Attended versus cached-autonomous network-loss policy is chosen explicitly.
 - Show physical safety-chain coverage separately from Wi-Fi state. Never present
   a successful packet as an E-stop guarantee.
+
+Implementation checkpoint: canonical participant packages, the identical
+global manifest, and retry-safe authenticated delivery state now reach the
+browser boundary. Clock acquisition/fitting and the complete
+prepare/install/confirm-or-abort coordinator remain open.
 
 Exit:
 

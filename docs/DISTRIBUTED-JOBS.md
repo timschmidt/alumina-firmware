@@ -107,6 +107,14 @@ in the durable checkpoint. The last chunk alone may be shorter. This sacrifices
 out-of-order upload in exchange for bounded MCU RAM, a constant-size coordinator,
 and a journal that can be reconstructed by a linear SD scan.
 
+The browser client implements that same boundary directly. It inspects exact
+publication identity before every new or ambiguous transaction, validates each
+local chunk and every reported durable prefix, and never retries a mutation by
+assuming a lost response means failure. For each MCU it reconciles the local
+executable partition completely before the identical global manifest. These
+headless/WASM state machines are implemented; live browser/radio/SD
+qualification and their UI remain open.
+
 The V1 cache is not FAT or another general filesystem. Two fixed SHA-256 anchors
 alternate generations over an append-only, hash-chained sequence of begin,
 chunk, abort, and publication records. Each record writes padded data, crosses a
