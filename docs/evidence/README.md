@@ -105,6 +105,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M7-BROWSER-CLOCK-COORDINATOR.md`](M7-BROWSER-CLOCK-COORDINATOR.md) —
   worker-capable conservative heartbeat acquisition, boot-scoped clock models,
   exact prepare/install/confirm-or-abort coordination, and retry reconciliation.
+- [`M7-BROWSER-AUTH-HTTP-SIM.md`](M7-BROWSER-AUTH-HTTP-SIM.md) — production
+  worker-to-host authenticated HTTP/CORS clock traffic, finite-outage and reboot
+  recovery, bounded-delay admission, and conservative excessive-delay rejection.
 - [`M7-PRESTART-HARDWARE-PRIMING.md`](M7-PRESTART-HARDWARE-PRIMING.md) — schedule
   wire version 2, abort-guard hardware priming, explicit prestart horizon
   acknowledgement, scheduled firmware ownership, and compile-only TinyBee

@@ -163,12 +163,16 @@ prepare/install/confirm-or-abort transitions without confirming before all
 installs. The browser now creates a dedicated control worker that owns
 independent authenticated sessions, exact causal clock models, bounded history,
 and retry-safe redacted diagnostic panels; its module lifecycle reaches a
-rendered worker-ready state in Chromium. Authenticated simulated-device traffic
-and physical timing qualification remain the next integration boundary. See the
+rendered worker-ready state in Chromium. That production worker now exchanges
+real authenticated browser HTTP/CORS heartbeat traffic with a deterministic
+host MCU fixture, recovers from response loss, a finite outage, and reboot, and
+refuses an excessive causal interval. Physical radio and timing qualification
+remain closed. See the
 [global-job packaging evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and
 [browser cache-delivery evidence](docs/evidence/M7-BROWSER-CACHE-DELIVERY.md),
 plus the
-[browser clock/coordinator evidence](docs/evidence/M7-BROWSER-CLOCK-COORDINATOR.md).
+[browser clock/coordinator evidence](docs/evidence/M7-BROWSER-CLOCK-COORDINATOR.md)
+and [authenticated browser/HTTP evidence](docs/evidence/M7-BROWSER-AUTH-HTTP-SIM.md).
 
 `alumina-config` defines canonical content-addressed resource bindings and
 reduced exact machine facts, validates them against the immutable board package,

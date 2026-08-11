@@ -3,10 +3,12 @@
 Date: 2026-08-11
 
 Status: a supervised live-browser worker/session boundary, authenticated clock
-acquisition, and a deterministic cached-start coordinator are implemented. The
-worker module lifecycle is browser-smoke-tested, while clock traffic remains
-native/WASM software evidence. This is not radio, SD-card, physical-start,
-synchronization-tolerance, or safety qualification.
+acquisition, and a deterministic cached-start coordinator are implemented. Its
+original checkpoint covered worker module smoke and native/WASM clock evidence;
+the later authenticated browser/HTTP fixture is recorded separately in
+[`M7-BROWSER-AUTH-HTTP-SIM.md`](M7-BROWSER-AUTH-HTTP-SIM.md). Neither checkpoint
+is radio, SD-card, physical-start, synchronization-tolerance, or safety
+qualification.
 
 The coordinated source checkpoints are:
 
@@ -183,11 +185,13 @@ These are linked-capacity observations, not stack watermarks or timing results.
 
 ## Remaining qualification boundary
 
-The worker still needs authenticated simulated-HTTP fixtures, live device
-identity/capability binding, cache/schedule ownership, explicit attended-policy
-controls, and live participant/safety-chain state. Browser tests must cover
-background throttling, AP loss, delay spikes, reboot, corrupt/full storage,
-partial readiness, ambiguous responses, wall-clock rollback, and concurrent
+Authenticated simulated HTTP now covers nominal traffic, response loss, a
+finite outage, reboot, bounded delay, and excessive-delay rejection. The worker
+still needs live device identity/capability binding, cache/schedule ownership,
+explicit attended-policy controls, and live participant/safety-chain state.
+Browser tests must still cover background throttling, abrupt AP removal and
+reacquisition, asymmetric/reordered traffic, corrupt/full storage, partial
+readiness, ambiguous schedule responses, wall-clock rollback, and concurrent
 session-counter selection. Firmware telemetry still needs qualified
 observed-edge capture. Two simulated and then two physical boards must run
 harmless cached GPIO traces under nominal and saturated Wi-Fi before any motion

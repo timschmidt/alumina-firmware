@@ -434,8 +434,11 @@ reconciliation are now implemented. A worker-capable conservative browser clock
 adapter and headless prepare/install/confirm-or-abort coordinator now enforce
 boot identity, exact deadlines, all-installed-before-confirm, finite leases,
 precommit cancellation, and ambiguous-mutation status reconciliation. Worker
-lifecycle/UI integration, live-browser qualification, observed-edge
-reconciliation, packet-stress/HIL runs, a qualified I²S/DMA backend, and the
+lifecycle/UI integration and production-worker authenticated browser/HTTP
+qualification now cover nominal sampling, response loss, a finite outage,
+reboot, bounded delay, and conservative excessive-delay rejection. Live
+cache/schedule ownership, observed-edge reconciliation, broader packet-stress
+and background-throttling cases, HIL runs, a qualified I²S/DMA backend, and the
 physical exit gate remain open; current board packages are non-armable.
 
 Exit gate:
