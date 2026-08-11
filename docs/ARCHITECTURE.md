@@ -837,6 +837,16 @@ validate that contract until physical evidence promotes the immutable board
 package to `Qualified`. A fake enable binding or implicit GPIO alias is
 prohibited.
 
+Portable rotor angle is a wrapping `u32` binary turn, so pole-pair reduction,
+quadrants, and wrap remain exact. `alumina-foc` reduces to `[-pi/4, pi/4]`,
+evaluates independently certified outward Q2.30 sine/cosine bounds, and admits
+the result only under explicit component-width and squared-norm ULP limits.
+Absolute-count calibration separately retains direction, count modulus,
+reference/electrical offset, pole pairs, reduced rational count error, binary
+alignment error, and the configuration digest. A rotor sample carries the full
+phase-error arc and must replay to the same canonical rotation. These are
+portable contracts; the MKS AS5600 buses do not yet implement them.
+
 ## Exact CAD-to-motor boundary
 
 Exactness is preserved by making the lossy boundary explicit and provable, not

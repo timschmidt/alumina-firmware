@@ -3,6 +3,14 @@
 
 use alumina_protocol::{DeviceCycle, Digest};
 
+mod angle;
+
+pub use angle::{
+    CountUncertainty, ElectricalPhase, ElectricalPhaseEstimate, HALF_TURN_BITS,
+    MAXIMUM_OBSERVATION_ERROR_BITS, PHASE_POINTS_PER_TURN, QUARTER_TURN_BITS, RotationPrecision,
+    RotorCalibration, RotorCountDirection, rotation_from_estimate, rotation_from_phase,
+};
+
 /// Fractional bits in the signed Q2.30 real-time representation.
 pub const Q30_FRACTION_BITS: u32 = 30;
 /// Exact denominator of every [`Q30`] value.
@@ -122,6 +130,13 @@ impl Q30Interval {
     pub const ONE: Self = Self::point(Q30::ONE);
     /// Exact interval containing only one half.
     pub const HALF: Self = Self::point(Q30::HALF);
+
+    const fn from_raw_bits(lower: i32, upper: i32) -> Self {
+        Self {
+            lower: Q30::from_bits(lower),
+            upper: Q30::from_bits(upper),
+        }
+    }
 
     /// Constructs a point interval.
     pub const fn point(value: Q30) -> Self {
@@ -927,10 +942,43 @@ impl FocCurrentCommand {
 /// Boot-local bounded rotor observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RotorSample {
+    pub configuration_digest: Digest,
+    pub pole_pairs: u16,
     pub observed_at: DeviceCycle,
-    /// Unsigned phase where the complete `u32` range is one electrical turn.
-    pub electrical_phase: u32,
+    pub electrical_phase: ElectricalPhase,
+    /// Symmetric circular error bound in binary phase lattice points.
+    pub maximum_phase_error_bits: u32,
     pub rotation: Rotation,
+}
+
+impl RotorSample {
+    /// Replays phase generation and binds the sample to one parameter snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FocError::Configuration`] for a foreign configuration,
+    /// [`FocError::RotorSample`] if the retained rotation is not the canonical
+    /// result for its phase/error pair, or a snapshot/phase/precision error.
+    pub fn validate_for(
+        self,
+        snapshot: &FocParameterSnapshot,
+        precision: RotationPrecision,
+    ) -> Result<(), FocError> {
+        snapshot.validate()?;
+        if self.configuration_digest.is_zero()
+            || self.configuration_digest != snapshot.configuration_digest
+            || self.pole_pairs == 0
+            || self.pole_pairs != snapshot.pole_pairs
+        {
+            return Err(FocError::Configuration);
+        }
+        let estimate =
+            ElectricalPhaseEstimate::new(self.electrical_phase, self.maximum_phase_error_bits)?;
+        if rotation_from_estimate(estimate, precision)? != self.rotation {
+            return Err(FocError::RotorSample);
+        }
+        Ok(())
+    }
 }
 
 /// Bounded phase-current sample in the same normalized scale as its snapshot.
@@ -964,7 +1012,7 @@ pub trait CurrentSense {
     fn sample(&mut self, at: DeviceCycle) -> Result<CurrentSample, Self::Error>;
 }
 
-/// Sole owner of qualified inverter enable and PWM commitment.
+/// Sole owner of qualified inverter shutdown and PWM commitment.
 pub trait PowerStage {
     type Error;
 
@@ -987,6 +1035,10 @@ pub enum FocError {
     IntervalOrder,
     DivideByZero,
     Rotation,
+    Phase,
+    Precision,
+    RotorCalibration,
+    RotorSample,
     UnbalancedPhases,
     ModulationRange,
     Controller,

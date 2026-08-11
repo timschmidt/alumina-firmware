@@ -247,9 +247,9 @@ parameter snapshots whose complete PI output rectangle is voltage-circle
 bounded, digest-bound scheduled commands, and allocation-free
 sensor/current/power-stage traits. A deliberately dimensionless simulator proves
 deterministic controller replay, convergence, visible saturation, and fail-closed
-parameter/vector rejection. MKS board reconciliation, PWM/ADC adapters, motor
-identification, deadlines, shutdown measurement, and every energization claim
-remain open. See the [portable FOC evidence](docs/evidence/M8-PORTABLE-FOC-FOUNDATION.md).
+parameter/vector rejection. Target PWM/ADC/sensor adapters, motor identification,
+deadlines, shutdown measurement, and every energization claim remain open. See
+the [portable FOC evidence](docs/evidence/M8-PORTABLE-FOC-FOUNDATION.md).
 
 The MKS ESP32 FOC V1.0 now also has an independently authored typed board
 package and linked `xtensa-esp32-none-elf` safe target. The revision schematic,
@@ -271,6 +271,16 @@ ownership for an admitted FOC axis. Board-package qualification remains the
 authority, so configuration cannot promote the MKS stages beyond `Described`;
 the real target still rejects every FOC axis and exposes no energization path.
 See the [shutdown-contract evidence](docs/evidence/M8-FOC-SHUTDOWN-CONTRACT.md).
+
+Portable rotor angles now use exact wrapping binary turns. Nearest-quadrant
+reduction feeds outward Q2.30 sine/cosine series whose pi and coefficient
+enclosures have independent integer certificates; runtime ULP policies reject
+overwide components or unit-norm evidence. Absolute sensor counts, direction,
+pole pairs, half-count quantization, electrical alignment error, and lattice
+rounding are retained in one digest-bound rotor observation. This remains
+portable mathematics: no AS5600 transaction, physical alignment, PWM/ADC path,
+or energized target exists. See the
+[exact-angle evidence](docs/evidence/M8-EXACT-ELECTRICAL-ANGLE.md).
 
 ## Developer checks
 

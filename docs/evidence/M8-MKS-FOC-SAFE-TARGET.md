@@ -134,9 +134,10 @@ The following gates remain open:
   promote the exact phase-high-impedance contract and board package;
 - decide and implement an explicit cache medium/board variant before cached
   autonomous or synchronized jobs are advertised;
-- implement exact electrical-angle generation and alignment, sensor ownership,
-  MCPWM/ADC synchronization, calibrated current sampling, dead time, deadlines,
-  fault handling, and a sole-owner `PowerStage` adapter; and
+- bind the portable exact-angle generator to qualified sensor ownership and
+  physical alignment; implement MCPWM/ADC synchronization, calibrated current
+  sampling, dead time, deadlines, fault handling, and a sole-owner `PowerStage`
+  adapter; and
 - review a disconnected, current-limited, one-motor HIL procedure before any
   nonzero phase command exists.
 

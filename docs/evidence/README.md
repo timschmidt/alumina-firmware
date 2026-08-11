@@ -126,3 +126,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M8-FOC-SHUTDOWN-CONTRACT.md`](M8-FOC-SHUTDOWN-CONTRACT.md) — canonical
   configuration V2 shutdown strategies, immutable qualification and topology
   gates, core-1 FOC profiles, and renewed multi-target linked-image evidence.
+- [`M8-EXACT-ELECTRICAL-ANGLE.md`](M8-EXACT-ELECTRICAL-ANGLE.md) — exact binary
+  turns, independently certified fixed-point sine/cosine, rational sensor and
+  alignment uncertainty, and digest-bound canonical rotor observations.

@@ -489,8 +489,9 @@ control, voltage-circle-bounded digest snapshots/commands, and hardware ownershi
 traits.
 The deterministic simulator replays a dimensionless one-pole dq plant and
 separates controller evidence from physical motor claims. The MKS board adapter,
-angle generation/alignment, other torque modes, cascaded motion loops, safety
-monitors, synchronized MCPWM/ADC, WCET, and all bench qualification remain open.
+physical electrical alignment, other torque modes, cascaded motion loops,
+safety monitors, synchronized MCPWM/ADC, WCET, and all bench qualification
+remain open.
 See the [portable FOC evidence](evidence/M8-PORTABLE-FOC-FOUNDATION.md).
 
 Safe-target checkpoint: a typed MKS ESP32 FOC V1.0 package and classic-ESP32
@@ -512,10 +513,17 @@ requires a `Qualified` stage topology and matching board safe values, so the
 current MKS `Described` stages still reject. See the
 [shutdown-contract evidence](evidence/M8-FOC-SHUTDOWN-CONTRACT.md).
 
-The next target slice implements exact angle reduction/generation and rotor
-observation, then composes one power stage behind a compile-time-closed
-energization gate. MCPWM/ADC synchronization and any nonzero duty remain
-separate reviewed work.
+The exact-angle checkpoint now uses a wrapping `u32` turn lattice, independently
+certified outward sine/cosine series, configurable component/norm ULP gates, and
+exact count/pole-pair/direction/alignment uncertainty. Rotor samples bind the
+configuration digest and pole pairs and replay their canonical rotation before
+controller use. See the
+[exact-angle evidence](evidence/M8-EXACT-ELECTRICAL-ANGLE.md).
+
+The next target slice composes compile-closed AS5600 sensor ownership and then
+one power stage behind a closed energization gate. MCPWM/ADC synchronization,
+physical electrical alignment, and any nonzero duty remain separate reviewed
+work.
 
 Exit gate:
 

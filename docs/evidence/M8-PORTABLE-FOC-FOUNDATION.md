@@ -118,10 +118,11 @@ SimpleFOC, FluidNC, or MKS example implementation source was copied or used as
 implementation material. All new code is repository-owned and licensed
 `MIT OR Apache-2.0`.
 
-Still open for M8 are angle reduction/sine production, electrical alignment,
-voltage and estimated/DC-current modes, velocity/position cascades, motor and
-sensor calibration records, MKS board reconciliation, MCPWM/ADC synchronization,
+Portable exact angle reduction, sine/cosine production, and rotor calibration
+now have a separate later checkpoint. Still open for M8 are physical electrical
+alignment, voltage and estimated/DC-current modes, velocity/position cascades,
+canonical machine-configuration calibration records, MCPWM/ADC synchronization,
 real power-stage/current/sensor adapters, FOC safety faults, deadline/WCET
 evidence, physical shutdown measurement, and interface-side exact parameter
-reduction. The MKS board remains `described`, `planned`, unavailable, and
-non-armable.
+reduction. The MKS board remains unavailable and non-armable. See the
+[exact-angle evidence](M8-EXACT-ELECTRICAL-ANGLE.md).
