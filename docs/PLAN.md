@@ -505,7 +505,8 @@ six pins no-pull inputs before the first await. All motion/FOC operations
 reject, storage is explicitly unavailable, and the target remains non-armable.
 See the [safe-target evidence](evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
-Configuration V2 now removes the obsolete `FocEnable` selector and adds a
+The completed Configuration V2 checkpoint removed the obsolete `FocEnable`
+selector and added a
 canonical axis-local shutdown contract for dedicated enable, dedicated disable,
 or phase high impedance. Core 1 retains the exact strategy, stage/control
 resources, polarity, qualified evidence, and transition-cycle bound. Validation
@@ -540,11 +541,19 @@ snapshot. This is still portable software: it initializes no ADC or MCPWM
 peripheral and makes no timing or current-measurement claim. See the
 [current-sampling evidence](evidence/M8-CURRENT-SAMPLING-CONTRACT.md).
 
-The next target slice gives these rotor/current/timing facts canonical stored
-configuration records and designs the classic-ESP32 ADC1 acquisition plus
-MCPWM integer-compare owners behind the still-closed power-stage type state.
-Physical electrical alignment, calibrated analog error, truthful edge stamps,
-measured sensor latency, and any nonzero duty remain separate reviewed work.
+Configuration V3 now gives those rotor/current/timing facts canonical stored
+records. It adds fixed runtime, direct/quadrature controller, rotor, two-channel
+ADC calibration, and PWM/ADC synchronization records; exact cross-record checks
+bind duplicated scalar authorities; and only a complete independently hashed
+profile lowers into digest-bound FOC snapshots. The MKS capability identity now
+names one compile-supported AS5600 endpoint on each independent encoder bus.
+The real `Described` stages still reject and no peripheral is activated. See the
+[configuration V3 evidence](evidence/M8-FOC-CONFIGURATION-V3.md).
+
+The next target slice designs the classic-ESP32 ADC1 acquisition and MCPWM
+integer-compare owners behind the still-closed power-stage type state. Physical
+electrical alignment, calibrated analog error, truthful edge stamps, measured
+sensor latency, and any nonzero duty remain separate reviewed work.
 
 Exit gate:
 

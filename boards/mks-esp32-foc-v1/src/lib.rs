@@ -16,8 +16,8 @@ pub const BOARD_ID: &str = "mks-esp32-foc-v1";
 pub const TARGET: &str = "xtensa-esp32-none-elf";
 /// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x9a, 0xcd, 0xbe, 0x01, 0x88, 0x8a, 0xed, 0x63, 0xc3, 0x42, 0x7a, 0xa7, 0x1f, 0xee, 0xff, 0x21,
-    0x1c, 0x45, 0x53, 0x2c, 0xb5, 0x01, 0xeb, 0x80, 0xbc, 0x43, 0x67, 0x73, 0x89, 0x1b, 0xdb, 0x99,
+    0x8b, 0x14, 0xc1, 0x7f, 0xc2, 0x78, 0x7b, 0xce, 0x93, 0xe1, 0x06, 0x10, 0xa3, 0x91, 0x57, 0xe3,
+    0x3a, 0x5a, 0x10, 0xfa, 0xc4, 0x77, 0xe9, 0x10, 0x02, 0x1f, 0x16, 0x6b, 0x56, 0x25, 0x32, 0xe3,
 ]);
 
 /// Stable board-local fitted-device namespace.
@@ -26,6 +26,10 @@ pub mod device {
     pub const POWER_STAGE_0: u16 = 0;
     /// Motor-1 three-phase gate-driver and MOSFET stage.
     pub const POWER_STAGE_1: u16 = 1;
+    /// AS5600-compatible absolute-angle endpoint on encoder connector 0.
+    pub const ENCODER_0: u16 = 2;
+    /// AS5600-compatible absolute-angle endpoint on encoder connector 1.
+    pub const ENCODER_1: u16 = 3;
 }
 
 const fn resource(
@@ -302,6 +306,18 @@ pub static RESOURCES: &[ResourceDescriptor] = &[
         SafeValue::HighImpedance,
         true,
     ),
+    resource(
+        ResourceId::Device(device::ENCODER_0),
+        OwnerDomain::Realtime,
+        SafeValue::NotApplicable,
+        false,
+    ),
+    resource(
+        ResourceId::Device(device::ENCODER_1),
+        OwnerDomain::Realtime,
+        SafeValue::NotApplicable,
+        false,
+    ),
 ];
 
 /// Canonical names used by configuration and board diagnostics.
@@ -358,6 +374,10 @@ pub static ALIASES: &[AliasDescriptor<'static>] = &[
         resource: ResourceId::I2c(0),
     },
     AliasDescriptor {
+        name: "encoder.0.sensor",
+        resource: ResourceId::Device(device::ENCODER_0),
+    },
+    AliasDescriptor {
         name: "encoder.0.index",
         resource: ResourceId::Gpio(15),
     },
@@ -403,6 +423,10 @@ pub static ALIASES: &[AliasDescriptor<'static>] = &[
     AliasDescriptor {
         name: "encoder.1.i2c",
         resource: ResourceId::I2c(1),
+    },
+    AliasDescriptor {
+        name: "encoder.1.sensor",
+        resource: ResourceId::Device(device::ENCODER_1),
     },
     AliasDescriptor {
         name: "encoder.1.index",
@@ -490,7 +514,10 @@ static MOTOR1_AUXILIARY: &[ResourceId] = &[
     },
 ];
 
-/// Two fitted but still unqualified power stages.
+static NO_AUXILIARY_RESOURCES: &[ResourceId] = &[];
+
+/// Two fitted but still unqualified power stages and two compile-supported
+/// AS5600-compatible encoder endpoints exposed by the board connectors.
 pub static DEVICES: &[DeviceDescriptor<'static>] = &[
     DeviceDescriptor {
         resource: ResourceId::Device(device::POWER_STAGE_0),
@@ -507,6 +534,22 @@ pub static DEVICES: &[DeviceDescriptor<'static>] = &[
         route: DeviceRoute::Dedicated,
         auxiliary_resources: MOTOR1_AUXILIARY,
         support: SupportLevel::Described,
+    },
+    DeviceDescriptor {
+        resource: ResourceId::Device(device::ENCODER_0),
+        owner: OwnerDomain::Realtime,
+        bus: Some(ResourceId::I2c(0)),
+        route: DeviceRoute::I2cAddress(0x36),
+        auxiliary_resources: NO_AUXILIARY_RESOURCES,
+        support: SupportLevel::Compiles,
+    },
+    DeviceDescriptor {
+        resource: ResourceId::Device(device::ENCODER_1),
+        owner: OwnerDomain::Realtime,
+        bus: Some(ResourceId::I2c(1)),
+        route: DeviceRoute::I2cAddress(0x36),
+        auxiliary_resources: NO_AUXILIARY_RESOURCES,
+        support: SupportLevel::Compiles,
     },
 ];
 
@@ -673,7 +716,12 @@ static CURRENT_HIL_RESOURCES: &[ResourceId] = &[
         channel: 6,
     },
 ];
-static ENCODER_HIL_RESOURCES: &[ResourceId] = &[ResourceId::I2c(0), ResourceId::I2c(1)];
+static ENCODER_HIL_RESOURCES: &[ResourceId] = &[
+    ResourceId::I2c(0),
+    ResourceId::I2c(1),
+    ResourceId::Device(device::ENCODER_0),
+    ResourceId::Device(device::ENCODER_1),
+];
 static TIMING_HIL_RESOURCES: &[ResourceId] = &[
     ResourceId::Timer { group: 1, index: 0 },
     ResourceId::Device(device::POWER_STAGE_0),
@@ -785,8 +833,9 @@ mod tests {
 
     #[test]
     fn schematic_routes_two_complete_power_stages() {
-        assert_eq!(DEVICES.len(), 2);
-        assert!(DEVICES.iter().all(|stage| {
+        let power_stages = &DEVICES[..2];
+        assert_eq!(power_stages.len(), 2);
+        assert!(power_stages.iter().all(|stage| {
             stage.owner == OwnerDomain::Realtime
                 && stage.support == SupportLevel::Described
                 && stage.auxiliary_resources.len() == 8
@@ -806,6 +855,19 @@ mod tests {
                     })
                 )
         );
+    }
+
+    #[test]
+    fn encoder_endpoints_are_distinct_compile_supported_as5600_routes() {
+        let encoders = &DEVICES[2..];
+        assert_eq!(encoders.len(), 2);
+        for (index, encoder) in encoders.iter().enumerate() {
+            assert_eq!(encoder.resource, ResourceId::Device(2 + index as u16));
+            assert_eq!(encoder.owner, OwnerDomain::Realtime);
+            assert_eq!(encoder.bus, Some(ResourceId::I2c(index as u8)));
+            assert_eq!(encoder.route, DeviceRoute::I2cAddress(0x36));
+            assert_eq!(encoder.support, SupportLevel::Compiles);
+        }
     }
 
     #[test]

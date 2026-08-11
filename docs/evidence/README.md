@@ -124,8 +124,17 @@ a hardware qualification: board promotion still follows the evidence ladder in
   absent enable/storage capabilities, six-phase-high-impedance boot composition,
   and classic-ESP32 linked-image evidence with all energization paths closed.
 - [`M8-FOC-SHUTDOWN-CONTRACT.md`](M8-FOC-SHUTDOWN-CONTRACT.md) — canonical
-  configuration V2 shutdown strategies, immutable qualification and topology
+  historical configuration V2 shutdown strategies, immutable qualification and topology
   gates, core-1 FOC profiles, and renewed multi-target linked-image evidence.
 - [`M8-EXACT-ELECTRICAL-ANGLE.md`](M8-EXACT-ELECTRICAL-ANGLE.md) — exact binary
   turns, independently certified fixed-point sine/cosine, rational sensor and
   alignment uncertainty, and digest-bound canonical rotor observations.
+- [`M8-AS5600-CLOSED-OWNERSHIP.md`](M8-AS5600-CLOSED-OWNERSHIP.md) — read-only
+  AS5600 wire semantics, dual MKS encoder type states, and sealed ADC/MCPWM
+  ownership with no scheduled or energizing path.
+- [`M8-CURRENT-SAMPLING-CONTRACT.md`](M8-CURRENT-SAMPLING-CONTRACT.md) — outward
+  raw-ADC calibration, bounded two-shunt reconstruction, and replayable
+  PWM/ADC synchronization evidence.
+- [`M8-FOC-CONFIGURATION-V3.md`](M8-FOC-CONFIGURATION-V3.md) — canonical stored
+  controller/rotor/current/timing records, exact cross-record validation, and
+  SHA-256-bound real-time FOC lowering.

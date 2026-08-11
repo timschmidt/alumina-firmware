@@ -263,14 +263,16 @@ candidate. Every FOC/motion operation still rejects. This is compile evidence
 only, not a reset-state, shutdown, timing, or energization claim. See the
 [MKS safe-target evidence](docs/evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
-Canonical machine configuration is now deliberately V2: it removes the old
-`FocEnable` selector and makes shutdown a separate qualified topology contract
-for dedicated enable, dedicated disable, or phase high impedance. Both cores
-validate the same fixed bytes, and core 1 retains complete U/V/W and shutdown
-ownership for an admitted FOC axis. Board-package qualification remains the
+Canonical machine configuration is now deliberately V3. It retains the V2
+qualified shutdown topology and adds fixed records for normalized loop timing,
+direct/quadrature PI parameters, exact rotor calibration and rotation precision,
+two outward current-channel maps, and qualified PWM/ADC synchronization. Both
+cores validate the same fixed bytes. Only a complete SHA-256-verified profile
+can lower into digest-bound FOC controller, rotor, and current objects; no V1/V2
+compatibility decoder remains. Board-package qualification remains the
 authority, so configuration cannot promote the MKS stages beyond `Described`;
 the real target still rejects every FOC axis and exposes no energization path.
-See the [shutdown-contract evidence](docs/evidence/M8-FOC-SHUTDOWN-CONTRACT.md).
+See the [configuration V3 evidence](docs/evidence/M8-FOC-CONFIGURATION-V3.md).
 
 Portable rotor angles now use exact wrapping binary turns. Nearest-quadrant
 reduction feeds outward Q2.30 sine/cosine series whose pi and coefficient
@@ -307,6 +309,16 @@ jitter, skew, latency, and edge guards must all agree before the sample can bind
 to a FOC parameter snapshot. This remains portable software: no ADC or MCPWM is
 initialized and no target sample is claimed. See the
 [current-sampling evidence](docs/evidence/M8-CURRENT-SAMPLING-CONTRACT.md).
+
+The MKS capability document now identifies each independent 400 kHz encoder
+connector as its own compile-supported AS5600 endpoint at address `0x36`, while
+keeping the two unqualified power stages separate. A canonical FOC profile must
+bind one endpoint, exactly two phase-selected ADC inputs, all three PWM phases,
+and the qualified stage topology. Exact scalar authorities must agree with the
+retained integer pole-pair, encoder-modulus, loop-rate, PWM-period, and dead-time
+facts. The portable V3 tests replay all fixed record forms and every two-chunk
+byte boundary before lowering. These remain synthetic qualification fixtures;
+the physical MKS target is non-armable and its ADC/MCPWM tokens remain sealed.
 
 ## Developer checks
 
@@ -351,7 +363,7 @@ cargo xtask hil list
 cargo xtask hil build mks-tinybee-pcm-short-safe
 ```
 
-Both current packages remain intentionally non-armable. “Compiles” means the
+All current board packages remain intentionally non-armable. “Compiles” means the
 typed package and complete release image build for the declared chip; it is not
 bench, safe-state, peripheral-smoke, or timing qualification. See the
 [dual-core compile evidence](docs/evidence/M2-DUAL-CORE-RUNTIME.md) and the

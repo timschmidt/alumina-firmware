@@ -44,7 +44,7 @@ One typed resource is four bytes: `kind: u8`, `first: u8`, and `second: u16`.
 | 5 | I2S engine | 14 | storage |
 | 6 | RMT | 15 | radio |
 | 7 | timed-output engine/channel | 16 | safety input |
-| 8 | I2C | 17 | fitted device |
+| 8 | I2C | 17 | device or routed device endpoint |
 | 9 | SPI |  |  |
 
 ## Payload order
@@ -87,6 +87,10 @@ An optional resource is `present: u8`, three reserved bytes, then a resource ID;
 the entire eight bytes are zero when absent. A device route is eight bytes:
 kind plus three reserved bytes, followed by a resource ID for SPI chip select,
 an I2C address followed by three zeros, or four zeros for dedicated/UART routes.
+A device entry may represent a fitted component or a board-routed configurable
+endpoint for an external component. Its support level proves only the declared
+driver/route implementation; machine configuration and physical evidence still
+have to establish that an optional device is actually present and calibrated.
 
 Enum values are explicitly assigned in schema order:
 
@@ -154,3 +158,4 @@ Current identities are:
 | --- | ---: | --- |
 | MKS TinyBee V1.x | 3,251 | `000f151d9a404a94d82b311ab4033db23fe65e56c48d8a1d43bd773662c7c351` |
 | T-Deck Pro | 2,605 | `617a1b62b7e7f68762a8950ebe582f47bfd20b66d8cd052363a4d841e08eec10` |
+| MKS ESP32 FOC V1.0 | 2,808 | `8b14c17fc2787bce93e10610a39157e33a5a10fac477e910021f166b562532e3` |

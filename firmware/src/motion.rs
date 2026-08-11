@@ -104,9 +104,10 @@ impl MotionService {
         self.finish_preplanned = false;
         self.finish_committed = false;
         self.start_observation_recorded = false;
-        let summary = configuration.identity.summary;
+        let identity = configuration.identity();
+        let summary = identity.summary;
         if summary.stepper_axes == 0 {
-            self.configuration_digest = configuration.identity.digest;
+            self.configuration_digest = identity.digest;
             return Ok(());
         }
         if usize::from(summary.stepper_axes) != selected::JOB_AXES || summary.foc_axes != 0 {
@@ -117,8 +118,8 @@ impl MotionService {
         }
         let contract = selected::motion_shift_contract().ok_or(MotionServiceError::Unsupported)?;
         let profile = StepperExecutionProfile::<{ selected::JOB_AXES }>::from_configuration(
-            &configuration.identity,
-            &configuration.profile,
+            &identity,
+            configuration.profile(),
             TICK_HZ,
             selected::MOTION_OUTPUT_QUANTUM_CYCLES,
             selected::MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES,
@@ -128,7 +129,7 @@ impl MotionService {
             ScheduledShiftedStepper::new(profile, contract)
                 .map_err(|_| MotionServiceError::Configuration)?,
         );
-        self.configuration_digest = configuration.identity.digest;
+        self.configuration_digest = identity.digest;
         Ok(())
     }
 

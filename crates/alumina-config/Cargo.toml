@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 alumina-board.workspace = true
 alumina-capability.workspace = true
+alumina-foc.workspace = true
 alumina-protocol.workspace = true
 alumina-safety.workspace = true
 alumina-storage.workspace = true

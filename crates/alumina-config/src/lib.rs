@@ -10,6 +10,11 @@ use alumina_board::{
 use alumina_capability::{
     CapabilityError, decode_resource_id, encode_resource_id, verify_declared_identity,
 };
+use alumina_foc::{
+    CountUncertainty, CurrentChannelCalibration, CurrentPolarity, ElectricalPhase,
+    FocTimingProfile, PiConfig, Q30, Q30Interval, RotationPrecision, RotorCountDirection,
+    TwoShuntPhasePair,
+};
 use alumina_protocol::Digest;
 use alumina_safety::{
     InputBias, InputPolarity, MAX_SAFETY_INPUTS, SafetyInputRole, SafetyInputSpec,
@@ -19,11 +24,19 @@ use alumina_storage::provisioning::{ProvisionedCache, ProvisionedCacheError};
 use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
 use sha2::{Digest as ShaDigest, Sha256};
 
+mod foc;
+
+pub use foc::{
+    FocControllerAxis, FocControllerParameters, FocCurrentChannel, FocCurrentChannelParameters,
+    FocPwmAdcTimingParameters, FocRotorParameters, FocRuntimeParameters,
+    LoweredFocAxisConfiguration,
+};
+
 /// Exact machine-configuration schema version.
-pub const CONFIGURATION_VERSION: u16 = 2;
+pub const CONFIGURATION_VERSION: u16 = 3;
 /// Bytes in the fixed canonical document header.
 pub const CONFIGURATION_HEADER_BYTES: usize = 80;
-/// Bytes in every V2 configuration record.
+/// Bytes in every V3 configuration record.
 pub const CONFIGURATION_RECORD_BYTES: usize = 64;
 /// Schema-wide bound independent of a board's smaller admission budget.
 pub const MAX_CONFIGURATION_RECORDS: usize = 256;
@@ -34,10 +47,15 @@ pub const MAX_EXECUTABLE_STEPPER_AXES: usize = 8;
 /// Maximum FOC axes whose complete hardware contract is retained on core 1.
 pub const MAX_EXECUTABLE_FOC_AXES: usize = 4;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG02";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG03";
 const RECORD_KIND_BINDING: u16 = 1;
 const RECORD_KIND_SCALAR: u16 = 2;
 const RECORD_KIND_FOC_SHUTDOWN: u16 = 3;
+const RECORD_KIND_FOC_RUNTIME: u16 = 4;
+const RECORD_KIND_FOC_CONTROLLER: u16 = 5;
+const RECORD_KIND_FOC_ROTOR: u16 = 6;
+const RECORD_KIND_FOC_CURRENT_CHANNEL: u16 = 7;
+const RECORD_KIND_FOC_PWM_ADC_TIMING: u16 = 8;
 const PUBLICATION_MAGIC: [u8; 8] = *b"ALMCFQ01";
 const SELECTION_MAGIC: [u8; 8] = *b"ALMCFS01";
 const COORDINATOR_STATUS_MAGIC: [u8; 8] = *b"ALMCST01";
@@ -79,7 +97,7 @@ impl ConfigurationPublication {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V2 SHA-256/configuration representation.
+    /// Decodes only the exact V3 SHA-256/configuration representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationRequestError> {
         if encoded.len() != CONFIGURATION_PUBLICATION_BYTES {
             return Err(ConfigurationRequestError::Length);
@@ -240,7 +258,7 @@ impl ConfigurationFlags {
     pub const FIELD_ORIENTED_CONTROL: u32 = 1 << 2;
     /// Configuration contains non-motion laboratory/control resources.
     pub const LAB_CONTROL: u32 = 1 << 3;
-    /// All V2 flags.
+    /// All V3 flags.
     pub const ALLOWED: u32 =
         Self::MOTION | Self::CACHED_AUTONOMOUS | Self::FIELD_ORIENTED_CONTROL | Self::LAB_CONTROL;
 
@@ -278,7 +296,7 @@ impl ConfigurationHeader {
             .ok_or(ConfigurationError::Length)
     }
 
-    /// Encodes the exact V2 header.
+    /// Encodes the exact V3 header.
     pub fn encode(self) -> Result<[u8; CONFIGURATION_HEADER_BYTES], ConfigurationError> {
         self.validate()?;
         let mut encoded = [0_u8; CONFIGURATION_HEADER_BYTES];
@@ -298,7 +316,7 @@ impl ConfigurationHeader {
         Ok(encoded)
     }
 
-    /// Decodes only the exact canonical V2 header.
+    /// Decodes only the exact canonical V3 header.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_HEADER_BYTES {
             return Err(ConfigurationError::Length);
@@ -698,6 +716,9 @@ impl ScalarFact {
                 | Self::AxisMicrosteps
                 | Self::AxisEncoderCountsPerTurn
                 | Self::MotorPolePairs
+                | Self::PwmCarrierHertz
+                | Self::ControlRateHertz
+                | Self::TimerTickHertz
         )
     }
 
@@ -838,6 +859,11 @@ pub enum ConfigurationRecord {
     Binding(ResourceBinding),
     Scalar(ExactScalar),
     FocShutdown(FocShutdownContract),
+    FocRuntime(FocRuntimeParameters),
+    FocController(FocControllerParameters),
+    FocRotor(FocRotorParameters),
+    FocCurrentChannel(FocCurrentChannelParameters),
+    FocPwmAdcTiming(FocPwmAdcTimingParameters),
 }
 
 impl ConfigurationRecord {
@@ -888,11 +914,116 @@ impl ConfigurationRecord {
                 encoded[21] = shutdown.evidence as u8;
                 // Bytes 22..64 are reserved zero.
             }
+            Self::FocRuntime(runtime) => {
+                encoded[8..10].copy_from_slice(&runtime.pole_pairs.to_le_bytes());
+                encoded[12..16].copy_from_slice(&runtime.timing.pwm_hz.to_le_bytes());
+                encoded[16..20].copy_from_slice(&runtime.timing.current_loop_hz.to_le_bytes());
+                encoded[20..22]
+                    .copy_from_slice(&runtime.timing.velocity_loop_divider.to_le_bytes());
+                encoded[22..24]
+                    .copy_from_slice(&runtime.timing.position_loop_divider.to_le_bytes());
+                encoded[24..28]
+                    .copy_from_slice(&runtime.maximum_phase_current.bits().to_le_bytes());
+                encoded[28..32]
+                    .copy_from_slice(&runtime.maximum_phase_voltage.bits().to_le_bytes());
+                // Bytes 10..12 and 32..64 are reserved zero.
+            }
+            Self::FocController(controller) => {
+                let parameters = controller.parameters;
+                encoded[8..12].copy_from_slice(&parameters.proportional_gain.bits().to_le_bytes());
+                encoded[12..16]
+                    .copy_from_slice(&parameters.integral_gain_per_update.bits().to_le_bytes());
+                encoded[16..20].copy_from_slice(&parameters.integral_minimum.bits().to_le_bytes());
+                encoded[20..24].copy_from_slice(&parameters.integral_maximum.bits().to_le_bytes());
+                encoded[24..28].copy_from_slice(&parameters.output_minimum.bits().to_le_bytes());
+                encoded[28..32].copy_from_slice(&parameters.output_maximum.bits().to_le_bytes());
+                // Bytes 32..64 are reserved zero.
+            }
+            Self::FocRotor(rotor) => {
+                encoded[8..12].copy_from_slice(&rotor.counts_per_mechanical_turn.to_le_bytes());
+                encoded[12..16].copy_from_slice(&rotor.count_at_reference.to_le_bytes());
+                encoded[16..20]
+                    .copy_from_slice(&rotor.electrical_phase_at_reference.bits().to_le_bytes());
+                encoded[20..24].copy_from_slice(&rotor.maximum_alignment_error_bits.to_le_bytes());
+                encoded[24..28]
+                    .copy_from_slice(&rotor.maximum_count_error.numerator().to_le_bytes());
+                encoded[28..32]
+                    .copy_from_slice(&rotor.maximum_count_error.denominator().to_le_bytes());
+                encoded[32..36].copy_from_slice(
+                    &rotor
+                        .rotation_precision
+                        .maximum_component_width_ulps
+                        .to_le_bytes(),
+                );
+                encoded[36..40].copy_from_slice(
+                    &rotor
+                        .rotation_precision
+                        .maximum_norm_error_ulps
+                        .to_le_bytes(),
+                );
+                encoded[40] = rotor.evidence as u8;
+                // Bytes 41..64 are reserved zero.
+            }
+            Self::FocCurrentChannel(channel) => {
+                let calibration = channel.calibration;
+                encoded[8..10].copy_from_slice(&calibration.adc_maximum_count.to_le_bytes());
+                encoded[10..12].copy_from_slice(&calibration.valid_count_minimum.to_le_bytes());
+                encoded[12..14].copy_from_slice(&calibration.valid_count_maximum.to_le_bytes());
+                encoded[14..16].copy_from_slice(&calibration.count_at_zero.to_le_bytes());
+                encoded[16] = current_polarity_wire(calibration.polarity);
+                encoded[17] = channel.evidence as u8;
+                encoded[20..24].copy_from_slice(
+                    &calibration
+                        .normalized_current_per_count
+                        .lower()
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[24..28].copy_from_slice(
+                    &calibration
+                        .normalized_current_per_count
+                        .upper()
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[28..32]
+                    .copy_from_slice(&calibration.maximum_additive_error.bits().to_le_bytes());
+                encoded[32..36]
+                    .copy_from_slice(&calibration.maximum_interval_width_ulps.to_le_bytes());
+                // Bytes 18..20 and 36..64 are reserved zero.
+            }
+            Self::FocPwmAdcTiming(timing) => {
+                encoded[8..12].copy_from_slice(&timing.device_cycle_hz.to_le_bytes());
+                encoded[12..16].copy_from_slice(&timing.pwm_period_cycles.to_le_bytes());
+                encoded[16..20]
+                    .copy_from_slice(&timing.nominal_acquisition_offset_cycles.to_le_bytes());
+                encoded[20..24]
+                    .copy_from_slice(&timing.maximum_trigger_jitter_cycles.to_le_bytes());
+                encoded[24..28].copy_from_slice(&timing.maximum_acquisition_cycles.to_le_bytes());
+                encoded[28..32].copy_from_slice(&timing.maximum_channel_skew_cycles.to_le_bytes());
+                encoded[32..36].copy_from_slice(&timing.maximum_conversion_cycles.to_le_bytes());
+                encoded[36..40]
+                    .copy_from_slice(&timing.minimum_switching_guard_cycles.to_le_bytes());
+                encoded[40..44].copy_from_slice(
+                    &timing
+                        .maximum_normalized_current_slew_per_cycle
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[44..48]
+                    .copy_from_slice(&timing.maximum_interchannel_skew_error.bits().to_le_bytes());
+                encoded[48..52].copy_from_slice(&timing.maximum_phase_current.bits().to_le_bytes());
+                encoded[52..56]
+                    .copy_from_slice(&timing.maximum_phase_interval_width_ulps.to_le_bytes());
+                encoded[56..60].copy_from_slice(&timing.pwm_dead_time_cycles.to_le_bytes());
+                encoded[60] = timing.evidence as u8;
+                // Bytes 61..64 are reserved zero.
+            }
         }
         Ok(encoded)
     }
 
-    /// Decodes only an exact fixed-width V2 record.
+    /// Decodes only an exact fixed-width V3 record.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_RECORD_BYTES
             || usize::from(read_u16(encoded, 2)) != CONFIGURATION_RECORD_BYTES
@@ -968,6 +1099,129 @@ impl ConfigurationRecord {
                         .ok_or(ConfigurationError::Evidence)?,
                 })
             }
+            RECORD_KIND_FOC_RUNTIME => {
+                if selector != 0 {
+                    return Err(ConfigurationError::Selector);
+                }
+                if encoded[10..12].iter().any(|byte| *byte != 0)
+                    || encoded[32..64].iter().any(|byte| *byte != 0)
+                {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocRuntime(FocRuntimeParameters {
+                    instance,
+                    pole_pairs: read_u16(encoded, 8),
+                    timing: FocTimingProfile {
+                        pwm_hz: read_u32(encoded, 12),
+                        current_loop_hz: read_u32(encoded, 16),
+                        velocity_loop_divider: read_u16(encoded, 20),
+                        position_loop_divider: read_u16(encoded, 22),
+                    },
+                    maximum_phase_current: Q30::from_bits(read_i32(encoded, 24)),
+                    maximum_phase_voltage: Q30::from_bits(read_i32(encoded, 28)),
+                })
+            }
+            RECORD_KIND_FOC_CONTROLLER => {
+                if encoded[32..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocController(FocControllerParameters {
+                    instance,
+                    axis: FocControllerAxis::from_wire(selector)
+                        .ok_or(ConfigurationError::Selector)?,
+                    parameters: PiConfig {
+                        proportional_gain: Q30::from_bits(read_i32(encoded, 8)),
+                        integral_gain_per_update: Q30::from_bits(read_i32(encoded, 12)),
+                        integral_minimum: Q30::from_bits(read_i32(encoded, 16)),
+                        integral_maximum: Q30::from_bits(read_i32(encoded, 20)),
+                        output_minimum: Q30::from_bits(read_i32(encoded, 24)),
+                        output_maximum: Q30::from_bits(read_i32(encoded, 28)),
+                    },
+                })
+            }
+            RECORD_KIND_FOC_ROTOR => {
+                if encoded[41..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocRotor(FocRotorParameters {
+                    instance,
+                    counts_per_mechanical_turn: read_u32(encoded, 8),
+                    count_at_reference: read_u32(encoded, 12),
+                    electrical_phase_at_reference: ElectricalPhase::from_bits(read_u32(
+                        encoded, 16,
+                    )),
+                    direction: rotor_direction_from_wire(selector)
+                        .ok_or(ConfigurationError::Selector)?,
+                    maximum_alignment_error_bits: read_u32(encoded, 20),
+                    maximum_count_error: CountUncertainty::new(
+                        read_u32(encoded, 24),
+                        read_u32(encoded, 28),
+                    )
+                    .map_err(|_| ConfigurationError::FocRotor)?,
+                    rotation_precision: RotationPrecision {
+                        maximum_component_width_ulps: read_u32(encoded, 32),
+                        maximum_norm_error_ulps: read_u32(encoded, 36),
+                    },
+                    evidence: FactEvidence::from_wire(encoded[40])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
+            RECORD_KIND_FOC_CURRENT_CHANNEL => {
+                if encoded[18..20].iter().any(|byte| *byte != 0)
+                    || encoded[36..64].iter().any(|byte| *byte != 0)
+                {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocCurrentChannel(FocCurrentChannelParameters {
+                    instance,
+                    channel: FocCurrentChannel::from_wire(selector)
+                        .ok_or(ConfigurationError::Selector)?,
+                    calibration: CurrentChannelCalibration {
+                        adc_maximum_count: read_u16(encoded, 8),
+                        valid_count_minimum: read_u16(encoded, 10),
+                        valid_count_maximum: read_u16(encoded, 12),
+                        count_at_zero: read_u16(encoded, 14),
+                        polarity: current_polarity_from_wire(encoded[16])
+                            .ok_or(ConfigurationError::Selector)?,
+                        normalized_current_per_count: Q30Interval::new(
+                            Q30::from_bits(read_i32(encoded, 20)),
+                            Q30::from_bits(read_i32(encoded, 24)),
+                        )
+                        .map_err(|_| ConfigurationError::FocCurrent)?,
+                        maximum_additive_error: Q30::from_bits(read_i32(encoded, 28)),
+                        maximum_interval_width_ulps: read_u32(encoded, 32),
+                    },
+                    evidence: FactEvidence::from_wire(encoded[17])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
+            RECORD_KIND_FOC_PWM_ADC_TIMING => {
+                if encoded[61..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocPwmAdcTiming(FocPwmAdcTimingParameters {
+                    instance,
+                    phase_pair: phase_pair_from_wire(selector)
+                        .ok_or(ConfigurationError::Selector)?,
+                    device_cycle_hz: read_u32(encoded, 8),
+                    pwm_period_cycles: read_u32(encoded, 12),
+                    nominal_acquisition_offset_cycles: read_u32(encoded, 16),
+                    maximum_trigger_jitter_cycles: read_u32(encoded, 20),
+                    maximum_acquisition_cycles: read_u32(encoded, 24),
+                    maximum_channel_skew_cycles: read_u32(encoded, 28),
+                    maximum_conversion_cycles: read_u32(encoded, 32),
+                    minimum_switching_guard_cycles: read_u32(encoded, 36),
+                    maximum_normalized_current_slew_per_cycle: Q30::from_bits(read_i32(
+                        encoded, 40,
+                    )),
+                    maximum_interchannel_skew_error: Q30::from_bits(read_i32(encoded, 44)),
+                    maximum_phase_current: Q30::from_bits(read_i32(encoded, 48)),
+                    maximum_phase_interval_width_ulps: read_u32(encoded, 52),
+                    pwm_dead_time_cycles: read_u32(encoded, 56),
+                    evidence: FactEvidence::from_wire(encoded[60])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
             _ => return Err(ConfigurationError::RecordKind),
         };
         record.validate_shape()?;
@@ -990,7 +1244,12 @@ impl ConfigurationRecord {
                             | ScalarFact::TimerTickHertz
                     )
             }
-            Self::FocShutdown(_) => true,
+            Self::FocShutdown(_)
+            | Self::FocRuntime(_)
+            | Self::FocController(_)
+            | Self::FocRotor(_)
+            | Self::FocCurrentChannel(_)
+            | Self::FocPwmAdcTiming(_) => true,
         }
     }
 
@@ -1002,6 +1261,27 @@ impl ConfigurationRecord {
                 RECORD_KIND_FOC_SHUTDOWN,
                 shutdown.instance,
                 shutdown.strategy as u16,
+            ),
+            Self::FocRuntime(runtime) => (RECORD_KIND_FOC_RUNTIME, runtime.instance, 0),
+            Self::FocController(controller) => (
+                RECORD_KIND_FOC_CONTROLLER,
+                controller.instance,
+                controller.axis as u16,
+            ),
+            Self::FocRotor(rotor) => (
+                RECORD_KIND_FOC_ROTOR,
+                rotor.instance,
+                rotor_direction_wire(rotor.direction),
+            ),
+            Self::FocCurrentChannel(channel) => (
+                RECORD_KIND_FOC_CURRENT_CHANNEL,
+                channel.instance,
+                channel.channel as u16,
+            ),
+            Self::FocPwmAdcTiming(timing) => (
+                RECORD_KIND_FOC_PWM_ADC_TIMING,
+                timing.instance,
+                phase_pair_wire(timing.phase_pair),
             ),
         }
     }
@@ -1121,6 +1401,11 @@ impl ConfigurationRecord {
                     }
                 }
             }
+            Self::FocRuntime(runtime) => runtime.validate_shape()?,
+            Self::FocController(controller) => controller.validate_shape()?,
+            Self::FocRotor(rotor) => rotor.validate_shape()?,
+            Self::FocCurrentChannel(channel) => channel.validate_shape()?,
+            Self::FocPwmAdcTiming(timing) => timing.validate_shape()?,
         }
         Ok(())
     }
@@ -1165,7 +1450,25 @@ struct FocProfileState {
     phase_u: Option<ResourceBinding>,
     phase_v: Option<ResourceBinding>,
     phase_w: Option<ResourceBinding>,
+    current_a: Option<ResourceBinding>,
+    current_b: Option<ResourceBinding>,
+    current_c: Option<ResourceBinding>,
+    bus_voltage: Option<ResourceBinding>,
+    encoder: Option<ResourceBinding>,
+    fault: Option<ResourceBinding>,
     shutdown: Option<FocShutdownContract>,
+    runtime: Option<FocRuntimeParameters>,
+    direct_controller: Option<FocControllerParameters>,
+    quadrature_controller: Option<FocControllerParameters>,
+    rotor: Option<FocRotorParameters>,
+    current_channel0: Option<FocCurrentChannelParameters>,
+    current_channel1: Option<FocCurrentChannelParameters>,
+    pwm_adc_timing: Option<FocPwmAdcTimingParameters>,
+    encoder_counts_per_turn: Option<Rational>,
+    pole_pairs: Option<Rational>,
+    pwm_carrier_hz: Option<Rational>,
+    pwm_dead_time_seconds: Option<Rational>,
+    control_rate_hz: Option<Rational>,
 }
 
 impl FocProfileState {
@@ -1173,8 +1476,37 @@ impl FocProfileState {
         phase_u: None,
         phase_v: None,
         phase_w: None,
+        current_a: None,
+        current_b: None,
+        current_c: None,
+        bus_voltage: None,
+        encoder: None,
+        fault: None,
         shutdown: None,
+        runtime: None,
+        direct_controller: None,
+        quadrature_controller: None,
+        rotor: None,
+        current_channel0: None,
+        current_channel1: None,
+        pwm_adc_timing: None,
+        encoder_counts_per_turn: None,
+        pole_pairs: None,
+        pwm_carrier_hz: None,
+        pwm_dead_time_seconds: None,
+        control_rate_hz: None,
     };
+
+    const fn has_configuration(self) -> bool {
+        self.shutdown.is_some()
+            || self.runtime.is_some()
+            || self.direct_controller.is_some()
+            || self.quadrature_controller.is_some()
+            || self.rotor.is_some()
+            || self.current_channel0.is_some()
+            || self.current_channel1.is_some()
+            || self.pwm_adc_timing.is_some()
+    }
 }
 
 /// Whether the configured driver-control resource asserts enable or disable.
@@ -1189,7 +1521,7 @@ pub enum AxisDriverControl {
 /// For `step`, the active/inactive fields are pulse-high and pulse-low time.
 /// For `direction` and `driver_control`, they are setup-before-step and
 /// hold-after-step time. This role-specific interpretation is part of
-/// configuration V2.
+/// configuration V3.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StepperAxisProfile {
     pub instance: u16,
@@ -1199,14 +1531,26 @@ pub struct StepperAxisProfile {
     pub driver_control_action: AxisDriverControl,
 }
 
-/// Complete resource and shutdown ownership retained for one admitted FOC axis.
+/// Complete resource, calibration, timing, and control facts for one FOC axis.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FocAxisProfile {
     pub instance: u16,
     pub phase_u: ResourceBinding,
     pub phase_v: ResourceBinding,
     pub phase_w: ResourceBinding,
+    pub current_channel0_binding: ResourceBinding,
+    pub current_channel1_binding: ResourceBinding,
+    pub bus_voltage: Option<ResourceBinding>,
+    pub encoder: ResourceBinding,
+    pub fault: Option<ResourceBinding>,
     pub shutdown: FocShutdownContract,
+    pub runtime: FocRuntimeParameters,
+    pub direct_controller: FocControllerParameters,
+    pub quadrature_controller: FocControllerParameters,
+    pub rotor: FocRotorParameters,
+    pub current_channel0: FocCurrentChannelParameters,
+    pub current_channel1: FocCurrentChannelParameters,
+    pub pwm_adc_timing: FocPwmAdcTimingParameters,
 }
 
 /// Allocation-free executable facts retained from the exact configuration.
@@ -1345,6 +1689,17 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             ConfigurationRecord::FocShutdown(shutdown) => {
                 self.validate_foc_shutdown(shutdown)?;
             }
+            ConfigurationRecord::FocRuntime(runtime) => self.retain_foc_runtime(runtime)?,
+            ConfigurationRecord::FocController(controller) => {
+                self.retain_foc_controller(controller)?;
+            }
+            ConfigurationRecord::FocRotor(rotor) => self.retain_foc_rotor(rotor)?,
+            ConfigurationRecord::FocCurrentChannel(channel) => {
+                self.retain_foc_current_channel(channel)?;
+            }
+            ConfigurationRecord::FocPwmAdcTiming(timing) => {
+                self.retain_foc_pwm_adc_timing(timing)?;
+            }
         }
         self.last_key = Some(key);
         self.seen_records += 1;
@@ -1375,9 +1730,22 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         let mut profile = RealtimeConfigurationProfile::EMPTY;
         for (instance, axis) in self.axes.iter().copied().enumerate() {
             let has_step = axis.binding_mask & role_bit(BindingRole::AxisStep) != 0;
-            let has_foc = axis.binding_mask & role_bit(BindingRole::FocPhaseU) != 0
-                || axis.binding_mask & role_bit(BindingRole::FocPhaseV) != 0
-                || axis.binding_mask & role_bit(BindingRole::FocPhaseW) != 0;
+            let foc_binding_mask = role_bit(BindingRole::FocPhaseU)
+                | role_bit(BindingRole::FocPhaseV)
+                | role_bit(BindingRole::FocPhaseW)
+                | role_bit(BindingRole::FocCurrentA)
+                | role_bit(BindingRole::FocCurrentB)
+                | role_bit(BindingRole::FocCurrentC)
+                | role_bit(BindingRole::FocBusVoltage)
+                | role_bit(BindingRole::FocEncoder)
+                | role_bit(BindingRole::FocFault);
+            let retained_foc = self
+                .foc
+                .get(instance)
+                .copied()
+                .unwrap_or(FocProfileState::EMPTY);
+            let has_foc =
+                axis.binding_mask & foc_binding_mask != 0 || retained_foc.has_configuration();
             if has_step && has_foc {
                 return Err(ConfigurationError::AxisKind);
             }
@@ -1438,37 +1806,151 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                 }
                 let bindings = role_bit(BindingRole::FocPhaseU)
                     | role_bit(BindingRole::FocPhaseV)
-                    | role_bit(BindingRole::FocPhaseW);
-                let scalars = fact_bit(ScalarFact::MotorPolePairs)
+                    | role_bit(BindingRole::FocPhaseW)
+                    | role_bit(BindingRole::FocEncoder);
+                let scalars = fact_bit(ScalarFact::AxisEncoderCountsPerTurn)
+                    | fact_bit(ScalarFact::MotorPolePairs)
                     | fact_bit(ScalarFact::MotorCurrentLimitAmperes)
                     | fact_bit(ScalarFact::MotorVoltageLimitVolts)
                     | fact_bit(ScalarFact::PwmCarrierHertz)
                     | fact_bit(ScalarFact::PwmDeadTimeSeconds)
-                    | fact_bit(ScalarFact::ControlRateHertz);
+                    | fact_bit(ScalarFact::ControlRateHertz)
+                    | fact_bit(ScalarFact::CurrentSenseOhms)
+                    | fact_bit(ScalarFact::CurrentSenseVoltsPerAmpere);
                 if axis.binding_mask & bindings != bindings || axis.scalar_mask & scalars != scalars
                 {
                     return Err(ConfigurationError::IncompleteAxis);
                 }
-                let retained = self.foc[instance];
+                let retained = retained_foc;
                 let phase_u = retained.phase_u.ok_or(ConfigurationError::IncompleteAxis)?;
                 let phase_v = retained.phase_v.ok_or(ConfigurationError::IncompleteAxis)?;
                 let phase_w = retained.phase_w.ok_or(ConfigurationError::IncompleteAxis)?;
+                let encoder = retained.encoder.ok_or(ConfigurationError::IncompleteAxis)?;
                 let shutdown = retained
                     .shutdown
                     .ok_or(ConfigurationError::IncompleteAxis)?;
-                self.validate_foc_shutdown_topology(phase_u, phase_v, phase_w, shutdown)?;
-                profile.foc_axes[usize::from(foc_axes)] = Some(FocAxisProfile {
+                let runtime = retained.runtime.ok_or(ConfigurationError::IncompleteAxis)?;
+                let direct_controller = retained
+                    .direct_controller
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let quadrature_controller = retained
+                    .quadrature_controller
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let rotor = retained.rotor.ok_or(ConfigurationError::IncompleteAxis)?;
+                let current_channel0 = retained
+                    .current_channel0
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let current_channel1 = retained
+                    .current_channel1
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let pwm_adc_timing = retained
+                    .pwm_adc_timing
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let current_mask = role_bit(BindingRole::FocCurrentA)
+                    | role_bit(BindingRole::FocCurrentB)
+                    | role_bit(BindingRole::FocCurrentC);
+                let (expected_current_mask, current_channel0_binding, current_channel1_binding) =
+                    match pwm_adc_timing.phase_pair {
+                        TwoShuntPhasePair::Ab => (
+                            role_bit(BindingRole::FocCurrentA) | role_bit(BindingRole::FocCurrentB),
+                            retained.current_a,
+                            retained.current_b,
+                        ),
+                        TwoShuntPhasePair::Bc => (
+                            role_bit(BindingRole::FocCurrentB) | role_bit(BindingRole::FocCurrentC),
+                            retained.current_b,
+                            retained.current_c,
+                        ),
+                        TwoShuntPhasePair::Ca => (
+                            role_bit(BindingRole::FocCurrentC) | role_bit(BindingRole::FocCurrentA),
+                            retained.current_c,
+                            retained.current_a,
+                        ),
+                    };
+                if axis.binding_mask & current_mask != expected_current_mask {
+                    return Err(ConfigurationError::IncompleteAxis);
+                }
+                let current_channel0_binding =
+                    current_channel0_binding.ok_or(ConfigurationError::IncompleteAxis)?;
+                let current_channel1_binding =
+                    current_channel1_binding.ok_or(ConfigurationError::IncompleteAxis)?;
+                if [phase_u, phase_v, phase_w]
+                    .iter()
+                    .any(|phase| phase.maximum_frequency_hz < runtime.timing.pwm_hz)
+                    || [current_channel0_binding, current_channel1_binding]
+                        .iter()
+                        .any(|channel| {
+                            channel.maximum_frequency_hz < runtime.timing.current_loop_hz
+                        })
+                    || u64::from(encoder.maximum_frequency_hz)
+                        * u64::from(runtime.timing.velocity_loop_divider)
+                        < u64::from(runtime.timing.current_loop_hz)
+                {
+                    return Err(ConfigurationError::Frequency);
+                }
+                self.validate_foc_shutdown_topology(
+                    phase_u,
+                    phase_v,
+                    phase_w,
+                    current_channel0_binding,
+                    current_channel1_binding,
+                    shutdown,
+                )?;
+                if matches!(encoder.resource, ResourceId::Device(_))
+                    && !self.package.devices.iter().any(|device| {
+                        device.resource == encoder.resource
+                            && device.owner == OwnerDomain::Realtime
+                            && device.support != SupportLevel::Described
+                    })
+                {
+                    return Err(ConfigurationError::FocRotor);
+                }
+                if retained
+                    .pole_pairs
+                    .is_none_or(|value| !rational_equals_u32(value, u32::from(runtime.pole_pairs)))
+                    || retained
+                        .pwm_carrier_hz
+                        .is_none_or(|value| !rational_equals_u32(value, runtime.timing.pwm_hz))
+                    || retained.control_rate_hz.is_none_or(|value| {
+                        !rational_equals_u32(value, runtime.timing.current_loop_hz)
+                    })
+                    || retained.encoder_counts_per_turn.is_none_or(|value| {
+                        !rational_equals_u32(value, rotor.counts_per_mechanical_turn)
+                    })
+                    || retained.pwm_dead_time_seconds.is_none_or(|value| {
+                        !rational_equals_ratio(
+                            value,
+                            pwm_adc_timing.pwm_dead_time_cycles,
+                            pwm_adc_timing.device_cycle_hz,
+                        )
+                    })
+                {
+                    return Err(ConfigurationError::FocRuntime);
+                }
+                let foc_profile = FocAxisProfile {
                     instance: u16::try_from(instance).map_err(|_| ConfigurationError::AxisCount)?,
                     phase_u,
                     phase_v,
                     phase_w,
+                    current_channel0_binding,
+                    current_channel1_binding,
+                    bus_voltage: retained.bus_voltage,
+                    encoder,
+                    fault: retained.fault,
                     shutdown,
-                });
+                    runtime,
+                    direct_controller,
+                    quadrature_controller,
+                    rotor,
+                    current_channel0,
+                    current_channel1,
+                    pwm_adc_timing,
+                };
+                foc::validate_profile(foc_profile)?;
+                profile.foc_axes[usize::from(foc_axes)] = Some(foc_profile);
                 foc_axes = foc_axes
                     .checked_add(1)
                     .ok_or(ConfigurationError::AxisCount)?;
-            } else if instance < MAX_EXECUTABLE_FOC_AXES && self.foc[instance].shutdown.is_some() {
-                return Err(ConfigurationError::IncompleteAxis);
             }
             if let (Some(minimum), Some(maximum)) = (axis.minimum, axis.maximum)
                 && minimum.exact_cmp(maximum) != Ordering::Less
@@ -1594,6 +2076,12 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     BindingRole::FocPhaseU => foc.phase_u = Some(binding),
                     BindingRole::FocPhaseV => foc.phase_v = Some(binding),
                     BindingRole::FocPhaseW => foc.phase_w = Some(binding),
+                    BindingRole::FocCurrentA => foc.current_a = Some(binding),
+                    BindingRole::FocCurrentB => foc.current_b = Some(binding),
+                    BindingRole::FocCurrentC => foc.current_c = Some(binding),
+                    BindingRole::FocBusVoltage => foc.bus_voltage = Some(binding),
+                    BindingRole::FocEncoder => foc.encoder = Some(binding),
+                    BindingRole::FocFault => foc.fault = Some(binding),
                     _ => {}
                 }
             }
@@ -1629,6 +2117,81 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         for resource in resources {
             self.claimed[self.claimed_len] = Some(*resource);
             self.claimed_len += 1;
+        }
+        Ok(())
+    }
+
+    fn retain_foc_runtime(
+        &mut self,
+        runtime: FocRuntimeParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(runtime.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.runtime.replace(runtime).is_some() {
+            return Err(ConfigurationError::FocRuntime);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_controller(
+        &mut self,
+        controller: FocControllerParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(controller.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        let selected = match controller.axis {
+            FocControllerAxis::Direct => &mut state.direct_controller,
+            FocControllerAxis::Quadrature => &mut state.quadrature_controller,
+        };
+        if selected.replace(controller).is_some() {
+            return Err(ConfigurationError::FocRuntime);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_rotor(&mut self, rotor: FocRotorParameters) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(rotor.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.rotor.replace(rotor).is_some() {
+            return Err(ConfigurationError::FocRotor);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_current_channel(
+        &mut self,
+        channel: FocCurrentChannelParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(channel.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        let selected = match channel.channel {
+            FocCurrentChannel::Channel0 => &mut state.current_channel0,
+            FocCurrentChannel::Channel1 => &mut state.current_channel1,
+        };
+        if selected.replace(channel).is_some() {
+            return Err(ConfigurationError::FocCurrent);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_pwm_adc_timing(
+        &mut self,
+        timing: FocPwmAdcTimingParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(timing.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.pwm_adc_timing.replace(timing).is_some() {
+            return Err(ConfigurationError::FocCurrent);
         }
         Ok(())
     }
@@ -1706,6 +2269,8 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         phase_u: ResourceBinding,
         phase_v: ResourceBinding,
         phase_w: ResourceBinding,
+        current_channel0: ResourceBinding,
+        current_channel1: ResourceBinding,
         shutdown: FocShutdownContract,
     ) -> Result<(), ConfigurationError> {
         let stage = self
@@ -1720,6 +2285,13 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             .any(|phase| !stage.auxiliary_resources.contains(phase))
         {
             return Err(ConfigurationError::ShutdownContract);
+        }
+        let current_channels = [current_channel0.resource, current_channel1.resource];
+        if current_channels
+            .iter()
+            .any(|channel| !stage.auxiliary_resources.contains(channel))
+        {
+            return Err(ConfigurationError::FocCurrent);
         }
         match shutdown.strategy {
             FocShutdownStrategy::PhaseHighImpedance => {
@@ -1822,12 +2394,27 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
 
     fn validate_scalar(&mut self, scalar: ExactScalar) {
         if scalar.fact.axis_fact() {
-            let axis = &mut self.axes[usize::from(scalar.instance)];
+            let instance = usize::from(scalar.instance);
+            let axis = &mut self.axes[instance];
             axis.scalar_mask |= fact_bit(scalar.fact);
             match scalar.fact {
                 ScalarFact::AxisPositionMinimumMetres => axis.minimum = Some(scalar.value),
                 ScalarFact::AxisPositionMaximumMetres => axis.maximum = Some(scalar.value),
                 _ => {}
+            }
+            if let Some(foc) = self.foc.get_mut(instance) {
+                match scalar.fact {
+                    ScalarFact::AxisEncoderCountsPerTurn => {
+                        foc.encoder_counts_per_turn = Some(scalar.value);
+                    }
+                    ScalarFact::MotorPolePairs => foc.pole_pairs = Some(scalar.value),
+                    ScalarFact::PwmCarrierHertz => foc.pwm_carrier_hz = Some(scalar.value),
+                    ScalarFact::PwmDeadTimeSeconds => {
+                        foc.pwm_dead_time_seconds = Some(scalar.value);
+                    }
+                    ScalarFact::ControlRateHertz => foc.control_rate_hz = Some(scalar.value),
+                    _ => {}
+                }
             }
         }
     }
@@ -1884,8 +2471,20 @@ pub struct ConfigurationIdentity {
 /// document from which they were independently derived.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RealtimeConfiguration {
-    pub identity: ConfigurationIdentity,
-    pub profile: RealtimeConfigurationProfile,
+    identity: ConfigurationIdentity,
+    profile: RealtimeConfigurationProfile,
+}
+
+impl RealtimeConfiguration {
+    /// Exact SHA-256 identity and summary paired with this executable profile.
+    pub const fn identity(&self) -> ConfigurationIdentity {
+        self.identity
+    }
+
+    /// Independently validated, allocation-free core-1 configuration facts.
+    pub const fn profile(&self) -> &RealtimeConfigurationProfile {
+        &self.profile
+    }
 }
 
 /// Fixed command prefix before an optional core-to-core configuration byte chunk.
@@ -2308,7 +2907,10 @@ impl ConfigurationFaultCode {
             ConfigurationError::Rational
             | ConfigurationError::Uncertainty
             | ConfigurationError::Scalar
-            | ConfigurationError::Evidence => Self::ExactFact,
+            | ConfigurationError::Evidence
+            | ConfigurationError::FocRuntime
+            | ConfigurationError::FocRotor
+            | ConfigurationError::FocCurrent => Self::ExactFact,
             ConfigurationError::IncompleteAxis
             | ConfigurationError::AxisKind
             | ConfigurationError::AxisCount
@@ -2667,7 +3269,7 @@ pub struct ConfigurationCoordinatorStatus {
 }
 
 impl ConfigurationCoordinatorStatus {
-    /// Encodes the exact 264-byte V2 status body.
+    /// Encodes the exact 264-byte V3 status body.
     pub fn encode(
         self,
     ) -> Result<[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES], ConfigurationCoordinatorStatusError>
@@ -2707,7 +3309,7 @@ impl ConfigurationCoordinatorStatus {
         Ok(encoded)
     }
 
-    /// Decodes and re-encodes to require the unique V2 representation.
+    /// Decodes and re-encodes to require the unique V3 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationCoordinatorStatusError> {
         if encoded.len() != CONFIGURATION_COORDINATOR_STATUS_BYTES {
             return Err(ConfigurationCoordinatorStatusError::Length);
@@ -3635,6 +4237,9 @@ pub enum ConfigurationError {
     AxisRange,
     ShutdownContract,
     ShutdownUnqualified,
+    FocRuntime,
+    FocRotor,
+    FocCurrent,
     MotionPolicy,
     Internal,
 }
@@ -3765,6 +4370,72 @@ const fn read_u32(bytes: &[u8], offset: usize) -> u32 {
         bytes[offset + 2],
         bytes[offset + 3],
     ])
+}
+
+const fn read_i32(bytes: &[u8], offset: usize) -> i32 {
+    i32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+const fn rotor_direction_wire(direction: RotorCountDirection) -> u16 {
+    match direction {
+        RotorCountDirection::Increasing => 1,
+        RotorCountDirection::Decreasing => 2,
+    }
+}
+
+const fn rotor_direction_from_wire(value: u16) -> Option<RotorCountDirection> {
+    match value {
+        1 => Some(RotorCountDirection::Increasing),
+        2 => Some(RotorCountDirection::Decreasing),
+        _ => None,
+    }
+}
+
+const fn current_polarity_wire(polarity: CurrentPolarity) -> u8 {
+    match polarity {
+        CurrentPolarity::Increasing => 1,
+        CurrentPolarity::Decreasing => 2,
+    }
+}
+
+const fn current_polarity_from_wire(value: u8) -> Option<CurrentPolarity> {
+    match value {
+        1 => Some(CurrentPolarity::Increasing),
+        2 => Some(CurrentPolarity::Decreasing),
+        _ => None,
+    }
+}
+
+const fn phase_pair_wire(pair: TwoShuntPhasePair) -> u16 {
+    match pair {
+        TwoShuntPhasePair::Ab => 1,
+        TwoShuntPhasePair::Bc => 2,
+        TwoShuntPhasePair::Ca => 3,
+    }
+}
+
+const fn phase_pair_from_wire(value: u16) -> Option<TwoShuntPhasePair> {
+    match value {
+        1 => Some(TwoShuntPhasePair::Ab),
+        2 => Some(TwoShuntPhasePair::Bc),
+        3 => Some(TwoShuntPhasePair::Ca),
+        _ => None,
+    }
+}
+
+fn rational_equals_u32(value: Rational, expected: u32) -> bool {
+    i128::from(value.numerator) == i128::from(expected) * i128::from(value.denominator)
+}
+
+fn rational_equals_ratio(value: Rational, numerator: u32, denominator: u32) -> bool {
+    denominator != 0
+        && i128::from(value.numerator) * i128::from(denominator)
+            == i128::from(numerator) * i128::from(value.denominator)
 }
 
 const fn read_u64(bytes: &[u8], offset: usize) -> u64 {
@@ -3918,6 +4589,26 @@ mod tests {
         })
     }
 
+    fn sampled_binding(
+        instance: u16,
+        role: BindingRole,
+        resource: ResourceId,
+        maximum_frequency_hz: u32,
+    ) -> ConfigurationRecord {
+        ConfigurationRecord::Binding(ResourceBinding {
+            instance,
+            role,
+            resource,
+            owner: OwnerDomain::Realtime,
+            polarity: SignalPolarity::NotApplicable,
+            flags: BindingFlags::default(),
+            minimum_active_cycles: 0,
+            minimum_inactive_cycles: 0,
+            maximum_frequency_hz,
+            watchdog_cycles: 240_000,
+        })
+    }
+
     fn scalar(instance: u16, fact: ScalarFact, value: Rational) -> ConfigurationRecord {
         ConfigurationRecord::Scalar(ExactScalar {
             instance,
@@ -3945,6 +4636,24 @@ mod tests {
     }
 
     fn mks_foc_records(shutdown: ConfigurationRecord) -> Vec<ConfigurationRecord> {
+        let controller = PiConfig {
+            proportional_gain: Q30::ZERO,
+            integral_gain_per_update: Q30::ZERO,
+            integral_minimum: Q30::NEG_ONE,
+            integral_maximum: Q30::ONE,
+            output_minimum: Q30::from_bits(-Q30::HALF.bits()),
+            output_maximum: Q30::HALF,
+        };
+        let current_channel = CurrentChannelCalibration {
+            adc_maximum_count: 4_095,
+            valid_count_minimum: 1_200,
+            valid_count_maximum: 2_800,
+            count_at_zero: 2_000,
+            polarity: CurrentPolarity::Increasing,
+            normalized_current_per_count: Q30Interval::point(Q30::from_bits(1 << 19)),
+            maximum_additive_error: Q30::from_bits(1 << 18),
+            maximum_interval_width_ulps: 1 << 19,
+        };
         let mut records = Vec::from([
             binding(
                 0,
@@ -3983,22 +4692,115 @@ mod tests {
                 SignalPolarity::ActiveLow,
                 false,
             ),
+            sampled_binding(
+                0,
+                BindingRole::FocCurrentA,
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: 3,
+                },
+                20_000,
+            ),
+            sampled_binding(
+                0,
+                BindingRole::FocCurrentB,
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: 0,
+                },
+                20_000,
+            ),
+            sampled_binding(
+                0,
+                BindingRole::FocEncoder,
+                ResourceId::Device(board_mks_esp32_foc_v1::device::ENCODER_0),
+                1_000,
+            ),
             shutdown,
         ]);
         records.extend([
+            scalar(0, ScalarFact::AxisEncoderCountsPerTurn, rational(4_096, 1)),
             scalar(0, ScalarFact::MotorPolePairs, rational(7, 1)),
             scalar(0, ScalarFact::MotorCurrentLimitAmperes, rational(1, 2)),
             scalar(0, ScalarFact::MotorVoltageLimitVolts, rational(6, 1)),
             scalar(0, ScalarFact::PwmCarrierHertz, rational(20_000, 1)),
             scalar(0, ScalarFact::PwmDeadTimeSeconds, rational(1, 10_000_000)),
             scalar(0, ScalarFact::ControlRateHertz, rational(20_000, 1)),
+            scalar(0, ScalarFact::CurrentSenseOhms, rational(1, 100)),
+            scalar(0, ScalarFact::CurrentSenseVoltsPerAmpere, rational(1, 1)),
+            ConfigurationRecord::FocRuntime(FocRuntimeParameters {
+                instance: 0,
+                pole_pairs: 7,
+                timing: FocTimingProfile {
+                    pwm_hz: 20_000,
+                    current_loop_hz: 20_000,
+                    velocity_loop_divider: 20,
+                    position_loop_divider: 10,
+                },
+                maximum_phase_current: Q30::ONE,
+                maximum_phase_voltage: Q30::ONE,
+            }),
+            ConfigurationRecord::FocController(FocControllerParameters {
+                instance: 0,
+                axis: FocControllerAxis::Direct,
+                parameters: controller,
+            }),
+            ConfigurationRecord::FocController(FocControllerParameters {
+                instance: 0,
+                axis: FocControllerAxis::Quadrature,
+                parameters: controller,
+            }),
+            ConfigurationRecord::FocRotor(FocRotorParameters {
+                instance: 0,
+                counts_per_mechanical_turn: 4_096,
+                count_at_reference: 0,
+                electrical_phase_at_reference: ElectricalPhase::ZERO,
+                direction: RotorCountDirection::Increasing,
+                maximum_alignment_error_bits: 1_024,
+                maximum_count_error: CountUncertainty::new(1, 2).unwrap(),
+                rotation_precision: RotationPrecision {
+                    maximum_component_width_ulps: 12_000_000,
+                    maximum_norm_error_ulps: 12_000_000,
+                },
+                evidence: FactEvidence::Measured,
+            }),
+            ConfigurationRecord::FocCurrentChannel(FocCurrentChannelParameters {
+                instance: 0,
+                channel: FocCurrentChannel::Channel0,
+                calibration: current_channel,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocCurrentChannel(FocCurrentChannelParameters {
+                instance: 0,
+                channel: FocCurrentChannel::Channel1,
+                calibration: current_channel,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocPwmAdcTiming(FocPwmAdcTimingParameters {
+                instance: 0,
+                phase_pair: TwoShuntPhasePair::Ab,
+                device_cycle_hz: 80_000_000,
+                pwm_period_cycles: 4_000,
+                nominal_acquisition_offset_cycles: 2_000,
+                maximum_trigger_jitter_cycles: 2,
+                maximum_acquisition_cycles: 20,
+                maximum_channel_skew_cycles: 8,
+                maximum_conversion_cycles: 40,
+                minimum_switching_guard_cycles: 50,
+                maximum_normalized_current_slew_per_cycle: Q30::from_bits(1 << 14),
+                maximum_interchannel_skew_error: Q30::from_bits(1 << 17),
+                maximum_phase_current: Q30::ONE,
+                maximum_phase_interval_width_ulps: 1 << 22,
+                pwm_dead_time_cycles: 8,
+                evidence: FactEvidence::Qualified,
+            }),
         ]);
         records.sort_by_key(|record| record.key());
         records
     }
 
     fn qualified_mks_package<'a>(
-        devices: &'a [alumina_board::DeviceDescriptor<'a>; 2],
+        devices: &'a [alumina_board::DeviceDescriptor<'a>],
     ) -> BoardPackage<'a> {
         reidentified_package(BoardPackage {
             devices,
@@ -4249,6 +5051,85 @@ mod tests {
     }
 
     #[test]
+    fn foc_v3_records_have_unique_canonical_fixed_width_encodings() {
+        let records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+        let mut checked = 0;
+        for record in records {
+            let (kind, _, _) = record.key();
+            if kind < RECORD_KIND_FOC_RUNTIME {
+                continue;
+            }
+            let encoded = record.encode().unwrap();
+            assert_eq!(encoded.len(), CONFIGURATION_RECORD_BYTES);
+            assert_eq!(ConfigurationRecord::decode(&encoded), Ok(record));
+
+            let reserved_offset = match kind {
+                RECORD_KIND_FOC_RUNTIME => 10,
+                RECORD_KIND_FOC_CONTROLLER | RECORD_KIND_FOC_ROTOR => 63,
+                RECORD_KIND_FOC_CURRENT_CHANNEL => 18,
+                RECORD_KIND_FOC_PWM_ADC_TIMING => 63,
+                _ => unreachable!(),
+            };
+            let mut noncanonical = encoded;
+            noncanonical[reserved_offset] = 1;
+            assert_eq!(
+                ConfigurationRecord::decode(&noncanonical),
+                Err(ConfigurationError::Reserved)
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 7);
+
+        let timing = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ))
+        .into_iter()
+        .find(|record| matches!(record, ConfigurationRecord::FocPwmAdcTiming(_)))
+        .unwrap();
+        let mut unknown_pair = timing.encode().unwrap();
+        unknown_pair[6..8].copy_from_slice(&4_u16.to_le_bytes());
+        assert_eq!(
+            ConfigurationRecord::decode(&unknown_pair),
+            Err(ConfigurationError::Selector)
+        );
+
+        let runtime = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ))
+        .into_iter()
+        .find(|record| matches!(record, ConfigurationRecord::FocRuntime(_)))
+        .unwrap();
+        let mut unknown_runtime_selector = runtime.encode().unwrap();
+        unknown_runtime_selector[6..8].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(
+            ConfigurationRecord::decode(&unknown_runtime_selector),
+            Err(ConfigurationError::Selector)
+        );
+
+        let header = ConfigurationHeader {
+            capability_digest: board_mks_esp32_foc_v1::CAPABILITY_DIGEST,
+            record_count: 1,
+            realtime_record_count: 1,
+            flags: ConfigurationFlags::default(),
+        };
+        let mut old_header = header.encode().unwrap();
+        old_header[0..8].copy_from_slice(b"ALMCFG02");
+        old_header[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        assert_eq!(
+            ConfigurationHeader::decode(&old_header),
+            Err(ConfigurationError::Magic)
+        );
+    }
+
+    #[test]
     fn resource_claim_batches_are_transactional() {
         let header = ConfigurationHeader {
             capability_digest: board_mks_esp32_foc_v1::PACKAGE.board.capability_digest,
@@ -4308,22 +5189,23 @@ mod tests {
         };
         let mut validator =
             ConfigurationValidator::<32>::new(&board_mks_esp32_foc_v1::PACKAGE, header).unwrap();
-        for record in &records[..records.len() - 1] {
-            validator.push(*record).unwrap();
+        for record in records {
+            if matches!(record, ConfigurationRecord::FocShutdown(_)) {
+                assert_eq!(
+                    validator.push(record),
+                    Err(ConfigurationError::ShutdownUnqualified)
+                );
+                return;
+            }
+            validator.push(record).unwrap();
         }
-        assert_eq!(
-            validator.push(records[records.len() - 1]),
-            Err(ConfigurationError::ShutdownUnqualified)
-        );
+        panic!("fixture must contain an FOC shutdown contract");
     }
 
     #[test]
     fn qualified_high_impedance_shutdown_is_retained_exactly_on_core1() {
-        let mut devices = [
-            board_mks_esp32_foc_v1::PACKAGE.devices[0],
-            board_mks_esp32_foc_v1::PACKAGE.devices[1],
-        ];
-        for device in &mut devices {
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        for device in &mut devices[..2] {
             device.support = SupportLevel::Qualified;
         }
         let package = qualified_mks_package(&devices);
@@ -4358,6 +5240,176 @@ mod tests {
     }
 
     #[test]
+    fn complete_foc_document_lowers_only_after_exact_stream_validation() {
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        for device in &mut devices[..2] {
+            device.support = SupportLevel::Qualified;
+        }
+        let package = qualified_mks_package(&devices);
+        let records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+        let flags = ConfigurationFlags(
+            ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+        );
+        let (bytes, digest) = document(&package, &records, flags);
+
+        for split in 1..bytes.len() {
+            let mut validator = ConfigurationStreamValidator::<32>::new(
+                &package,
+                digest,
+                u32::try_from(bytes.len()).unwrap(),
+            )
+            .unwrap();
+            validator.push(&bytes[..split]).unwrap();
+            validator.push(&bytes[split..]).unwrap();
+            assert_eq!(validator.finish().unwrap().digest, digest);
+        }
+
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        let (identity, profile) = validator.finish_with_profile().unwrap();
+        let configuration = RealtimeConfiguration { identity, profile };
+        assert_eq!(configuration.identity(), identity);
+        assert_eq!(configuration.profile().foc_axis_count(), 1);
+
+        let lowered = configuration.lower_foc_axis(0).unwrap();
+        assert_eq!(lowered.instance, 0);
+        assert_eq!(lowered.parameters.configuration_digest, digest);
+        assert_eq!(lowered.parameters.pole_pairs, 7);
+        assert_eq!(lowered.parameters.timing.pwm_hz, 20_000);
+        assert_eq!(lowered.rotor.configuration_digest, digest);
+        assert_eq!(lowered.rotor.counts_per_mechanical_turn, 4_096);
+        assert_eq!(lowered.current.snapshot().configuration_digest, digest);
+        assert_eq!(lowered.current.snapshot().phase_pair, TwoShuntPhasePair::Ab);
+        assert_eq!(lowered.pwm_dead_time_cycles, 8);
+        assert_eq!(
+            configuration
+                .profile()
+                .foc_axis(0)
+                .unwrap()
+                .encoder
+                .resource,
+            ResourceId::Device(board_mks_esp32_foc_v1::device::ENCODER_0)
+        );
+        assert_eq!(
+            configuration.lower_foc_axis(1),
+            Err(ConfigurationError::IncompleteAxis)
+        );
+
+        let mut mismatched = records.clone();
+        let ConfigurationRecord::Scalar(carrier) = mismatched
+            .iter_mut()
+            .find(|record| {
+                matches!(
+                    record,
+                    ConfigurationRecord::Scalar(ExactScalar {
+                        fact: ScalarFact::PwmCarrierHertz,
+                        ..
+                    })
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        carrier.value = rational(10_000, 1);
+        let (bytes, digest) = document(&package, &mismatched, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::FocRuntime));
+
+        let mut incomplete = records;
+        incomplete.retain(|record| !matches!(record, ConfigurationRecord::FocRotor(_)));
+        let (bytes, digest) = document(&package, &incomplete, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::IncompleteAxis));
+
+        let mut wrong_topology = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+        let ConfigurationRecord::Binding(current_b) = wrong_topology
+            .iter_mut()
+            .find(|record| {
+                matches!(
+                    record,
+                    ConfigurationRecord::Binding(ResourceBinding {
+                        role: BindingRole::FocCurrentB,
+                        ..
+                    })
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        current_b.resource = ResourceId::Adc {
+            unit: 1,
+            channel: 7,
+        };
+        let (bytes, digest) = document(&package, &wrong_topology, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::FocCurrent));
+
+        let mut undersampled = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+        let ConfigurationRecord::Binding(current_a) = undersampled
+            .iter_mut()
+            .find(|record| {
+                matches!(
+                    record,
+                    ConfigurationRecord::Binding(ResourceBinding {
+                        role: BindingRole::FocCurrentA,
+                        ..
+                    })
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        current_a.maximum_frequency_hz = 19_999;
+        let (bytes, digest) = document(&package, &undersampled, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::Frequency));
+    }
+
+    #[test]
     fn dedicated_shutdown_polarity_must_match_the_board_safe_level() {
         let control = ResourceId::Gpio(21);
         let mut resources = Vec::from(board_mks_esp32_foc_v1::PACKAGE.board.resources);
@@ -4370,17 +5422,13 @@ mod tests {
         let mut stage_auxiliary =
             Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices[0].auxiliary_resources);
         stage_auxiliary.push(control);
-        let devices = [
-            alumina_board::DeviceDescriptor {
-                auxiliary_resources: &stage_auxiliary,
-                support: SupportLevel::Qualified,
-                ..board_mks_esp32_foc_v1::PACKAGE.devices[0]
-            },
-            alumina_board::DeviceDescriptor {
-                support: SupportLevel::Qualified,
-                ..board_mks_esp32_foc_v1::PACKAGE.devices[1]
-            },
-        ];
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        devices[0] = alumina_board::DeviceDescriptor {
+            auxiliary_resources: &stage_auxiliary,
+            support: SupportLevel::Qualified,
+            ..devices[0]
+        };
+        devices[1].support = SupportLevel::Qualified;
         let mut board = board_mks_esp32_foc_v1::PACKAGE.board;
         board.resources = &resources;
         let package = reidentified_package(BoardPackage {
@@ -4456,7 +5504,7 @@ mod tests {
     #[test]
     fn tinybee_motion_document_validates_at_every_chunk_split() {
         assert!(
-            core::mem::size_of::<RealtimeConfigurationProfile>() <= 2_048,
+            core::mem::size_of::<RealtimeConfigurationProfile>() <= 4_096,
             "executable profiles are retained transactionally on core 1"
         );
         let records = tinybee_motion_records();
@@ -4589,7 +5637,12 @@ mod tests {
                 }
                 ConfigurationRecord::Binding(_)
                 | ConfigurationRecord::Scalar(_)
-                | ConfigurationRecord::FocShutdown(_) => {}
+                | ConfigurationRecord::FocShutdown(_)
+                | ConfigurationRecord::FocRuntime(_)
+                | ConfigurationRecord::FocController(_)
+                | ConfigurationRecord::FocRotor(_)
+                | ConfigurationRecord::FocCurrentChannel(_)
+                | ConfigurationRecord::FocPwmAdcTiming(_) => {}
             }
         }
         records.sort_by_key(|record| record.key());

@@ -1,6 +1,6 @@
-# Canonical machine configuration V2
+# Canonical machine configuration V3
 
-`ALMCFG02` is the content-addressed machine/resource authority emitted by the
+`ALMCFG03` is the content-addressed machine/resource authority emitted by the
 browser/WASM compiler and independently validated on both ESP cores. It is not
 JSON, FluidNC configuration, G-code, a Rust memory image, or executable code.
 The complete bytes are uploaded as storage object kind `MachineConfiguration`
@@ -16,15 +16,16 @@ between revisions or capability/qualification changes.
 Integers are little-endian. Reserved bytes are zero. Unknown flags, record
 kinds, roles, facts, owners, polarities, or evidence values reject. Records are
 fixed-width and strictly ordered by `(kind, instance, selector)`; duplicate keys
-are consequently impossible. V2 admits 1–256 records and no trailing data. V1
-is not accepted; firmware and UI are updated together.
+are consequently impossible. V3 admits 1–256 records and no trailing data. V1
+and V2 are not accepted; firmware and UI are updated together without a
+compatibility decoder.
 
 The fixed 80-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCFG02` |
-| 8 | 2 | exact schema version `2` |
+| 0 | 8 | ASCII `ALMCFG03` |
+| 8 | 2 | exact schema version `3` |
 | 10 | 2 | header bytes, exactly `80` |
 | 12 | 4 | total bytes, exactly `80 + record_count × 64` |
 | 16 | 32 | required canonical board-capability SHA-256 |
@@ -44,7 +45,7 @@ Every record is exactly 64 bytes. Its common prefix is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 2 | kind: resource binding `1`, exact scalar `2`, FOC shutdown contract `3` |
+| 0 | 2 | kind: binding `1`, scalar `2`, FOC shutdown `3`, runtime `4`, controller `5`, rotor `6`, current channel `7`, PWM/ADC timing `8` |
 | 2 | 2 | record bytes, exactly `64` |
 | 4 | 2 | logical instance; axis index for axis/motor facts |
 | 6 | 2 | kind-specific role or scalar-fact selector |
@@ -160,11 +161,118 @@ stage plus all three bound phase resources to advertise `HighImpedance`.
 
 The stage must be a realtime-owned hazardous fitted device at
 `SupportLevel::Qualified`. Its topology must contain all three phase resources
-and, for a dedicated strategy, the control resource. The contract claims the
-stage/control exclusively, applies board electrical constraints, requires a
-nonzero cycle bound, and is always independently streamed to core 1. A UI claim
-of qualified evidence cannot promote a `Described`, `Compiles`, or `Bench`
-stage. Qualification is immutable board-package evidence.
+and both selected ADC current resources and, for a dedicated strategy, the
+control resource. The contract claims the stage/control exclusively, applies
+board electrical constraints, requires a nonzero cycle bound, and is always
+independently streamed to core 1. A UI claim of qualified evidence cannot
+promote a `Described`, `Compiles`, or `Bench` stage. Qualification is immutable
+board-package evidence.
+
+### FOC runtime and controller records
+
+Kind `4` has selector zero and stores the normalized fixed-rate controller
+snapshot:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 2 | nonzero pole-pair count |
+| 10 | 2 | reserved zero |
+| 12 | 4 | PWM carrier Hz |
+| 16 | 4 | current-loop Hz |
+| 20 | 2 | nonzero velocity-loop divider |
+| 22 | 2 | nonzero position-loop divider |
+| 24 | 4 | normalized maximum phase current, Q2.30 and exactly one |
+| 28 | 4 | normalized maximum phase voltage, Q2.30 and exactly one |
+| 32 | 32 | reserved zero |
+
+The PWM rate must be an integer multiple of the current-loop rate. The physical
+current and voltage facts define what normalized one means; accepting a second
+arbitrary scale in the real-time record would create two authorities.
+
+Kind `5` stores one fixed-period Q2.30 PI controller. Selector `1` is direct
+current and `2` is quadrature current. Offsets 8, 12, 16, 20, 24, and 28 are,
+respectively, proportional gain, integral gain per update, integral minimum,
+integral maximum, output minimum, and output maximum; bytes 32–63 are zero.
+Gains are nonnegative and both bound pairs are ordered. Cross-record lowering
+also proves that every corner of the direct/quadrature output rectangle fits in
+the normalized voltage circle.
+
+### FOC rotor record
+
+Kind `6` stores exact absolute-count calibration. Its selector is increasing
+count direction `1` or decreasing direction `2`:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 4 | counts per mechanical turn, at least two |
+| 12 | 4 | count at the calibration reference, inside the modulus |
+| 16 | 4 | wrapping `u32` binary electrical phase at the reference |
+| 20 | 4 | maximum symmetric alignment error in binary-phase points |
+| 24 | 4 | reduced count-error numerator |
+| 28 | 4 | reduced nonzero count-error denominator |
+| 32 | 4 | maximum sine/cosine interval width in Q2.30 ULPs |
+| 36 | 4 | maximum squared-norm error in Q2.30 ULPs |
+| 40 | 1 | measured `2` or qualified `3` evidence |
+| 41 | 23 | reserved zero |
+
+The count error is nonnegative, reduced, and represents zero only as `0/1`.
+Declared-only rotor calibration rejects. Validation constructs the complete
+digest-bound rotor mapping and evaluates a reference observation through the
+certified outward rotation implementation under the stated precision policy.
+
+### FOC current-channel records
+
+Kind `7` stores channel zero (selector `1`) or channel one (selector `2`) of the
+selected two-shunt pair:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 2 | maximum ADC code |
+| 10 | 2 | inclusive valid-code minimum |
+| 12 | 2 | inclusive valid-code maximum |
+| 14 | 2 | selected zero-current code |
+| 16 | 1 | increasing `1` or decreasing `2` code polarity |
+| 17 | 1 | measured `2` or qualified `3` evidence |
+| 18 | 2 | reserved zero |
+| 20 | 4 | lower normalized-current-per-count endpoint, Q2.30 |
+| 24 | 4 | upper normalized-current-per-count endpoint, Q2.30 |
+| 28 | 4 | maximum additive normalized error, Q2.30 |
+| 32 | 4 | maximum result interval width in Q2.30 ULPs |
+| 36 | 28 | reserved zero |
+
+Both rails are excluded, the valid window must bracket the zero code, gain is
+positive, and additive uncertainty cannot omit half-count quantization. The
+complete affine endpoints must remain inside normalized current limits.
+
+### FOC PWM/ADC timing record
+
+Kind `8` selects the physical two-shunt phase order: AB `1`, BC `2`, or CA `3`.
+Channel zero is the first named phase and channel one is the second:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 4 | device-cycle Hz |
+| 12 | 4 | integer PWM-period cycles |
+| 16 | 4 | nominal acquisition offset from period start |
+| 20 | 4 | maximum trigger jitter cycles |
+| 24 | 4 | maximum acquisition-aperture cycles |
+| 28 | 4 | maximum interchannel-skew cycles |
+| 32 | 4 | maximum conversion cycles after the last sample |
+| 36 | 4 | minimum switching-edge guard cycles |
+| 40 | 4 | maximum normalized current slew per device cycle, Q2.30 |
+| 44 | 4 | maximum admitted interchannel-skew error, Q2.30 |
+| 48 | 4 | normalized maximum phase current, Q2.30 and exactly one |
+| 52 | 4 | maximum reconstructed phase-interval width in Q2.30 ULPs |
+| 56 | 4 | PWM dead-time cycles |
+| 60 | 1 | evidence, exactly qualified `3` |
+| 61 | 3 | reserved zero |
+
+The period and all timing bounds must fit one exact device-cycle lattice. The
+dead time is nonzero, less than half a period, no larger than the switching
+guard, and exactly equal to the axis `PwmDeadTimeSeconds` rational when divided
+by device-cycle Hz. The device-cycle rate must equal PWM Hz times period cycles.
+Two channel records, this timing record, and the selected two ADC bindings lower
+as one validated current-calibration object; none is independently executable.
 
 ## Cross-record admission
 
@@ -182,11 +290,32 @@ during configuration validation rather than disappearing from execution state.
 
 The axis also requires full steps, microsteps, gearing, travel/revolution,
 calibration, position range, velocity, acceleration, and jerk facts. A FOC axis
-requires unique U/V/W resources, exactly one qualified shutdown contract, and
-pole-pair, current/voltage-limit, carrier/dead-time, and control-rate facts.
-Stepper and FOC bindings cannot describe the same logical axis. At most four
-FOC profiles are retained in compact logical-instance order on core 1. Position
-minimum must compare exactly below maximum.
+requires unique U/V/W resources, one supported absolute-encoder device or PCNT
+resource, exactly the two ADC resources selected by its phase-pair record, one qualified shutdown
+contract, and pole-pair, encoder-count, current/voltage-limit,
+carrier/dead-time/control-rate, shunt, and current-gain facts. It also requires
+exactly one runtime record, direct and quadrature controller records, one rotor
+record, two current-channel records, and one PWM/ADC timing record. Runtime pole
+pairs, encoder modulus, PWM/current-loop rates, and dead-time ratio must equal
+their scalar authorities exactly. Phase and current binding rates must cover the
+PWM and current loops, while encoder rate times the integer velocity-loop
+divider must cover the current-loop rate. Stepper and FOC bindings cannot
+describe the same logical axis. At most four complete FOC profiles are retained in compact
+logical-instance order on core 1. Position minimum must compare exactly below
+maximum.
+
+Optional FOC bus-voltage and fault bindings are retained rather than accepted
+and discarded. A fault binding also appears in the canonical safety-input
+profile and participates in the conservative local arm gate.
+
+After the whole document passes length, canonical encoding, board capability,
+semantic validation, and SHA-256 verification, core 1 may lower a retained FOC
+slot. The combined `RealtimeConfiguration` cannot be assembled outside
+`alumina-config`; this prevents callers from pairing a profile with a different
+identity. Lowering injects that validated digest into `FocParameterSnapshot`,
+`RotorCalibration`, and `TwoShuntCurrentCalibration`, revalidates all three, and
+returns only the proof-wrapped current calibration. It does not initialize ADC,
+MCPWM, or a power stage.
 
 MKS ESP32 FOC V1.0 structurally selects phase-high-impedance shutdown, but its
 current `Described` power-stage evidence deliberately rejects configuration.
@@ -288,15 +417,16 @@ selector and likewise remains closed until revalidation finishes.
 
 ## Current implementation boundary
 
-The canonical format, SD publication reader, dual independent validators, core
+The canonical V3 format, SD publication reader, dual independent validators, core
 framing, authenticated firmware routing, boot recovery, safe-state transitions,
-executable safety-input profile, job-identity handoff, and raw-media two-phase
-selection journal are implemented. The portable monitor consumes that profile
-with exact-cycle debounce, polarity, first-stale-cycle watchdogs, arming facts,
-and typed transitions; target GPIO sampling remains a later hardware gate.
+executable safety/stepper/FOC profiles, digest-bound FOC lowering, job-identity
+handoff, and raw-media two-phase selection journal are implemented. The portable
+monitor consumes its safety profile with exact-cycle debounce, polarity,
+first-stale-cycle watchdogs, arming facts, and typed transitions; TinyBee target
+GPIO sampling is present but remains physically unqualified.
 Activation, abort, and clear replay as complete fail-closed states across every
 injected write/sync cut. Both current board packages remain explicitly
 non-armable pending physical qualification, so a successfully committed
-configuration still cannot make `JobPrepare` executable on either image. No
+configuration still cannot make `JobPrepare` executable on any image. No
 physical-board lifecycle, runtime stack watermark, or Wi-Fi/SD concurrency claim
 is made by this software checkpoint.

@@ -186,7 +186,11 @@ pub enum SupportLevel {
     Qualified,
 }
 
-/// One fitted board device and its bus relationship.
+/// One fitted board device or board-routed configurable device endpoint.
+///
+/// A routed endpoint describes the only driver/bus/address combination the
+/// board can admit; `support` is implementation evidence, not proof that an
+/// optional external peripheral is physically present.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceDescriptor<'a> {
     /// Must be a `ResourceId::Device` or `ResourceId::Storage` in `resources`.

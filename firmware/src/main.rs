@@ -1323,7 +1323,7 @@ fn apply_configuration_command(
                 let active = configurations.active_configuration().ok_or(())?;
                 motion.configure(active).map_err(|_| ())?;
                 let monitor = resources
-                    .configure_safety_inputs(&active.profile, nominal_scan_period_cycles)
+                    .configure_safety_inputs(active.profile(), nominal_scan_period_cycles)
                     .map_err(|_| ())?;
                 *safety_inputs = monitor;
                 *safety_input_status = safety_inputs

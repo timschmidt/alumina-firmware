@@ -206,7 +206,11 @@ buses, and all motor routes, and synchronously makes all six phase pins no-pull
 inputs before its first await. GPIO2, which participates in the USB
 auto-programming/strap circuit, belongs to core 0 rather than being exposed as
 an auxiliary realtime input. Core 0 also owns Wi-Fi and service UART resources
-and exposes a permanently faulted non-fitted cache backend. This is a
+and exposes a permanently faulted non-fitted cache backend. Each encoder
+connector is now a distinct compile-supported, externally populated AS5600
+endpoint at address `0x36`; that is driver/route evidence, not a presence or
+measurement claim. Configuration V3 can retain a complete rotor/current/timing
+profile only behind the still-unqualified stage gate. This is a
 `compiles`, non-armable safe composition: reset behavior, inverter both-off
 behavior, MCPWM/ADC operation, sensor traffic, current measurement, safety
 inputs, and energization remain unverified.
