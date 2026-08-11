@@ -723,6 +723,17 @@ impl ExecutionBlock {
     }
 }
 
+/// Returns the exact number of coordinated motion records that fit in one
+/// canonical execution block for `AXES`.
+///
+/// Authoritative compilers use this query instead of duplicating the V1 record
+/// prefix or axis-field layout. Zero and over-wide axis vectors fail with the
+/// same error as block construction.
+pub fn maximum_motion_segments_per_block<const AXES: usize>() -> Result<usize, BlockError> {
+    let record_bytes = motion_record_bytes::<AXES>()?;
+    Ok(EXECUTION_BLOCK_PAYLOAD_BYTES / record_bytes)
+}
+
 impl fmt::Debug for ExecutionBlock {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1552,6 +1563,18 @@ mod tests {
 
     #[test]
     fn fixed_payload_capacity_is_exact_for_three_and_eight_axes() {
+        assert_eq!(maximum_motion_segments_per_block::<2>(), Ok(10));
+        assert_eq!(maximum_motion_segments_per_block::<3>(), Ok(8));
+        assert_eq!(maximum_motion_segments_per_block::<8>(), Ok(4));
+        assert!(matches!(
+            maximum_motion_segments_per_block::<0>(),
+            Err(BlockError::AxisCount { .. })
+        ));
+        assert!(matches!(
+            maximum_motion_segments_per_block::<9>(),
+            Err(BlockError::AxisCount { .. })
+        ));
+
         let segment3 = ExecutionSegment {
             start_tick: StreamTick(0),
             end_tick: StreamTick(1),
