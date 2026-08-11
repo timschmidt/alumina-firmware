@@ -256,6 +256,13 @@ The first development checkpoint and its exact source caveat are recorded in
 It proves the native/WASM type and production-artifact baseline; it does not
 replace the browser, visual, exact-CAM, or hardware evidence below.
 
+The next development checkpoint is recorded in
+[`evidence/M5-EXACT-CAM-COMPILER.md`](evidence/M5-EXACT-CAM-COMPILER.md). It
+proves certified exact curve/region presentation and the first deterministic
+curve-to-canonical-lattice compiler fixture. It remains narrower than the M5
+exit gate and makes no browser-workflow, complete machine-error, or hardware
+claim.
+
 - native/WASM unit tests for exact graph evaluation, forward migration among new
   released schemas (not the old interface), unknown-node round trip, type/unit
   errors, and capability reconciliation;

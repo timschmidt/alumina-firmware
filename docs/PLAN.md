@@ -272,13 +272,17 @@ Exit gate:
   path remains.
 
 Implementation checkpoint: the legacy application has been replaced by a
-greenfield exact core, canonical protocol/simulator client, and minimal
-Hypergraphics native/WASM shell. The build rejects registry substitutes for the
-current sibling CSGRS/Hyper stack and structurally separates exact, measured,
-canonical machine, and display values. A checked CSGRS/Hypermesh adapter now
-lives in Hypergraphics. The moving Hypercurve/Hyperphysics sources prevent a
-release pin, and the authoritative curve-to-job compiler remains open. See the
-[M5/I0 evidence](evidence/M5-INTERFACE-EXACT-BASELINE.md).
+greenfield exact core, canonical protocol/simulator client, and Hypergraphics
+native/WASM shell. The build rejects registry substitutes for the current
+sibling CSGRS/Hyper stack and structurally separates exact, measured, canonical
+machine, and display values. Hypergraphics now owns certified exact curve/path
+and role-preserving region presentation. A separate compiler certifies a
+line/arc/Bezier fixture through motion-specific curve chords, exact path length,
+machine-step and timer lattices, and the real canonical firmware IR. General
+Bezier metric promotion, complete machine constraints/error budgets,
+lookahead/jerk, canonical job packaging, browser transport, and release pinning
+remain open. See the [M5/I0 evidence](evidence/M5-INTERFACE-EXACT-BASELINE.md)
+and [M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
 

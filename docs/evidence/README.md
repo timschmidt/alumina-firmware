@@ -61,6 +61,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   exact/UI value boundaries, current sibling CSGRS/Hyper source enforcement,
   Hypergraphics ownership, canonical client/simulator bytes, and native/WASM
   production-build evidence.
+- [`M5-EXACT-CAM-COMPILER.md`](M5-EXACT-CAM-COMPILER.md) — certified
+  Hypercurve path/region presentation, lossless supported-family Hyperpath
+  promotion, exact curve-to-machine-lattice compilation, canonical machine IR,
+  conservative error evidence, and renewed native/WASM artifact checks.
 - [`M6-EXACT-STEPPER-CORE.md`](M6-EXACT-STEPPER-CORE.md) — exact centered
   integer step interpolation, configuration-derived electrical timing,
   complete shifted-image mapping, canonical status, and cached-block simulation.

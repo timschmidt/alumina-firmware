@@ -97,6 +97,14 @@ Exit:
 - The interface composes scenes and interactions; it no longer implements a
   second mesh renderer.
 
+Implementation checkpoint: Hypergraphics now owns certified presentation of an
+exact line/arc/cubic path and curved material/hole region in addition to the
+checked native mesh adapter. Exact sources and subdivision/role evidence remain
+in the scene; neither line meshes nor their GPU values can become CAM input.
+Visual regression coverage, filled regions, picking, envelopes, and interaction
+remain open. See the
+[M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md).
+
 ## I2 — Native device, network, storage, and clock client
 
 One client model is shared by configuration, board view, graph nodes, plots, and
@@ -197,6 +205,16 @@ Exit:
 - Golden/pathological tests prove or conservatively bound CAD→reduced path,
   reduced path→command lattice, and timing error.
 - Firmware never appears as an alternative CAM compiler in the UI.
+
+Implementation checkpoint: a window-free compiler independently certifies the
+representative source path into exact motion chords, then proves nearest
+machine-step and cumulative timer rounding before emitting the sibling
+`alumina-machine-ir` segment type. It retains a conservative
+source-curve-to-canonical-command-chord bound and keeps physical following error
+outside that claim. Capability-driven policy, full kinematics and lookahead,
+canonical job bytes, browser determinism tests, and SD/multi-MCU integration
+remain open. See the
+[M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md).
 
 ## I4 — Annotated board explorer, logic analyzer, and oscilloscope
 
