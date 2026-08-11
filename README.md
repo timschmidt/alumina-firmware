@@ -72,7 +72,8 @@ keeps the locators outside conventional primary partition metadata and their
 fixed placement avoids GPT's card-tail backup sectors. Core 1 now establishes a
 board-specific hazardous-output contract before Wi-Fi: T-Deck Pro retains GPIO2
 as high impedance, while TinyBee first latches a complete 24-bit all-safe
-shift-register image and retains its GPIO2 as high impedance. Core 0 admits
+shift-register image and retains GPIO2 plus its four digital safety-input routes
+as high impedance. Core 0 admits
 storage mutation only while 100 ms safety publications remain identity-matched
 and no more than 500 ms old. This makes explicit provisioning reachable in the
 compiled images without making a bench, armability, or implicit-format claim.
@@ -140,10 +141,15 @@ to step count, retained until terminal tick/position correlation, and never
 acknowledged after a fault. Configuration-derived safety inputs have stable
 core-1 slots with polarity, pull, exact assert/release debounce, finite sampling
 watchdogs, arming masks, and typed E-stop/interlock/limit/driver/probe reactions.
-Neither slice is wired to a physically qualified serializer or GPIO sampler, so
-both board packages remain non-armable. See the
+TinyBee now realizes GPIO 33/32/22/35 as a transactional nominal one-millisecond
+core-1 polling bank; every fault first reapplies the full board-safe image and
+invalidates admitted job ownership. The exact input masks and next watchdog
+deadline cross to core 0 in the canonical safety snapshot. This is target
+wiring, not measured GPIO, electrical, response-time, or motion-output
+qualification, so both packages remain non-armable. See the
 [stepper evidence](docs/evidence/M6-EXACT-STEPPER-CORE.md) and
-[safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md).
+[portable safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md), plus the
+[target safety-input evidence](docs/evidence/M6-TARGET-SAFETY-INPUTS.md).
 
 ## Developer checks
 

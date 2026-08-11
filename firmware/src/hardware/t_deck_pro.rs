@@ -1,5 +1,7 @@
 use alumina_board::BoardPackage;
-use alumina_safety::SafetyContractId;
+use alumina_config::RealtimeConfigurationProfile;
+use alumina_protocol::DeviceCycle;
+use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
 use alumina_service::CACHE_LIMITS;
 use alumina_storage::provisioning::ProvisionedCache;
@@ -17,6 +19,7 @@ use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 
 use super::RuntimeResources;
+use super::safety_inputs::{SafetyInputBackendError, SafetyInputBank, SafetyInputScan};
 use crate::storage::EspSdSpiBus;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
@@ -178,19 +181,58 @@ pub struct RealtimeResources {
 pub struct EstablishedRealtimeResources {
     timer_group1: TIMG1<'static>,
     vibration_motor: Input<'static>,
+    safety_inputs: SafetyInputBank<0>,
 }
 
-/// Reserved for future fallible board-safe transactions.
+/// Static board-contract defect detected before core 1 may publish `Safe`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SafeOutputError {}
+pub enum SafeOutputError {
+    /// Fixed board safety-input routes were internally inconsistent.
+    SafetyInput(SafetyInputBackendError),
+}
 
 impl RealtimeResources {
     /// Establishes the only RT-owned hazardous pin as a retained input/high-Z.
     pub fn establish_safe_outputs(self) -> Result<EstablishedRealtimeResources, SafeOutputError> {
+        let safety_inputs = SafetyInputBank::<0>::new([]).map_err(SafeOutputError::SafetyInput)?;
         Ok(EstablishedRealtimeResources {
             timer_group1: self.timer_group1,
             vibration_motor: Input::new(self.vibration_motor, InputConfig::default()),
+            safety_inputs,
         })
+    }
+}
+
+impl EstablishedRealtimeResources {
+    /// Rejects any configured safety route because T-Deck Pro exposes none to
+    /// the real-time machine domain in this board package.
+    pub fn configure_safety_inputs(
+        &mut self,
+        profile: &RealtimeConfigurationProfile,
+        nominal_scan_period_cycles: u64,
+    ) -> Result<Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>, SafetyInputBackendError> {
+        self.safety_inputs
+            .configure(profile, nominal_scan_period_cycles)
+    }
+
+    /// Samples the active monitor; an admitted T-Deck profile is necessarily empty.
+    pub fn scan_safety_inputs(
+        &self,
+        monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+        at: DeviceCycle,
+    ) -> Result<SafetyInputScan, SafetyInputBackendError> {
+        self.safety_inputs.scan(monitor, at)
+    }
+
+    /// Keeps the empty route set in its canonical state.
+    pub fn clear_safety_inputs(&mut self) {
+        self.safety_inputs.clear();
+    }
+
+    /// Reasserts GPIO2 as an input/high-impedance safe state.
+    pub fn force_safe_outputs(&mut self) -> Result<(), SafeOutputError> {
+        self.vibration_motor.apply_config(&InputConfig::default());
+        Ok(())
     }
 }
 

@@ -119,6 +119,40 @@ non-faulted. The firmware retains only the most recently returned healthy probe
 for 500 ms; `JobCommit` must cite it exactly. Core 1 independently checks its
 own deadline health again when applying commit and confirm.
 
+## Safety telemetry
+
+Core 1 publishes the fixed 72-byte `ALMS` V2 payload inside a `Telemetry` frame.
+The outer frame supplies production cycle and publication sequence; the payload
+is:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 4 | magic `ALMS` |
+| 4 | 1 | exact version (`2`) |
+| 5 | 1 | safety state |
+| 6 | 1 | retained fault code, zero outside `Fault` |
+| 7 | 1 | safe-output-established and real-time-job-active flags |
+| 8 | 4 | nonzero wrapping global transition generation outside boot |
+| 12 | 16 | exact board safe-output contract identity |
+| 28 | 8 | cumulative maximum core-1 lateness |
+| 36 | 1 | configured safety-input count, at most 32 |
+| 37 | 1 | next-watchdog-deadline-present flag |
+| 38 | 2 | reserved zero |
+| 40 | 4 | known-input mask |
+| 44 | 4 | active-input mask, a subset of known |
+| 48 | 4 | arm-required-input mask |
+| 52 | 4 | stale-input mask |
+| 56 | 4 | wrapping stable-input transition generation |
+| 60 | 4 | reserved zero |
+| 64 | 8 | next local watchdog-failure cycle, or zero when absent |
+
+Masks cannot name a slot beyond the count. A stale mask and future deadline
+cannot coexist; a configured fully fresh status must carry a deadline. Changes
+to count or stable masks require a newer global transition generation. A healthy
+sample may move only the future deadline without inventing a state transition.
+Core 0 validates the entire payload, safe-output contract, sequence, production
+time, and freshness before using it for admission.
+
 The portable estimator maintains exact causal offset/rate intervals with a
 declared parts-per-million rate envelope. It neither assumes nor estimates
 symmetric Wi-Fi delay. Stale, high-round-trip, high-processing, reordered,

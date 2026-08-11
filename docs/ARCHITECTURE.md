@@ -590,8 +590,23 @@ makes every fault-class role arm-required; only a probe may remain active until
 an operation-specific homing/probing policy is qualified. Typed transitions
 keep E-stop, interlock, limit, driver fault, and probe semantics distinct; the
 first-release mapping faults on the first four classes and requests a hold for a
-probe. ESP GPIO interrupt/poll integration and HIL response-time qualification
-remain separate gates.
+probe.
+
+The target composition now realizes that profile as a fixed ESP GPIO bank on
+core 1. TinyBee admits GPIO 33, 32, and 22 with optional on-chip pull-up/down and
+GPIO35 in floating mode only; T-Deck Pro intentionally exposes no machine
+safety-input route. Activation validates the complete route/pull/cadence set
+before applying any configuration-specific bias. One nominal 1 ms pass samples
+every stable slot at the same `DeviceCycle`; late passes retain the portable
+watchdog's no-healing rule. Stable masks and the next watchdog deadline travel
+in the canonical 72-byte safety snapshot and are independently checked on core
+0. A fault synchronously reapplies the board-safe transaction, invalidates the
+admitted block and schedule, then latches the first fault reason. Until a
+constrained-deceleration backend is qualified, Hold deliberately degrades to a
+safe Stop. Once faulted, core 1 preserves the terminal input observation without
+retriggering a non-healing sample-gap fault on every pass. Poll latency, contact
+conditioning, ESP pull behavior, simultaneous edge latency, and the safe-image
+rewrite still require physical HIL.
 
 ## Advanced stepper motion
 

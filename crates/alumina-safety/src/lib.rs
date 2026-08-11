@@ -274,6 +274,19 @@ pub struct SafetyInputStatus {
 }
 
 impl SafetyInputStatus {
+    /// Canonical status when no active configuration owns safety inputs.
+    pub const fn unconfigured() -> Self {
+        Self {
+            input_count: 0,
+            known_mask: 0,
+            active_mask: 0,
+            required_mask: 0,
+            stale_mask: 0,
+            transition_generation: 0,
+            next_watchdog_deadline: None,
+        }
+    }
+
     /// All configured inputs are known/fresh and every required input is clear.
     pub const fn ready_to_arm(self) -> bool {
         if self.input_count == 0 || self.input_count > 32 {
@@ -288,6 +301,53 @@ impl SafetyInputStatus {
             && self.stale_mask == 0
             && self.active_mask & self.required_mask == 0
     }
+
+    /// Validates bounded masks and the canonical unconfigured representation.
+    pub const fn validate(self) -> Result<(), SafetyInputStatusError> {
+        if self.input_count > 32 {
+            return Err(SafetyInputStatusError::Count);
+        }
+        let expected = if self.input_count == 32 {
+            u32::MAX
+        } else if self.input_count == 0 {
+            0
+        } else {
+            (1_u32 << self.input_count) - 1
+        };
+        if (self.known_mask | self.active_mask | self.required_mask | self.stale_mask) & !expected
+            != 0
+            || self.active_mask & !self.known_mask != 0
+        {
+            return Err(SafetyInputStatusError::Mask);
+        }
+        if self.input_count == 0
+            && (self.known_mask != 0
+                || self.active_mask != 0
+                || self.required_mask != 0
+                || self.stale_mask != 0
+                || self.transition_generation != 0
+                || self.next_watchdog_deadline.is_some())
+        {
+            return Err(SafetyInputStatusError::Unconfigured);
+        }
+        if self.stale_mask != 0 && self.next_watchdog_deadline.is_some()
+            || self.input_count != 0
+                && self.stale_mask == 0
+                && self.next_watchdog_deadline.is_none()
+        {
+            return Err(SafetyInputStatusError::Deadline);
+        }
+        Ok(())
+    }
+}
+
+/// Malformed bounded safety-input status.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SafetyInputStatusError {
+    Count,
+    Mask,
+    Unconfigured,
+    Deadline,
 }
 
 /// Allocation-free, exact-cycle debounce and sampling-watchdog monitor.
@@ -562,6 +622,20 @@ const fn minimum_device_cycle(
     }
 }
 
+/// Stable input facts exclude the rolling future watchdog deadline, which
+/// advances with healthy samples without representing a state transition.
+pub const fn safety_input_facts_changed(
+    current: SafetyInputStatus,
+    previous: SafetyInputStatus,
+) -> bool {
+    current.input_count != previous.input_count
+        || current.known_mask != previous.known_mask
+        || current.active_mask != previous.active_mask
+        || current.required_mask != previous.required_mask
+        || current.stale_mask != previous.stale_mask
+        || current.transition_generation != previous.transition_generation
+}
+
 /// Version-independent identity of the exact board safe-output transaction.
 ///
 /// This is a semantic identifier, not a cryptographic digest. Board composition
@@ -581,7 +655,7 @@ pub const SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE: u8 = 1 << 1;
 const SNAPSHOT_KNOWN_FLAGS: u8 =
     SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED | SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE;
 const SNAPSHOT_MAGIC: [u8; 4] = *b"ALMS";
-const SNAPSHOT_VERSION: u8 = 1;
+const SNAPSHOT_VERSION: u8 = 2;
 
 /// Fixed, allocation-free core-1 safety publication.
 ///
@@ -602,11 +676,13 @@ pub struct SafetySnapshot {
     pub safe_output_contract: SafetyContractId,
     /// Largest sampled real-time scheduling lateness in device cycles.
     pub maximum_lateness_cycles: u64,
+    /// Exact configuration-derived digital-input observation at publication.
+    pub safety_inputs: SafetyInputStatus,
 }
 
 impl SafetySnapshot {
     /// Exact encoded payload size. Rust layout is never placed on a queue.
-    pub const WIRE_LEN: usize = 40;
+    pub const WIRE_LEN: usize = 72;
 
     /// Returns whether the board-safe output transaction is retained.
     pub const fn safe_outputs_established(self) -> bool {
@@ -628,6 +704,9 @@ impl SafetySnapshot {
         if self.safe_output_contract == SafetyContractId::ZERO {
             return Err(SnapshotError::ZeroContract);
         }
+        self.safety_inputs
+            .validate()
+            .map_err(SnapshotError::SafetyInputs)?;
         if self.state == SafetyState::Boot {
             if self.transition_generation != 0 || self.fault.is_some() {
                 return Err(SnapshotError::StateInvariant);
@@ -652,6 +731,17 @@ impl SafetySnapshot {
         if self.state == SafetyState::Running && !self.realtime_job_active() {
             return Err(SnapshotError::StateInvariant);
         }
+        if matches!(self.state, SafetyState::Boot | SafetyState::Safe)
+            && self.safety_inputs.input_count != 0
+        {
+            return Err(SnapshotError::StateInvariant);
+        }
+        if matches!(self.state, SafetyState::Armed | SafetyState::Running)
+            && self.safety_inputs.input_count != 0
+            && !self.safety_inputs.ready_to_arm()
+        {
+            return Err(SnapshotError::StateInvariant);
+        }
         Ok(())
     }
 
@@ -667,7 +757,17 @@ impl SafetySnapshot {
         encoded[8..12].copy_from_slice(&self.transition_generation.to_le_bytes());
         encoded[12..28].copy_from_slice(&self.safe_output_contract.0);
         encoded[28..36].copy_from_slice(&self.maximum_lateness_cycles.to_le_bytes());
-        // Bytes 36..40 are reserved and remain zero.
+        encoded[36] = self.safety_inputs.input_count;
+        encoded[37] = u8::from(self.safety_inputs.next_watchdog_deadline.is_some());
+        // Bytes 38..40 and 60..64 are reserved and remain zero.
+        encoded[40..44].copy_from_slice(&self.safety_inputs.known_mask.to_le_bytes());
+        encoded[44..48].copy_from_slice(&self.safety_inputs.active_mask.to_le_bytes());
+        encoded[48..52].copy_from_slice(&self.safety_inputs.required_mask.to_le_bytes());
+        encoded[52..56].copy_from_slice(&self.safety_inputs.stale_mask.to_le_bytes());
+        encoded[56..60].copy_from_slice(&self.safety_inputs.transition_generation.to_le_bytes());
+        if let Some(deadline) = self.safety_inputs.next_watchdog_deadline {
+            encoded[64..72].copy_from_slice(&deadline.0.to_le_bytes());
+        }
         Ok(encoded)
     }
 
@@ -687,7 +787,11 @@ impl SafetySnapshot {
                 received: encoded[4],
             });
         }
-        if encoded[36..40] != [0; 4] {
+        if encoded[37] & !1 != 0
+            || encoded[38..40] != [0; 2]
+            || encoded[60..64] != [0; 4]
+            || encoded[37] == 0 && encoded[64..72] != [0; 8]
+        {
             return Err(SnapshotError::Reserved);
         }
         let state = SafetyState::from_wire(encoded[5]).ok_or(SnapshotError::State {
@@ -708,6 +812,16 @@ impl SafetySnapshot {
             transition_generation: read_u32(encoded, 8),
             safe_output_contract: SafetyContractId(contract),
             maximum_lateness_cycles: read_u64(encoded, 28),
+            safety_inputs: SafetyInputStatus {
+                input_count: encoded[36],
+                known_mask: read_u32(encoded, 40),
+                active_mask: read_u32(encoded, 44),
+                required_mask: read_u32(encoded, 48),
+                stale_mask: read_u32(encoded, 52),
+                transition_generation: read_u32(encoded, 56),
+                next_watchdog_deadline: (encoded[37] != 0)
+                    .then(|| DeviceCycle(read_u64(encoded, 64))),
+            },
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -733,6 +847,8 @@ pub enum SnapshotError {
     Reserved,
     /// Safe-output contract used the forbidden zero sentinel.
     ZeroContract,
+    /// Bounded safety-input masks or deadline were inconsistent.
+    SafetyInputs(SafetyInputStatusError),
     /// State, fault, generation, and safe-output facts disagree.
     StateInvariant,
 }
@@ -757,6 +873,8 @@ pub struct EffectiveSafety {
     pub realtime_job_active: bool,
     /// Core-1 maximum lateness, or zero without a fresh observation.
     pub maximum_lateness_cycles: u64,
+    /// Fresh exact input facts, otherwise the canonical unconfigured value.
+    pub safety_inputs: SafetyInputStatus,
 }
 
 impl EffectiveSafety {
@@ -765,6 +883,7 @@ impl EffectiveSafety {
         fresh: false,
         realtime_job_active: true,
         maximum_lateness_cycles: 0,
+        safety_inputs: SafetyInputStatus::unconfigured(),
     };
 }
 
@@ -865,6 +984,7 @@ impl SafetyObserver {
             fresh: true,
             realtime_job_active: accepted.snapshot.realtime_job_active(),
             maximum_lateness_cycles: accepted.snapshot.maximum_lateness_cycles,
+            safety_inputs: accepted.snapshot.safety_inputs,
         }
     }
 
@@ -913,7 +1033,11 @@ impl SafetyObserver {
             }
             let safety_facts_changed = snapshot.state != previous.snapshot.state
                 || snapshot.fault != previous.snapshot.fault
-                || snapshot.flags != previous.snapshot.flags;
+                || snapshot.flags != previous.snapshot.flags
+                || safety_input_facts_changed(
+                    snapshot.safety_inputs,
+                    previous.snapshot.safety_inputs,
+                );
             if safety_facts_changed && !generation_changed {
                 return Err(ObservationError::TransitionGeneration);
             }
@@ -1033,6 +1157,9 @@ impl SafetyMachine {
     /// Applies one event atomically or leaves the machine unchanged on failure.
     pub fn apply(&mut self, event: Event, conditions: Conditions) -> Result<SafetyState, Error> {
         if let Event::Fault(code) = event {
+            if self.state == SafetyState::Fault {
+                return Ok(self.state);
+            }
             self.state = SafetyState::Fault;
             self.fault = Some(code);
             return Ok(self.state);
@@ -1116,6 +1243,7 @@ mod tests {
             transition_generation: generation,
             safe_output_contract: CONTRACT,
             maximum_lateness_cycles: 17,
+            safety_inputs: SafetyInputStatus::unconfigured(),
         }
     }
 
@@ -1296,6 +1424,37 @@ mod tests {
     }
 
     #[test]
+    fn safety_input_status_rejects_out_of_width_and_noncanonical_deadlines() {
+        let valid = SafetyInputStatus {
+            input_count: 2,
+            known_mask: 0b11,
+            active_mask: 0b01,
+            required_mask: 0b11,
+            stale_mask: 0,
+            transition_generation: 3,
+            next_watchdog_deadline: Some(DeviceCycle(100)),
+        };
+        assert_eq!(valid.validate(), Ok(()));
+        assert_eq!(
+            SafetyInputStatus {
+                active_mask: 0b100,
+                ..valid
+            }
+            .validate(),
+            Err(SafetyInputStatusError::Mask)
+        );
+        assert_eq!(
+            SafetyInputStatus {
+                stale_mask: 0b10,
+                ..valid
+            }
+            .validate(),
+            Err(SafetyInputStatusError::Deadline)
+        );
+        assert_eq!(SafetyInputStatus::unconfigured().validate(), Ok(()));
+    }
+
+    #[test]
     fn bounce_and_nonmonotonic_samples_cannot_create_false_transitions() {
         let spec = SafetyInputSpec {
             minimum_active_cycles: 3,
@@ -1395,6 +1554,21 @@ mod tests {
     }
 
     #[test]
+    fn first_asynchronous_fault_reason_remains_latched() {
+        let mut machine = running_machine();
+        machine
+            .apply(
+                Event::Fault(FaultCode::EmergencyStop),
+                Conditions::default(),
+            )
+            .unwrap();
+        machine
+            .apply(Event::Fault(FaultCode::Driver), Conditions::default())
+            .unwrap();
+        assert_eq!(machine.fault(), Some(FaultCode::EmergencyStop));
+    }
+
+    #[test]
     fn browser_style_reset_without_physical_confirmation_is_rejected() {
         let mut machine = running_machine();
         machine
@@ -1433,6 +1607,26 @@ mod tests {
             SafetySnapshot::decode(&interlock.encode().unwrap()),
             Ok(interlock)
         );
+
+        let mut configured = safe_snapshot(5);
+        configured.state = SafetyState::Configured;
+        configured.safety_inputs = SafetyInputStatus {
+            input_count: 2,
+            known_mask: 0b11,
+            active_mask: 0,
+            required_mask: 0b11,
+            stale_mask: 0,
+            transition_generation: 2,
+            next_watchdog_deadline: Some(DeviceCycle(9_000)),
+        };
+        let encoded = configured.encode().unwrap();
+        assert_eq!(SafetySnapshot::decode(&encoded), Ok(configured));
+        let mut noncanonical_deadline = encoded;
+        noncanonical_deadline[37] = 0;
+        assert_eq!(
+            SafetySnapshot::decode(&noncanonical_deadline),
+            Err(SnapshotError::Reserved)
+        );
     }
 
     #[test]
@@ -1461,6 +1655,7 @@ mod tests {
                 fresh: true,
                 realtime_job_active: false,
                 maximum_lateness_cycles: 17,
+                safety_inputs: SafetyInputStatus::unconfigured(),
             }
         );
         assert_eq!(observer.effective(1_501), EffectiveSafety::UNOBSERVED);
@@ -1510,6 +1705,43 @@ mod tests {
         fault.transition_generation = 8;
         assert_eq!(observer.observe(4, 13, 13, fault), Ok(()));
         assert_eq!(observer.effective(13).state, SafetyState::Fault);
+    }
+
+    #[test]
+    fn changed_input_facts_require_global_generation_but_deadline_refresh_does_not() {
+        let mut observer = observer(500);
+        let mut configured = safe_snapshot(7);
+        configured.state = SafetyState::Configured;
+        configured.safety_inputs = SafetyInputStatus {
+            input_count: 1,
+            known_mask: 1,
+            active_mask: 0,
+            required_mask: 1,
+            stale_mask: 0,
+            transition_generation: 1,
+            next_watchdog_deadline: Some(DeviceCycle(100)),
+        };
+        observer.observe(1, 10, 10, configured).unwrap();
+
+        let mut active = configured;
+        active.safety_inputs.active_mask = 1;
+        active.safety_inputs.transition_generation = 2;
+        assert_eq!(
+            observer.observe(2, 11, 11, active),
+            Err(ObservationError::TransitionGeneration)
+        );
+
+        observer.observe(3, 12, 12, configured).unwrap();
+        active.transition_generation = 8;
+        observer.observe(4, 13, 13, active).unwrap();
+
+        let mut refreshed = active;
+        refreshed.safety_inputs.next_watchdog_deadline = Some(DeviceCycle(200));
+        assert_eq!(observer.observe(5, 14, 14, refreshed), Ok(()));
+        assert_eq!(
+            observer.effective(14).safety_inputs,
+            refreshed.safety_inputs
+        );
     }
 
     #[test]

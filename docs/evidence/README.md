@@ -62,7 +62,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   complete shifted-image mapping, canonical status, and cached-block simulation.
 - [`M6-SAFETY-INPUT-CORE.md`](M6-SAFETY-INPUT-CORE.md) — configuration-derived
   safety-input slots, exact debounce and sample watchdogs, arming masks, and
-  typed conservative reactions with target sampling still closed.
+  typed conservative reactions at the portable checkpoint.
+- [`M6-TARGET-SAFETY-INPUTS.md`](M6-TARGET-SAFETY-INPUTS.md) — transactional
+  TinyBee GPIO sampling, canonical input telemetry, and local safe-stop/job
+  invalidation wiring, with all physical timing/electrical claims still closed.
 - [`M7-DISTRIBUTED-CLOCKS-JOBS.md`](M7-DISTRIBUTED-CLOCKS-JOBS.md) — exact
   causal clock estimation, boot-bound cached schedules, three-stage
   install/confirm/start authority, adversarial two-MCU simulation, and closed

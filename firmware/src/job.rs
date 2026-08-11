@@ -464,6 +464,13 @@ impl JobService {
         {
             return Err(());
         }
+        if matches!(
+            report.state,
+            RealtimeJobState::Cancelled | RealtimeJobState::Faulted
+        ) && let Some(prefetch) = self.prefetch.as_mut()
+        {
+            prefetch.cancel();
+        }
         self.realtime = Some(report);
         Ok(())
     }
@@ -497,7 +504,16 @@ impl JobService {
                 descriptor,
             )
             .map_err(|_| ())?;
-            if report.state != JobScheduleState::Prepared || report.prepared_token != Some(expected)
+            if !matches!(
+                (report.state, report.fault),
+                (
+                    JobScheduleState::Prepared,
+                    alumina_job::JobScheduleFault::None
+                ) | (
+                    JobScheduleState::Faulted,
+                    alumina_job::JobScheduleFault::SafetyStop
+                )
+            ) || report.prepared_token != Some(expected)
             {
                 return Err(());
             }
@@ -892,6 +908,71 @@ impl RealtimeJobService {
             .ok_or(())?
             .fault_execution()
             .map_err(|_| ())?;
+        self.publish_report(endpoint, now)
+    }
+
+    /// Invalidates all core-1 job ownership after the hardware owner has
+    /// synchronously applied its board-safe transaction.
+    pub fn local_safety_fault(
+        &mut self,
+        endpoint: &mut DefaultRealtimeEndpoint,
+        now: DeviceCycle,
+    ) -> Result<(), ()> {
+        if let Some(job) = self.job.as_mut() {
+            job.fault();
+        }
+        self.admitted = None;
+        if let Some(job) = self.job.as_ref()
+            && matches!(
+                job.status().state,
+                RealtimeJobState::Cancelled | RealtimeJobState::Faulted
+            )
+        {
+            job.drain(endpoint).map_err(|_| ())?;
+        }
+        if let Some(schedule) = self.schedule.as_mut()
+            && !matches!(
+                schedule.report().state,
+                JobScheduleState::Aborted
+                    | JobScheduleState::Expired
+                    | JobScheduleState::Complete
+                    | JobScheduleState::Faulted
+            )
+        {
+            schedule.fault_safety_stop().map_err(|_| ())?;
+        }
+        self.publish_report(endpoint, now)
+    }
+
+    /// Cancels all core-1 job ownership after an operator-requested safe stop.
+    pub fn local_stop(
+        &mut self,
+        endpoint: &mut DefaultRealtimeEndpoint,
+        now: DeviceCycle,
+    ) -> Result<(), ()> {
+        if let Some(job) = self.job.as_mut() {
+            job.cancel();
+        }
+        self.admitted = None;
+        if let Some(job) = self.job.as_ref()
+            && matches!(
+                job.status().state,
+                RealtimeJobState::Cancelled | RealtimeJobState::Faulted
+            )
+        {
+            job.drain(endpoint).map_err(|_| ())?;
+        }
+        if let Some(schedule) = self.schedule.as_mut()
+            && !matches!(
+                schedule.report().state,
+                JobScheduleState::Aborted
+                    | JobScheduleState::Expired
+                    | JobScheduleState::Complete
+                    | JobScheduleState::Faulted
+            )
+        {
+            schedule.fault_safety_stop().map_err(|_| ())?;
+        }
         self.publish_report(endpoint, now)
     }
 

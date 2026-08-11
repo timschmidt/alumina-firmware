@@ -373,6 +373,7 @@ pub enum JobScheduleFault {
     MissedStart = 1,
     LeaseExpired = 2,
     Execution = 3,
+    SafetyStop = 4,
 }
 
 impl JobScheduleFault {
@@ -382,6 +383,7 @@ impl JobScheduleFault {
             1 => Some(Self::MissedStart),
             2 => Some(Self::LeaseExpired),
             3 => Some(Self::Execution),
+            4 => Some(Self::SafetyStop),
             _ => None,
         }
     }
@@ -617,6 +619,23 @@ impl PreparedJobSchedule {
         Ok(self.report())
     }
 
+    /// Latches a local safety stop before or after the scheduled start. The
+    /// caller must apply the board-safe output transaction first.
+    pub fn fault_safety_stop(&mut self) -> Result<JobScheduleReport, JobScheduleError> {
+        if matches!(
+            self.state,
+            JobScheduleState::Aborted
+                | JobScheduleState::Expired
+                | JobScheduleState::Complete
+                | JobScheduleState::Faulted
+        ) {
+            return Err(JobScheduleError::State);
+        }
+        self.state = JobScheduleState::Faulted;
+        self.fault = JobScheduleFault::SafetyStop;
+        Ok(self.report())
+    }
+
     /// Fixed status suitable for the combined authenticated job response.
     pub fn report(&self) -> JobScheduleReport {
         let (policy, prepared_token, start, confirm, abort, lease, commit_id) = self.commit.map_or(
@@ -820,8 +839,12 @@ impl JobScheduleReport {
     fn validate(self) -> Result<(), JobScheduleWireError> {
         let committed = self.policy.is_some();
         if !committed {
-            if self.state != JobScheduleState::Prepared
-                || self.fault != JobScheduleFault::None
+            let valid_state = matches!(
+                (self.state, self.fault),
+                (JobScheduleState::Prepared, JobScheduleFault::None)
+                    | (JobScheduleState::Faulted, JobScheduleFault::SafetyStop)
+            );
+            if !valid_state
                 || self.prepared_token.is_none()
                 || self.start_emitted
                 || self.local_start_cycle.0 != 0
@@ -855,7 +878,7 @@ impl JobScheduleReport {
                 self.fault,
                 JobScheduleFault::LeaseExpired | JobScheduleFault::Execution
             );
-        if self.start_emitted != start_required {
+        if self.fault != JobScheduleFault::SafetyStop && self.start_emitted != start_required {
             return Err(JobScheduleWireError::StateShape);
         }
         if (self.state == JobScheduleState::Faulted) != (self.fault != JobScheduleFault::None) {
@@ -1072,6 +1095,38 @@ mod tests {
         assert_eq!(
             schedule.complete(DeviceCycle(15_000)).unwrap().state,
             JobScheduleState::Complete
+        );
+    }
+
+    #[test]
+    fn local_safety_stop_is_canonical_before_and_after_start() {
+        let mut prepared = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
+        let report = prepared.fault_safety_stop().unwrap();
+        assert_eq!(report.state, JobScheduleState::Faulted);
+        assert_eq!(report.fault, JobScheduleFault::SafetyStop);
+        assert!(!report.start_emitted);
+        assert_eq!(
+            JobScheduleReport::decode(&report.encode().unwrap()),
+            Ok(report)
+        );
+        assert_eq!(prepared.fault_safety_stop(), Err(JobScheduleError::State));
+
+        let commit = commit();
+        let mut running = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
+        running.install(commit, admission(1_000)).unwrap();
+        let confirm =
+            JobScheduleReference::for_commit(JobScheduleReferenceAction::Confirm, commit).unwrap();
+        running.confirm(confirm, DeviceCycle(7_000)).unwrap();
+        assert!(matches!(
+            running.advance(commit.local_start_cycle),
+            JobScheduleAction::Start { .. }
+        ));
+        let report = running.fault_safety_stop().unwrap();
+        assert_eq!(report.fault, JobScheduleFault::SafetyStop);
+        assert!(report.start_emitted);
+        assert_eq!(
+            JobScheduleReport::decode(&report.encode().unwrap()),
+            Ok(report)
         );
     }
 

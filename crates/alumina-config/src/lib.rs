@@ -2783,6 +2783,13 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             .map(|configuration| configuration.identity)
     }
 
+    /// Independently validated active executable configuration. Physical
+    /// core-1 owners use this immediately after activation to establish input
+    /// modes; job authority remains gated by [`Self::authorized_configuration`].
+    pub const fn active_configuration(&self) -> Option<&RealtimeConfiguration> {
+        self.active.as_ref()
+    }
+
     /// Active identity admitted to other core-1 actors only after durable
     /// service-core confirmation.
     pub fn authorized_identity(&self) -> Option<ConfigurationIdentity> {

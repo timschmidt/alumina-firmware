@@ -989,6 +989,7 @@ mod tests {
             transition_generation: frame_sequence,
             safe_output_contract: TEST_CONTRACT,
             maximum_lateness_cycles: 0,
+            safety_inputs: alumina_safety::SafetyInputStatus::unconfigured(),
         };
         service
             .observe_safety_snapshot(

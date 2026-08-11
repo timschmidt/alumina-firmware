@@ -98,6 +98,15 @@ the sole role not implicitly arm-blocking unless its record explicitly sets the
 required flag. Later homing/probing modes must replace that fallback with an
 equally bounded operation-specific policy.
 
+The first target sampler runs at a nominal 1 ms core-1 cadence, so every active
+input's maximum sample gap must be at least that nominal period; actual lateness
+beyond the configured bound still faults. TinyBee currently realizes GPIO 33,
+32, and 22 with floating/pull-up/pull-down modes and GPIO35 as floating-only.
+All routes are validated before any new pull mode is applied. T-Deck Pro exposes
+no machine safety-input route, so a nonempty safety profile fails closed at the
+target boundary. These are compiled routing facts, not electrical or latency
+qualification.
+
 ### Exact scalar
 
 | Offset | Bytes | Meaning |

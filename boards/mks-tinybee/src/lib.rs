@@ -16,8 +16,8 @@ pub const BOARD_ID: &str = "mks-tinybee-v1";
 pub const TARGET: &str = "xtensa-esp32-none-elf";
 /// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x00, 0x0f, 0x15, 0x1d, 0x9a, 0x40, 0x4a, 0x94, 0xd8, 0x2b, 0x31, 0x1a, 0xb4, 0x03, 0x3d, 0xb2,
-    0x3f, 0xe6, 0x5e, 0x56, 0xc4, 0x8d, 0x8a, 0x1d, 0x43, 0xbd, 0x77, 0x36, 0x62, 0xc7, 0xc3, 0x51,
+    0xfc, 0x8d, 0x02, 0x0b, 0xb9, 0x99, 0x2f, 0x1f, 0xfd, 0xf9, 0x93, 0x88, 0x15, 0x08, 0x63, 0x12,
+    0xb9, 0xff, 0xf6, 0xfa, 0x2a, 0x7f, 0x83, 0xcb, 0xab, 0x1c, 0xf9, 0x6b, 0x00, 0x4c, 0xe8, 0x31,
 ]);
 /// Shift-register safe image inferred from active-high StepStick disable inputs.
 ///
@@ -883,7 +883,14 @@ pub static INTERRUPTS: &[InterruptDescriptor] = &[
     },
 ];
 
-static SAFE_STATE_HIL_RESOURCES: &[ResourceId] = &[ResourceId::I2s(0), ResourceId::Gpio(2)];
+static SAFE_STATE_HIL_RESOURCES: &[ResourceId] = &[
+    ResourceId::I2s(0),
+    ResourceId::Gpio(2),
+    ResourceId::Gpio(22),
+    ResourceId::Gpio(32),
+    ResourceId::Gpio(33),
+    ResourceId::Gpio(35),
+];
 static SHIFT_OUTPUT_HIL_RESOURCES: &[ResourceId] = &[ResourceId::I2s(0)];
 static LIMIT_HIL_RESOURCES: &[ResourceId] = &[
     ResourceId::Gpio(33),

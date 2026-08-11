@@ -32,9 +32,10 @@ use alumina_runtime::{
     DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
 };
 use alumina_safety::{
-    Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE,
-    SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetyMachine, SafetyObservationPolicy, SafetyObserver,
-    SafetySnapshot, SafetyState,
+    Conditions, Event as SafetyEvent, FaultCode, MAX_SAFETY_INPUTS,
+    SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE, SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetyInputMonitor,
+    SafetyInputReaction, SafetyInputStatus, SafetyMachine, SafetyObservationPolicy, SafetyObserver,
+    SafetySnapshot, SafetyState, safety_input_facts_changed,
 };
 use defmt::{error, info};
 use embassy_executor::Spawner;
@@ -377,13 +378,14 @@ async fn realtime_task(
         panic!("realtime executor started on the wrong core");
     }
 
-    let resources = match resources.establish_safe_outputs() {
+    let mut resources = match resources.establish_safe_outputs() {
         Ok(resources) => resources,
         Err(_) => {
             hold_safe_output_fault(&mut endpoint, 0).await;
         }
     };
     let mut safety = SafetyMachine::new();
+    let mut safe_outputs_established = true;
     if safety
         .apply(
             SafetyEvent::Initialize,
@@ -409,6 +411,8 @@ async fn realtime_task(
         RealtimeConfigurationService::<{ selected::CONFIGURATION_BINDINGS }>::new(
             selected::PACKAGE,
         );
+    let mut safety_inputs: Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>> = None;
+    let mut safety_input_status = SafetyInputStatus::unconfigured();
     let mut last_job_active = false;
     let mut configuration_sequence = 0_u32;
     let mut clock_sequence = 0_u32;
@@ -419,7 +423,8 @@ async fn realtime_task(
         Instant::now(),
         safety,
         transition_generation,
-        SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED,
+        safety_snapshot_flags(safe_outputs_established, false),
+        safety_input_status,
         0,
     );
 
@@ -433,15 +438,147 @@ async fn realtime_task(
         );
         expected += period;
 
+        let now = DeviceCycle(observed.as_ticks());
+        // The first asynchronous fault is terminal until a qualified physical
+        // reset path exists. Stop touching the faulted input monitor so a
+        // deliberately non-healing sample-gap latch cannot retrigger work on
+        // every real-time pass.
+        if safety.state() != SafetyState::Fault
+            && let Some(scan) = safety_inputs
+                .as_mut()
+                .map(|monitor| resources.scan_safety_inputs(monitor, now))
+        {
+            match scan {
+                Ok(scan) => {
+                    if safety_input_facts_changed(scan.status, safety_input_status) {
+                        transition_generation = next_nonzero(transition_generation);
+                    }
+                    safety_input_status = scan.status;
+                    match scan.reaction {
+                        Some(SafetyInputReaction::Fault(fault)) => {
+                            latch_realtime_fault(
+                                &mut resources,
+                                &mut jobs,
+                                &mut safety,
+                                &mut endpoint,
+                                &mut safe_outputs_established,
+                                &mut transition_generation,
+                                &mut telemetry_sequence,
+                                now,
+                                observed,
+                                probe.maximum_lateness_cycles(),
+                                safety_input_status,
+                                fault,
+                                scan.reaction_slot,
+                            );
+                        }
+                        Some(SafetyInputReaction::Hold) => {
+                            if matches!(
+                                safety.state(),
+                                SafetyState::Armed | SafetyState::Running | SafetyState::Hold
+                            ) {
+                                // Until a board backend has a qualified constrained
+                                // hold, a probe request degrades to a safe stop.
+                                request_realtime_stop(
+                                    &mut resources,
+                                    &mut jobs,
+                                    &mut safety,
+                                    &mut endpoint,
+                                    &mut safe_outputs_established,
+                                    &mut transition_generation,
+                                    &mut telemetry_sequence,
+                                    now,
+                                    observed,
+                                    probe.maximum_lateness_cycles(),
+                                    safety_input_status,
+                                    scan.reaction_slot,
+                                );
+                            }
+                        }
+                        Some(SafetyInputReaction::Clear) | None => {}
+                    }
+                }
+                Err(_) => {
+                    if let Some(monitor) = safety_inputs.as_ref() {
+                        let status = monitor.status(now);
+                        if safety_input_facts_changed(status, safety_input_status) {
+                            transition_generation = next_nonzero(transition_generation);
+                        }
+                        safety_input_status = status;
+                    }
+                    latch_realtime_fault(
+                        &mut resources,
+                        &mut jobs,
+                        &mut safety,
+                        &mut endpoint,
+                        &mut safe_outputs_established,
+                        &mut transition_generation,
+                        &mut telemetry_sequence,
+                        now,
+                        observed,
+                        probe.maximum_lateness_cycles(),
+                        safety_input_status,
+                        FaultCode::Identity,
+                        6,
+                    );
+                }
+            }
+        }
+
         if let Some(urgent) = endpoint.urgent_after(urgent_generation) {
             urgent_generation = urgent.generation;
-            if urgent.code == UrgentKind::EmergencyStop as u8 {
-                let _ = safety.apply(
-                    SafetyEvent::Fault(FaultCode::EmergencyStop),
-                    Conditions::default(),
-                );
-                transition_generation = next_nonzero(transition_generation);
-                endpoint.publish_fault(2, urgent.detail);
+            match urgent.code {
+                code if code == UrgentKind::Hold as u8 || code == UrgentKind::Stop as u8 => {
+                    // The first target backend has no qualified constrained
+                    // deceleration yet, so Hold intentionally degrades to Stop.
+                    request_realtime_stop(
+                        &mut resources,
+                        &mut jobs,
+                        &mut safety,
+                        &mut endpoint,
+                        &mut safe_outputs_established,
+                        &mut transition_generation,
+                        &mut telemetry_sequence,
+                        now,
+                        observed,
+                        probe.maximum_lateness_cycles(),
+                        safety_input_status,
+                        urgent.detail,
+                    );
+                }
+                code if code == UrgentKind::EmergencyStop as u8 => latch_realtime_fault(
+                    &mut resources,
+                    &mut jobs,
+                    &mut safety,
+                    &mut endpoint,
+                    &mut safe_outputs_established,
+                    &mut transition_generation,
+                    &mut telemetry_sequence,
+                    now,
+                    observed,
+                    probe.maximum_lateness_cycles(),
+                    safety_input_status,
+                    FaultCode::EmergencyStop,
+                    urgent.detail,
+                ),
+                code if code == UrgentKind::ResetRequest as u8 => {
+                    // Network intent alone never satisfies physical reset policy.
+                }
+                _ => latch_realtime_fault(
+                    &mut resources,
+                    &mut jobs,
+                    &mut safety,
+                    &mut endpoint,
+                    &mut safe_outputs_established,
+                    &mut transition_generation,
+                    &mut telemetry_sequence,
+                    now,
+                    observed,
+                    probe.maximum_lateness_cycles(),
+                    safety_input_status,
+                    FaultCode::Identity,
+                    7,
+                ),
             }
         }
         while let Ok(command) = endpoint.try_receive_command() {
@@ -458,11 +595,15 @@ async fn realtime_task(
                     .is_ok(),
                 FrameKind::Configuration => match apply_configuration_command(
                     &mut configurations,
+                    &mut resources,
+                    &mut safety_inputs,
+                    &mut safety_input_status,
                     &mut jobs,
                     &mut safety,
                     &mut endpoint,
                     &command,
                     DeviceCycle(observed.as_ticks()),
+                    period.as_ticks(),
                     &mut configuration_sequence,
                 ) {
                     Ok(changed) => {
@@ -475,12 +616,21 @@ async fn realtime_task(
                 _ => false,
             };
             if !valid {
-                let _ = safety.apply(
-                    SafetyEvent::Fault(FaultCode::Identity),
-                    Conditions::default(),
+                latch_realtime_fault(
+                    &mut resources,
+                    &mut jobs,
+                    &mut safety,
+                    &mut endpoint,
+                    &mut safe_outputs_established,
+                    &mut transition_generation,
+                    &mut telemetry_sequence,
+                    now,
+                    observed,
+                    probe.maximum_lateness_cycles(),
+                    safety_input_status,
+                    FaultCode::Identity,
+                    3,
                 );
-                transition_generation = next_nonzero(transition_generation);
-                endpoint.publish_fault(3, 0);
             }
             if safety_changed {
                 transition_generation = next_nonzero(transition_generation);
@@ -490,7 +640,8 @@ async fn realtime_task(
                     observed,
                     safety,
                     transition_generation,
-                    safety_snapshot_flags(true, jobs.active()),
+                    safety_snapshot_flags(safe_outputs_established, jobs.active()),
+                    safety_input_status,
                     probe.maximum_lateness_cycles(),
                 );
             }
@@ -499,12 +650,21 @@ async fn realtime_task(
             .preadmit(&mut endpoint, DeviceCycle(observed.as_ticks()))
             .is_err()
         {
-            let _ = safety.apply(
-                SafetyEvent::Fault(FaultCode::Identity),
-                Conditions::default(),
+            latch_realtime_fault(
+                &mut resources,
+                &mut jobs,
+                &mut safety,
+                &mut endpoint,
+                &mut safe_outputs_established,
+                &mut transition_generation,
+                &mut telemetry_sequence,
+                now,
+                observed,
+                probe.maximum_lateness_cycles(),
+                safety_input_status,
+                FaultCode::Identity,
+                4,
             );
-            transition_generation = next_nonzero(transition_generation);
-            endpoint.publish_fault(4, 0);
         }
 
         let schedule_action = jobs
@@ -521,17 +681,20 @@ async fn realtime_task(
             JobScheduleAction::LeaseExpired => Some(FaultCode::Watchdog),
         };
         if let Some(fault) = schedule_fault {
-            let _ = safety.apply(SafetyEvent::Fault(fault), Conditions::default());
-            transition_generation = next_nonzero(transition_generation);
-            endpoint.publish_fault(fault.wire_value(), 5);
-            publish_safety_snapshot(
+            latch_realtime_fault(
+                &mut resources,
+                &mut jobs,
+                &mut safety,
                 &mut endpoint,
+                &mut safe_outputs_established,
+                &mut transition_generation,
                 &mut telemetry_sequence,
+                now,
                 observed,
-                safety,
-                transition_generation,
-                safety_snapshot_flags(true, jobs.active()),
                 probe.maximum_lateness_cycles(),
+                safety_input_status,
+                fault,
+                5,
             );
         }
 
@@ -545,7 +708,8 @@ async fn realtime_task(
                 observed,
                 safety,
                 transition_generation,
-                safety_snapshot_flags(true, job_active),
+                safety_snapshot_flags(safe_outputs_established, job_active),
+                safety_input_status,
                 probe.maximum_lateness_cycles(),
             );
         }
@@ -559,7 +723,8 @@ async fn realtime_task(
                 observed,
                 safety,
                 transition_generation,
-                safety_snapshot_flags(true, job_active),
+                safety_snapshot_flags(safe_outputs_established, job_active),
+                safety_input_status,
                 probe.maximum_lateness_cycles(),
             );
             if jobs.has_job() {
@@ -583,16 +748,166 @@ async fn realtime_task(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn latch_realtime_fault(
+    resources: &mut selected::EstablishedRealtimeResources,
+    jobs: &mut RealtimeJobService,
+    safety: &mut SafetyMachine,
+    endpoint: &mut DefaultRealtimeEndpoint,
+    safe_outputs_established: &mut bool,
+    transition_generation: &mut u32,
+    telemetry_sequence: &mut u32,
+    now: DeviceCycle,
+    observed: Instant,
+    maximum_lateness_cycles: u64,
+    safety_input_status: SafetyInputStatus,
+    requested_fault: FaultCode,
+    detail: u8,
+) {
+    let prior_state = safety.state();
+    let prior_fault = safety.fault();
+    let prior_job_active = jobs.active();
+    let safe_applied = resources.force_safe_outputs().is_ok();
+    *safe_outputs_established &= safe_applied;
+    let fault = if safe_applied {
+        requested_fault
+    } else {
+        FaultCode::SafeOutput
+    };
+    let _ = jobs.local_safety_fault(endpoint, now);
+    let _ = safety.apply(SafetyEvent::Fault(fault), Conditions::default());
+    let retained_fault = safety.fault().unwrap_or(fault);
+    if prior_state != safety.state()
+        || prior_fault != safety.fault()
+        || prior_job_active != jobs.active()
+        || !safe_applied
+    {
+        *transition_generation = next_nonzero(*transition_generation);
+    }
+    endpoint.publish_fault(retained_fault.wire_value(), detail);
+    publish_safety_snapshot(
+        endpoint,
+        telemetry_sequence,
+        observed,
+        *safety,
+        *transition_generation,
+        safety_snapshot_flags(*safe_outputs_established, jobs.active()),
+        safety_input_status,
+        maximum_lateness_cycles,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_realtime_stop(
+    resources: &mut selected::EstablishedRealtimeResources,
+    jobs: &mut RealtimeJobService,
+    safety: &mut SafetyMachine,
+    endpoint: &mut DefaultRealtimeEndpoint,
+    safe_outputs_established: &mut bool,
+    transition_generation: &mut u32,
+    telemetry_sequence: &mut u32,
+    now: DeviceCycle,
+    observed: Instant,
+    maximum_lateness_cycles: u64,
+    safety_input_status: SafetyInputStatus,
+    detail: u8,
+) {
+    if resources.force_safe_outputs().is_err() {
+        // A later retry may make the pins safe, but it cannot erase evidence
+        // that this stop transaction itself failed.
+        *safe_outputs_established = false;
+        latch_realtime_fault(
+            resources,
+            jobs,
+            safety,
+            endpoint,
+            safe_outputs_established,
+            transition_generation,
+            telemetry_sequence,
+            now,
+            observed,
+            maximum_lateness_cycles,
+            safety_input_status,
+            FaultCode::SafeOutput,
+            detail,
+        );
+        return;
+    }
+    let prior_state = safety.state();
+    let prior_job_active = jobs.active();
+    if jobs.local_stop(endpoint, now).is_err() {
+        latch_realtime_fault(
+            resources,
+            jobs,
+            safety,
+            endpoint,
+            safe_outputs_established,
+            transition_generation,
+            telemetry_sequence,
+            now,
+            observed,
+            maximum_lateness_cycles,
+            safety_input_status,
+            FaultCode::Identity,
+            detail,
+        );
+        return;
+    }
+    let transition = match safety.state() {
+        SafetyState::Running | SafetyState::Hold => {
+            safety.apply(SafetyEvent::Finish, Conditions::default())
+        }
+        SafetyState::Armed => safety.apply(SafetyEvent::Disarm, Conditions::default()),
+        _ => Ok(safety.state()),
+    };
+    if transition.is_err() {
+        latch_realtime_fault(
+            resources,
+            jobs,
+            safety,
+            endpoint,
+            safe_outputs_established,
+            transition_generation,
+            telemetry_sequence,
+            now,
+            observed,
+            maximum_lateness_cycles,
+            safety_input_status,
+            FaultCode::Identity,
+            detail,
+        );
+        return;
+    }
+    if prior_state != safety.state() || prior_job_active != jobs.active() {
+        *transition_generation = next_nonzero(*transition_generation);
+    }
+    publish_safety_snapshot(
+        endpoint,
+        telemetry_sequence,
+        observed,
+        *safety,
+        *transition_generation,
+        safety_snapshot_flags(*safe_outputs_established, jobs.active()),
+        safety_input_status,
+        maximum_lateness_cycles,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn apply_configuration_command(
     configurations: &mut RealtimeConfigurationService<
         'static,
         { selected::CONFIGURATION_BINDINGS },
     >,
+    resources: &mut selected::EstablishedRealtimeResources,
+    safety_inputs: &mut Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>,
+    safety_input_status: &mut SafetyInputStatus,
     jobs: &mut RealtimeJobService,
     safety: &mut SafetyMachine,
     endpoint: &mut DefaultRealtimeEndpoint,
     frame: &IntercoreFrame<{ alumina_runtime::COMMAND_PAYLOAD_BYTES }>,
     now: DeviceCycle,
+    nominal_scan_period_cycles: u64,
     report_sequence: &mut u32,
 ) -> Result<bool, ()> {
     frame.validate(FrameKind::Configuration).map_err(|_| ())?;
@@ -614,6 +929,16 @@ fn apply_configuration_command(
                 if report.state != RealtimeConfigurationState::Active || report.active_authorized {
                     return Err(());
                 }
+                let active = configurations.active_configuration().ok_or(())?;
+                let monitor = resources
+                    .configure_safety_inputs(&active.profile, nominal_scan_period_cycles)
+                    .map_err(|_| ())?;
+                *safety_inputs = monitor;
+                *safety_input_status = safety_inputs
+                    .as_ref()
+                    .map_or(SafetyInputStatus::unconfigured(), |monitor| {
+                        monitor.status(now)
+                    });
                 jobs.set_active_config(Digest::ZERO);
                 safety
                     .apply(
@@ -638,6 +963,9 @@ fn apply_configuration_command(
                 if report.state != RealtimeConfigurationState::Cleared {
                     return Err(());
                 }
+                resources.clear_safety_inputs();
+                *safety_inputs = None;
+                *safety_input_status = SafetyInputStatus::unconfigured();
                 jobs.set_active_config(Digest::ZERO);
                 safety
                     .apply(SafetyEvent::Unconfigure, Conditions::default())
@@ -703,6 +1031,7 @@ fn publish_clock_report(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn publish_safety_snapshot(
     endpoint: &mut DefaultRealtimeEndpoint,
     telemetry_sequence: &mut u32,
@@ -710,6 +1039,7 @@ fn publish_safety_snapshot(
     safety: SafetyMachine,
     transition_generation: u32,
     flags: u8,
+    safety_inputs: SafetyInputStatus,
     maximum_lateness_cycles: u64,
 ) {
     let snapshot = SafetySnapshot {
@@ -719,6 +1049,7 @@ fn publish_safety_snapshot(
         transition_generation,
         safe_output_contract: selected::SAFE_OUTPUT_CONTRACT,
         maximum_lateness_cycles,
+        safety_inputs,
     };
     let payload = match snapshot.encode() {
         Ok(payload) => payload,
@@ -748,7 +1079,16 @@ async fn hold_safe_output_fault(endpoint: &mut DefaultRealtimeEndpoint, detail: 
     let mut sequence = 0_u32;
     endpoint.publish_fault(FaultCode::SafeOutput.wire_value(), detail);
     loop {
-        publish_safety_snapshot(endpoint, &mut sequence, Instant::now(), safety, 1, 0, 0);
+        publish_safety_snapshot(
+            endpoint,
+            &mut sequence,
+            Instant::now(),
+            safety,
+            1,
+            0,
+            SafetyInputStatus::unconfigured(),
+            0,
+        );
         Timer::after(Duration::from_millis(100)).await;
     }
 }

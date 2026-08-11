@@ -1,5 +1,7 @@
-use alumina_board::BoardPackage;
-use alumina_safety::SafetyContractId;
+use alumina_board::{BoardPackage, ResourceId};
+use alumina_config::RealtimeConfigurationProfile;
+use alumina_protocol::DeviceCycle;
+use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
 use alumina_service::CACHE_LIMITS;
 use alumina_shift_register::{
@@ -21,6 +23,9 @@ use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
 
 use super::RuntimeResources;
+use super::safety_inputs::{
+    BiasCapability, SafetyInputBackendError, SafetyInputBank, SafetyInputRoute, SafetyInputScan,
+};
 use crate::storage::EspSdSpiBus;
 
 pub type StorageCard = SdSpiCard<EspSdSpiBus, Output<'static>, Delay>;
@@ -30,14 +35,16 @@ pub const JOB_AXES: usize = 3;
 /// Maximum unique resource claims retained by each configuration validator.
 pub const CONFIGURATION_BINDINGS: usize = 64;
 
-/// Semantic identity of GPIO2 high-impedance plus the exact 24-bit static image.
+/// Semantic identity of GPIO2 and the four sampled digital inputs retained
+/// with output drivers disabled, plus the exact 24-bit static image.
 ///
-/// Byte fields are `TBSC`, version 1, width 24, MSB-first, image LE, GPIO2
-/// high-impedance, static GPIO bootstrap, and 100 ns timing floor. Change this
-/// whenever that transaction changes; HIL qualification remains independently
-/// false in the board package.
+/// Byte fields are `TBSC`, version 2, width 24, MSB-first, image LE, five
+/// input-mode GPIOs (2, 22, 32, 33, 35), static GPIO bootstrap, and a 100 ns
+/// timing floor. Configuration-owned pull bias does not enable an output
+/// driver. Change this whenever that transaction changes; HIL qualification
+/// remains independently false in the board package.
 pub const SAFE_OUTPUT_CONTRACT: SafetyContractId = SafetyContractId([
-    b'T', b'B', b'S', b'C', 1, 24, 1, 0x49, 0x12, 0, 0, 1, 1, 100, 0, 0,
+    b'T', b'B', b'S', b'C', 2, 24, 1, 0x49, 0x12, 0, 0, 5, 1, 100, 0, 0,
 ]);
 
 /// Core-0 tokens. They cannot be constructed again or moved from this owner.
@@ -164,11 +171,8 @@ pub struct EstablishedRealtimeResources {
     i2s_dma: DMA_I2S0<'static>,
     safe_shift: SafeShift,
     probe_servo: Input<'static>,
-    limit_x: GPIO33<'static>,
-    limit_y: GPIO32<'static>,
-    limit_z: GPIO22<'static>,
+    safety_inputs: SafetyInputBank<4>,
     thermistor_1_sd_detect: GPIO34<'static>,
-    material_detect: GPIO35<'static>,
     thermistor_0: GPIO36<'static>,
     thermistor_bed: GPIO39<'static>,
     adc1: ADC1<'static>,
@@ -181,6 +185,8 @@ pub enum SafeOutputError {
     Image(ImageError),
     /// Bounded shift/latch timing contract was invalid.
     Timing(TimingError),
+    /// Fixed board safety-input routes were internally inconsistent.
+    SafetyInput(SafetyInputBackendError),
 }
 
 impl RealtimeResources {
@@ -199,15 +205,32 @@ impl RealtimeResources {
             latch,
             BlockingDelay::new(),
         ))?;
-        let image = CompleteImage {
-            width: board_mks_tinybee::SHIFT_CHAIN_WIDTH,
-            defined_mask: board_mks_tinybee::COMPLETE_SHIFT_MASK,
-            bits: board_mks_tinybee::DESCRIBED_SAFE_I2S_IMAGE,
-            // Vendor schematic U1 receives serial data and cascades U1→U2→U3.
-            // Q128/bit 0 therefore enters last; bit 23 enters first.
-            order: BitOrder::MostSignificantFirst,
-        };
-        infallible_pins(safe_shift.write_complete(image, Timing::CONSERVATIVE_100NS))?;
+        infallible_pins(
+            safe_shift.write_complete(tinybee_safe_image(), Timing::CONSERVATIVE_100NS),
+        )?;
+        let safety_inputs = SafetyInputBank::new([
+            SafetyInputRoute::new(
+                ResourceId::Gpio(33),
+                self.limit_x,
+                BiasCapability::PullUpDown,
+            ),
+            SafetyInputRoute::new(
+                ResourceId::Gpio(32),
+                self.limit_y,
+                BiasCapability::PullUpDown,
+            ),
+            SafetyInputRoute::new(
+                ResourceId::Gpio(22),
+                self.limit_z,
+                BiasCapability::PullUpDown,
+            ),
+            SafetyInputRoute::new(
+                ResourceId::Gpio(35),
+                self.material_detect,
+                BiasCapability::FloatingOnly,
+            ),
+        ])
+        .map_err(SafeOutputError::SafetyInput)?;
 
         Ok(EstablishedRealtimeResources {
             timer_group1: self.timer_group1,
@@ -215,15 +238,58 @@ impl RealtimeResources {
             i2s_dma: self.i2s_dma,
             safe_shift,
             probe_servo,
-            limit_x: self.limit_x,
-            limit_y: self.limit_y,
-            limit_z: self.limit_z,
+            safety_inputs,
             thermistor_1_sd_detect: self.thermistor_1_sd_detect,
-            material_detect: self.material_detect,
             thermistor_0: self.thermistor_0,
             thermistor_bed: self.thermistor_bed,
             adc1: self.adc1,
         })
+    }
+}
+
+impl EstablishedRealtimeResources {
+    /// Applies a complete configuration-derived GPIO-input transaction.
+    pub fn configure_safety_inputs(
+        &mut self,
+        profile: &RealtimeConfigurationProfile,
+        nominal_scan_period_cycles: u64,
+    ) -> Result<Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>, SafetyInputBackendError> {
+        self.safety_inputs
+            .configure(profile, nominal_scan_period_cycles)
+    }
+
+    /// Samples all active safety inputs from their sole core-1 owner.
+    pub fn scan_safety_inputs(
+        &self,
+        monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+        at: DeviceCycle,
+    ) -> Result<SafetyInputScan, SafetyInputBackendError> {
+        self.safety_inputs.scan(monitor, at)
+    }
+
+    /// Removes configuration-specific pulls without relinquishing pin ownership.
+    pub fn clear_safety_inputs(&mut self) {
+        self.safety_inputs.clear();
+    }
+
+    /// Reapplies the complete hazardous-output image synchronously on core 1.
+    pub fn force_safe_outputs(&mut self) -> Result<(), SafeOutputError> {
+        self.probe_servo.apply_config(&InputConfig::default());
+        infallible_pins(
+            self.safe_shift
+                .write_complete(tinybee_safe_image(), Timing::CONSERVATIVE_100NS),
+        )
+    }
+}
+
+const fn tinybee_safe_image() -> CompleteImage {
+    CompleteImage {
+        width: board_mks_tinybee::SHIFT_CHAIN_WIDTH,
+        defined_mask: board_mks_tinybee::COMPLETE_SHIFT_MASK,
+        bits: board_mks_tinybee::DESCRIBED_SAFE_I2S_IMAGE,
+        // Vendor schematic U1 receives serial data and cascades U1→U2→U3.
+        // Q128/bit 0 therefore enters last; bit 23 enters first.
+        order: BitOrder::MostSignificantFirst,
     }
 }
 

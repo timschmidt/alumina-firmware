@@ -1,5 +1,7 @@
 use esp_hal::peripherals::{CPU_CTRL, SW_INTERRUPT, TIMG0};
 
+mod safety_inputs;
+
 /// Runtime-only tokens consumed before either domain executor starts.
 pub struct RuntimeResources {
     pub timer_group0: TIMG0<'static>,

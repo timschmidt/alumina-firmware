@@ -1286,6 +1286,19 @@ impl<const AXES: usize> RealtimeJob<AXES> {
         }
     }
 
+    /// Invalidates the current token after the sole hardware owner has already
+    /// applied its board-safe transaction.
+    pub fn fault(&mut self) {
+        if !matches!(
+            self.state,
+            RealtimeJobState::Complete | RealtimeJobState::Cancelled | RealtimeJobState::Faulted
+        ) {
+            self.state = RealtimeJobState::Faulted;
+            self.outstanding = None;
+            self.admitted_progress = None;
+        }
+    }
+
     /// Drops queued blocks after cancellation/fault before another prepare.
     pub fn drain<S: WorkSource>(
         &self,
@@ -2064,6 +2077,24 @@ mod tests {
         service.try_send_work(block(0, Digest::ZERO)).unwrap();
         assert_eq!(job.drain(&mut realtime).unwrap(), 1);
         assert_eq!(realtime.work_depth(), 0);
+    }
+
+    #[test]
+    fn local_hardware_fault_invalidates_an_admitted_token_before_drain() {
+        type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
+        let boundary = Box::leak(Box::new(Boundary::new()));
+        let (mut service, mut realtime) = boundary.split();
+        service.try_send_work(block(0, Digest::ZERO)).unwrap();
+        let mut job = RealtimeJob::<3>::prepare(descriptor(1)).unwrap();
+        let admitted = match job.poll(&mut realtime).unwrap() {
+            RealtimePoll::Block(block) => block,
+            _ => panic!("the first block must be admitted"),
+        };
+        job.fault();
+        assert_eq!(job.status().state, RealtimeJobState::Faulted);
+        assert!(!job.status().outstanding);
+        assert!(matches!(job.acknowledge(admitted), Err(JobError::State)));
+        assert_eq!(job.drain(&mut realtime).unwrap(), 0);
     }
 
     #[test]

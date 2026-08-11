@@ -6,6 +6,9 @@ Status: exact configuration retention, digital-input debounce, sampling
 watchdogs, arming facts, and typed conservative reactions are implemented in
 portable `no_std` code. This is not an ESP GPIO sampler, interrupt-latency,
 electrical-integrity, E-stop, interlock, motion-stop, or HIL qualification claim.
+The later compiled target wiring is recorded separately in
+[`M6-TARGET-SAFETY-INPUTS.md`](M6-TARGET-SAFETY-INPUTS.md); the measurements and
+closed claims below remain the historical portable checkpoint.
 
 ## Implemented boundary
 
