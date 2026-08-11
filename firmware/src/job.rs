@@ -692,11 +692,12 @@ impl JobService {
     }
 }
 
-/// Sole core-1 owner of independent validation and the pre-admitted block.
+/// Sole core-1 owner of independent validation and the next pre-admitted block.
 pub struct RealtimeJobService {
     descriptor: Option<JobDescriptor>,
     job: Option<RealtimeJob<{ selected::JOB_AXES }>>,
     admitted: Option<AdmittedBlock<{ selected::JOB_AXES }>>,
+    lookahead: Option<AdmittedBlock<{ selected::JOB_AXES }>>,
     schedule: Option<alumina_job::PreparedJobSchedule>,
     report_sequence: u32,
     active_config: Digest,
@@ -709,6 +710,7 @@ impl RealtimeJobService {
             descriptor: None,
             job: None,
             admitted: None,
+            lookahead: None,
             schedule: None,
             report_sequence: 0,
             active_config: Digest::ZERO,
@@ -765,13 +767,14 @@ impl RealtimeJobService {
                             | RealtimeJobState::Complete
                     )
                 }) && self.admitted.is_none()
+                    && self.lookahead.is_none()
                     && endpoint.work_depth() == 0
                 {
                     self.job = None;
                     self.descriptor = None;
                     self.schedule = None;
                 }
-                if self.job.is_some() || self.admitted.is_some() {
+                if self.job.is_some() || self.admitted.is_some() || self.lookahead.is_some() {
                     return Err(());
                 }
                 self.job = Some(RealtimeJob::prepare(descriptor).map_err(|_| ())?);
@@ -795,6 +798,7 @@ impl RealtimeJobService {
                 ) {
                     job.cancel();
                     self.admitted = None;
+                    self.lookahead = None;
                     job.drain(endpoint).map_err(|_| ())?;
                 }
                 self.schedule = None;
@@ -804,7 +808,8 @@ impl RealtimeJobService {
                 if frame.header().config_digest != descriptor.config_digest {
                     return Err(());
                 }
-                let cache_ready = self.admitted.is_some()
+                let required = if descriptor.block_count == 1 { 1 } else { 2 };
+                let cache_ready = self.preadmitted_count() >= required
                     && self
                         .job
                         .as_ref()
@@ -857,27 +862,48 @@ impl RealtimeJobService {
         self.publish_report(endpoint, now)
     }
 
-    /// Independently validates and retains at most the first unexecuted block.
+    /// Independently validates and retains the next block while the bounded
+    /// execution window still has ownership capacity.
     pub fn preadmit(
         &mut self,
         endpoint: &mut DefaultRealtimeEndpoint,
         now: DeviceCycle,
     ) -> Result<(), ()> {
-        if self.admitted.is_some() {
+        if self.lookahead.is_some() {
             return Ok(());
         }
         let Some(job) = self.job.as_mut() else {
             return Ok(());
         };
-        if job.status().state != RealtimeJobState::Prepared {
+        if !matches!(
+            job.status().state,
+            RealtimeJobState::Prepared | RealtimeJobState::Admitted
+        ) {
             return Ok(());
         }
-        match job.poll(endpoint).map_err(|_| ())? {
-            RealtimePoll::Empty | RealtimePoll::Outstanding => Ok(()),
-            RealtimePoll::Block(admitted) => {
-                self.admitted = Some(admitted);
-                self.publish_report(endpoint, now)
+        let mut changed = false;
+        loop {
+            match job.poll(endpoint).map_err(|_| ())? {
+                RealtimePoll::Empty | RealtimePoll::Outstanding => break,
+                RealtimePoll::Block(admitted) => {
+                    if self.admitted.is_none() {
+                        self.admitted = Some(admitted);
+                    } else if self.lookahead.is_none() {
+                        self.lookahead = Some(admitted);
+                    } else {
+                        return Err(());
+                    }
+                    changed = true;
+                    if self.lookahead.is_some() {
+                        break;
+                    }
+                }
             }
+        }
+        if changed {
+            self.publish_report(endpoint, now)
+        } else {
+            Ok(())
         }
     }
 
@@ -886,10 +912,14 @@ impl RealtimeJobService {
         self.descriptor
     }
 
-    /// Whether an installed schedule and its first independently admitted
-    /// block are both present for the local arm transition.
+    /// Whether an installed schedule and its required one- or two-block initial
+    /// planning window are present for the local arm transition.
     pub fn ready_to_arm(&self) -> bool {
-        self.admitted.is_some()
+        let required = self.descriptor.map_or(
+            0,
+            |descriptor| if descriptor.block_count == 1 { 1 } else { 2 },
+        );
+        self.preadmitted_count() >= required
             && self
                 .job
                 .as_ref()
@@ -899,15 +929,21 @@ impl RealtimeJobService {
                 .is_some_and(|schedule| schedule.report().state == JobScheduleState::Installed)
     }
 
-    /// Transfers the sole pre-admitted block into the physical motion owner.
-    /// The job actor retains its outstanding token until the same block is
-    /// returned by exact, physically committed execution.
+    /// Transfers the next pre-admitted block into the physical motion owner.
+    /// The job actor retains every ordered token until the same block is
+    /// returned by its exact, independent physical-commit barrier.
     pub fn take_admitted(&mut self) -> Option<AdmittedBlock<{ selected::JOB_AXES }>> {
-        self.admitted.take()
+        let admitted = self.admitted.take();
+        self.admitted = self.lookahead.take();
+        admitted
     }
 
-    /// Completes the outstanding token only after the motion owner returns the
-    /// exact block following every physical output commit.
+    fn preadmitted_count(&self) -> usize {
+        usize::from(self.admitted.is_some()) + usize::from(self.lookahead.is_some())
+    }
+
+    /// Completes the oldest outstanding token only after the motion owner
+    /// returns that exact block following its physical output prefix.
     pub fn acknowledge_executed(
         &mut self,
         endpoint: &mut DefaultRealtimeEndpoint,
@@ -1024,6 +1060,7 @@ impl RealtimeJobService {
             job.fault();
         }
         self.admitted = None;
+        self.lookahead = None;
         if let Some(job) = self.job.as_ref()
             && matches!(
                 job.status().state,
@@ -1056,6 +1093,7 @@ impl RealtimeJobService {
             job.cancel();
         }
         self.admitted = None;
+        self.lookahead = None;
         if let Some(job) = self.job.as_ref()
             && matches!(
                 job.status().state,

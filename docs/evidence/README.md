@@ -78,6 +78,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M6-CIRCULAR-DMA-HORIZON.md`](M6-CIRCULAR-DMA-HORIZON.md) — allocation-free
   circular-ring release/refill ownership, two-phase dense-frame acceptance,
   independent physical-latch authority, and final-disable lead simulation.
+- [`M6-CROSS-BLOCK-PREFILL.md`](M6-CROSS-BLOCK-PREFILL.md) — strict two-block
+  admission, per-block physical-commit barriers, prestart successor ownership,
+  and continuous circular-DMA/wire simulation across a block boundary.
 - [`M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md`](M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md)
   — isolated build-only safe-image TinyBee capture artifact, bounded refill/stop
   procedure, and explicit disconnected-load/physical-review gate.

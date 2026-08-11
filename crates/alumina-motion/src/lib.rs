@@ -6,7 +6,7 @@ use alumina_config::{
     AxisDriverControl, ConfigurationIdentity, RealtimeConfigurationProfile, SignalPolarity,
     StepperAxisProfile,
 };
-use alumina_job::AdmittedBlock;
+use alumina_job::{AdmittedBlock, REALTIME_BLOCK_WINDOW};
 use alumina_machine_ir::{BlockError, ExecutionSegment, MAX_EXECUTION_AXES, StreamTick};
 use alumina_protocol::DeviceCycle;
 
@@ -2179,9 +2179,13 @@ pub enum ScheduledShiftPlan {
         queued: usize,
         staged: usize,
     },
-    /// The block's complete logical trace is planned; unique ownership remains
-    /// retained until every queued output has a physical commit observation.
-    BlockPlanned { completion_at: DeviceCycle },
+    /// One block's complete logical trace is planned. Its unique ownership is
+    /// retained behind a per-block physical-commit barrier while a successor
+    /// may enter the bounded planning window.
+    BlockPlanned {
+        sequence: u32,
+        completion_at: DeviceCycle,
+    },
 }
 
 /// A cached block whose complete-image transactions have all been physically
@@ -2218,6 +2222,13 @@ impl<const AXES: usize> core::fmt::Debug for ScheduledBlockCompletion<AXES> {
     }
 }
 
+/// A logically complete block and the exact generated-update prefix that must
+/// be physically observed before its unique admission token may be returned.
+struct ScheduledBlockBarrier<const AXES: usize> {
+    completed: ScheduledBlockCompletion<AXES>,
+    required_committed_updates: u64,
+}
+
 /// Failure while advancing the future logical event/image plan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScheduledShiftError {
@@ -2250,8 +2261,9 @@ pub enum OutputStageError {
 ///
 /// Logical generation, hardware staging, and physical latch observation are
 /// three distinct monotonically ordered transitions. Generation may run ahead
-/// to fill `OUTPUTS`, but a cached block never returns to its job actor until
-/// every generated image is both staged and committed. This owner is distinct
+/// to fill `OUTPUTS` and may cross one block boundary, but each cached block
+/// returns only after its own generated prefix is committed and its terminal
+/// cycle is observed. This owner is distinct
 /// from [`ShiftedCachedStepper`], whose single synchronous transaction policy is
 /// useful for GPIO/bootstrap backends but cannot maintain a DMA horizon.
 pub struct ScheduledShiftedStepper<const AXES: usize, const OUTPUTS: usize> {
@@ -2261,7 +2273,9 @@ pub struct ScheduledShiftedStepper<const AXES: usize, const OUTPUTS: usize> {
     head: usize,
     len: usize,
     staged: usize,
-    completed: Option<ScheduledBlockCompletion<AXES>>,
+    completed: [Option<ScheduledBlockBarrier<AXES>>; REALTIME_BLOCK_WINDOW],
+    completed_head: usize,
+    completed_len: usize,
     faulted_block: Option<AdmittedBlock<AXES>>,
     next_token: u32,
     output_quantum_cycles: u32,
@@ -2294,7 +2308,9 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
             head: 0,
             len: 0,
             staged: 0,
-            completed: None,
+            completed: [const { None }; REALTIME_BLOCK_WINDOW],
+            completed_head: 0,
+            completed_len: 0,
             faulted_block: None,
             next_token: 0,
             output_quantum_cycles: profile.timing.output_quantum_cycles,
@@ -2317,7 +2333,7 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
     ) -> Result<(), ScheduledShiftError> {
         if self.output_faulted
             || self.len != 0
-            || self.completed.is_some()
+            || self.completed_len != 0
             || self.faulted_block.is_some()
             || self.finish_token.is_some()
             || self.job_completion_pending
@@ -2341,8 +2357,7 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         admitted: AdmittedBlock<AXES>,
     ) -> Result<(), RejectedMotionBlock<AXES>> {
         if self.output_faulted
-            || self.len != 0
-            || self.completed.is_some()
+            || self.completed_len == REALTIME_BLOCK_WINDOW
             || self.faulted_block.is_some()
             || self.finish_token.is_some()
             || self.job_completion_pending
@@ -2366,9 +2381,12 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         if self.output_faulted || self.finish_token.is_some() || self.job_completion_pending {
             return Err(ScheduledShiftError::State);
         }
-        if let Some(completed) = self.completed.as_ref() {
+        if !self.cached.has_admitted_block()
+            && let Some(completed) = self.newest_completed()
+        {
             return Ok(ScheduledShiftPlan::BlockPlanned {
-                completion_at: completed.completion.at,
+                sequence: completed.completed.admitted.header().sequence,
+                completion_at: completed.completed.completion.at,
             });
         }
         loop {
@@ -2425,11 +2443,34 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
                     admitted,
                     completion,
                 } => {
-                    self.completed = Some(ScheduledBlockCompletion {
-                        admitted,
-                        completion,
-                    });
+                    let sequence = admitted.header().sequence;
+                    let queued = match u64::try_from(self.len) {
+                        Ok(queued) => queued,
+                        Err(_) => {
+                            self.output_faulted = true;
+                            return Err(ScheduledShiftError::Arithmetic);
+                        }
+                    };
+                    let required_committed_updates =
+                        match self.committed_updates.checked_add(queued) {
+                            Some(required) => required,
+                            None => {
+                                self.output_faulted = true;
+                                return Err(ScheduledShiftError::Arithmetic);
+                            }
+                        };
+                    if let Err(error) = self.push_completed(ScheduledBlockBarrier {
+                        completed: ScheduledBlockCompletion {
+                            admitted,
+                            completion,
+                        },
+                        required_committed_updates,
+                    }) {
+                        self.output_faulted = true;
+                        return Err(error);
+                    }
                     return Ok(ScheduledShiftPlan::BlockPlanned {
+                        sequence,
                         completion_at: completion.at,
                     });
                 }
@@ -2559,29 +2600,41 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         })
     }
 
-    /// Returns a logically complete block only after its entire generated ring
-    /// has drained and the exact terminal cycle itself has been observed. The
-    /// latter prevents an output-free tail or dwell from completing early.
+    /// Returns the oldest logically complete block after its own generated
+    /// prefix and exact terminal cycle have both been physically observed.
+    /// Later-block images may remain queued or staged without delaying this
+    /// independent ownership barrier.
     pub fn take_completed_block(
         &mut self,
         observed: DeviceCycle,
     ) -> Option<ScheduledBlockCompletion<AXES>> {
-        let terminal_observed = self
-            .completed
-            .as_ref()
-            .is_some_and(|completed| observed >= completed.completion.at);
-        if self.output_faulted || self.len != 0 || !terminal_observed {
-            None
-        } else {
-            self.completed.take()
+        if self.output_faulted || self.completed_len == 0 {
+            return None;
         }
+        let ready = self.completed[self.completed_head]
+            .as_ref()
+            .is_some_and(|barrier| {
+                self.committed_updates >= barrier.required_committed_updates
+                    && observed >= barrier.completed.completion.at
+            });
+        if !ready {
+            return None;
+        }
+        let barrier = self.completed[self.completed_head].take()?;
+        self.completed_head = if self.completed_len == 1 {
+            0
+        } else {
+            (self.completed_head + 1) % REALTIME_BLOCK_WINDOW
+        };
+        self.completed_len -= 1;
+        Some(barrier.completed)
     }
 
     /// Exact earliest cycle at which normal terminal disable may be scheduled.
     pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
         if self.output_faulted
             || self.len != 0
-            || self.completed.is_some()
+            || self.completed_len != 0
             || self.finish_token.is_some()
             || self.job_completion_pending
         {
@@ -2598,7 +2651,8 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
     /// retained.
     pub fn planned_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
         if self.output_faulted
-            || self.completed.is_none()
+            || self.completed_len == 0
+            || self.cached.has_admitted_block()
             || self.finish_token.is_some()
             || self.job_completion_pending
         {
@@ -2615,7 +2669,7 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
     ) -> Result<ScheduledShiftOutput, ScheduledShiftError> {
         if self.output_faulted
             || self.len != 0
-            || self.completed.is_some()
+            || self.completed_len != 0
             || self.finish_token.is_some()
             || self.job_completion_pending
         {
@@ -2631,7 +2685,8 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         at: DeviceCycle,
     ) -> Result<ScheduledShiftOutput, ScheduledShiftError> {
         if self.output_faulted
-            || self.completed.is_none()
+            || self.completed_len == 0
+            || self.cached.has_admitted_block()
             || self.finish_token.is_some()
             || self.job_completion_pending
             || self.len == OUTPUTS
@@ -2660,18 +2715,25 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         self.finish_token = None;
         self.job_completion_pending = false;
         let _ = self.cached.fault(at);
-        if self.faulted_block.is_none() {
-            self.faulted_block = self
-                .completed
+        let cached_block = self.cached.take_faulted_block();
+        if self.faulted_block.is_none() && self.completed_len != 0 {
+            self.faulted_block = self.completed[self.completed_head]
                 .take()
-                .map(ScheduledBlockCompletion::into_block)
-                .or_else(|| self.cached.take_faulted_block());
+                .map(|barrier| barrier.completed.into_block());
+        }
+        self.completed = [const { None }; REALTIME_BLOCK_WINDOW];
+        self.completed_head = 0;
+        self.completed_len = 0;
+        if self.faulted_block.is_none() {
+            self.faulted_block = cached_block;
         }
         self.mapper.force_safe(at)
     }
 
-    /// Releases the unacknowledgeable cached block after [`Self::fault`] has
-    /// issued the complete logical safe transaction.
+    /// Releases at most one unacknowledgeable block for fault diagnostics after
+    /// [`Self::fault`] issued the complete logical safe transaction. Every
+    /// admission token was already invalidated; any other retained blocks are
+    /// destroyed, never acknowledged.
     pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
         if self.output_faulted {
             self.faulted_block.take()
@@ -2690,10 +2752,15 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         self.staged
     }
 
-    /// Whether the current block's complete logical trace is retained while
-    /// its generated outputs await physical acknowledgement.
+    /// Whether the logical executor is between blocks with at least one exact
+    /// completion barrier retained.
     pub const fn block_completion_planned(&self) -> bool {
-        self.completed.is_some()
+        self.completed_len != 0 && !self.cached.has_admitted_block()
+    }
+
+    /// Number of independently retained per-block physical-commit barriers.
+    pub const fn retained_block_completions(&self) -> usize {
+        self.completed_len
     }
 
     /// Number of target-confirmed complete-image updates.
@@ -2750,6 +2817,34 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
         self.len += 1;
         self.last_generated_at = Some(output.update.at);
         Ok(())
+    }
+
+    fn push_completed(
+        &mut self,
+        barrier: ScheduledBlockBarrier<AXES>,
+    ) -> Result<(), ScheduledShiftError> {
+        if self.completed_len == REALTIME_BLOCK_WINDOW {
+            return Err(ScheduledShiftError::State);
+        }
+        let tail = self
+            .completed_head
+            .checked_add(self.completed_len)
+            .ok_or(ScheduledShiftError::Arithmetic)?
+            % REALTIME_BLOCK_WINDOW;
+        if self.completed[tail].is_some() {
+            return Err(ScheduledShiftError::State);
+        }
+        self.completed[tail] = Some(barrier);
+        self.completed_len += 1;
+        Ok(())
+    }
+
+    fn newest_completed(&self) -> Option<&ScheduledBlockBarrier<AXES>> {
+        if self.completed_len == 0 {
+            return None;
+        }
+        let index = (self.completed_head + self.completed_len - 1) % REALTIME_BLOCK_WINDOW;
+        self.completed[index].as_ref()
     }
 
     fn distinct_finish_cycle(&self) -> Result<DeviceCycle, MotionError> {
@@ -3126,6 +3221,21 @@ mod tests {
         }
     }
 
+    struct TwoBlocks {
+        first: Option<ExecutionBlock>,
+        second: Option<ExecutionBlock>,
+    }
+
+    impl WorkSource for TwoBlocks {
+        fn try_receive(&mut self) -> Option<ExecutionBlock> {
+            self.first.take().or_else(|| self.second.take())
+        }
+
+        fn depth(&self) -> usize {
+            usize::from(self.first.is_some()) + usize::from(self.second.is_some())
+        }
+    }
+
     fn admitted_block(segments: &[ExecutionSegment<3>]) -> (RealtimeJob<3>, AdmittedBlock<3>) {
         let stream_id = StreamId::new([0x11; 16]).unwrap();
         let capability_digest = alumina_protocol::Digest([0x22; 32]);
@@ -3172,6 +3282,76 @@ mod tests {
             }
         };
         (job, admitted)
+    }
+
+    fn admitted_block_pair(
+        first_segments: &[ExecutionSegment<3>],
+        second_segments: &[ExecutionSegment<3>],
+    ) -> (RealtimeJob<3>, AdmittedBlock<3>, AdmittedBlock<3>) {
+        let stream_id = StreamId::new([0x11; 16]).unwrap();
+        let capability_digest = alumina_protocol::Digest([0x22; 32]);
+        let config_digest = alumina_protocol::Digest([0x33; 32]);
+        let first = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            alumina_protocol::Digest::ZERO,
+            first_segments,
+        )
+        .unwrap();
+        let second = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            1,
+            first.header().block_digest,
+            second_segments,
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 7,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(alumina_protocol::Digest([0x44; 32])),
+                    byte_len: 1_024,
+                },
+                manifest: ContentId::from_sha256(alumina_protocol::Digest([0x55; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 3,
+            block_count: 2,
+            first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 1_000,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 1_000,
+                    maximum_steps_per_segment: 100,
+                },
+            },
+        };
+        let mut source = TwoBlocks {
+            first: Some(first),
+            second: Some(second),
+        };
+        let mut job = RealtimeJob::prepare(descriptor).unwrap();
+        let first = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("first validated block must be admitted")
+            }
+        };
+        let second = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("second validated block must be admitted")
+            }
+        };
+        (job, first, second)
     }
 
     fn drain_segment<const AXES: usize>(
@@ -3555,6 +3735,7 @@ mod tests {
         assert_eq!(
             runner.plan_through(DeviceCycle(140)).unwrap(),
             ScheduledShiftPlan::BlockPlanned {
+                sequence: 0,
                 completion_at: DeviceCycle(140),
             }
         );
@@ -3610,6 +3791,83 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_runner_prefills_successor_before_releasing_prior_block() {
+        let (mut job, first, second) =
+            admitted_block_pair(&[segment(0, 40, [2, 0, 0])], &[segment(40, 80, [2, 0, 0])]);
+        let mut profile = shifted_profile();
+        profile.timing = timing(2);
+        profile.timing.output_quantum_cycles = 4;
+        for axis in &mut profile.timing.axes {
+            axis.pulse_high_cycles = 4;
+            axis.pulse_low_cycles = 4;
+        }
+        let mut runner =
+            ScheduledShiftedStepper::<3, 16>::new(profile, shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(first).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(180)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                sequence: 0,
+                completion_at: DeviceCycle(140),
+            }
+        );
+        let first_prefix = runner.queued_outputs();
+        assert_eq!(first_prefix, 5);
+        assert_eq!(runner.retained_block_completions(), 1);
+
+        runner.admit_block(second).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(180)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                sequence: 1,
+                completion_at: DeviceCycle(180),
+            }
+        );
+        assert_eq!(runner.retained_block_completions(), 2);
+        assert!(runner.queued_outputs() > first_prefix);
+        assert!(runner.take_completed_block(DeviceCycle(180)).is_none());
+
+        let mut staged = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            runner.stage_output(output).unwrap();
+            staged.push(output);
+        }
+        assert_eq!(staged.len(), 9);
+        assert!(
+            staged
+                .windows(2)
+                .all(|pair| pair[0].update.at < pair[1].update.at)
+        );
+        for output in staged.iter().take(first_prefix).copied() {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        assert_eq!(runner.queued_outputs(), staged.len() - first_prefix);
+        let completed = runner.take_completed_block(DeviceCycle(140)).unwrap();
+        assert_eq!(completed.completion().at, DeviceCycle(140));
+        let first = completed.into_block();
+        assert_eq!(first.header().sequence, 0);
+        assert_eq!(
+            job.acknowledge(first).unwrap().state,
+            RealtimeJobState::Admitted
+        );
+
+        for output in staged.iter().skip(first_prefix).copied() {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        let completed = runner.take_completed_block(DeviceCycle(180)).unwrap();
+        assert_eq!(completed.completion().position, [4, 0, 0]);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
+    }
+
+    #[test]
     fn scheduled_final_disable_can_be_owned_before_block_release() {
         let (mut job, admitted) = admitted_block(&[segment(0, 8, [1, 0, 0])]);
         let mut profile = shifted_profile();
@@ -3625,6 +3883,7 @@ mod tests {
         assert_eq!(
             runner.plan_through(DeviceCycle(108)).unwrap(),
             ScheduledShiftPlan::BlockPlanned {
+                sequence: 0,
                 completion_at: DeviceCycle(108),
             }
         );

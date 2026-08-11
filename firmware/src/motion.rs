@@ -14,6 +14,11 @@ type Runner =
     ScheduledShiftedStepper<{ selected::JOB_AXES }, { selected::MOTION_OUTPUT_RING_IMAGES }>;
 type OwnedBlock = AdmittedBlock<{ selected::JOB_AXES }>;
 
+struct PipelinePlan {
+    plan: ScheduledShiftPlan,
+    final_block_planned: bool,
+}
+
 /// One bounded result from servicing the exact motion owner.
 #[allow(
     clippy::large_enum_variant,
@@ -46,7 +51,10 @@ pub struct MotionService {
     configuration_digest: Digest,
     primed_epoch: Option<DeviceCycle>,
     running: bool,
+    total_blocks: u32,
     remaining_blocks: u32,
+    lookahead: Option<OwnedBlock>,
+    final_block_planned: bool,
     finish_requested: bool,
     finish_preplanned: bool,
     finish_committed: bool,
@@ -60,7 +68,10 @@ impl MotionService {
             configuration_digest: Digest::ZERO,
             primed_epoch: None,
             running: false,
+            total_blocks: 0,
             remaining_blocks: 0,
+            lookahead: None,
+            final_block_planned: false,
             finish_requested: false,
             finish_preplanned: false,
             finish_committed: false,
@@ -78,7 +89,10 @@ impl MotionService {
         self.configuration_digest = Digest::ZERO;
         self.primed_epoch = None;
         self.running = false;
+        self.total_blocks = 0;
         self.remaining_blocks = 0;
+        self.lookahead = None;
+        self.final_block_planned = false;
         self.finish_requested = false;
         self.finish_preplanned = false;
         self.finish_committed = false;
@@ -116,7 +130,10 @@ impl MotionService {
         self.configuration_digest = Digest::ZERO;
         self.primed_epoch = None;
         self.running = false;
+        self.total_blocks = 0;
         self.remaining_blocks = 0;
+        self.lookahead = None;
+        self.final_block_planned = false;
         self.finish_requested = false;
         self.finish_preplanned = false;
         self.finish_committed = false;
@@ -135,12 +152,18 @@ impl MotionService {
         descriptor: JobDescriptor,
         epoch: DeviceCycle,
         admitted: OwnedBlock,
+        lookahead: Option<OwnedBlock>,
         observed: DeviceCycle,
     ) -> Result<(), MotionServiceError> {
         if descriptor.config_digest != self.configuration_digest
             || self.primed_epoch.is_some()
             || self.running
             || observed >= epoch
+            || (descriptor.block_count == 1) != lookahead.is_none()
+            || admitted.header().sequence != 0
+            || lookahead
+                .as_ref()
+                .is_some_and(|block| block.header().sequence != 1)
         {
             return Err(MotionServiceError::Configuration);
         }
@@ -157,6 +180,7 @@ impl MotionService {
         runner
             .admit_block(admitted)
             .map_err(|_| MotionServiceError::State)?;
+        let mut lookahead = lookahead;
         let required_horizon = DeviceCycle(
             epoch
                 .0
@@ -169,10 +193,16 @@ impl MotionService {
         if writable_horizon < required_horizon {
             return Err(MotionServiceError::Output);
         }
-        let plan = Self::plan_and_stage(runner, resources, required_horizon)?;
-        let mut seal_through = Self::covered_through(plan, required_horizon)?;
+        let outcome = Self::plan_pipeline(
+            runner,
+            resources,
+            required_horizon,
+            descriptor.block_count,
+            &mut lookahead,
+        )?;
+        let mut seal_through = Self::covered_through(outcome.plan, required_horizon)?;
         let mut finish_preplanned = false;
-        if matches!(plan, ScheduledShiftPlan::BlockPlanned { .. }) && descriptor.block_count == 1 {
+        if outcome.final_block_planned {
             let finish_at = runner
                 .planned_finish_cycle()
                 .map_err(|_| MotionServiceError::State)?;
@@ -192,7 +222,10 @@ impl MotionService {
             return Err(MotionServiceError::Output);
         }
         self.primed_epoch = Some(epoch);
+        self.total_blocks = descriptor.block_count;
         self.remaining_blocks = descriptor.block_count;
+        self.lookahead = lookahead;
+        self.final_block_planned = outcome.final_block_planned;
         self.finish_requested = false;
         self.finish_preplanned = finish_preplanned;
         self.finish_committed = false;
@@ -208,21 +241,27 @@ impl MotionService {
         Ok(())
     }
 
-    /// Moves the exact outstanding block token into the generated-output owner.
+    /// Retains the next exact outstanding block for admission as soon as the
+    /// current logical block reaches its planning boundary.
     #[allow(
         clippy::result_large_err,
         reason = "rejection must return unique inline block ownership"
     )]
     pub fn admit(&mut self, admitted: OwnedBlock) -> Result<(), OwnedBlock> {
-        if self.remaining_blocks == 0 || self.finish_preplanned {
+        if !self.running
+            || self.remaining_blocks == 0
+            || self.final_block_planned
+            || self.finish_preplanned
+            || self.lookahead.is_some()
+            || admitted.header().sequence >= self.total_blocks
+        {
             return Err(admitted);
         }
-        match self.runner.as_mut() {
-            Some(runner) => runner
-                .admit_block(admitted)
-                .map_err(|rejected| rejected.into_block()),
-            None => Err(admitted),
+        if self.runner.is_none() {
+            return Err(admitted);
         }
+        self.lookahead = Some(admitted);
+        Ok(())
     }
 
     /// Advances hardware observations and extends the immutable future horizon.
@@ -241,7 +280,10 @@ impl MotionService {
         if self.finish_requested && self.finish_committed {
             self.running = false;
             self.primed_epoch = None;
+            self.total_blocks = 0;
             self.remaining_blocks = 0;
+            self.lookahead = None;
+            self.final_block_planned = false;
             self.finish_requested = false;
             self.finish_preplanned = false;
             self.finish_committed = false;
@@ -260,9 +302,7 @@ impl MotionService {
             return Ok(MotionAction::OutputCommitted);
         }
         let mut known_writable_horizon = None;
-        if self.remaining_blocks == 1
-            && !self.finish_preplanned
-            && runner.block_completion_planned()
+        if self.final_block_planned && !self.finish_preplanned && runner.block_completion_planned()
         {
             let finish_at = runner
                 .planned_finish_cycle()
@@ -311,10 +351,17 @@ impl MotionService {
             }
             return Ok(MotionAction::WaitingForHardware);
         }
-        let plan = Self::plan_and_stage(runner, resources, writable_horizon)?;
-        let mut covered = Self::covered_through(plan, writable_horizon)?;
+        let outcome = Self::plan_pipeline(
+            runner,
+            resources,
+            writable_horizon,
+            self.total_blocks,
+            &mut self.lookahead,
+        )?;
+        let mut covered = Self::covered_through(outcome.plan, writable_horizon)?;
         let mut finish_preplanned = false;
-        if matches!(plan, ScheduledShiftPlan::BlockPlanned { .. }) && self.remaining_blocks == 1 {
+        if outcome.final_block_planned {
+            self.final_block_planned = true;
             let finish_at = runner
                 .planned_finish_cycle()
                 .map_err(|_| MotionServiceError::State)?;
@@ -331,7 +378,7 @@ impl MotionService {
             return Err(MotionServiceError::Output);
         }
         self.finish_preplanned = finish_preplanned;
-        match plan {
+        match outcome.plan {
             ScheduledShiftPlan::Idle => Ok(MotionAction::Idle),
             ScheduledShiftPlan::Future { at } => Ok(MotionAction::Future { at }),
             ScheduledShiftPlan::HorizonFull { .. } | ScheduledShiftPlan::BlockPlanned { .. } => {
@@ -361,7 +408,7 @@ impl MotionService {
                 .checked_sub(u64::from(selected::MOTION_OUTPUT_QUANTUM_CYCLES))
                 .map(DeviceCycle)
                 .ok_or(MotionServiceError::State),
-            ScheduledShiftPlan::BlockPlanned { completion_at } => Ok(completion_at),
+            ScheduledShiftPlan::BlockPlanned { completion_at, .. } => Ok(completion_at),
         }
     }
 
@@ -392,7 +439,10 @@ impl MotionService {
         let update = runner.fault(at);
         self.primed_epoch = None;
         self.running = false;
+        self.total_blocks = 0;
         self.remaining_blocks = 0;
+        self.lookahead = None;
+        self.final_block_planned = false;
         self.finish_requested = false;
         self.finish_preplanned = false;
         self.finish_committed = false;
@@ -414,6 +464,55 @@ impl MotionService {
     /// Whether this owner has entered the job lifecycle.
     pub fn started(&self) -> bool {
         self.running
+    }
+
+    /// Extends one immutable hardware horizon across at most the bounded
+    /// successor window. A logical block boundary is not treated as a physical
+    /// output boundary: if its successor is already owned, planning continues
+    /// at the same exact stream tick while the prior commit barrier remains.
+    fn plan_pipeline(
+        runner: &mut Runner,
+        resources: &mut selected::EstablishedRealtimeResources,
+        through: DeviceCycle,
+        total_blocks: u32,
+        lookahead: &mut Option<OwnedBlock>,
+    ) -> Result<PipelinePlan, MotionServiceError> {
+        loop {
+            let plan = Self::plan_and_stage(runner, resources, through)?;
+            let ScheduledShiftPlan::BlockPlanned { sequence, .. } = plan else {
+                return Ok(PipelinePlan {
+                    plan,
+                    final_block_planned: false,
+                });
+            };
+            let successor = sequence.checked_add(1).ok_or(MotionServiceError::State)?;
+            if successor > total_blocks {
+                return Err(MotionServiceError::State);
+            }
+            if successor == total_blocks {
+                if lookahead.is_some() {
+                    return Err(MotionServiceError::State);
+                }
+                return Ok(PipelinePlan {
+                    plan,
+                    final_block_planned: true,
+                });
+            }
+            let Some(next) = lookahead.take() else {
+                return Ok(PipelinePlan {
+                    plan,
+                    final_block_planned: false,
+                });
+            };
+            if next.header().sequence != successor {
+                *lookahead = Some(next);
+                return Err(MotionServiceError::State);
+            }
+            if let Err(rejected) = runner.admit_block(next) {
+                *lookahead = Some(rejected.into_block());
+                return Err(MotionServiceError::State);
+            }
+        }
     }
 
     fn plan_and_stage(

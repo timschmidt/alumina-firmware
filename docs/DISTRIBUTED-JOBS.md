@@ -134,10 +134,13 @@ the guard. Core 1 owns every deadline transition and reports schedule state;
 exact tick/digest progress. `JobCancel` remains the precommit/aborted cleanup
 operation and drains queued ownership.
 
-The admitted first block remains outstanding while the exact motion owner holds
-its unique token. Core 1 installs a descriptor-bound lattice origin and
-scheduled epoch, preflights the block, and returns it only after each generated
-complete image has a matching target-confirmed commit. At the abort guard it
+The admitted initial window remains outstanding while the exact motion owner
+holds its unique tokens. One-block jobs retain one; multi-block jobs must cache
+and independently validate two before schedule install or arm. Core 1 installs
+a descriptor-bound lattice origin and scheduled epoch, preflights the window,
+and returns each block only after its generated-update prefix has matching
+target-confirmed commits and its exact terminal cycle is observed. The successor
+may already be queued when the predecessor returns. At the abort guard core 1
 must additionally build and verify a continuous immutable hardware horizon
 through a board-qualified interval beyond start. A separate `Primed` report is
 required before the start epoch. Fresh interlocks, deadline health, cached work,
@@ -146,8 +149,8 @@ an armable package, and a qualified output backend jointly gate the local
 bootstrap writer plus an unreachable compile-only PCM-short composition, and
 T-Deck Pro has no machine-output backend. Both first packages therefore remain
 non-armable and target preparation is fail-closed. Hold currently degrades to a
-safe stop; constrained hold/resume, cross-block hardware prefill, lease renewal,
-and observed-edge capture remain open.
+safe stop; constrained hold/resume, lease renewal, target-timed refill, and
+observed-edge capture remain open.
 
 ## Deterministic prepare/commit start
 
@@ -176,8 +179,9 @@ The UI orchestrates a bounded two-phase procedure:
    actually starts.
 6. **Prime locally:** at the abort guard, remote abort authority closes and each
    confirmed MCU emits one local hardware-prime action. Core 1 transfers the
-   already-admitted block into its sole output owner, stages the continuous
-   future timeline, and reports `Primed`. It must finish before its exact local
+   already-admitted one- or two-block window into its sole output owner, stages
+   the continuous future timeline across any covered block boundary, and reports
+   `Primed`. It must finish before its exact local
    start cycle; otherwise it latches `MissedStart` and remains safe. No packet
    triggers this transition.
 7. **Execute:** a primed timeline releases from each MCU's hardware clock at the

@@ -363,6 +363,21 @@ mod tests {
         }
     }
 
+    struct TwoBlocks {
+        first: Option<ExecutionBlock>,
+        second: Option<ExecutionBlock>,
+    }
+
+    impl WorkSource for TwoBlocks {
+        fn try_receive(&mut self) -> Option<ExecutionBlock> {
+            self.first.take().or_else(|| self.second.take())
+        }
+
+        fn depth(&self) -> usize {
+            usize::from(self.first.is_some()) + usize::from(self.second.is_some())
+        }
+    }
+
     fn admitted_motion_block() -> (RealtimeJob<3>, AdmittedBlock<3>) {
         let stream_id = StreamId::new([0x11; 16]).unwrap();
         let capability_digest = Digest([0x22; 32]);
@@ -416,6 +431,79 @@ mod tests {
         (job, admitted)
     }
 
+    fn admitted_motion_pair() -> (RealtimeJob<3>, AdmittedBlock<3>, AdmittedBlock<3>) {
+        let stream_id = StreamId::new([0x11; 16]).unwrap();
+        let capability_digest = Digest([0x22; 32]);
+        let config_digest = Digest([0x33; 32]);
+        let first = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            Digest::ZERO,
+            &[ExecutionSegment {
+                start_tick: StreamTick(0),
+                end_tick: StreamTick(40),
+                delta_steps: [2, 0, 0],
+                flags: 0,
+            }],
+        )
+        .unwrap();
+        let second = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            1,
+            first.header().block_digest,
+            &[ExecutionSegment {
+                start_tick: StreamTick(40),
+                end_tick: StreamTick(80),
+                delta_steps: [2, 0, 0],
+                flags: 0,
+            }],
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 7,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(Digest([0x44; 32])),
+                    byte_len: 1_024,
+                },
+                manifest: ContentId::from_sha256(Digest([0x55; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 3,
+            block_count: 2,
+            first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 1_000,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 1_000,
+                    maximum_steps_per_segment: 100,
+                },
+            },
+        };
+        let mut source = TwoBlocks {
+            first: Some(first),
+            second: Some(second),
+        };
+        let mut job = RealtimeJob::prepare(descriptor).unwrap();
+        let first = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("first block must admit"),
+        };
+        let second = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("second block must admit"),
+        };
+        (job, first, second)
+    }
+
     #[test]
     fn bit_level_observer_exposes_updates_only_at_following_latches() {
         let grid = PcmShortFrameGrid::new(1_000, 1_000_000, 250_000).unwrap();
@@ -459,6 +547,7 @@ mod tests {
         assert_eq!(
             runner.plan_through(DeviceCycle(140)).unwrap(),
             ScheduledShiftPlan::BlockPlanned {
+                sequence: 0,
                 completion_at: DeviceCycle(140),
             }
         );
@@ -551,6 +640,7 @@ mod tests {
         assert_eq!(
             runner.plan_through(DeviceCycle(156)).unwrap(),
             ScheduledShiftPlan::BlockPlanned {
+                sequence: 0,
                 completion_at: DeviceCycle(156),
             }
         );
@@ -628,6 +718,118 @@ mod tests {
             RealtimeJobState::Complete
         );
         assert_eq!(dma.fault(), None);
+    }
+
+    #[test]
+    fn circular_dma_remains_dense_across_independent_block_barriers() {
+        let grid = PcmShortFrameGrid::new(96, 1_000_000, 250_000).unwrap();
+        let mut bootstrap = PcmShortTimeline::<0>::new(grid, SAFE).unwrap();
+        let mut wire = SimPcmShortLatch::new(grid, SAFE).unwrap();
+        let mut dma = PcmShortDmaHorizon::<_, 16, 4>::new(grid, SAFE).unwrap();
+        let (mut job, first, second) = admitted_motion_pair();
+        let mut runner =
+            ScheduledShiftedStepper::<3, 16>::new(shifted_profile(), shifted_contract()).unwrap();
+        runner.start_job(DeviceCycle(116), [0; 3]).unwrap();
+        runner.admit_block(first).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(196)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                sequence: 0,
+                completion_at: DeviceCycle(156),
+            }
+        );
+        let first_prefix = runner.queued_outputs();
+        assert_eq!(first_prefix, 5);
+        runner.admit_block(second).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(196)).unwrap(),
+            ScheduledShiftPlan::BlockPlanned {
+                sequence: 1,
+                completion_at: DeviceCycle(196),
+            }
+        );
+        let finish_at = runner.planned_finish_cycle().unwrap();
+        let finish = runner.schedule_planned_finish(finish_at).unwrap();
+
+        let mut outputs = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            dma.stage(TaggedScheduledCompleteImage {
+                tag: output.token,
+                commit_cycle: output.update.at.0,
+                image: CompleteImage {
+                    bits: output.update.image,
+                    ..SAFE
+                },
+            })
+            .unwrap();
+            runner.stage_output(output).unwrap();
+            outputs.push(output);
+        }
+        assert!(outputs.len() > first_prefix);
+        assert!(outputs.windows(2).all(|pair| {
+            pair[0].update.at < pair[1].update.at && pair[0].token != pair[1].token
+        }));
+
+        let mut physical_ring = VecDeque::new();
+        for _ in 0..4 {
+            physical_ring.push_back(bootstrap.next_frame().unwrap());
+        }
+        let mut returned_sequences = Vec::new();
+        let mut final_disable_observed = false;
+        for _ in 0..40 {
+            let transmitted = physical_ring.pop_front().unwrap();
+            let observed = wire.consume_frame(transmitted).unwrap();
+            dma.observe_latches_through(observed.latch_cycle).unwrap();
+            while let Some(commit) = dma.take_commit().unwrap() {
+                let output = outputs
+                    .iter()
+                    .copied()
+                    .find(|output| output.token == commit.tag)
+                    .unwrap();
+                assert_eq!(wire.visible_image().bits, output.update.image);
+                runner
+                    .commit_output(commit.tag, DeviceCycle(commit.commit_cycle))
+                    .unwrap();
+                if runner.take_job_complete() {
+                    assert_eq!(commit.tag, finish.token);
+                    final_disable_observed = true;
+                }
+            }
+            while let Some(completed) =
+                runner.take_completed_block(DeviceCycle(observed.latch_cycle))
+            {
+                let admitted = completed.into_block();
+                let sequence = admitted.header().sequence;
+                if sequence == 0 {
+                    assert!(runner.queued_outputs() > 0);
+                    assert_eq!(
+                        job.acknowledge(admitted).unwrap().state,
+                        RealtimeJobState::Admitted
+                    );
+                } else {
+                    assert_eq!(sequence, 1);
+                    assert_eq!(
+                        job.acknowledge(admitted).unwrap().state,
+                        RealtimeJobState::Complete
+                    );
+                }
+                returned_sequences.push(sequence);
+            }
+            if final_disable_observed && returned_sequences == [0, 1] {
+                break;
+            }
+
+            dma.synchronize_refill_availability(1).unwrap();
+            let refill = dma.next_refill_frame().unwrap().unwrap();
+            dma.accept_refill(refill).unwrap();
+            physical_ring.push_back(refill);
+        }
+
+        assert_eq!(returned_sequences, [0, 1]);
+        assert!(final_disable_observed);
+        assert_eq!(wire.visible_image().bits, finish.update.image);
+        assert_eq!(dma.fault(), None);
+        assert_eq!(wire.fault(), None);
     }
 
     #[test]

@@ -950,8 +950,16 @@ fn prime_realtime_motion(
     }
     let descriptor = jobs.descriptor().ok_or(())?;
     let admitted = jobs.take_admitted().ok_or(())?;
+    let lookahead = jobs.take_admitted();
     motion
-        .prime(resources, descriptor, scheduled_cycle, admitted, observed)
+        .prime(
+            resources,
+            descriptor,
+            scheduled_cycle,
+            admitted,
+            lookahead,
+            observed,
+        )
         .map_err(|_| ())?;
     jobs.mark_hardware_primed(endpoint, observed)
 }
@@ -1005,14 +1013,13 @@ fn service_realtime_motion(
             MotionAction::BlockComplete(admitted) => {
                 match jobs.acknowledge_executed(endpoint, now, admitted)? {
                     RealtimeJobState::Complete => motion.request_finish().map_err(|_| ())?,
-                    RealtimeJobState::Prepared => {
+                    RealtimeJobState::Prepared | RealtimeJobState::Admitted => {
                         jobs.preadmit(endpoint, now)?;
-                        let next = jobs.take_admitted().ok_or(())?;
-                        motion.admit(next).map_err(|_| ())?;
+                        if let Some(next) = jobs.take_admitted() {
+                            motion.admit(next).map_err(|_| ())?;
+                        }
                     }
-                    RealtimeJobState::Admitted
-                    | RealtimeJobState::Cancelled
-                    | RealtimeJobState::Faulted => return Err(()),
+                    RealtimeJobState::Cancelled | RealtimeJobState::Faulted => return Err(()),
                 }
             }
             MotionAction::JobComplete => {

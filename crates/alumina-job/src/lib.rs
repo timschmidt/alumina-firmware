@@ -32,6 +32,12 @@ pub const SERVICE_JOB_REPORT_WIRE_BYTES: usize = 96;
 pub const JOB_STATUS_WIRE_BYTES: usize = 304;
 /// Exact `JobCancel` operation body length.
 pub const JOB_CANCEL_WIRE_BYTES: usize = 8;
+/// Maximum number of independently validated blocks that core 1 may lend to
+/// the physical execution pipeline before the oldest token is acknowledged.
+///
+/// Two is the minimum useful window for continuous hardware output: one block
+/// may await its exact physical-commit barrier while the successor is planned.
+pub const REALTIME_BLOCK_WINDOW: usize = 2;
 
 const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD2";
 const JOB_DESCRIPTOR_VERSION: u16 = 2;
@@ -1105,7 +1111,7 @@ impl<const AXES: usize> ServicePrefetch<AXES> {
 pub enum RealtimeJobState {
     /// Descriptor installed; no block is currently owned by the executor.
     Prepared = 1,
-    /// One independently validated block is owned by the executor.
+    /// One or more independently validated blocks are owned by the executor.
     Admitted = 2,
     /// Every block was acknowledged consumed in exact order.
     Complete = 3,
@@ -1129,10 +1135,11 @@ impl RealtimeJobState {
 }
 
 #[derive(Clone, Copy)]
-struct Outstanding {
+struct Outstanding<const AXES: usize> {
     prepare_id: u64,
     sequence: u32,
     block_digest: alumina_protocol::Digest,
+    progress: MotionStreamProgress<AXES>,
 }
 
 /// Core-1 status safe to publish as bounded telemetry.
@@ -1148,11 +1155,11 @@ pub struct RealtimeJobStatus<const AXES: usize> {
     pub completed_blocks: u32,
     /// Exact immutable total.
     pub total_blocks: u32,
-    /// Validated facts through the block currently owned by the executor.
+    /// Validated facts through the newest block owned by the executor pipeline.
     pub admitted_progress: Option<MotionStreamProgress<AXES>>,
     /// Terminal facts for the completed prefix.
     pub completed_progress: Option<MotionStreamProgress<AXES>>,
-    /// Whether one admitted block is currently owned outside this state machine.
+    /// Whether one or more admitted blocks are owned outside this state machine.
     pub outstanding: bool,
 }
 
@@ -1188,18 +1195,20 @@ impl<const AXES: usize> AdmittedBlock<AXES> {
 pub enum RealtimePoll<const AXES: usize> {
     /// Ring was empty.
     Empty,
-    /// A prior admitted block must be completed or cancelled first.
+    /// The bounded admission window is full.
     Outstanding,
     /// Newly owned and independently validated block.
     Block(AdmittedBlock<AXES>),
 }
 
-/// Core-1 independent stream validator and one-block ownership gate.
+/// Core-1 independent stream validator and bounded ownership gate.
 pub struct RealtimeJob<const AXES: usize> {
     descriptor: JobDescriptor,
     validator: MotionStreamValidator<AXES>,
     state: RealtimeJobState,
-    outstanding: Option<Outstanding>,
+    outstanding: [Option<Outstanding<AXES>>; REALTIME_BLOCK_WINDOW],
+    outstanding_head: usize,
+    outstanding_len: usize,
     admitted_blocks: u32,
     completed_blocks: u32,
     admitted_progress: Option<MotionStreamProgress<AXES>>,
@@ -1222,7 +1231,9 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             descriptor,
             validator,
             state: RealtimeJobState::Prepared,
-            outstanding: None,
+            outstanding: [None; REALTIME_BLOCK_WINDOW],
+            outstanding_head: 0,
+            outstanding_len: 0,
             admitted_blocks: 0,
             completed_blocks: 0,
             admitted_progress: None,
@@ -1241,7 +1252,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             | RealtimeJobState::Cancelled
             | RealtimeJobState::Faulted => return Err(JobError::State),
         }
-        if self.outstanding.is_some() {
+        if self.outstanding_len == REALTIME_BLOCK_WINDOW {
             return Ok(RealtimePoll::Outstanding);
         }
         let Some(block) = source.try_receive() else {
@@ -1251,15 +1262,20 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             Ok(progress) => progress,
             Err(error) => {
                 self.state = RealtimeJobState::Faulted;
+                self.clear_outstanding();
+                self.admitted_progress = None;
                 return Err(JobError::Machine(error));
             }
         };
         let header = block.header();
-        self.outstanding = Some(Outstanding {
+        let tail = (self.outstanding_head + self.outstanding_len) % REALTIME_BLOCK_WINDOW;
+        self.outstanding[tail] = Some(Outstanding {
             prepare_id: self.descriptor.prepare_id,
             sequence: header.sequence,
             block_digest: header.block_digest,
+            progress,
         });
+        self.outstanding_len += 1;
         self.admitted_blocks = progress.accepted_blocks;
         self.admitted_progress = Some(progress);
         self.state = RealtimeJobState::Admitted;
@@ -1278,29 +1294,48 @@ impl<const AXES: usize> RealtimeJob<AXES> {
         if self.state != RealtimeJobState::Admitted {
             return Err(JobError::State);
         }
-        let expected = self.outstanding.ok_or(JobError::AdmissionToken)?;
+        let expected = self.outstanding[self.outstanding_head].ok_or(JobError::AdmissionToken)?;
         let header = admitted.block.header();
         if admitted.prepare_id != expected.prepare_id
             || admitted.prepare_id != self.descriptor.prepare_id
             || header.sequence != expected.sequence
             || header.block_digest != expected.block_digest
-            || admitted.progress.accepted_blocks != self.admitted_blocks
-            || self.admitted_progress != Some(admitted.progress)
+            || admitted.progress != expected.progress
         {
             self.state = RealtimeJobState::Faulted;
-            self.outstanding = None;
+            self.clear_outstanding();
             self.admitted_progress = None;
             return Err(JobError::AdmissionToken);
         }
-        self.outstanding = None;
-        self.admitted_progress = None;
+        self.outstanding[self.outstanding_head] = None;
+        self.outstanding_head = if self.outstanding_len == 1 {
+            0
+        } else {
+            (self.outstanding_head + 1) % REALTIME_BLOCK_WINDOW
+        };
+        self.outstanding_len -= 1;
         self.completed_blocks = admitted.progress.accepted_blocks;
         self.completed_progress = Some(admitted.progress);
         if admitted.progress.complete {
-            self.validator.finish().map_err(JobError::Machine)?;
+            if self.outstanding_len != 0 {
+                self.state = RealtimeJobState::Faulted;
+                self.clear_outstanding();
+                self.admitted_progress = None;
+                return Err(JobError::AdmissionToken);
+            }
+            if let Err(error) = self.validator.finish() {
+                self.state = RealtimeJobState::Faulted;
+                self.clear_outstanding();
+                self.admitted_progress = None;
+                return Err(JobError::Machine(error));
+            }
+            self.admitted_progress = None;
             self.state = RealtimeJobState::Complete;
-        } else {
+        } else if self.outstanding_len == 0 {
+            self.admitted_progress = None;
             self.state = RealtimeJobState::Prepared;
+        } else {
+            self.state = RealtimeJobState::Admitted;
         }
         Ok(self.status())
     }
@@ -1312,7 +1347,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             RealtimeJobState::Complete | RealtimeJobState::Faulted
         ) {
             self.state = RealtimeJobState::Cancelled;
-            self.outstanding = None;
+            self.clear_outstanding();
             self.admitted_progress = None;
         }
     }
@@ -1325,7 +1360,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             RealtimeJobState::Complete | RealtimeJobState::Cancelled | RealtimeJobState::Faulted
         ) {
             self.state = RealtimeJobState::Faulted;
-            self.outstanding = None;
+            self.clear_outstanding();
             self.admitted_progress = None;
         }
     }
@@ -1360,8 +1395,14 @@ impl<const AXES: usize> RealtimeJob<AXES> {
             total_blocks: self.descriptor.block_count,
             admitted_progress: self.admitted_progress,
             completed_progress: self.completed_progress,
-            outstanding: self.outstanding.is_some(),
+            outstanding: self.outstanding_len != 0,
         }
+    }
+
+    fn clear_outstanding(&mut self) {
+        self.outstanding = [None; REALTIME_BLOCK_WINDOW];
+        self.outstanding_head = 0;
+        self.outstanding_len = 0;
     }
 }
 
@@ -1380,11 +1421,11 @@ pub struct RealtimeJobReport {
     pub total_blocks: u32,
     /// Blocks waiting in the cross-core ownership ring.
     pub queue_depth: u32,
-    /// Facts through an outstanding admitted block, when present.
+    /// Facts through the newest outstanding admitted block, when present.
     pub admitted_progress: Option<(StreamTick, Digest)>,
     /// Facts through the last acknowledged block, when present.
     pub completed_progress: Option<(StreamTick, Digest)>,
-    /// Whether the execution owner currently holds one complete block.
+    /// Whether the execution pipeline currently holds one or more blocks.
     pub outstanding: bool,
 }
 
@@ -1540,10 +1581,15 @@ impl RealtimeJobReport {
             {
                 Err(RealtimeJobReportWireError::Progress)
             }
-            RealtimeJobState::Admitted
-                if self.admitted_blocks != self.completed_blocks.saturating_add(1) =>
-            {
-                Err(RealtimeJobReportWireError::Progress)
+            RealtimeJobState::Admitted => {
+                let in_flight = self.admitted_blocks.saturating_sub(self.completed_blocks);
+                let window = u32::try_from(REALTIME_BLOCK_WINDOW)
+                    .map_err(|_| RealtimeJobReportWireError::Counts)?;
+                if in_flight == 0 || in_flight > window {
+                    Err(RealtimeJobReportWireError::Progress)
+                } else {
+                    Ok(())
+                }
             }
             RealtimeJobState::Complete
                 if self.completed_blocks != self.total_blocks || self.outstanding =>
@@ -2051,7 +2097,7 @@ mod tests {
     }
 
     #[test]
-    fn realtime_admission_owns_one_block_and_rejects_wrong_order() {
+    fn realtime_admission_pipelines_two_blocks_and_rejects_wrong_order() {
         type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
         let boundary = Box::leak(Box::new(Boundary::new()));
         let (mut service, mut realtime) = boundary.split();
@@ -2074,19 +2120,28 @@ mod tests {
             RealtimeJobReport::decode(&report.encode().unwrap()),
             Ok(report)
         );
+        let second = match job.poll(&mut realtime).unwrap() {
+            RealtimePoll::Block(block) => block,
+            _ => panic!("second block must enter the bounded lookahead window"),
+        };
+        assert_eq!(second.header().sequence, 1);
         assert!(matches!(
             job.poll(&mut realtime).unwrap(),
             RealtimePoll::Outstanding
         ));
+        let report = RealtimeJobReport::from_status(job.status(), realtime.work_depth()).unwrap();
+        assert_eq!(report.admitted_blocks, 2);
+        assert_eq!(report.completed_blocks, 0);
+        assert_eq!(
+            RealtimeJobReport::decode(&report.encode().unwrap()),
+            Ok(report)
+        );
         let status = job.acknowledge(admitted).unwrap();
         assert_eq!(status.completed_blocks, 1);
-        assert_eq!(status.state, RealtimeJobState::Prepared);
+        assert_eq!(status.state, RealtimeJobState::Admitted);
+        assert_eq!(status.admitted_progress.unwrap().accepted_blocks, 2);
 
-        let admitted = match job.poll(&mut realtime).unwrap() {
-            RealtimePoll::Block(block) => block,
-            _ => panic!("second block must be available"),
-        };
-        let status = job.acknowledge(admitted).unwrap();
+        let status = job.acknowledge(second).unwrap();
         assert_eq!(status.state, RealtimeJobState::Complete);
         assert_eq!(status.completed_blocks, 2);
         assert_eq!(status.completed_progress.unwrap().position, [2, -2, 0]);
@@ -2097,6 +2152,28 @@ mod tests {
             RealtimeJobReport::decode(&report.encode().unwrap()),
             Ok(report)
         );
+
+        let boundary = Box::leak(Box::new(Boundary::new()));
+        let (mut service, mut realtime) = boundary.split();
+        let first = block(0, Digest::ZERO);
+        let first_digest = first.header().block_digest;
+        service.try_send_work(first).unwrap();
+        service.try_send_work(block(1, first_digest)).unwrap();
+        let mut job = RealtimeJob::<3>::prepare(descriptor(2)).unwrap();
+        let _first = match job.poll(&mut realtime).unwrap() {
+            RealtimePoll::Block(block) => block,
+            _ => panic!("first block must be available"),
+        };
+        let second = match job.poll(&mut realtime).unwrap() {
+            RealtimePoll::Block(block) => block,
+            _ => panic!("second block must be available"),
+        };
+        assert!(matches!(
+            job.acknowledge(second),
+            Err(JobError::AdmissionToken)
+        ));
+        assert_eq!(job.status().state, RealtimeJobState::Faulted);
+        assert!(!job.status().outstanding);
     }
 
     #[test]
@@ -2129,6 +2206,24 @@ mod tests {
         service.try_send_work(block(0, Digest::ZERO)).unwrap();
         assert_eq!(job.drain(&mut realtime).unwrap(), 1);
         assert_eq!(realtime.work_depth(), 0);
+
+        let boundary = Box::leak(Box::new(Boundary::new()));
+        let (mut service, mut realtime) = boundary.split();
+        service.try_send_work(block(0, Digest::ZERO)).unwrap();
+        service.try_send_work(block(1, Digest([0x99; 32]))).unwrap();
+        let mut job = RealtimeJob::<3>::prepare(descriptor(2)).unwrap();
+        let first = match job.poll(&mut realtime).unwrap() {
+            RealtimePoll::Block(block) => block,
+            _ => panic!("the valid prefix must be admitted"),
+        };
+        assert!(matches!(
+            job.poll(&mut realtime),
+            Err(JobError::Machine(BlockError::PreviousDigest))
+        ));
+        assert_eq!(job.status().state, RealtimeJobState::Faulted);
+        assert!(!job.status().outstanding);
+        assert!(job.status().admitted_progress.is_none());
+        assert!(matches!(job.acknowledge(first), Err(JobError::State)));
     }
 
     #[test]

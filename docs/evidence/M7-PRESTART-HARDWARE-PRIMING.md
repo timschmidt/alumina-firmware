@@ -9,6 +9,10 @@ ESP32 I²S phase, DMA-refill, physical-latch, static/stream handoff, safe-stop,
 cross-block-horizon, synchronization, armability, or machine qualification
 claim.
 
+The later [cross-block prefill checkpoint](M6-CROSS-BLOCK-PREFILL.md) closes the
+bounded software-horizon item without changing any target or physical claim
+above.
+
 ## Schedule authority
 
 The version-2 schedule family deliberately changes all three canonical domains:

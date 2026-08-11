@@ -682,15 +682,17 @@ backend. It has a fixed allocation-free ring and treats generation, acceptance
 into the sole immutable hardware timeline, and physical latch observation as
 three different ordered states. A full ring stops planning without discarding
 the next event; a staging mismatch, reordered token, early latch, or late latch
-is terminal. Logical block completion retains the unique admitted block until
-the ring is empty *and* its exact terminal cycle has been observed, including an
-output-free tail or dwell. Terminal driver disable is scheduled and physically
-acknowledged through the same ring. It is inserted while the final block remains
-owned, before physical draining could consume the hardware lead needed by a
-circular target. If the earliest legal disable would coincide with the prior
-complete image, it moves to the next exact output-grid boundary; two different
-images never claim one physical latch. Only one block is currently planned at a
-time, so cross-block prefill is still an open target integration boundary.
+is terminal. Logical block completion records an exact generated-update prefix
+and terminal cycle. A fixed two-block window may admit and plan the successor
+while the prior token remains retained; the prior block returns as soon as its
+own prefix is physically committed and its terminal cycle observed, even when
+later images remain queued. Admission and completion barriers are strict FIFO,
+and an invalid successor invalidates the complete window. Terminal driver
+disable is scheduled and physically acknowledged through the same ring. It is
+inserted while the final block remains owned, before physical draining could
+consume the hardware lead needed by a circular target. If the earliest legal
+disable would coincide with the prior complete image, it moves to the next exact
+output-grid boundary; two different images never claim one physical latch.
 
 The next serializer layer is now explicit and portable. `PcmShortMonoFrame`
 encodes one full, already composed image into a 32-bit mono sample repeated in
@@ -736,10 +738,12 @@ A second host integration starts with a four-frame safe ring, models one
 descriptor becoming CPU-owned for each transmitted frame, refills each released
 slot from `PcmShortDmaHorizon`, and reconstructs the independent 64-bit wire.
 The final disable is already in the sparse plan before the block token can
-return and becomes visible before the job actor acknowledges completion. This
-proves circular ownership and ordering in software; it does not equate a DMA
-descriptor EOF with WS, qualify an ESP32 interrupt, or solve cross-block
-lookahead.
+return and becomes visible before the job actor acknowledges completion. A
+two-block variant validates both blocks before start, plans the successor while
+the predecessor is retained, emits one uninterrupted dense frame sequence, and
+returns each block at its independent commit-count barrier. This proves bounded
+cross-block circular ownership and ordering in software; it does not equate a
+DMA descriptor EOF with WS or qualify an ESP32 interrupt.
 
 The first target-facing fixture is a separate TinyBee safe-image-only binary,
 not a feature path through production firmware. It establishes the static safe

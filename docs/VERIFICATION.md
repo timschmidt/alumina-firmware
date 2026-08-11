@@ -66,6 +66,9 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   release credits, preview/push/accept refill identity, sealed versus writable
   horizons, untracked-write/underrun faults, and final-disable preplanning while
   the unique block remains retained;
+- bounded cross-block ownership: two independently validated tokens, successor
+  prefill before predecessor release, per-block commit-count/terminal-cycle
+  barriers, strict acknowledgement order, and a gap-free dense wire trace;
 - flash-stall and delayed-service events without pretending to prove hardware
   timing; and
 - trace/replay of every command, state transition, scheduled event, output, sample,

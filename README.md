@@ -103,16 +103,18 @@ transfers non-cloneable owned blocks under exact credits. See the
 opens one exact typed publication, reads at most one verified SD chunk per
 bounded step, retains ownership across a full work ring, and never marks a
 partition complete until every block has transferred. Core 1 independently
-validates one owned block at a time and advances completion only through an
-exact acknowledgement token. Cached `StreamTick` values remain distinct from
-absolute `DeviceCycle` values until a future deterministic commit installs an
-epoch. The simulator drives these actors through a provisioned cache with
-700-byte chunks, forces backpressure, and proves identical terminal stream
-facts. Firmware now compiles the crate for both boards; authenticated job
+validates a strict two-block ownership window and advances completion only
+through ordered exact acknowledgement tokens. Cached `StreamTick` values remain
+distinct from absolute `DeviceCycle` values until a future deterministic commit
+installs an epoch. The simulator drives these actors through a provisioned
+cache with 700-byte chunks, forces backpressure, and proves identical terminal
+stream facts. Firmware now compiles the crate for both boards; authenticated job
 control now routes canonical prepare/cancel/status frames through core 0, drives
 bounded verified prefetch, installs the independent core-1 validator, and
-publishes correlated status. Core 1 retains the first admitted block without
-acknowledging or executing it. `alumina-capability` now encodes every typed board
+publishes correlated status. Core 1 retains one initial block, or two for a
+multi-block job, without acknowledging or executing them. See the
+[cross-block prefill evidence](docs/evidence/M6-CROSS-BLOCK-PREFILL.md).
+`alumina-capability` now encodes every typed board
 fact as an allocation-free canonical `ALMCAP01` document. Both first packages
 compile its independently recomputed SHA-256, firmware verifies it before Wi-Fi,
 identity advertises it, and authenticated `CapabilitiesGet` returns bounded

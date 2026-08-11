@@ -303,8 +303,9 @@ serializer, browser planner, and physical workflow remain closed; both first
 board packages remain non-armable. Core 1 now composes the exact cached executor
 with the active configuration, descriptor-bound absolute lattice origin,
 scheduled epoch, interlock-qualified arm/start state, and a two-phase complete-
-image transaction. A block is acknowledged only after every target-reported
-physical commit, and normal disable waits for the exact enable-hold cycle.
+image transaction. A block is acknowledged only after its exact generated
+output prefix is physically committed, and normal disable waits for the exact
+enable-hold cycle.
 TinyBee's blocking static writer is only a compile/HIL staging path and cannot
 qualify arming; T-Deck Pro has no motion output. The portable safety-input
 layer retains configuration-derived resource/polarity/pull/debounce/watchdog
@@ -320,8 +321,8 @@ requires exact boundary alignment and one-frame lead, and expands sparse updates
 into a continuous fixed-capacity horizon. The simulator reconstructs every
 image from all 64 modeled wire bits and latches sequence, timing, contract, and
 horizon-starvation faults. Target DMA ownership, physical latch observation,
-motion lookahead production, safe stop/reclaim, and HIL qualification remain
-open; this software checkpoint does not alter either board's armability.
+safe stop/reclaim, and HIL qualification remain open; this software checkpoint
+does not alter either board's armability.
 The scheduled checkpoint adds an exact backend output lattice and a bounded
 scheduled-image owner that separates future generation, hardware-timeline
 acceptance, and ordered latch observation. It stops cleanly at ring capacity,
@@ -333,10 +334,9 @@ that future-image owner and requires an explicit `Priming → Primed` hardware
 horizon acknowledgement between the distributed abort guard and local start.
 Both board adapters reject every streaming-horizon call, and TinyBee's
 safe-prefilled PCM-short circular-DMA composition remains compile-only and
-unreachable. Target frame materialization, a qualified cycle/frame epoch,
-cross-block prefill, safe peripheral reclaim, interrupt-backed commit
-observation, and logic-analyzer evidence remain open; both boards remain
-non-armable.
+unreachable. Target frame materialization, a qualified cycle/frame epoch, safe
+peripheral reclaim, interrupt-backed commit observation, and logic-analyzer
+evidence remain open; both boards remain non-armable.
 The follow-on circular-DMA checkpoint now owns exact released frame credits and
 uses a preview/push/accept transaction so a failed or partial target write never
 extends the sealed horizon. Sparse motion tags become materialized only in their
@@ -347,8 +347,20 @@ image per strictly increasing output-grid boundary. A four-frame host ring
 simulation exercises steady release/refill and proves final disable is visible
 before block acknowledgement. The TinyBee HAL surface uses one four-byte DMA
 descriptor per modeled frame, but remains compile-only and unreachable. FIFO/WS
-phase, refill interrupt/wake policy, static-to-stream handoff, safe reclaim,
-multi-block cross-prefill, and all physical claims remain open.
+phase, refill interrupt/wake policy, static-to-stream handoff, safe reclaim, and
+all physical claims remain open.
+The cross-block follow-on changes admission from one outstanding token to a
+strict two-block FIFO. Multi-block schedule installation and arming now require
+both initial blocks; core 1 carries that window through prestart priming and
+refills it only when the oldest independent physical barrier returns. The
+scheduled owner records a generated-update count and exact terminal cycle per
+block, so successor images may remain queued when the predecessor is released.
+Portable motion tests and a four-frame circular-DMA/wire simulation prove the
+successor is planned before predecessor release, every dense frame remains
+continuous, and acknowledgements remain ordered. The bounded window makes
+minimum cached block duration versus refill lead a compiler/qualification fact;
+insufficient horizon fails closed. Target interrupt timing and physical capture
+remain open.
 An isolated release-only `mks-tinybee-pcm-short-safe` HIL artifact now turns the
 first physical gate into a reproducible procedure. It establishes the blocking
 safe image before timekeeping or I²S setup, retains all service/second-core

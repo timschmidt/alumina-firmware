@@ -55,10 +55,11 @@ cycle 112 is accepted. The firmware also retries insertion when refill capacity
 has not yet reached the finish boundary; reaching that boundary without having
 preplanned the disable fails closed.
 
-Multi-block continuous prefill is deliberately not claimed. The current job
-handoff admits the next block only after the prior block's physical drain, so a
-qualified motion board must remain non-armable until cross-block planning owns
-that boundary or the accepted machine policy proves a harmless gap.
+This checkpoint originally stopped at a single block. The follow-on
+[cross-block prefill checkpoint](M6-CROSS-BLOCK-PREFILL.md) replaces that
+limitation with a bounded two-block admission window and per-block physical
+commit barriers. That later software evidence still does not qualify target
+DMA/interrupt timing or make either board armable.
 
 ## Circular host simulation and TinyBee compile surface
 
