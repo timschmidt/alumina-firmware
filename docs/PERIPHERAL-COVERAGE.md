@@ -183,8 +183,10 @@ Representative generated nodes:
 ### Wave B — Motion, analog, and industrial basics
 
 - MKS ESP32 FOC V1.0 read-only dual-AS5600 transport now compiles behind an
-  explicit dormant-to-I²C type state; synchronized ADC1 current acquisition,
-  MCPWM, measured phase-high-impedance shutdown, and a safe power profile remain;
+  explicit dormant-to-I²C type state; portable exact current-calibration,
+  two-shunt reconstruction, and PWM/ADC timing-witness contracts are present,
+  while a synchronized ADC1 producer, MCPWM compare-image owner, measured
+  phase-high-impedance shutdown, and a safe power profile remain;
 - TWAI/CAN, RS-485 and selected Modbus modes;
 - TMC UART/SPI devices, encoder/capture modes, DAC/touch where selected;
 - Ethernet or USB for the first board that physically requires it.

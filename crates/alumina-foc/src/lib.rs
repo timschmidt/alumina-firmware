@@ -4,11 +4,17 @@
 use alumina_protocol::{DeviceCycle, Digest};
 
 mod angle;
+mod current;
 
 pub use angle::{
     CountUncertainty, ElectricalPhase, ElectricalPhaseEstimate, HALF_TURN_BITS,
     MAXIMUM_OBSERVATION_ERROR_BITS, PHASE_POINTS_PER_TURN, QUARTER_TURN_BITS, RotationPrecision,
     RotorCalibration, RotorCountDirection, rotation_from_estimate, rotation_from_phase,
+};
+pub use current::{
+    CurrentChannelCalibration, CurrentPolarity, CurrentSample, PwmAdcSampleStamp,
+    PwmAdcSynchronization, TwoShuntCurrentCalibration, TwoShuntPhasePair,
+    ValidatedTwoShuntCurrentCalibration,
 };
 
 /// Fractional bits in the signed Q2.30 real-time representation.
@@ -981,13 +987,6 @@ impl RotorSample {
     }
 }
 
-/// Bounded phase-current sample in the same normalized scale as its snapshot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CurrentSample {
-    pub observed_at: DeviceCycle,
-    pub phases: Phase3,
-}
-
 /// Backend observation of one committed three-phase duty image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PowerStageCommit {
@@ -1008,8 +1007,11 @@ pub trait RotorSensor {
 pub trait CurrentSense {
     type Error;
 
-    /// Returns the PWM-synchronized bounded current sample.
-    fn sample(&mut self, at: DeviceCycle) -> Result<CurrentSample, Self::Error>;
+    /// Takes one completed, PWM-correlated sample when the backend has one.
+    ///
+    /// A backend configured from a validated immutable calibration returns
+    /// `None` until a complete ADC conversion and synchronization stamp exist.
+    fn take_synchronized_sample(&mut self) -> Result<Option<CurrentSample>, Self::Error>;
 }
 
 /// Sole owner of qualified inverter shutdown and PWM commitment.
@@ -1039,6 +1041,10 @@ pub enum FocError {
     Precision,
     RotorCalibration,
     RotorSample,
+    CurrentCalibration,
+    CurrentRawSample,
+    CurrentSynchronization,
+    CurrentSample,
     UnbalancedPhases,
     ModulationRange,
     Controller,

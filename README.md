@@ -294,6 +294,20 @@ without sending a transaction. Motion still rejects and the board remains
 non-armable. See the
 [AS5600/closed-ownership evidence](docs/evidence/M8-AS5600-CLOSED-OWNERSHIP.md).
 
+The portable current boundary now likewise preserves measurement uncertainty.
+Each raw ADC channel maps through an outward Q2.30 gain interval plus mandatory
+additive error that cannot omit half-count quantization; rail codes, an
+unbracketed zero, overwide intervals, and values outside the configured current
+limit reject. A validated two-shunt snapshot names the measured phase pair,
+widens for interchannel skew using an explicit current-slew bound, reconstructs
+the third phase, and retains the independent-box zero-sequence residual. Every
+sample also carries replayable PWM-period, duty-token, acquisition, channel,
+conversion, and nearest-switching-edge timestamps. Device-cycle/PWM rate,
+jitter, skew, latency, and edge guards must all agree before the sample can bind
+to a FOC parameter snapshot. This remains portable software: no ADC or MCPWM is
+initialized and no target sample is claimed. See the
+[current-sampling evidence](docs/evidence/M8-CURRENT-SAMPLING-CONTRACT.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

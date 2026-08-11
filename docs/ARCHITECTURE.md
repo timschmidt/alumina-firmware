@@ -862,6 +862,37 @@ and HIL. Converting a count into a `RotorSample` remains the digest-bound
 `RotorCalibration` responsibility; sensor timing, alignment, and error bounds
 remain unqualified.
 
+The portable current boundary is similarly evidence-bearing rather than a raw
+`u16` shortcut. Each channel snapshot declares an inclusive interior ADC code
+window, strictly bracketed selected-zero code, polarity, outward Q2.30
+normalized-current-per-count interval, additive error, and maximum result
+width. Conversion evaluates `(raw - zero) * gain_interval` exactly in a widened
+integer domain and then widens by the additive bound. That bound must include at
+least half of the upper gain, so ADC quantization cannot disappear. Validation
+checks both channel endpoints and all four two-shunt endpoint pairs against the
+configured current and interval-width limits.
+
+A PWM/ADC synchronization snapshot lives entirely in the boot-local device
+cycle domain. Each current observation retains the configuration digest, duty
+commit token, PWM period sequence/start, acquisition start, both sample-and-hold
+cycles, conversion completion, and the nearest switching edges surrounding the
+aperture. Validation binds the exact integer PWM period to the FOC snapshot and
+checks trigger jitter, acquisition span, interchannel skew, conversion latency,
+period containment, and edge guards. The measured pair is widened by a declared
+current-slew bound before the third phase is reconstructed; loss of interval
+correlation is retained as an explicit zero-sequence bound for Clarke
+transformation. A validated wrapper avoids rechecking the immutable calibration
+on every real-time observation, while `CurrentSample::validate_for` replays the
+raw codes and timing stamp before controller use.
+
+An isolated timing stamp cannot prove that its duty token corresponds to the
+physical compare image, that its edge cycles are truthful, or that period
+sequences are continuous. Those are obligations of the future sole-owner
+MCPWM/ADC backend, integer compare-image audit, stream state machine, and HIL.
+No current target constructs an ADC sampler or an MCPWM operator, and no
+portable interval has yet been reduced to the nominal point used by the PI
+controller.
+
 ## Exact CAD-to-motor boundary
 
 Exactness is preserved by making the lossy boundary explicit and provable, not

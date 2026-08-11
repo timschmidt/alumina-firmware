@@ -531,10 +531,20 @@ uncalibrated inputs are sealed into types with no energizing/sampling trait or
 raw-token extractor. See the
 [AS5600/closed-ownership evidence](evidence/M8-AS5600-CLOSED-OWNERSHIP.md).
 
-The next target slice specifies calibrated current-sense snapshots and the
-PWM/ADC synchronization model without opening an energization path. Physical
-electrical alignment, measured sensor error/latency, and any nonzero duty remain
-separate reviewed work.
+The current-sampling checkpoint now adds exact raw-ADC calibration intervals,
+validated two-shunt phase reconstruction, retained zero-sequence uncertainty,
+and replayable PWM/ADC timing witnesses. Digest identity, integer PWM period,
+trigger jitter, acquisition aperture, channel skew, conversion latency, and
+nearest-switching-edge guards must agree before a sample can bind to a FOC
+snapshot. This is still portable software: it initializes no ADC or MCPWM
+peripheral and makes no timing or current-measurement claim. See the
+[current-sampling evidence](evidence/M8-CURRENT-SAMPLING-CONTRACT.md).
+
+The next target slice gives these rotor/current/timing facts canonical stored
+configuration records and designs the classic-ESP32 ADC1 acquisition plus
+MCPWM integer-compare owners behind the still-closed power-stage type state.
+Physical electrical alignment, calibrated analog error, truthful edge stamps,
+measured sensor latency, and any nonzero duty remain separate reviewed work.
 
 Exit gate:
 
