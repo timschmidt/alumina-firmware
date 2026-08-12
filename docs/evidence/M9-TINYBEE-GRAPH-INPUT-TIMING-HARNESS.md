@@ -57,14 +57,15 @@ StepStick, and display load must remain disconnected. An operator-owned actual
 fixture photograph plus a distinct annotated derivative must visibly identify
 the pins, leads, and disconnected load groups.
 
-The initial SLogic16U3 contract uses D0=GPIO4 release timing, D1=GPIO33 raw
-input, and D2=GPIO21 graph sink at 400 MHz with a 1.6 V threshold, 50 ms
-pre-trigger, and 300 ms total capture. Pass policy requires at least 150
-complete 1 kHz releases, 20 releases on each side of the assertion/sink event,
-periods within 1 ms ±100 us, release pulses no wider than 300 us, one sink
-assertion, 1.9–3.2 ms physical-input-to-sink latency, and at most 10 us from the
-correlated completed release to the sink edge. At least 25 health requests must
-succeed with zero failures.
+The initial SLogic16U3 contract selects its minimum four-channel bank and uses
+D0=GPIO4 release timing, D1=GPIO33 raw input, and D2=GPIO21 graph sink at
+400 MHz with a 1.6 V threshold, 50 ms pre-trigger, and 300 ms total capture. D3
+must remain physically unconnected and is ignored by the decoder. Pass policy
+requires at least 150 complete 1 kHz releases, 20 releases on each side of the
+assertion/sink event, periods within 1 ms ±100 us, release pulses no wider than
+300 us, one sink assertion, 1.9–3.2 ms physical-input-to-sink latency, and at
+most 10 us from the correlated completed release to the sink edge. At least 25
+health requests must succeed with zero failures.
 
 `cargo xtask hil analyze-tinybee-graph-vcd` is a streaming three-signal VCD
 decoder. It rejects unknown selected levels, fractional-picosecond timestamps,

@@ -228,14 +228,16 @@ as the protected X-endstop signal. Never bridge or probe pin 2 as part of this
 fixture. With J14 open, first measure pin 3 at 2.7–3.6 V. The assertion action
 is an insulated jumper from J14 pin 3 to J14 pin 1 only.
 
-Use three active SLogic16U3 channels, a 1.6 V threshold, and at least one short
-ground lead. Do not connect either analyzer VCC pin to the TinyBee.
+Select the SLogic16U3 four-channel bank, use a 1.6 V threshold, and attach at
+least one short ground lead. Only D0–D2 are used: leave D3 physically
+unconnected. Do not connect either analyzer VCC pin to the TinyBee.
 
 | SLogic | Signal | Board point | ESP32 route | Meaning |
 | --- | --- | --- | ---: | --- |
 | D0 | TIMING | EXP1 pin 4, `LCD_RS_O` | GPIO4 | high only around the fixed graph `release` call |
 | D1 | INPUT | J14/X- pin 3 | GPIO33 through the protected endstop network | raw active-low assertion |
 | D2 | SINK | EXP1 pin 3, `LCD_EN_O` | GPIO21 | graph sink value, changed only after a completed release |
+| D3 | UNUSED | no connection | — | selected only because four channels is the analyzer's minimum bank |
 | GND | ground | J14/X- pin 1 or another verified ground | — | common reference |
 
 Locate EXP1 pin 1 from the square PCB pad, not from an assumed cable
@@ -243,8 +245,8 @@ orientation. EXP1 pin 3 and pin 4 traverse the fitted display buffer and may be
 near 5 V. Measure both high levels within 3.0–5.5 V before the recorded run;
 the SLogic16U3's reviewed 0–10 V input range is required here. EXP1 and EXP2
 must otherwise remain empty. The retained annotated photograph must visibly
-label J14 pins 1/2/3, EXP1 pins 3/4, every analyzer lead, and every disconnected
-load group.
+label J14 pins 1/2/3, EXP1 pins 3/4, every analyzer lead, the unconnected D3
+lead, and every disconnected load group.
 
 ### Run and capture
 
@@ -257,8 +259,9 @@ at least 25 successful responses and zero failures; this is the independent
 proof that the real AP/web tasks were scheduled on core 0 during the trace.
 
 Arm the analyzer on the D1 falling edge with at least 20 ms pre-trigger history
-and at least 200 ms total capture. The preferred initial setting is 400 MHz,
-50 ms pre-trigger (20,000,000 samples), and 300 ms total (120,000,000 samples).
+and at least 200 ms total capture. The preferred initial setting is the
+four-channel bank at 400 MHz, 50 ms pre-trigger (20,000,000 samples), and
+300 ms total (120,000,000 samples).
 Once armed, bridge only J14 pin 3 to pin 1 and hold it through the remainder of
 the capture. Contact bounce is accepted as raw evidence, but a pass allows at
 most 16 raw transitions and derives the 2 ms debounce interval from the final

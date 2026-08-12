@@ -82,6 +82,8 @@ const FIELDS: &[&str] = &[
     "sample_rate_hz",
     "threshold_mv",
     "active_channel_count",
+    "unused_channel",
+    "unused_channel_unconnected",
     "timing_channel",
     "input_channel",
     "sink_channel",
@@ -255,8 +257,20 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeeGraphRunSummar
     if !(900..=1_600).contains(&record.u64("threshold_mv")?) {
         return Err(record.error("threshold_mv", "must be within 0.9–1.6 V"));
     }
-    if record.u64("active_channel_count")? != 3 {
-        return Err(record.error("active_channel_count", "must be exactly three"));
+    if record.u64("active_channel_count")? != 4 {
+        return Err(record.error(
+            "active_channel_count",
+            "must select the SLogic16U3 four-channel bank",
+        ));
+    }
+    if record.u64("unused_channel")? != 3 {
+        return Err(record.error("unused_channel", "must identify D3"));
+    }
+    if !record.boolean("unused_channel_unconnected")? {
+        return Err(record.error(
+            "unused_channel_unconnected",
+            "must prove the unused D3 lead was not connected",
+        ));
     }
     for (field, expected) in [
         ("timing_channel", 0),
@@ -712,7 +726,9 @@ mod tests {
             set("capture_software_version", quoted("fixture"));
             set("sample_rate_hz", "400000000".to_owned());
             set("threshold_mv", "1600".to_owned());
-            set("active_channel_count", "3".to_owned());
+            set("active_channel_count", "4".to_owned());
+            set("unused_channel", "3".to_owned());
+            set("unused_channel_unconnected", "true".to_owned());
             set("timing_channel", "0".to_owned());
             set("input_channel", "1".to_owned());
             set("sink_channel", "2".to_owned());
@@ -827,5 +843,27 @@ mod tests {
         .unwrap();
         let error = validate(&fixture.root, &fixture.record).unwrap_err();
         assert!(error.contains("does not exactly reproduce"));
+    }
+
+    #[test]
+    fn analyzer_bank_requires_an_unconnected_d3() {
+        let fixture = Fixture::new();
+        let original = fs::read_to_string(&fixture.record).unwrap();
+        fs::write(
+            &fixture.record,
+            original.replace("active_channel_count = 4", "active_channel_count = 3"),
+        )
+        .unwrap();
+        assert!(validate(&fixture.root, &fixture.record).is_err());
+
+        fs::write(
+            &fixture.record,
+            original.replace(
+                "unused_channel_unconnected = true",
+                "unused_channel_unconnected = false",
+            ),
+        )
+        .unwrap();
+        assert!(validate(&fixture.root, &fixture.record).is_err());
     }
 }
