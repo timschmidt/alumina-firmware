@@ -306,9 +306,20 @@ the third phase, and retains the independent-box zero-sequence residual. Every
 sample also carries replayable PWM-period, duty-token, acquisition, channel,
 conversion, and nearest-switching-edge timestamps. Device-cycle/PWM rate,
 jitter, skew, latency, and edge guards must all agree before the sample can bind
-to a FOC parameter snapshot. This remains portable software: no ADC or MCPWM is
-initialized and no target sample is claimed. See the
+to a FOC parameter snapshot. The synchronized producer remains portable
+software: no target can create this stamp and no target current sample is
+claimed. See the
 [current-sampling evidence](docs/evidence/M8-CURRENT-SAMPLING-CONTRACT.md).
+
+The MKS target now has a separate compile-only ADC1 commissioning transition.
+It consumes the one ADC1 token and all four schematic current pins, programs an
+explicit approximate attenuation for each route at the HAL-default 12-bit
+resolution, and polls exactly channel 0 followed by channel 1. The returned raw
+pair records request and conversion-completion observations only. It has no PWM
+token, digest, sample-aperture time, edge witness, calibration lowering, or
+`CurrentSense` implementation, so diagnostic reads cannot enter the torque
+loop. The transition is not scheduled and has not run on hardware. See the
+[classic ESP32 ADC1 evidence](docs/evidence/M8-CLASSIC-ESP32-ADC1-OWNER.md).
 
 The MKS capability document now identifies each independent 400 kHz encoder
 connector as its own compile-supported AS5600 endpoint at address `0x36`, while
@@ -318,7 +329,8 @@ and the qualified stage topology. Exact scalar authorities must agree with the
 retained integer pole-pair, encoder-modulus, loop-rate, PWM-period, and dead-time
 facts. The portable V3 tests replay all fixed record forms and every two-chunk
 byte boundary before lowering. These remain synthetic qualification fixtures;
-the physical MKS target is non-armable and its ADC/MCPWM tokens remain sealed.
+the physical MKS target is non-armable, ADC1 commissioning is unqualified and
+unscheduled, and both MCPWM tokens remain sealed.
 
 ## Developer checks
 

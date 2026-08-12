@@ -99,6 +99,7 @@ dependencies = [
  "esp-radio",
  "esp-rtos",
  "heapless 0.8.0",
+ "nb 1.1.0",
  "panic-rtt-target",
  "rtt-target",
  "static_cell",

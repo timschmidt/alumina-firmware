@@ -2,6 +2,201 @@ use alumina_protocol::{DeviceCycle, Digest};
 
 use super::{AlphaBeta, FocError, FocParameterSnapshot, Phase3, Q30, Q30Interval, clarke};
 
+/// Logical member of one sequential two-channel ADC acquisition.
+///
+/// This selector describes conversion order only. It does not identify a
+/// physical phase until a validated current calibration supplies that mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SequentialAdcChannel {
+    Channel0,
+    Channel1,
+}
+
+/// Request for one software-started, sequential pair of raw ADC conversions.
+///
+/// The request deliberately carries no PWM token or configuration digest. A
+/// result from this path is suitable for commissioning diagnostics and offset
+/// collection, but cannot be promoted to [`CurrentSample`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SequentialAdcRequest {
+    /// Logical FOC axis whose two routed inputs are selected.
+    pub axis: u16,
+    /// Nonzero caller token used to correlate the diagnostic result.
+    pub token: u32,
+    /// Cycle at which software requested the first conversion.
+    pub requested_at: DeviceCycle,
+}
+
+/// Completed raw pair from a software-started sequential ADC path.
+///
+/// Completion times bound when software observed each conversion result. They
+/// are not sample-and-hold instants, PWM trigger evidence, or switching-edge
+/// evidence. Consequently this type cannot be converted into
+/// [`PwmAdcSampleStamp`] or [`CurrentSample`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SequentialAdcPair {
+    pub axis: u16,
+    pub token: u32,
+    pub requested_at: DeviceCycle,
+    pub channel0_conversion_completed_at: DeviceCycle,
+    pub channel1_conversion_completed_at: DeviceCycle,
+    pub raw_counts: [u16; 2],
+}
+
+/// Deterministic misuse or observation failure in sequential ADC acquisition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SequentialAdcAcquisitionError {
+    /// A zero correlation token was supplied.
+    ZeroToken,
+    /// Another pair is already in progress.
+    Busy,
+    /// No pair is in progress.
+    Idle,
+    /// A conversion completed for the channel that is not currently selected.
+    ChannelOrder,
+    /// A completion observation precedes the request or preceding completion.
+    TimeOrder,
+    /// A raw conversion exceeds the configured ADC code range.
+    RawCount,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingSequentialAdcPair {
+    request: SequentialAdcRequest,
+    channel0: Option<(u16, DeviceCycle)>,
+}
+
+/// Allocation-free ordering owner for software-started two-channel ADC reads.
+///
+/// The owner admits exactly channel 0 followed by channel 1, checks raw code
+/// range and monotonic completion observations, and permits explicit abort.
+/// It intentionally models none of the PWM synchronization facts required by
+/// [`PwmAdcSynchronization`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SequentialAdcAcquisition {
+    adc_maximum_count: u16,
+    pending: Option<PendingSequentialAdcPair>,
+}
+
+impl SequentialAdcAcquisition {
+    /// Constructs an idle sequencer for one nonempty ADC code lattice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SequentialAdcAcquisitionError::RawCount`] for a zero maximum.
+    pub const fn new(adc_maximum_count: u16) -> Result<Self, SequentialAdcAcquisitionError> {
+        if adc_maximum_count == 0 {
+            Err(SequentialAdcAcquisitionError::RawCount)
+        } else {
+            Ok(Self {
+                adc_maximum_count,
+                pending: None,
+            })
+        }
+    }
+
+    /// Starts one pair without starting any hardware conversion itself.
+    pub fn begin(
+        &mut self,
+        request: SequentialAdcRequest,
+    ) -> Result<(), SequentialAdcAcquisitionError> {
+        if request.token == 0 {
+            return Err(SequentialAdcAcquisitionError::ZeroToken);
+        }
+        if self.pending.is_some() {
+            return Err(SequentialAdcAcquisitionError::Busy);
+        }
+        self.pending = Some(PendingSequentialAdcPair {
+            request,
+            channel0: None,
+        });
+        Ok(())
+    }
+
+    /// Returns the sole channel whose conversion may currently be polled.
+    pub const fn pending_channel(&self) -> Option<SequentialAdcChannel> {
+        match self.pending {
+            Some(PendingSequentialAdcPair { channel0: None, .. }) => {
+                Some(SequentialAdcChannel::Channel0)
+            }
+            Some(PendingSequentialAdcPair {
+                channel0: Some(_), ..
+            }) => Some(SequentialAdcChannel::Channel1),
+            None => None,
+        }
+    }
+
+    /// Returns the request retained by an in-progress pair.
+    pub const fn pending_request(&self) -> Option<SequentialAdcRequest> {
+        match self.pending {
+            Some(pending) => Some(pending.request),
+            None => None,
+        }
+    }
+
+    /// Records one completed conversion and returns the pair after channel 1.
+    ///
+    /// A raw-range or time-order failure aborts the in-progress pair so a
+    /// partially invalid observation cannot later complete. Calling with the
+    /// wrong channel is treated as caller misuse and leaves the valid pending
+    /// conversion selected.
+    pub fn record_conversion(
+        &mut self,
+        channel: SequentialAdcChannel,
+        raw_count: u16,
+        completed_at: DeviceCycle,
+    ) -> Result<Option<SequentialAdcPair>, SequentialAdcAcquisitionError> {
+        let Some(mut pending) = self.pending else {
+            return Err(SequentialAdcAcquisitionError::Idle);
+        };
+        let expected = if pending.channel0.is_some() {
+            SequentialAdcChannel::Channel1
+        } else {
+            SequentialAdcChannel::Channel0
+        };
+        if channel != expected {
+            return Err(SequentialAdcAcquisitionError::ChannelOrder);
+        }
+        if raw_count > self.adc_maximum_count {
+            self.pending = None;
+            return Err(SequentialAdcAcquisitionError::RawCount);
+        }
+        let preceding_cycle = pending
+            .channel0
+            .map_or(pending.request.requested_at, |(_, cycle)| cycle);
+        if completed_at.0 < preceding_cycle.0 {
+            self.pending = None;
+            return Err(SequentialAdcAcquisitionError::TimeOrder);
+        }
+        match channel {
+            SequentialAdcChannel::Channel0 => {
+                pending.channel0 = Some((raw_count, completed_at));
+                self.pending = Some(pending);
+                Ok(None)
+            }
+            SequentialAdcChannel::Channel1 => {
+                let Some((channel0_count, channel0_completed_at)) = pending.channel0 else {
+                    return Err(SequentialAdcAcquisitionError::ChannelOrder);
+                };
+                self.pending = None;
+                Ok(Some(SequentialAdcPair {
+                    axis: pending.request.axis,
+                    token: pending.request.token,
+                    requested_at: pending.request.requested_at,
+                    channel0_conversion_completed_at: channel0_completed_at,
+                    channel1_conversion_completed_at: completed_at,
+                    raw_counts: [channel0_count, raw_count],
+                }))
+            }
+        }
+    }
+
+    /// Aborts a pending pair and returns its original request, if any.
+    pub fn abort(&mut self) -> Option<SequentialAdcRequest> {
+        self.pending.take().map(|pending| pending.request)
+    }
+}
+
 /// Direction in which increasing ADC codes move normalized phase current.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CurrentPolarity {
@@ -548,6 +743,114 @@ mod tests {
             d_current: pi,
             q_current: pi,
         }
+    }
+
+    #[test]
+    fn sequential_adc_owner_admits_exactly_one_ordered_pair() {
+        let request = SequentialAdcRequest {
+            axis: 1,
+            token: 9,
+            requested_at: DeviceCycle(1_000),
+        };
+        let mut acquisition = SequentialAdcAcquisition::new(4_095).unwrap();
+        assert_eq!(acquisition.pending_channel(), None);
+        assert_eq!(acquisition.begin(request), Ok(()));
+        assert_eq!(
+            acquisition.pending_channel(),
+            Some(SequentialAdcChannel::Channel0)
+        );
+        assert_eq!(
+            acquisition.record_conversion(
+                SequentialAdcChannel::Channel0,
+                2_001,
+                DeviceCycle(1_004),
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            acquisition.pending_channel(),
+            Some(SequentialAdcChannel::Channel1)
+        );
+        assert_eq!(
+            acquisition.record_conversion(
+                SequentialAdcChannel::Channel1,
+                1_999,
+                DeviceCycle(1_009),
+            ),
+            Ok(Some(SequentialAdcPair {
+                axis: 1,
+                token: 9,
+                requested_at: DeviceCycle(1_000),
+                channel0_conversion_completed_at: DeviceCycle(1_004),
+                channel1_conversion_completed_at: DeviceCycle(1_009),
+                raw_counts: [2_001, 1_999],
+            }))
+        );
+        assert_eq!(acquisition.pending_channel(), None);
+    }
+
+    #[test]
+    fn sequential_adc_owner_rejects_overlap_order_and_zero_token() {
+        let request = SequentialAdcRequest {
+            axis: 0,
+            token: 5,
+            requested_at: DeviceCycle(20),
+        };
+        let mut acquisition = SequentialAdcAcquisition::new(4_095).unwrap();
+        let mut zero = request;
+        zero.token = 0;
+        assert_eq!(
+            acquisition.begin(zero),
+            Err(SequentialAdcAcquisitionError::ZeroToken)
+        );
+        acquisition.begin(request).unwrap();
+        assert_eq!(
+            acquisition.begin(request),
+            Err(SequentialAdcAcquisitionError::Busy)
+        );
+        assert_eq!(
+            acquisition.record_conversion(SequentialAdcChannel::Channel1, 2_000, DeviceCycle(21),),
+            Err(SequentialAdcAcquisitionError::ChannelOrder)
+        );
+        assert_eq!(acquisition.abort(), Some(request));
+        assert_eq!(acquisition.abort(), None);
+    }
+
+    #[test]
+    fn sequential_adc_owner_aborts_invalid_observations() {
+        let request = SequentialAdcRequest {
+            axis: 0,
+            token: 6,
+            requested_at: DeviceCycle(20),
+        };
+        assert_eq!(
+            SequentialAdcAcquisition::new(0),
+            Err(SequentialAdcAcquisitionError::RawCount)
+        );
+        let mut acquisition = SequentialAdcAcquisition::new(4_095).unwrap();
+        acquisition.begin(request).unwrap();
+        assert_eq!(
+            acquisition.record_conversion(SequentialAdcChannel::Channel0, 4_096, DeviceCycle(21),),
+            Err(SequentialAdcAcquisitionError::RawCount)
+        );
+        assert_eq!(acquisition.pending_channel(), None);
+
+        acquisition.begin(request).unwrap();
+        assert_eq!(
+            acquisition.record_conversion(SequentialAdcChannel::Channel0, 2_000, DeviceCycle(19),),
+            Err(SequentialAdcAcquisitionError::TimeOrder)
+        );
+        assert_eq!(acquisition.pending_channel(), None);
+
+        acquisition.begin(request).unwrap();
+        acquisition
+            .record_conversion(SequentialAdcChannel::Channel0, 2_000, DeviceCycle(21))
+            .unwrap();
+        assert_eq!(
+            acquisition.record_conversion(SequentialAdcChannel::Channel1, 2_000, DeviceCycle(20),),
+            Err(SequentialAdcAcquisitionError::TimeOrder)
+        );
+        assert_eq!(acquisition.pending_channel(), None);
     }
 
     #[test]

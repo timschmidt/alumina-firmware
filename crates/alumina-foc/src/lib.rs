@@ -13,8 +13,9 @@ pub use angle::{
 };
 pub use current::{
     CurrentChannelCalibration, CurrentPolarity, CurrentSample, PwmAdcSampleStamp,
-    PwmAdcSynchronization, TwoShuntCurrentCalibration, TwoShuntPhasePair,
-    ValidatedTwoShuntCurrentCalibration,
+    PwmAdcSynchronization, SequentialAdcAcquisition, SequentialAdcAcquisitionError,
+    SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest, TwoShuntCurrentCalibration,
+    TwoShuntPhasePair, ValidatedTwoShuntCurrentCalibration,
 };
 
 /// Fractional bits in the signed Q2.30 real-time representation.

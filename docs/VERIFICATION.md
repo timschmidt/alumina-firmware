@@ -128,7 +128,7 @@ exclusive. A synthetic “all boards in one binary” build is not useful.
 
 Each physical board fixture provides controllable power, serial/JTAG where
 available, loopback/test loads, and a logic analyzer or capture MCU. Initial
-manual fixtures may use the available logic analyzer, webcam, 10 MHz DSO,
+manual fixtures may use the available SLogic16U3, webcam, 10 MHz DSO,
 multimeter, USB connection, TinyBee, and T-Deck Pro; automate power/capture as
 the suite stabilizes. Add the received MKS ESP32 FOC V1.0 with a current-limited
 supply and physically safe motor fixture.

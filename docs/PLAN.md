@@ -537,8 +537,8 @@ validated two-shunt phase reconstruction, retained zero-sequence uncertainty,
 and replayable PWM/ADC timing witnesses. Digest identity, integer PWM period,
 trigger jitter, acquisition aperture, channel skew, conversion latency, and
 nearest-switching-edge guards must agree before a sample can bind to a FOC
-snapshot. This is still portable software: it initializes no ADC or MCPWM
-peripheral and makes no timing or current-measurement claim. See the
+snapshot. Its synchronized producer is still portable software: no target
+creates the stamp and it makes no timing or current-measurement claim. See the
 [current-sampling evidence](evidence/M8-CURRENT-SAMPLING-CONTRACT.md).
 
 Configuration V3 now gives those rotor/current/timing facts canonical stored
@@ -550,10 +550,21 @@ names one compile-supported AS5600 endpoint on each independent encoder bus.
 The real `Described` stages still reject and no peripheral is activated. See the
 [configuration V3 evidence](evidence/M8-FOC-CONFIGURATION-V3.md).
 
-The next target slice designs the classic-ESP32 ADC1 acquisition and MCPWM
-integer-compare owners behind the still-closed power-stage type state. Physical
-electrical alignment, calibrated analog error, truthful edge stamps, measured
-sensor latency, and any nonzero duty remain separate reviewed work.
+The classic-ESP32 ADC1 ownership checkpoint now adds a compile-only,
+software-started diagnostic path. A type-state transition consumes ADC1 and all
+four routed current inputs, retains explicit per-route attenuation at the
+HAL-default 12-bit resolution, and exposes a bounded channel-0/channel-1 polling
+sequence. It records request and conversion-completion cycles but cannot create
+a sample-aperture or PWM-edge witness and does not implement `CurrentSense`.
+The transition is unscheduled and untested on hardware. See the
+[ADC1-owner evidence](evidence/M8-CLASSIC-ESP32-ADC1-OWNER.md).
+
+The next target slice implements exact interval-to-integer MCPWM compare
+lowering and a timer-zero latch owner while all six phase pins remain no-pull
+inputs. Joining ADC attenuation and MCPWM clock facts to canonical
+configuration, physical electrical alignment, calibrated analog error,
+truthful edge stamps, measured sensor latency, and any nonzero duty remain
+separate reviewed work.
 
 Exit gate:
 

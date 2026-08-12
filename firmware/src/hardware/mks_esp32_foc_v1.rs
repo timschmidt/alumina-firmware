@@ -10,6 +10,10 @@
 use alumina_as5600::{As5600, MagnetStatus, Observation, RawAngle};
 use alumina_board::BoardPackage;
 use alumina_config::RealtimeConfigurationProfile;
+use alumina_foc::{
+    SequentialAdcAcquisition, SequentialAdcAcquisitionError, SequentialAdcChannel,
+    SequentialAdcPair, SequentialAdcRequest,
+};
 use alumina_motion::{
     OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
 };
@@ -19,7 +23,7 @@ use alumina_service::CACHE_LIMITS;
 use alumina_storage::media::{AsyncBlockDevice, MediaBlock};
 use alumina_storage::provisioning::ProvisionedCache;
 use defmt::warn;
-use esp_hal::Async;
+use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, Error as I2cError, I2c};
 use esp_hal::peripherals::{
@@ -28,6 +32,7 @@ use esp_hal::peripherals::{
     MCPWM1, Peripherals, TIMG1, UART0, WIFI,
 };
 use esp_hal::time::Rate;
+use esp_hal::{Async, Blocking};
 
 use super::RuntimeResources;
 use super::safety_inputs::{SafetyInputBackendError, SafetyInputBank, SafetyInputScan};
@@ -88,6 +93,8 @@ pub const MOTION_OUTPUT_RING_IMAGES: usize = 64;
 pub const MOTION_PRIME_HORIZON_CYCLES: u64 = 20_000;
 /// Conservative board-composition rate for each independent encoder bus.
 pub const ENCODER_I2C_HZ: u32 = 400_000;
+/// Classic ESP32 ADC1 is used at its HAL-default 12-bit resolution.
+pub const ADC1_MAXIMUM_COUNT: u16 = 4_095;
 
 /// This direct-PWM board has no shifted step/motion image contract.
 pub const fn motion_shift_contract() -> Option<ShiftImageContract> {
@@ -186,12 +193,180 @@ struct ClosedPowerStage<Pwm> {
     dead_code,
     reason = "uncalibrated state intentionally has no conversion operation"
 )]
-struct UncalibratedCurrentSense {
+pub struct UncalibratedCurrentSense {
     adc1: ADC1<'static>,
     current_a0: GPIO39<'static>,
     current_b0: GPIO36<'static>,
     current_a1: GPIO35<'static>,
     current_b1: GPIO34<'static>,
+}
+
+/// Explicit classic-ESP32 ADC attenuation selected for one current input.
+///
+/// These names intentionally retain the HAL's approximate hardware settings;
+/// no voltage range or current accuracy follows from selecting one. A stored
+/// calibration must later bind the setting to measured analog evidence.
+#[allow(
+    dead_code,
+    reason = "all attenuation selections are retained for later stored configuration"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Adc1Attenuation {
+    Db0,
+    Db2p5,
+    Db6,
+    Db11,
+}
+
+impl Adc1Attenuation {
+    const fn into_hal(self) -> Attenuation {
+        match self {
+            Self::Db0 => Attenuation::_0dB,
+            Self::Db2p5 => Attenuation::_2p5dB,
+            Self::Db6 => Attenuation::_6dB,
+            Self::Db11 => Attenuation::_11dB,
+        }
+    }
+}
+
+/// Named attenuation settings for one stage's two schematic current routes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Adc1MotorAttenuation {
+    pub current_a: Adc1Attenuation,
+    pub current_b: Adc1Attenuation,
+}
+
+/// Per-route attenuation required before ADC1 takes ownership of the pins.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Adc1AcquisitionConfiguration {
+    pub motor0: Adc1MotorAttenuation,
+    pub motor1: Adc1MotorAttenuation,
+}
+
+/// Physical motor selecting one pair of current-amplifier outputs.
+#[allow(
+    dead_code,
+    reason = "both diagnostic current paths compile but are unscheduled before HIL"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CurrentAxis {
+    Axis0,
+    Axis1,
+}
+
+impl CurrentAxis {
+    const fn instance(self) -> u16 {
+        match self {
+            Self::Axis0 => 0,
+            Self::Axis1 => 1,
+        }
+    }
+}
+
+type Adc1Driver = Adc<'static, ADC1<'static>, Blocking>;
+type CurrentA0 = AdcPin<GPIO39<'static>, ADC1<'static>>;
+type CurrentB0 = AdcPin<GPIO36<'static>, ADC1<'static>>;
+type CurrentA1 = AdcPin<GPIO35<'static>, ADC1<'static>>;
+type CurrentB1 = AdcPin<GPIO34<'static>, ADC1<'static>>;
+
+/// Error from the explicitly unqualified ADC1 commissioning path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Adc1AcquisitionError {
+    /// The portable ordering/range contract rejected the operation.
+    Sequence(SequentialAdcAcquisitionError),
+    /// The HAL returned a terminal conversion error.
+    Peripheral,
+}
+
+impl From<SequentialAdcAcquisitionError> for Adc1AcquisitionError {
+    fn from(error: SequentialAdcAcquisitionError) -> Self {
+        Self::Sequence(error)
+    }
+}
+
+/// Sole ADC1 owner for raw, software-started commissioning conversions.
+///
+/// Classic ESP32's current `esp-hal` API exposes a software-started one-shot
+/// path here, not an MCPWM-triggered aperture. This owner therefore returns
+/// only [`SequentialAdcPair`], records conversion-completion observations, and
+/// deliberately does not implement [`alumina_foc::CurrentSense`].
+pub struct UnqualifiedAdc1CurrentSense {
+    adc: Adc1Driver,
+    current_a0: CurrentA0,
+    current_b0: CurrentB0,
+    current_a1: CurrentA1,
+    current_b1: CurrentB1,
+    acquisition: SequentialAdcAcquisition,
+    configuration: Adc1AcquisitionConfiguration,
+}
+
+impl UnqualifiedAdc1CurrentSense {
+    /// Returns the exact attenuation selections currently programmed in ADC1.
+    pub const fn configuration(&self) -> Adc1AcquisitionConfiguration {
+        self.configuration
+    }
+
+    /// Begins one ordered diagnostic pair without claiming a sampling instant.
+    pub fn begin_pair(
+        &mut self,
+        axis: CurrentAxis,
+        token: u32,
+        requested_at: DeviceCycle,
+    ) -> Result<(), Adc1AcquisitionError> {
+        self.acquisition
+            .begin(SequentialAdcRequest {
+                axis: axis.instance(),
+                token,
+                requested_at,
+            })
+            .map_err(Into::into)
+    }
+
+    /// Polls the currently selected conversion once.
+    ///
+    /// `observed_at` is the cycle at which software observes a completed ADC
+    /// conversion. It is not represented as a sample-and-hold timestamp.
+    pub fn poll_pair(
+        &mut self,
+        observed_at: DeviceCycle,
+    ) -> Result<Option<SequentialAdcPair>, Adc1AcquisitionError> {
+        let request = self
+            .acquisition
+            .pending_request()
+            .ok_or(SequentialAdcAcquisitionError::Idle)?;
+        let channel = self
+            .acquisition
+            .pending_channel()
+            .ok_or(SequentialAdcAcquisitionError::Idle)?;
+        let conversion = match (request.axis, channel) {
+            (0, SequentialAdcChannel::Channel0) => self.adc.read_oneshot(&mut self.current_a0),
+            (0, SequentialAdcChannel::Channel1) => self.adc.read_oneshot(&mut self.current_b0),
+            (1, SequentialAdcChannel::Channel0) => self.adc.read_oneshot(&mut self.current_a1),
+            (1, SequentialAdcChannel::Channel1) => self.adc.read_oneshot(&mut self.current_b1),
+            _ => {
+                self.acquisition.abort();
+                return Err(Adc1AcquisitionError::Sequence(
+                    SequentialAdcAcquisitionError::ChannelOrder,
+                ));
+            }
+        };
+        match conversion {
+            Ok(raw_count) => self
+                .acquisition
+                .record_conversion(channel, raw_count, observed_at)
+                .map_err(Into::into),
+            Err(nb::Error::WouldBlock) => Ok(None),
+            Err(nb::Error::Other(())) => {
+                self.acquisition.abort();
+                Err(Adc1AcquisitionError::Peripheral)
+            }
+        }
+    }
+
+    /// Cancels a partial diagnostic pair without manufacturing a result.
+    pub fn abort_pair(&mut self) -> Option<SequentialAdcRequest> {
+        self.acquisition.abort()
+    }
 }
 
 type EncoderTransport = I2c<'static, Async>;
@@ -228,13 +403,16 @@ pub struct As5600EncoderResources {
 /// Core-1 resources after the safe phase transition.
 #[allow(
     dead_code,
-    reason = "closed PWM/ADC tokens remain reserved for reviewed target work"
+    reason = "closed PWM and selected current ownership remain staged target work"
 )]
-pub struct EstablishedRealtimeResources<Encoders = DormantEncoderResources> {
+pub struct EstablishedRealtimeResources<
+    Encoders = DormantEncoderResources,
+    Current = UncalibratedCurrentSense,
+> {
     timer_group1: TIMG1<'static>,
     stage0: ClosedPowerStage<MCPWM0<'static>>,
     stage1: ClosedPowerStage<MCPWM1<'static>>,
-    current_sense: UncalibratedCurrentSense,
+    current_sense: Current,
     encoders: Encoders,
     safety_inputs: SafetyInputBank<0>,
 }
@@ -328,7 +506,7 @@ impl RealtimeResources {
     }
 }
 
-impl EstablishedRealtimeResources<DormantEncoderResources> {
+impl<Current> EstablishedRealtimeResources<DormantEncoderResources, Current> {
     /// Selects read-only AS5600 mode for both independent encoder connectors.
     ///
     /// The phase, ADC, timer, and safety owners are moved unchanged. Connecting
@@ -338,7 +516,9 @@ impl EstablishedRealtimeResources<DormantEncoderResources> {
         dead_code,
         reason = "AS5600 mode compiles but awaits stored selection and HIL"
     )]
-    pub fn activate_as5600_encoders(self) -> EstablishedRealtimeResources<As5600EncoderResources> {
+    pub fn activate_as5600_encoders(
+        self,
+    ) -> EstablishedRealtimeResources<As5600EncoderResources, Current> {
         let EstablishedRealtimeResources {
             timer_group1,
             stage0,
@@ -385,7 +565,116 @@ impl EstablishedRealtimeResources<DormantEncoderResources> {
     }
 }
 
-impl EstablishedRealtimeResources<As5600EncoderResources> {
+impl<Encoders> EstablishedRealtimeResources<Encoders, UncalibratedCurrentSense> {
+    /// Gives ADC1 sole ownership of all four current-amplifier routes.
+    ///
+    /// Construction selects the caller-supplied approximate attenuation for
+    /// every physical pin and the HAL-default 12-bit resolution. It neither
+    /// starts a conversion nor binds the choices to stored current calibration.
+    /// The resulting software-started path remains diagnostic-only and cannot
+    /// satisfy [`alumina_foc::CurrentSense`].
+    #[allow(
+        dead_code,
+        reason = "diagnostic ADC1 ownership compiles but awaits stored selection and HIL"
+    )]
+    pub fn activate_unqualified_adc1(
+        self,
+        configuration: Adc1AcquisitionConfiguration,
+    ) -> EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSense> {
+        let EstablishedRealtimeResources {
+            timer_group1,
+            stage0,
+            stage1,
+            current_sense,
+            encoders,
+            safety_inputs,
+        } = self;
+        let UncalibratedCurrentSense {
+            adc1,
+            current_a0,
+            current_b0,
+            current_a1,
+            current_b1,
+        } = current_sense;
+        let mut adc_configuration = AdcConfig::<ADC1<'static>>::new();
+        let current_a0 =
+            adc_configuration.enable_pin(current_a0, configuration.motor0.current_a.into_hal());
+        let current_b0 =
+            adc_configuration.enable_pin(current_b0, configuration.motor0.current_b.into_hal());
+        let current_a1 =
+            adc_configuration.enable_pin(current_a1, configuration.motor1.current_a.into_hal());
+        let current_b1 =
+            adc_configuration.enable_pin(current_b1, configuration.motor1.current_b.into_hal());
+        let adc = Adc::new(adc1, adc_configuration);
+        let acquisition = SequentialAdcAcquisition::new(ADC1_MAXIMUM_COUNT)
+            .unwrap_or_else(|_| panic!("nonzero fixed classic-ESP32 ADC1 range rejected"));
+
+        EstablishedRealtimeResources {
+            timer_group1,
+            stage0,
+            stage1,
+            current_sense: UnqualifiedAdc1CurrentSense {
+                adc,
+                current_a0,
+                current_b0,
+                current_a1,
+                current_b1,
+                acquisition,
+                configuration,
+            },
+            encoders,
+            safety_inputs,
+        }
+    }
+}
+
+impl<Encoders> EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSense> {
+    /// Returns the programmed but unqualified ADC1 attenuation selections.
+    #[allow(
+        dead_code,
+        reason = "diagnostic ADC1 ownership compiles but is not reported before HIL"
+    )]
+    pub const fn unqualified_current_configuration(&self) -> Adc1AcquisitionConfiguration {
+        self.current_sense.configuration()
+    }
+
+    /// Begins one software-started diagnostic pair on the selected motor.
+    #[allow(
+        dead_code,
+        reason = "diagnostic ADC1 ownership compiles but is not scheduled before HIL"
+    )]
+    pub fn begin_unqualified_current_pair(
+        &mut self,
+        axis: CurrentAxis,
+        token: u32,
+        requested_at: DeviceCycle,
+    ) -> Result<(), Adc1AcquisitionError> {
+        self.current_sense.begin_pair(axis, token, requested_at)
+    }
+
+    /// Polls the active diagnostic pair once without creating PWM evidence.
+    #[allow(
+        dead_code,
+        reason = "diagnostic ADC1 ownership compiles but is not scheduled before HIL"
+    )]
+    pub fn poll_unqualified_current_pair(
+        &mut self,
+        observed_at: DeviceCycle,
+    ) -> Result<Option<SequentialAdcPair>, Adc1AcquisitionError> {
+        self.current_sense.poll_pair(observed_at)
+    }
+
+    /// Cancels a partial diagnostic pair.
+    #[allow(
+        dead_code,
+        reason = "diagnostic ADC1 ownership compiles but is not scheduled before HIL"
+    )]
+    pub fn abort_unqualified_current_pair(&mut self) -> Option<SequentialAdcRequest> {
+        self.current_sense.abort_pair()
+    }
+}
+
+impl<Current> EstablishedRealtimeResources<As5600EncoderResources, Current> {
     /// Reads one exact 12-bit mechanical count without changing sensor state.
     #[allow(
         dead_code,
@@ -429,7 +718,7 @@ impl EstablishedRealtimeResources<As5600EncoderResources> {
     }
 }
 
-impl<Encoders> EstablishedRealtimeResources<Encoders> {
+impl<Encoders, Current> EstablishedRealtimeResources<Encoders, Current> {
     /// Rejects configured safety routes because none is established on V1.0.
     pub fn configure_safety_inputs(
         &mut self,

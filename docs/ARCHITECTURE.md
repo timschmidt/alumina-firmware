@@ -889,9 +889,12 @@ An isolated timing stamp cannot prove that its duty token corresponds to the
 physical compare image, that its edge cycles are truthful, or that period
 sequences are continuous. Those are obligations of the future sole-owner
 MCPWM/ADC backend, integer compare-image audit, stream state machine, and HIL.
-No current target constructs an ADC sampler or an MCPWM operator, and no
-portable interval has yet been reduced to the nominal point used by the PI
-controller.
+The MKS target can now consume ADC1 and its four fixed input pins into a
+software-started diagnostic owner with explicit approximate attenuation and a
+strict two-channel sequence. Its timestamps are conversion-completion
+observations, not sample apertures; it has no digest or PWM token and cannot
+implement `CurrentSense`. No current target constructs an MCPWM operator, and
+no portable duty interval has yet been reduced to an integer compare point.
 
 `ALMCFG03` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
@@ -904,7 +907,8 @@ dead-time facts. Only after independent full-stream SHA-256 validation can the
 private real-time configuration container inject that digest and revalidate a
 `FocParameterSnapshot`, `RotorCalibration`, and proof-wrapped
 `TwoShuntCurrentCalibration`. This is lowering, not peripheral activation: the
-MKS stage remains non-armable and its raw ADC/MCPWM ownership stays sealed.
+MKS stage remains non-armable, the diagnostic ADC1 transition is not connected
+to this lowering, and its MCPWM ownership stays sealed.
 
 ## Exact CAD-to-motor boundary
 

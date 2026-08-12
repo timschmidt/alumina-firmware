@@ -136,6 +136,7 @@ heapless = "0.8.0"
 hmac = { version = "0.12.1", default-features = false }
 log = "0.4.27"
 nmea = { version = "0.5.0", default-features = false, features = ["GGA", "RMC", "VTG", "GSA", "GSV", "GLL", "TXT"] }
+nb = "1.1.0"
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
 rtt-target = { version = "0.6.2", features = ["defmt"] }
 sha2 = { version = "0.10.9", default-features = false }

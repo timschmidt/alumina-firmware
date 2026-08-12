@@ -210,10 +210,13 @@ and exposes a permanently faulted non-fitted cache backend. Each encoder
 connector is now a distinct compile-supported, externally populated AS5600
 endpoint at address `0x36`; that is driver/route evidence, not a presence or
 measurement claim. Configuration V3 can retain a complete rotor/current/timing
-profile only behind the still-unqualified stage gate. This is a
-`compiles`, non-armable safe composition: reset behavior, inverter both-off
-behavior, MCPWM/ADC operation, sensor traffic, current measurement, safety
-inputs, and energization remain unverified.
+profile only behind the still-unqualified stage gate. A separate unscheduled
+diagnostic transition can configure all four ADC1 inputs with explicit
+attenuation and perform ordered software-started raw reads; it creates no
+synchronized or calibrated sample. This is a `compiles`, non-armable safe
+composition: reset behavior, inverter both-off behavior, MCPWM operation,
+ADC timing/accuracy, sensor traffic, current measurement, safety inputs, and
+energization remain unverified.
 
 ## T-LoRa Pager late target
 

@@ -138,3 +138,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M8-FOC-CONFIGURATION-V3.md`](M8-FOC-CONFIGURATION-V3.md) — canonical stored
   controller/rotor/current/timing records, exact cross-record validation, and
   SHA-256-bound real-time FOC lowering.
+- [`M8-CLASSIC-ESP32-ADC1-OWNER.md`](M8-CLASSIC-ESP32-ADC1-OWNER.md) — ordered
+  software-started ADC1 commissioning ownership for all four MKS current routes,
+  with synchronization and torque-control claims kept closed.

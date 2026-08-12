@@ -95,6 +95,7 @@ esp-hal.workspace = true
 esp-radio.workspace = true
 esp-rtos.workspace = true
 heapless.workspace = true
+nb.workspace = true
 panic-rtt-target.workspace = true
 rtt-target.workspace = true
 static_cell.workspace = true

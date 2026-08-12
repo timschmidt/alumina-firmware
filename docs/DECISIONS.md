@@ -169,8 +169,9 @@ describes the attached machine.
 ## Review and available evidence
 
 The first reviewer is an original RepRap developer. Available hardware and test
-equipment include TinyBee, T-Deck Pro, USB debug access, a logic analyzer, a
-webcam, a 10 MHz DSO, and a multimeter; MKS ESP32 FOC V1.0 is to be ordered.
+equipment include TinyBee, T-Deck Pro, USB debug access, an SLogic16U3 logic
+analyzer, a webcam, a 10 MHz DSO, and a multimeter; MKS ESP32 FOC V1.0 is to be
+ordered.
 Representative systems are RepRaps, AvidCNC-class routers, laser/plasma cutters,
 and laboratory equipment from hobby through entry-level professional use.
 Endstops, emergency stops, and basic safety interlocks are first-class inputs.
