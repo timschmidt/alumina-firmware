@@ -363,9 +363,14 @@ checked per-input/aggregate canonical memory ceilings. Audited cross-clock
 Stream dependencies now use exact rational clock resolution and one explicit
 latest-at-or-before transition, with shared-root, smallest-pattern,
 minimum-queue, and held-sample proofs. A separate fixed HostExact registry now
-simulates external Stream sources, that transition, and Stream sinks in exact
+simulates external Stream sources, that transition, Stream sinks, exact
+arithmetic/clamping, explicit unit delays, and fail-safe permit gating in exact
 root time; canonical traces replay by independently regenerating every byte. A
-third registry now binds complete audited semantics to fixed implementation,
+shared fallible PID/interlock fixture now feeds tests and the native/WASM
+application's first read-only inspector. Its bounded semantic layout exposes
+typed ports, exact parameters, explicit state/feedback, and exact cursor values
+behind certified display projections. The third registry now binds complete
+audited semantics to fixed implementation,
 domain, clock, and WCET descriptors. It lowers the initial Boolean
 Service-to-Realtime subset into an independently replayed 4 KiB `ALGRIR02`
 package with integer device-cycle schedules and fixed state/channel/bridge
@@ -385,13 +390,15 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, and graph UI remain open. See the
+resource opcodes, editable graph/front-panel workflows, and broader live plots
+remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
 [`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), and
 [`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) and
 [`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
+[`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

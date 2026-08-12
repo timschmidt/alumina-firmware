@@ -11,6 +11,11 @@ commit `e35f57b853f667092a4a04122075ea2824dde38c`, against `aluminafw`
 `75af1ca1b78834dcc18f1e18e1a24eff32d2a856`. It changes no firmware source,
 target image, board configuration, network configuration, or physical I/O.
 
+The later [exact control-inspector checkpoint](M9-EXACT-CONTROL-INSPECTOR.md)
+records the shared fallible UI fixture, label-dependent current graph/trace
+identities, and optimized native/WASM rendering. The identities below remain
+the historical identities of this implementation commit.
+
 The interface continued to build against the current sibling workspace stack,
 not a released CSGRS crate. Direct source identities at the final artifact
 audit included CSGRS `b34a2f47b90e3d329028d6337d19dfbc9629fbb0`,
@@ -137,7 +142,8 @@ The source-policy audit accepted only the local CSGRS/Hyper/Alumina stacks and
 the existing permissive native/WASM inventory. No GPL-family source, library,
 tool output, or asset was copied, linked, or vendored.
 
-The next offline M9 slices are browser-visible construction/inspection of this
-same graph, bounded plot/front-panel traces, and reviewed lowering of selected
-control primitives into fixed-memory Service/Realtime IR. Physical Wi-Fi/input
-timing remains a separate retained-capture gate.
+The immediate browser-inspector slice is now recorded by the linked follow-up.
+Remaining offline M9 work includes editable construction, component/front-panel
+state, broader bounded probes, and reviewed lowering of selected control
+primitives into fixed-memory Service/Realtime IR. Physical Wi-Fi/input timing
+remains a separate retained-capture gate.

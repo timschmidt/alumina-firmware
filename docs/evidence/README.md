@@ -175,6 +175,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   arithmetic, explicit unit-delay state, fail-safe permit gating, and a
   deterministic visible multi-rate PID/interlock fixture with `ALSI` V2
   context binding.
+- [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
+  fallible exact-control fixture, deterministic bounded semantic layout,
+  explicit feedback/state inspection, exact-cursor traces, and optimized
+  native/WASM browser-render evidence.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.
