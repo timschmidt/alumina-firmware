@@ -450,7 +450,6 @@ async fn realtime_task(
     mut timing_marker: Output<'static>,
     mut sink_marker: Output<'static>,
 ) {
-    esp_println_uart::println!("ALUMINA_HIL_RT_INIT stage=entry");
     if Cpu::current() != Cpu::AppCpu {
         realtime_fault(&mut timing_marker, &mut sink_marker, 1).await;
     }
@@ -458,7 +457,6 @@ async fn realtime_task(
         Ok(resources) => resources,
         Err(_) => realtime_fault(&mut timing_marker, &mut sink_marker, 2).await,
     };
-    esp_println_uart::println!("ALUMINA_HIL_RT_INIT stage=safe-outputs");
     let period = Duration::from_ticks(RELEASE_PERIOD_CYCLES);
     let mut monitor = match resources
         .configure_safety_inputs::<HIL_SAFETY_INPUT_CAPACITY>(profile, RELEASE_PERIOD_CYCLES)
@@ -466,21 +464,15 @@ async fn realtime_task(
         Ok(Some(monitor)) => monitor,
         Ok(None) | Err(_) => realtime_fault(&mut timing_marker, &mut sink_marker, 3).await,
     };
-    esp_println_uart::println!("ALUMINA_HIL_RT_INIT stage=input-configured");
 
     // Establish a known debounced state before core 0 may initialize Wi-Fi.
     // Outputs are already at the complete board safe image and neither graph
     // execution nor arm authority exists during this commissioning boundary.
     let mut next_scan = Instant::now();
-    let mut first_sample = true;
     let mut previous_sample = loop {
         let now = wait_for_next_sample(&mut next_scan, period).await;
         if sample_input(&resources, &mut monitor, now).is_err() {
             realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 4).await;
-        }
-        if first_sample {
-            esp_println_uart::println!("ALUMINA_HIL_RT_INIT stage=first-input-sample");
-            first_sample = false;
         }
         if monitor
             .stable_active_by_resource(ResourceId::Gpio(33), now)
@@ -489,7 +481,6 @@ async fn realtime_task(
             break now;
         }
     };
-    esp_println_uart::println!("ALUMINA_HIL_RT_INIT stage=boot-input-debounced");
     BOOT_SAFE_READY.store(true, Ordering::Release);
 
     // ESP radio initialization may briefly suspend the other core. This
