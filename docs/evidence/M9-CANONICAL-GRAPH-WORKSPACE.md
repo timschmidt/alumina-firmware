@@ -150,13 +150,13 @@ The unchanged 96,792-byte `Cargo.lock` has SHA-256
 
 ## Closed claims, licensing, and next gate
 
-This is an in-memory editing foundation, not a complete graph editor or front
-panel. It has no node insertion/deletion, palette, parameter editing,
-selection-set operation, grouping/commenting, subgraph/component document,
-front-panel binding, undo/redo history, file download/upload, browser
-persistence, or collaborative diff. It does not grant semantic admission,
-Service/Realtime implementation, firmware opcode, resource, deployment,
-safety, motor-control, or physical-output authority.
+This checkpoint was an in-memory placement/wiring foundation, not a complete
+graph editor or front panel. It had no node insertion/deletion, palette,
+parameter editing, selection-set operation, grouping/commenting,
+subgraph/component document, front-panel binding, undo/redo history, file
+download/upload, browser persistence, or collaborative diff. It does not grant
+semantic admission, Service/Realtime implementation, firmware opcode,
+resource, deployment, safety, motor-control, or physical-output authority.
 
 The bare MKS TinyBee V1.0 remained on its existing disconnected-load HIL image;
 it was not reset, flashed, or contacted. No motor, motor driver, or process
@@ -169,7 +169,8 @@ The source-policy audit accepted only the local CSGRS/Hyper/Alumina stacks and
 the existing permissive native/WASM inventory. No GPL-family source, library,
 tool output, or asset was copied, linked, or vendored.
 
-The next offline editor slice is canonical node creation/deletion and a
-schema-derived palette/parameter surface, followed by undo/redo and browser/file
-persistence. Component/front-panel documents and broader bounded probes remain
-separate work. Physical Wi-Fi and input timing remain retained-capture gates.
+The later [graph palette/parameter checkpoint](M9-GRAPH-PALETTE-PARAMETERS.md)
+records canonical node creation/deletion and the first schema-derived exact
+parameter surface. Undo/redo, browser/file persistence, component/front-panel
+documents, and broader bounded probes remain separate work. Physical Wi-Fi and
+input timing remain retained-capture gates.

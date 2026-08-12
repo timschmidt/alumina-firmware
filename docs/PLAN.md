@@ -706,13 +706,16 @@ admission. The first resource opcode is a capability-bound realtime read of a
 known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
-control/output opcodes, additional capability nodes, node/palette/parameter
-editing, component/front-panel documents, workspace history/persistence, and
-broader live plots remain open. A disconnected TinyBee
-prequalification run exposed a roughly 54 ms unarmed radio-startup
-suspension and proved that an ordinary core-1 executor could miss the 200 us
-dispatch reserve. The fixture now discards and re-debounces input state after
-radio startup and runs releases from a priority-3 core-1 interrupt executor;
+control/output opcodes, additional capability nodes, composite and
+identity-bearing parameter editors, label/domain editing,
+component/front-panel documents, workspace history/persistence, and broader
+live plots remain open. Canonical HostExact node creation/deletion and exact
+scalar parameter editing now exist through an 11-kind audited palette. A
+disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed
+radio-startup suspension and proved that an ordinary core-1 executor could miss
+the 200 us dispatch reserve. The fixture now discards and re-debounces input
+state after radio startup and runs releases from a priority-3 core-1 interrupt
+executor;
 an idle-AP soak exceeded 180,000 releases without a terminal fault. This is
 commissioning evidence only: the required analyzer trace and simultaneous
 HTTP-load log remain open.
@@ -726,6 +729,7 @@ See the
 [exact-control graph](evidence/M9-EXACT-CONTROL-GRAPH.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
+[graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and

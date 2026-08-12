@@ -395,8 +395,10 @@ epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
 resource opcodes, broader graph/front-panel workflows, and live plots remain
-open; canonical placement/wiring exists, while node/palette/parameter editing,
-history/persistence, and component/front-panel documents do not. See the
+open. Canonical placement/wiring and an 11-kind audited palette now support
+node create/delete and exact scalar parameter replacement; history/persistence,
+composite or identity-bearing parameter editors, and component/front-panel
+documents remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -405,6 +407,7 @@ history/persistence, and component/front-panel documents do not. See the
 [`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
+[`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

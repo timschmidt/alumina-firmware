@@ -56,8 +56,10 @@ effect is claimed. The native/WASM application now also opens a bounded,
 editable view of the shared exact PID/interlock fixture with audited semantic
 layers, explicit state feedback, typed ports, exact parameters, and exact-cursor
 plots. Canonical `ALGW` keeps presentation-only integer placement separate from
-the embedded `ALGR`; node moves and typed wire edits are transactional, and
-topology changes detach the old graph-bound trace. It grants no deployment or
+the embedded `ALGR`; its 11-entry fixed-schema palette supports monotonic node
+creation, atomic node/incident-wire deletion, node moves, typed wire edits, and
+bounded exact scalar parameter replacement. All edits are transactional, and
+graph changes detach the old graph-bound trace. It grants no deployment or
 output authority. See
 the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
 evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
@@ -66,7 +68,8 @@ execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 [capability-bound input evidence](docs/evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md),
 and the [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
-workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md).
+workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
+palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
