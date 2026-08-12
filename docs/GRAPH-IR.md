@@ -7,9 +7,9 @@ single-device `ALGRIR01` package containing only reviewed opcodes, integer
 device-cycle schedules, fixed state/queue arenas, and the identities needed to
 reject stale or substituted work.
 
-This is a format, portable-admission, and fixed-opcode execution checkpoint. No
-authenticated firmware API or board composition installs a package yet, and no
-physical resource is claimed.
+The resource-free fixed-opcode subset now reaches authenticated, reloadable
+split-core execution in the live Embassy tasks. It still claims no physical
+resource or target timing qualification.
 
 ## Fixed package
 
@@ -180,15 +180,20 @@ combined canonical report exposes both actors without treating progress as
 authority. Configuration, jobs, storage mutation, and graph lifecycle exclude
 one another while fixed safety remains authoritative.
 
-That lifecycle selects bytes but does not yet instantiate or split
-`FixedGraphRuntime` inside the live Embassy tasks. Active selection is
-boot-ephemeral; durable selector recovery, start/stop epochs, executor task
-composition, measured deadline/WCET monitoring, resource opcodes,
-capability-published arena limits, physical telemetry, and HIL timing remain
-later work.
+Permanent fixed actors now own those selected bytes in the live Embassy tasks.
+Authenticated `GraphStart`/`GraphStop` requests bind a boot-local run ID and
+future device-cycle epoch; core 0 primes Service tick zero, core 1 admits the
+same run, and the pinned tasks release only their own schedules. Package reserve
+cycles form an enforced late-dispatch boundary, and exact stop retains the
+shared first fault until both actors acknowledge. Active selection remains
+boot-ephemeral; durable selector recovery, measured deadline/WCET evidence,
+resource opcodes, capability-published arena limits, physical telemetry, and
+HIL timing remain later work.
 
 The reproduced compiler/runtime fixtures, target link results, artifact hashes,
 and closed claims are recorded in
 [`evidence/M9-FIXED-GRAPH-RUNTIME.md`](evidence/M9-FIXED-GRAPH-RUNTIME.md).
 The authenticated SD/core lifecycle and its narrower open claims are recorded
 in [`evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md).
+The live start/stop and pinned-release checkpoint is recorded in
+[`evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md`](evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md).

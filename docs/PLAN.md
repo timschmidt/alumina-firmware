@@ -676,9 +676,12 @@ publishes a typed immutable 4 KiB SD object, an authenticated coordinator has
 both cores independently validate and select its exact identities, and fixed
 staging/active storage plus dual-core authorization are linked in every current
 board image. The headless browser/WASM client reconciles lost responses and
-rejects foreign identity. Durable selection/boot recovery, composition of the
-selected bytes into live fixed executors, measured executor timing, resource
-opcodes, capability nodes, and graph UI remain open.
+rejects foreign identity. Permanent core-local actors now admit authenticated
+future run epochs, preserve source-first priming, release from their pinned
+Embassy tasks, latch the first cross-core execution fault, and reconcile exact
+stop. The browser distinguishes accepted start from both-core Running and
+retains fault evidence through stop. Durable selection/boot recovery, measured
+executor timing, resource opcodes, capability nodes, and graph UI remain open.
 See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
@@ -688,8 +691,8 @@ See the
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
-[authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
-evidence.
+[authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and
+[split-core execution](evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md) evidence.
 
 Exit gate:
 

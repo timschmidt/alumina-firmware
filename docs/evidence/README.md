@@ -181,3 +181,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — immutable SD publication, authenticated browser lifecycle, independent
   dual-core admission/authorization, live Embassy ownership, target links, and
   explicit boot-ephemeral/non-executing boundaries.
+- [`M9-SPLIT-CORE-GRAPH-EXECUTION.md`](M9-SPLIT-CORE-GRAPH-EXECUTION.md) —
+  permanent core-local actors, authenticated exact start/stop epochs,
+  pinned-task release scheduling, retained first-cause faults, browser
+  reconciliation, and explicit resource-free/timing-unqualified boundaries.

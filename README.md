@@ -41,12 +41,14 @@ owners, and executes only the three whitelisted opcodes through a bounded
 bridge with a first-cause fault latch. The package can now be uploaded as an
 immutable SD object, installed through authenticated Wi-Fi, independently
 rehash-validated on core 0 and core 1, selected, and exposed only after an exact
-dual-core authorization handshake. The lifecycle is composed into the live
-Embassy tasks on every current board image. Active selection is still
-boot-ephemeral, and those tasks do not yet instantiate the fixed executor or a
-resource opcode; no target timing or physical side effect is claimed. See the
-[fixed graph-IR boundary](docs/GRAPH-IR.md) and [deployment
-evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md).
+dual-core authorization handshake. Permanent core-local actors now accept an
+authenticated future run epoch, preserve source-first tick-zero priming,
+release from their pinned Embassy tasks, retain the first cross-core fault, and
+reconcile exact stop. Active selection is still boot-ephemeral and the opcodes
+remain resource-free; no target timing or physical side effect is claimed. See
+the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
+evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
+execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
@@ -510,7 +512,7 @@ firmware. Datasheets and upstream root metadata are retained under
   Hypergraphics, graph programming, annotated-board diagnostics, and plotting.
 - [Fixed deployed graph IR](docs/GRAPH-IR.md) — canonical whitelisted opcodes,
   device-cycle schedules, const-generic arenas, independent admission, and
-  split-core portable execution without a graph-document interpreter.
+  authenticated split-core execution without a graph-document interpreter.
 - [Verification strategy](docs/VERIFICATION.md) — simulation, exactness tests,
   HIL timing, synchronized-job, safety, and release evidence.
 - [Research sources](docs/SOURCES.md) — local and upstream evidence captured on
