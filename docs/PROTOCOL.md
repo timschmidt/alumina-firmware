@@ -602,12 +602,24 @@ payload and every unused byte is zero.
 Core 1's fixed 128-byte `ALGR` report retains receiver state, transaction, both
 digests, consumed bytes, optional node/channel/bridge counts, fault, active
 content identity, and a separate authorization bit. Core 0 returns it inside a
-256-byte `ALGS` coordinator report with service phase/fault, independent
-validated byte and SD-chunk counts, and the service-owned active identity.
-Canonical Empty, Validating, CandidateValid, Activating, Authorizing, Active,
-Clearing, Aborting, and Rejected shapes are independently checked. Active
-requires the two actors to name the same exact content and core 1 to report
-authorization.
+312-byte version-2 `ALGS` coordinator report with service phase/fault,
+independent validated byte and SD-chunk counts, service-owned active identity,
+and the 64-byte combined execution observation. Canonical Empty, Recovering,
+Validating, CandidateValid, Preparing, Activating, Committing, Authorizing,
+Active, Clearing, Aborting, Rejected, Starting, Running, Stopping, and
+ExecutionFaulted shapes are independently checked. Active requires the two
+actors to name the same exact content and core 1 to report authorization.
+
+Graph selection is a two-phase raw-media journal transaction. Its exact
+160-byte `ALMGRS01` record retains action, nonzero transaction, complete
+80-byte `PublishedObject`, package digest, and implementation digest. Activation
+ordering is `prepare -> core-1 select without authorization -> commit ->
+authorize both permanent actors`. Clear ordering is `prepare -> clear core 1 ->
+commit -> clear the service actor`. A reset discards any unmatched prepare,
+then reopens every byte of the last committed selection and repeats independent
+admission on both cores before authorization. Graph recovery waits for the
+committed machine configuration to be recovered and authorized because the
+package is bound to that exact configuration digest.
 
 The public `GET /api/v1/identity` JSON includes `device_id` as 32 lowercase hex
 digits. On ESP targets this is the public namespace bytes `ALUM-ESP1:` followed

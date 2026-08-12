@@ -44,11 +44,14 @@ rehash-validated on core 0 and core 1, selected, and exposed only after an exact
 dual-core authorization handshake. Permanent core-local actors now accept an
 authenticated future run epoch, preserve source-first tick-zero priming,
 release from their pinned Embassy tasks, retain the first cross-core fault, and
-reconcile exact stop. Active selection is still boot-ephemeral and the opcodes
-remain resource-free; no target timing or physical side effect is claimed. See
+reconcile exact stop. Active selection is now protected by a power-cut-tested
+two-phase media journal and is independently revalidated on both cores after
+configuration-first boot recovery. The opcodes remain resource-free; no target
+timing or physical side effect is claimed. See
 the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
 evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
-execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md).
+execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
+[durable-selection evidence](docs/evidence/M9-DURABLE-GRAPH-SELECTION.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic

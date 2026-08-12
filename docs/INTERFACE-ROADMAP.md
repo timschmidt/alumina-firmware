@@ -377,9 +377,11 @@ The headless browser/WASM client now publishes that package through the
 resumable SD cache and drives authenticated install/status/activate operations.
 Firmware independently replays it on core 0 and core 1, retains distinct
 candidate/active images, and withholds active bytes until both cores authorize
-the exact identities. General node/state/Event execution, durable graph
-selection, live fixed-executor composition, measured executor timing, resource
-opcodes, capability palette, and graph UI remain open. See the
+the exact identities. Permanent pinned-core actors now execute exact future run
+epochs, and a power-cut-tested selector journal recovers the committed package
+through configuration-first independent boot admission. General node/state/Event
+execution, measured executor timing, resource opcodes, capability palette, and
+graph UI remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -389,7 +391,7 @@ opcodes, capability palette, and graph UI remain open. See the
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
-evidence.
+and [`durable selection`](evidence/M9-DURABLE-GRAPH-SELECTION.md) evidence.
 
 ### Execution semantics
 

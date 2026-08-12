@@ -56,6 +56,12 @@ pub enum GraphCoordinatorPhase {
     Stopping = 11,
     /// A shared first-cause execution fault is retained until exact stop.
     ExecutionFaulted = 12,
+    /// A committed graph selection is being reopened and independently admitted at boot.
+    Recovering = 13,
+    /// Activation intent is being made durable before core-1 selection.
+    Preparing = 14,
+    /// Core-1 selected the graph and the prepared durable selection is committing.
+    Committing = 15,
 }
 
 impl GraphCoordinatorPhase {
@@ -74,6 +80,9 @@ impl GraphCoordinatorPhase {
             10 => Some(Self::Running),
             11 => Some(Self::Stopping),
             12 => Some(Self::ExecutionFaulted),
+            13 => Some(Self::Recovering),
+            14 => Some(Self::Preparing),
+            15 => Some(Self::Committing),
             _ => None,
         }
     }
@@ -101,6 +110,8 @@ pub enum GraphCoordinatorFault {
     Internal = 7,
     /// A permanent graph actor latched a first-cause execution failure.
     Execution = 8,
+    /// The durable graph-selection journal could not prepare, commit, abort, or replay.
+    Durability = 9,
 }
 
 impl GraphCoordinatorFault {
@@ -115,6 +126,7 @@ impl GraphCoordinatorFault {
             6 => Some(Self::ForbiddenState),
             7 => Some(Self::Internal),
             8 => Some(Self::Execution),
+            9 => Some(Self::Durability),
             _ => None,
         }
     }
@@ -291,7 +303,11 @@ impl GraphCoordinatorReport {
                 Ok(())
             }
             GraphCoordinatorPhase::Rejected
-                if operation_valid && self.fault != GraphCoordinatorFault::None =>
+                if (operation_valid || operation_empty)
+                    && self.fault != GraphCoordinatorFault::None
+                    && (operation_valid
+                        || self.active_content_digest.is_zero()
+                            && self.execution == GraphExecutionReport::empty()) =>
             {
                 Ok(())
             }
@@ -1753,6 +1769,33 @@ mod tests {
             RealtimeGraphReport::decode(&candidate.encode().unwrap()),
             Ok(candidate)
         );
+        let recovering = GraphCoordinatorReport {
+            phase: GraphCoordinatorPhase::Recovering,
+            fault: GraphCoordinatorFault::None,
+            transaction_id: publication.transaction_id,
+            content_digest: publication.content_digest(),
+            package_digest: publication.package_digest,
+            validated_bytes: 0,
+            storage_chunks_read: 0,
+            active_content_digest: Digest::ZERO,
+            realtime: RealtimeGraphReport::empty(),
+            execution: GraphExecutionReport::empty(),
+        };
+        assert_eq!(
+            GraphCoordinatorReport::decode(&recovering.encode().unwrap()),
+            Ok(recovering)
+        );
+        let preparing = GraphCoordinatorReport {
+            phase: GraphCoordinatorPhase::Preparing,
+            validated_bytes: GRAPH_IR_PACKAGE_BYTES as u32,
+            storage_chunks_read: 4,
+            realtime: candidate,
+            ..recovering
+        };
+        assert_eq!(
+            GraphCoordinatorReport::decode(&preparing.encode().unwrap()),
+            Ok(preparing)
+        );
 
         let active = deployment.apply(
             CoreGraphCommand::activate(publication).unwrap(),
@@ -1762,6 +1805,33 @@ mod tests {
         assert_eq!(active.state, RealtimeGraphState::Active);
         assert!(!active.active_authorized);
         assert!(deployment.authorized_package_bytes().is_none());
+        let committing = GraphCoordinatorReport {
+            phase: GraphCoordinatorPhase::Committing,
+            realtime: active,
+            ..preparing
+        };
+        assert_eq!(
+            GraphCoordinatorReport::decode(&committing.encode().unwrap()),
+            Ok(committing)
+        );
+        let durability_rejection = GraphCoordinatorReport {
+            phase: GraphCoordinatorPhase::Rejected,
+            fault: GraphCoordinatorFault::Durability,
+            ..committing
+        };
+        assert_eq!(
+            GraphCoordinatorReport::decode(&durability_rejection.encode().unwrap()),
+            Ok(durability_rejection)
+        );
+        let selector_replay_failure = GraphCoordinatorReport {
+            phase: GraphCoordinatorPhase::Rejected,
+            fault: GraphCoordinatorFault::Storage,
+            ..GraphCoordinatorReport::empty()
+        };
+        assert_eq!(
+            GraphCoordinatorReport::decode(&selector_replay_failure.encode().unwrap()),
+            Ok(selector_replay_failure)
+        );
 
         let authorized = deployment.apply(
             CoreGraphCommand::authorize(publication).unwrap(),

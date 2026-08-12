@@ -185,10 +185,12 @@ Authenticated `GraphStart`/`GraphStop` requests bind a boot-local run ID and
 future device-cycle epoch; core 0 primes Service tick zero, core 1 admits the
 same run, and the pinned tasks release only their own schedules. Package reserve
 cycles form an enforced late-dispatch boundary, and exact stop retains the
-shared first fault until both actors acknowledge. Active selection remains
-boot-ephemeral; durable selector recovery, measured deadline/WCET evidence,
-resource opcodes, capability-published arena limits, physical telemetry, and
-HIL timing remain later work.
+shared first fault until both actors acknowledge. Active selection now uses a
+power-cut-tested prepare/commit journal. Boot aborts an unmatched prepare,
+waits for the exact active configuration, reopens every committed package byte,
+and repeats independent admission before either permanent actor is authorized.
+Measured deadline/WCET evidence, resource opcodes, capability-published arena
+limits, physical telemetry, and HIL timing remain later work.
 
 The reproduced compiler/runtime fixtures, target link results, artifact hashes,
 and closed claims are recorded in
@@ -197,3 +199,5 @@ The authenticated SD/core lifecycle and its narrower open claims are recorded
 in [`evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md).
 The live start/stop and pinned-release checkpoint is recorded in
 [`evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md`](evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md).
+The selector journal and configuration-first boot replay are recorded in
+[`evidence/M9-DURABLE-GRAPH-SELECTION.md`](evidence/M9-DURABLE-GRAPH-SELECTION.md).

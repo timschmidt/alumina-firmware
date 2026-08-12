@@ -1038,10 +1038,13 @@ admits all bytes before sending bounded Begin/Data/Finish commands; core 1
 independently rehashes and admits a separate staging image, then selection and
 service agreement gate visibility of a distinct active image. Combined
 telemetry reports both actors, and active/in-flight graph state excludes
-configuration and job mutation. The lifecycle does not yet construct, prime,
-split, or schedule `FixedGraphRuntime` in the live tasks. Selection is
-boot-ephemeral, and there is no resource opcode, capability-published graph
-arena, measured WCET, or physical timing claim at this checkpoint.
+configuration and job mutation. Permanent core-local actors construct, prime,
+split, and schedule the fixed runtime from authenticated future epochs. Graph
+selection uses a two-phase raw-media journal: prepare precedes core-1 selection,
+commit precedes authorization, and boot repeats byte-for-byte admission only
+after the committed configuration is authorized. There is still no resource
+opcode, capability-published graph arena, measured WCET, or physical timing
+claim at this checkpoint.
 
 ## Security and update model
 

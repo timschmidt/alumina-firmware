@@ -21,7 +21,9 @@ use alumina_service::{
     MAX_SERVICE_RESPONSE_BYTES, NativeRequest, ServiceRequest, ServiceRequestKind, ServiceResponse,
 };
 use alumina_storage::MutationContext;
-use alumina_storage::media::MediaError;
+use alumina_storage::media::{
+    DurableGraphSelection, GraphTransition, GraphTransitionAction, MediaError,
+};
 use alumina_storage::provisioning::ProvisionedCacheError;
 
 use crate::clock::{MAXIMUM_START_HORIZON_CYCLES, MINIMUM_START_LEAD_CYCLES};
@@ -316,6 +318,13 @@ pub struct GraphService {
     operation: Option<GraphPublication>,
     validation: Option<ServiceGraphValidation>,
     validation_status: Option<ServiceGraphValidationStatus>,
+    durable_active: Option<DurableGraphSelection>,
+    durable_pending: Option<GraphTransition>,
+    boot_orphan: Option<GraphTransition>,
+    journal_loaded: bool,
+    bootstrapped: bool,
+    boot_recovery: bool,
+    clear_after_abort: bool,
     active: Option<GraphPublication>,
     realtime: RealtimeGraphReport,
     realtime_execution: RealtimeGraphExecutionReport,
@@ -331,8 +340,8 @@ pub struct GraphService {
 }
 
 impl GraphService {
-    /// Starts with no graph; graph selection is intentionally boot-ephemeral in
-    /// this slice even though its package bytes are immutable on SD.
+    /// Starts fail-closed until the active configuration and mounted-media
+    /// graph selector have both completed boot recovery.
     pub const fn new(device_id: DeviceId, bridge: &'static GraphBridge) -> Self {
         Self {
             device_id,
@@ -342,6 +351,13 @@ impl GraphService {
             operation: None,
             validation: None,
             validation_status: None,
+            durable_active: None,
+            durable_pending: None,
+            boot_orphan: None,
+            journal_loaded: false,
+            bootstrapped: false,
+            boot_recovery: false,
+            clear_after_abort: false,
             active: None,
             realtime: RealtimeGraphReport::empty(),
             realtime_execution: RealtimeGraphExecutionReport::empty(),
@@ -371,7 +387,11 @@ impl GraphService {
 
     /// Any candidate or active graph excludes configuration replacement.
     pub fn blocks_configuration_mutation(&self) -> bool {
-        self.active.is_some()
+        (!self.bootstrapped && !self.active_config.is_zero())
+            || self.durable_active.is_some()
+            || self.durable_pending.is_some()
+            || self.boot_orphan.is_some()
+            || self.active.is_some()
             || !matches!(
                 self.phase,
                 GraphCoordinatorPhase::Empty | GraphCoordinatorPhase::Rejected
@@ -380,7 +400,11 @@ impl GraphService {
 
     /// Any candidate or active graph excludes cached motion-job admission.
     pub fn blocks_job_admission(&self) -> bool {
-        self.active.is_some()
+        !self.bootstrapped
+            || self.durable_active.is_some()
+            || self.durable_pending.is_some()
+            || self.boot_orphan.is_some()
+            || self.active.is_some()
             || !matches!(
                 self.phase,
                 GraphCoordinatorPhase::Empty | GraphCoordinatorPhase::Rejected
@@ -389,12 +413,15 @@ impl GraphService {
 
     /// Any reader/lifecycle operation serializes ordinary external storage mutation.
     pub fn blocks_storage_mutation(&self) -> bool {
-        !matches!(
-            self.phase,
-            GraphCoordinatorPhase::Empty
-                | GraphCoordinatorPhase::Active
-                | GraphCoordinatorPhase::Rejected
-        )
+        self.durable_pending.is_some()
+            || self.boot_orphan.is_some()
+            || (!self.bootstrapped && !self.active_config.is_zero())
+            || !matches!(
+                self.phase,
+                GraphCoordinatorPhase::Empty
+                    | GraphCoordinatorPhase::Active
+                    | GraphCoordinatorPhase::Rejected
+            )
     }
 
     /// Exact next Service-domain release used to wake the core-0 executor.
@@ -420,7 +447,10 @@ impl GraphService {
                 || !matches!(
                     self.phase,
                     GraphCoordinatorPhase::Empty
+                        | GraphCoordinatorPhase::Recovering
                         | GraphCoordinatorPhase::Validating
+                        | GraphCoordinatorPhase::Preparing
+                        | GraphCoordinatorPhase::Clearing
                         | GraphCoordinatorPhase::Aborting
                         | GraphCoordinatorPhase::Rejected
                 )
@@ -441,7 +471,11 @@ impl GraphService {
             // Begin can cross the bounded command queue. A periodic report for
             // the preceding core-1 operation may already be in flight; it is
             // canonical but cannot replace the new operation observation.
-            if self.phase == GraphCoordinatorPhase::Validating && !self.transfer_sent {
+            if matches!(
+                self.phase,
+                GraphCoordinatorPhase::Recovering | GraphCoordinatorPhase::Validating
+            ) && !self.transfer_sent
+            {
                 return Ok(());
             }
             return Err(());
@@ -535,20 +569,21 @@ impl GraphService {
         if native.frame.kind != FrameKind::Graph {
             return ServiceResponse::invalid_native();
         }
-        let status =
-            if native.frame.config_digest != self.active_config || self.active_config.is_zero() {
-                StatusCode::Conflict
-            } else {
-                match native.message.operation {
-                    Operation::GraphGet if native.body.is_empty() => StatusCode::Ok,
-                    Operation::GraphInstall => self.begin_install(cache, native, mutation).await,
-                    Operation::GraphActivate => self.request_activate(native, mutation),
-                    Operation::GraphClear => self.request_clear(native, mutation),
-                    Operation::GraphStart => self.request_start(native, now, mutation),
-                    Operation::GraphStop => self.request_stop(native, mutation),
-                    _ => StatusCode::Unsupported,
-                }
-            };
+        let status = if !self.bootstrapped {
+            StatusCode::Busy
+        } else if native.frame.config_digest != self.active_config || self.active_config.is_zero() {
+            StatusCode::Conflict
+        } else {
+            match native.message.operation {
+                Operation::GraphGet if native.body.is_empty() => StatusCode::Ok,
+                Operation::GraphInstall => self.begin_install(cache, native, mutation).await,
+                Operation::GraphActivate => self.request_activate(native, mutation),
+                Operation::GraphClear => self.request_clear(native, mutation),
+                Operation::GraphStart => self.request_start(native, now, mutation),
+                Operation::GraphStop => self.request_stop(native, mutation),
+                _ => StatusCode::Unsupported,
+            }
+        };
         self.respond(native, now, status)
     }
 
@@ -560,6 +595,12 @@ impl GraphService {
         now: DeviceCycle,
         mutation: MutationContext,
     ) {
+        if !self.bootstrapped {
+            self.bootstrap_step(cache, mutation).await;
+            if !self.bootstrapped {
+                return;
+            }
+        }
         if self.realtime_rejected_operation() {
             self.reject(GraphCoordinatorFault::Realtime);
             return;
@@ -568,11 +609,23 @@ impl GraphService {
             return;
         }
         match self.phase {
-            GraphCoordinatorPhase::Validating => self.validation_step(cache, endpoint, now).await,
+            GraphCoordinatorPhase::Recovering | GraphCoordinatorPhase::Validating => {
+                self.validation_step(cache, endpoint, now).await;
+            }
+            GraphCoordinatorPhase::Preparing => {
+                self.prepare_activation(cache, mutation).await;
+            }
             GraphCoordinatorPhase::Activating => self.activation_step(endpoint, now),
+            GraphCoordinatorPhase::Committing => {
+                self.commit_activation(cache, mutation).await;
+            }
             GraphCoordinatorPhase::Authorizing => self.authorization_step(endpoint, now),
-            GraphCoordinatorPhase::Clearing => self.clear_step(endpoint, now),
-            GraphCoordinatorPhase::Aborting => self.abort_step(endpoint, now),
+            GraphCoordinatorPhase::Clearing => {
+                self.clear_step(cache, endpoint, now, mutation).await;
+            }
+            GraphCoordinatorPhase::Aborting => {
+                self.abort_step(cache, endpoint, now, mutation).await;
+            }
             GraphCoordinatorPhase::Starting => {
                 if mutation.validate().is_err() {
                     self.cancel_unauthorized_start();
@@ -595,6 +648,95 @@ impl GraphService {
         }
     }
 
+    async fn bootstrap_step(
+        &mut self,
+        cache: &mut selected::StorageBackend,
+        mutation: MutationContext,
+    ) {
+        // Graph packages are bound to one exact active machine configuration.
+        // Give configuration recovery priority and do not even inspect the
+        // graph selector until both cores authorize that configuration.
+        if self.active_config.is_zero() {
+            return;
+        }
+        if !self.journal_loaded {
+            let journal = match cache.graph_journal() {
+                Ok(journal) => journal,
+                Err(ProvisionedCacheError::NotMounted) => return,
+                Err(_) => {
+                    self.reject(GraphCoordinatorFault::Storage);
+                    self.bootstrapped = true;
+                    return;
+                }
+            };
+            self.durable_active = journal.active;
+            self.boot_orphan = journal.pending;
+            self.journal_loaded = true;
+            self.boot_recovery = self.durable_active.is_some() || self.boot_orphan.is_some();
+            if let Some(orphan) = self.boot_orphan {
+                self.operation = Some(publication_from_durable(orphan.selection()));
+                self.phase = GraphCoordinatorPhase::Aborting;
+            }
+        }
+
+        // A prepare without its matching commit is inert. Discard it before
+        // reconstructing the last completely committed selection; core 1 has
+        // rebooted empty and must not be sent a lifecycle command for it.
+        if let Some(orphan) = self.boot_orphan {
+            if mutation.validate().is_err() {
+                return;
+            }
+            match cache.abort_graph_transition(orphan, mutation).await {
+                Ok(journal) => {
+                    self.durable_active = journal.active;
+                    self.boot_orphan = None;
+                    self.operation = None;
+                    self.phase = GraphCoordinatorPhase::Empty;
+                }
+                Err(_) => {
+                    self.reject(GraphCoordinatorFault::Durability);
+                    self.bootstrapped = true;
+                    return;
+                }
+            }
+        }
+
+        let Some(active) = self.durable_active else {
+            self.bootstrapped = true;
+            self.boot_recovery = false;
+            self.phase = GraphCoordinatorPhase::Empty;
+            return;
+        };
+        let publication = publication_from_durable(active);
+        let authority = GraphRuntimeAuthority {
+            device_id: self.device_id,
+            capability_digest: selected::PACKAGE.board.capability_digest,
+            config_digest: self.active_config,
+            implementation_digest: publication.implementation_digest,
+        };
+        match ServiceGraphValidation::open(cache, publication, authority, GRAPH_RUNTIME_LIMITS)
+            .await
+        {
+            Ok(validation) => {
+                self.operation = Some(publication);
+                self.validation_status = Some(validation.status());
+                self.validation = Some(validation);
+                self.pending_command = None;
+                self.control_sent = false;
+                self.transfer_sent = false;
+                self.phase = GraphCoordinatorPhase::Recovering;
+                self.fault = GraphCoordinatorFault::None;
+                self.bootstrapped = true;
+            }
+            Err(error) => {
+                let (_, fault) = transfer_error(error);
+                self.operation = Some(publication);
+                self.reject(fault);
+                self.bootstrapped = true;
+            }
+        }
+    }
+
     async fn begin_install(
         &mut self,
         cache: &mut selected::StorageBackend,
@@ -607,6 +749,9 @@ impl GraphService {
         };
         if mutation.validate().is_err() {
             return StatusCode::ForbiddenState;
+        }
+        if self.durable_pending.is_some() || self.boot_orphan.is_some() {
+            return StatusCode::Busy;
         }
         if self.lifecycle_busy() {
             return if self.operation == Some(publication) {
@@ -625,6 +770,8 @@ impl GraphService {
         self.pending_command = None;
         self.control_sent = false;
         self.transfer_sent = false;
+        self.boot_recovery = false;
+        self.clear_after_abort = false;
         let authority = GraphRuntimeAuthority {
             device_id: self.device_id,
             capability_digest: selected::PACKAGE.board.capability_digest,
@@ -668,10 +815,37 @@ impl GraphService {
         }
         if matches!(
             self.phase,
-            GraphCoordinatorPhase::Activating | GraphCoordinatorPhase::Authorizing
+            GraphCoordinatorPhase::Preparing
+                | GraphCoordinatorPhase::Activating
+                | GraphCoordinatorPhase::Committing
+                | GraphCoordinatorPhase::Authorizing
         ) && self.operation_matches(selection)
         {
             return StatusCode::Ok;
+        }
+        if self.phase == GraphCoordinatorPhase::Rejected && self.operation_matches(selection) {
+            if self
+                .durable_pending
+                .is_some_and(|transition| transition.action() == GraphTransitionAction::Activate)
+                && self.realtime_active_matches(false)
+            {
+                self.phase = GraphCoordinatorPhase::Committing;
+                self.fault = GraphCoordinatorFault::None;
+                return StatusCode::Ok;
+            }
+            if self.durable_active_matches(selection)
+                && (self.realtime_active_matches(false) || self.realtime_active_matches(true))
+            {
+                self.phase = GraphCoordinatorPhase::Authorizing;
+                self.control_sent = false;
+                self.fault = GraphCoordinatorFault::None;
+                return StatusCode::Ok;
+            }
+            if self.realtime_candidate_matches() && self.durable_pending.is_none() {
+                self.phase = GraphCoordinatorPhase::Preparing;
+                self.fault = GraphCoordinatorFault::None;
+                return StatusCode::Ok;
+            }
         }
         if self.phase != GraphCoordinatorPhase::CandidateValid
             || !self.operation_matches(selection)
@@ -679,7 +853,7 @@ impl GraphService {
         {
             return StatusCode::Conflict;
         }
-        self.phase = GraphCoordinatorPhase::Activating;
+        self.phase = GraphCoordinatorPhase::Preparing;
         self.control_sent = false;
         StatusCode::Ok
     }
@@ -696,18 +870,67 @@ impl GraphService {
         if mutation.validate().is_err() {
             return StatusCode::ForbiddenState;
         }
-        if self.operation_matches(selection)
-            && matches!(
-                self.phase,
-                GraphCoordinatorPhase::Validating
-                    | GraphCoordinatorPhase::CandidateValid
-                    | GraphCoordinatorPhase::Rejected
-                    | GraphCoordinatorPhase::Aborting
-            )
-        {
-            self.phase = GraphCoordinatorPhase::Aborting;
+        if self.durable_pending.is_some_and(|transition| {
+            transition.action() == GraphTransitionAction::Clear
+                && durable_selection_matches(transition.selection(), selection)
+        }) {
+            self.phase = GraphCoordinatorPhase::Clearing;
             self.control_sent = false;
+            self.fault = GraphCoordinatorFault::None;
             return StatusCode::Ok;
+        }
+        if self.durable_active_matches(selection)
+            && self.active.is_none()
+            && self.phase == GraphCoordinatorPhase::Rejected
+        {
+            let Some(durable) = self.durable_active else {
+                return StatusCode::Conflict;
+            };
+            self.operation = Some(publication_from_durable(durable));
+            self.durable_pending = Some(GraphTransition::clear(durable));
+            self.clear_after_abort = self.transfer_sent && !self.realtime_active_is_operation();
+            self.phase = if self.clear_after_abort {
+                GraphCoordinatorPhase::Aborting
+            } else {
+                GraphCoordinatorPhase::Clearing
+            };
+            self.control_sent = false;
+            self.fault = GraphCoordinatorFault::None;
+            return StatusCode::Ok;
+        }
+        if self.operation_matches(selection) {
+            match self.phase {
+                GraphCoordinatorPhase::Recovering
+                | GraphCoordinatorPhase::Validating
+                | GraphCoordinatorPhase::CandidateValid
+                | GraphCoordinatorPhase::Preparing => {
+                    self.phase = GraphCoordinatorPhase::Aborting;
+                    self.control_sent = false;
+                    return StatusCode::Ok;
+                }
+                GraphCoordinatorPhase::Activating if !self.control_sent => {
+                    self.phase = GraphCoordinatorPhase::Aborting;
+                    return StatusCode::Ok;
+                }
+                GraphCoordinatorPhase::Rejected if !self.realtime_active_is_operation() => {
+                    self.phase = GraphCoordinatorPhase::Aborting;
+                    self.control_sent = false;
+                    return StatusCode::Ok;
+                }
+                GraphCoordinatorPhase::Aborting | GraphCoordinatorPhase::Clearing => {
+                    return StatusCode::Ok;
+                }
+                GraphCoordinatorPhase::Activating
+                | GraphCoordinatorPhase::Committing
+                | GraphCoordinatorPhase::Authorizing => return StatusCode::Busy,
+                GraphCoordinatorPhase::Empty
+                | GraphCoordinatorPhase::Active
+                | GraphCoordinatorPhase::Rejected
+                | GraphCoordinatorPhase::Starting
+                | GraphCoordinatorPhase::Running
+                | GraphCoordinatorPhase::Stopping
+                | GraphCoordinatorPhase::ExecutionFaulted => {}
+            }
         }
         if self.active_matches(selection) {
             if matches!(self.phase, GraphCoordinatorPhase::Clearing) {
@@ -716,9 +939,19 @@ impl GraphService {
             if self.lifecycle_busy() {
                 return StatusCode::Busy;
             }
-            self.operation = self.active;
+            let Some(durable) = self.durable_active else {
+                return StatusCode::Conflict;
+            };
+            if !durable_selection_matches(durable, selection) {
+                return StatusCode::Conflict;
+            }
+            self.operation = Some(publication_from_durable(durable));
+            self.durable_pending = Some(GraphTransition::clear(durable));
             self.phase = GraphCoordinatorPhase::Clearing;
             self.control_sent = false;
+            self.transfer_sent = false;
+            self.clear_after_abort = false;
+            self.fault = GraphCoordinatorFault::None;
             return StatusCode::Ok;
         }
         StatusCode::Conflict
@@ -871,8 +1104,41 @@ impl GraphService {
         let complete = self.validation_status.is_some_and(|status| {
             status.state == ServiceGraphValidationState::Complete && status.identity.is_some()
         });
-        if complete && self.realtime_candidate_matches() {
+        if !complete || self.pending_command.is_some() || !self.realtime_candidate_matches() {
+            return;
+        }
+        if self.phase == GraphCoordinatorPhase::Recovering {
+            self.phase = GraphCoordinatorPhase::Activating;
+            self.control_sent = false;
+        } else {
             self.phase = GraphCoordinatorPhase::CandidateValid;
+        }
+    }
+
+    async fn prepare_activation(
+        &mut self,
+        cache: &mut selected::StorageBackend,
+        mutation: MutationContext,
+    ) {
+        let Some(publication) = self.operation else {
+            self.reject(GraphCoordinatorFault::Internal);
+            return;
+        };
+        let durable = match durable_from_publication(publication) {
+            Ok(durable) => durable,
+            Err(()) => {
+                self.reject(GraphCoordinatorFault::Request);
+                return;
+            }
+        };
+        let transition = GraphTransition::activate(durable);
+        match cache.prepare_graph_transition(transition, mutation).await {
+            Ok(_) => {
+                self.durable_pending = Some(transition);
+                self.phase = GraphCoordinatorPhase::Activating;
+                self.control_sent = false;
+            }
+            Err(_) => self.reject(GraphCoordinatorFault::Durability),
         }
     }
 
@@ -899,8 +1165,36 @@ impl GraphService {
             }
         }
         if self.realtime_active_matches(false) {
-            self.phase = GraphCoordinatorPhase::Authorizing;
+            self.phase = if self.boot_recovery {
+                GraphCoordinatorPhase::Authorizing
+            } else {
+                GraphCoordinatorPhase::Committing
+            };
             self.control_sent = false;
+        }
+    }
+
+    async fn commit_activation(
+        &mut self,
+        cache: &mut selected::StorageBackend,
+        mutation: MutationContext,
+    ) {
+        let Some(transition) = self.durable_pending else {
+            self.reject(GraphCoordinatorFault::Internal);
+            return;
+        };
+        if transition.action() != GraphTransitionAction::Activate {
+            self.reject(GraphCoordinatorFault::Internal);
+            return;
+        }
+        match cache.commit_graph_transition(transition, mutation).await {
+            Ok(journal) => {
+                self.durable_active = journal.active;
+                self.durable_pending = None;
+                self.phase = GraphCoordinatorPhase::Authorizing;
+                self.control_sent = false;
+            }
+            Err(_) => self.reject(GraphCoordinatorFault::Durability),
         }
     }
 
@@ -909,6 +1203,10 @@ impl GraphService {
             self.reject(GraphCoordinatorFault::Internal);
             return;
         };
+        if !self.durable_publication_matches(publication) {
+            self.reject(GraphCoordinatorFault::Durability);
+            return;
+        }
         if !self.control_sent {
             let command = match CoreGraphCommand::authorize(publication) {
                 Ok(command) => command,
@@ -932,19 +1230,43 @@ impl GraphService {
                 return;
             }
             self.active = Some(publication);
-            self.validation = None;
-            self.pending_command = None;
-            self.phase = GraphCoordinatorPhase::Active;
-            self.fault = GraphCoordinatorFault::None;
+            self.finish_operation();
         }
     }
 
-    fn clear_step(&mut self, endpoint: &mut DefaultServiceEndpoint, now: DeviceCycle) {
-        let Some(publication) = self.operation else {
+    async fn clear_step(
+        &mut self,
+        cache: &mut selected::StorageBackend,
+        endpoint: &mut DefaultServiceEndpoint,
+        now: DeviceCycle,
+        mutation: MutationContext,
+    ) {
+        let Some(transition) = self.durable_pending else {
             self.reject(GraphCoordinatorFault::Internal);
             return;
         };
-        if !self.control_sent {
+        if transition.action() != GraphTransitionAction::Clear {
+            self.reject(GraphCoordinatorFault::Internal);
+            return;
+        }
+        let publication = publication_from_durable(transition.selection());
+        let prepared = cache
+            .graph_journal()
+            .is_ok_and(|journal| journal.pending == Some(transition));
+        if !prepared {
+            match cache.prepare_graph_transition(transition, mutation).await {
+                Ok(_) => return,
+                Err(_) => {
+                    self.reject(GraphCoordinatorFault::Durability);
+                    return;
+                }
+            }
+        }
+        let already_cleared = self.realtime_graph_absent()
+            || self.realtime.state == RealtimeGraphState::Cleared
+                && self.realtime.content_digest == publication.content_digest()
+                && self.realtime.package_digest == publication.package_digest;
+        if !self.control_sent && !already_cleared {
             let command = match CoreGraphCommand::clear(publication) {
                 Ok(command) => command,
                 Err(_) => {
@@ -960,26 +1282,59 @@ impl GraphService {
                     return;
                 }
             }
+            return;
         }
-        if self.realtime.state == RealtimeGraphState::Cleared
-            && self.realtime.content_digest == publication.content_digest()
-            && self.realtime.package_digest == publication.package_digest
-        {
-            if self.clear_active_actor().is_err() {
-                self.reject(GraphCoordinatorFault::Internal);
-                return;
+        let settled = already_cleared
+            || self.realtime.state == RealtimeGraphState::Cleared
+                && self.realtime.content_digest == publication.content_digest()
+                && self.realtime.package_digest == publication.package_digest;
+        if !settled {
+            return;
+        }
+        match cache.commit_graph_transition(transition, mutation).await {
+            Ok(journal) => {
+                self.durable_active = journal.active;
+                self.durable_pending = None;
+                if self.clear_active_actor().is_err() {
+                    self.reject(GraphCoordinatorFault::Internal);
+                    return;
+                }
+                self.active = None;
+                self.finish_operation();
             }
-            self.active = None;
-            self.finish_operation();
+            Err(_) => self.reject(GraphCoordinatorFault::Durability),
         }
     }
 
-    fn abort_step(&mut self, endpoint: &mut DefaultServiceEndpoint, now: DeviceCycle) {
+    async fn abort_step(
+        &mut self,
+        cache: &mut selected::StorageBackend,
+        endpoint: &mut DefaultServiceEndpoint,
+        now: DeviceCycle,
+        mutation: MutationContext,
+    ) {
         let Some(publication) = self.operation else {
             self.finish_operation();
             return;
         };
         if !self.transfer_sent {
+            if self.clear_after_abort {
+                self.clear_after_abort = false;
+                self.phase = GraphCoordinatorPhase::Clearing;
+                self.control_sent = false;
+                return;
+            }
+            if let Some(transition) = self.durable_pending {
+                if transition.action() == GraphTransitionAction::Activate {
+                    match cache.abort_graph_transition(transition, mutation).await {
+                        Ok(_) => self.durable_pending = None,
+                        Err(_) => {
+                            self.reject(GraphCoordinatorFault::Durability);
+                            return;
+                        }
+                    }
+                }
+            }
             self.finish_operation();
             return;
         }
@@ -1007,6 +1362,24 @@ impl GraphService {
             self.realtime.state == RealtimeGraphState::Empty
         };
         if settled {
+            if self.clear_after_abort {
+                self.clear_after_abort = false;
+                self.transfer_sent = false;
+                self.control_sent = false;
+                self.phase = GraphCoordinatorPhase::Clearing;
+                return;
+            }
+            if let Some(transition) = self.durable_pending {
+                if transition.action() == GraphTransitionAction::Activate {
+                    match cache.abort_graph_transition(transition, mutation).await {
+                        Ok(_) => self.durable_pending = None,
+                        Err(_) => {
+                            self.reject(GraphCoordinatorFault::Durability);
+                            return;
+                        }
+                    }
+                }
+            }
             self.finish_operation();
         }
     }
@@ -1237,9 +1610,12 @@ impl GraphService {
     fn lifecycle_busy(&self) -> bool {
         matches!(
             self.phase,
-            GraphCoordinatorPhase::Validating
+            GraphCoordinatorPhase::Recovering
+                | GraphCoordinatorPhase::Validating
                 | GraphCoordinatorPhase::CandidateValid
+                | GraphCoordinatorPhase::Preparing
                 | GraphCoordinatorPhase::Activating
+                | GraphCoordinatorPhase::Committing
                 | GraphCoordinatorPhase::Authorizing
                 | GraphCoordinatorPhase::Clearing
                 | GraphCoordinatorPhase::Aborting
@@ -1253,9 +1629,12 @@ impl GraphService {
     fn package_lifecycle_busy(&self) -> bool {
         matches!(
             self.phase,
-            GraphCoordinatorPhase::Validating
+            GraphCoordinatorPhase::Recovering
+                | GraphCoordinatorPhase::Validating
                 | GraphCoordinatorPhase::CandidateValid
+                | GraphCoordinatorPhase::Preparing
                 | GraphCoordinatorPhase::Activating
+                | GraphCoordinatorPhase::Committing
                 | GraphCoordinatorPhase::Authorizing
                 | GraphCoordinatorPhase::Clearing
                 | GraphCoordinatorPhase::Aborting
@@ -1276,6 +1655,16 @@ impl GraphService {
                 && publication.content_digest() == selection.content_digest
                 && publication.package_digest == selection.package_digest
         })
+    }
+
+    fn durable_active_matches(&self, selection: GraphSelection) -> bool {
+        self.durable_active
+            .is_some_and(|durable| durable_selection_matches(durable, selection))
+    }
+
+    fn durable_publication_matches(&self, publication: GraphPublication) -> bool {
+        self.durable_active
+            .is_some_and(|durable| publication_from_durable(durable) == publication)
     }
 
     fn realtime_candidate_matches(&self) -> bool {
@@ -1300,12 +1689,30 @@ impl GraphService {
         })
     }
 
+    fn realtime_active_is_operation(&self) -> bool {
+        self.operation.is_some_and(|publication| {
+            self.realtime.state == RealtimeGraphState::Active
+                && self.realtime.transaction_id == publication.transaction_id
+                && self.realtime.content_digest == publication.content_digest()
+                && self.realtime.package_digest == publication.package_digest
+                && self.realtime.active_content_digest == publication.content_digest()
+        })
+    }
+
+    fn realtime_graph_absent(&self) -> bool {
+        self.realtime.state == RealtimeGraphState::Empty
+            && self.realtime.active_content_digest.is_zero()
+    }
+
     fn realtime_rejected_operation(&self) -> bool {
         matches!(
             self.phase,
-            GraphCoordinatorPhase::Validating
+            GraphCoordinatorPhase::Recovering
+                | GraphCoordinatorPhase::Validating
                 | GraphCoordinatorPhase::CandidateValid
+                | GraphCoordinatorPhase::Preparing
                 | GraphCoordinatorPhase::Activating
+                | GraphCoordinatorPhase::Committing
                 | GraphCoordinatorPhase::Authorizing
         ) && self.operation.is_some_and(|publication| {
             self.realtime.state == RealtimeGraphState::Rejected
@@ -1383,7 +1790,6 @@ impl GraphService {
     }
 
     fn reject(&mut self, fault: GraphCoordinatorFault) {
-        self.validation = None;
         self.pending_command = None;
         self.control_sent = false;
         self.phase = GraphCoordinatorPhase::Rejected;
@@ -1397,6 +1803,8 @@ impl GraphService {
         self.pending_command = None;
         self.control_sent = false;
         self.transfer_sent = false;
+        self.boot_recovery = false;
+        self.clear_after_abort = false;
         self.fault = GraphCoordinatorFault::None;
         self.phase = if self.active.is_some() {
             GraphCoordinatorPhase::Active
@@ -1404,6 +1812,31 @@ impl GraphService {
             GraphCoordinatorPhase::Empty
         };
     }
+}
+
+fn durable_from_publication(publication: GraphPublication) -> Result<DurableGraphSelection, ()> {
+    DurableGraphSelection::new(
+        publication.transaction_id,
+        publication.publication,
+        publication.package_digest,
+        publication.implementation_digest,
+    )
+    .map_err(|_| ())
+}
+
+fn publication_from_durable(selection: DurableGraphSelection) -> GraphPublication {
+    GraphPublication {
+        transaction_id: selection.transaction_id(),
+        publication: selection.publication(),
+        package_digest: selection.package_digest(),
+        implementation_digest: selection.implementation_digest(),
+    }
+}
+
+fn durable_selection_matches(durable: DurableGraphSelection, selection: GraphSelection) -> bool {
+    durable.transaction_id() == selection.transaction_id
+        && durable.publication().object.content.digest == selection.content_digest
+        && durable.package_digest() == selection.package_digest
 }
 
 fn graph_run_identity(request: GraphRunRequest) -> GraphRunIdentity {
