@@ -354,6 +354,7 @@ cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo xtask board list
 cargo xtask board check mks-tinybee-v1
+cargo xtask board check mks-tinybee-v1-4mb
 cargo xtask board check t-deck-pro
 cargo xtask board check mks-esp32-foc-v1
 cargo xtask capabilities --board mks-tinybee --json
@@ -380,8 +381,10 @@ Xtensa linker bundle when it is not already on `PATH`:
 
 ```console
 cargo xtask check --board mks-tinybee
+cargo xtask check --board mks-tinybee-4mb
 cargo xtask check --board t-deck-pro
 cargo xtask build --board mks-tinybee --profile release
+cargo xtask build --board mks-tinybee-4mb --profile release
 cargo xtask build --board t-deck-pro --profile release
 cargo xtask hil list
 cargo xtask hil build mks-tinybee-pcm-short-safe
@@ -398,6 +401,15 @@ flashes. Running it still requires the disconnected-load checklist in
 `ALUMINA_AP_PASSWORD` supplied outside the
 repository, but build-provisioned credentials still do not satisfy the planned
 unique device-stored production credential gate.
+
+`mks-tinybee` selects the primary 8 MiB package observed on the connected V1.0
+fixture. `mks-tinybee-4mb` is a separate opportunistic 4 MiB package with its
+own immutable board ID and capability digest. Selection is compile-time only;
+firmware never probes flash and substitutes packages at runtime. Successful
+builds preserve board-qualified ELF names beside Cargo's conventional output
+so building one variant cannot erase the only clearly named artifact for the
+other. The 4 MiB profile is compile-supported but has no matching fixture and
+remains subject to future web-bundle/update-slot flash budgets.
 
 ## Imported T-Deck support
 

@@ -43,6 +43,17 @@ input, five stepper axes/six motor connectors (dual Z), three thermistor inputs,
 heater/fan outputs, endstops, SD, and Wi-Fi. Its high-numbered `IO128`–`IO149`
 labels represent bits in an I²S-driven output chain.
 
+The build default `mks-tinybee` is the 8 MiB primary package, matching the
+capacity reported by the connected PCB marked `MKS TinyBee v1.0` and the
+operator's expectation for common shipments. The population-frequency claim is
+not treated as independently verified hardware evidence. A separate
+`mks-tinybee-4mb` build retains the same routed PCB facts but reports exactly
+4 MiB under board ID `mks-tinybee-v1-4mb`. Its different canonical capability
+digest prevents a 4 MiB image/configuration from masquerading as the primary
+package. There is no runtime autodetection or fallback. The 4 MiB variant
+currently links and fits an explicitly generated 4 MiB flash image, but has no
+physical fixture and may require reduced future asset/update budgets.
+
 ### Critical physical resources
 
 | Function | Alumina typed resource |

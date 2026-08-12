@@ -38,6 +38,7 @@ import.
 | Topic | Decision |
 | --- | --- |
 | First boards | MKS TinyBee V1.x and LILYGO T-Deck Pro, with physical hardware available for both. |
+| TinyBee flash variants | `mks-tinybee` is the 8 MiB primary observed on the connected V1.0 fixture. A separately identified 4 MiB build is retained opportunistically; no runtime capacity inference or package substitution is allowed. |
 | First FOC board | MKS ESP32 FOC V1.0 from the named vendor branch; hardware will be added to the bench. |
 | T-LoRa Pager | Stub the current ESP32-S3 product late, then add support after the first targets and FOC slice. |
 | Single-core chips | Rejected for now. Do not create degraded, cooperative, or Wi-Fi-disabled motion profiles. |

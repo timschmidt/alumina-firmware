@@ -351,6 +351,7 @@ Build UX:
 cargo xtask board list
 cargo xtask board check mks-tinybee
 cargo xtask build --board mks-tinybee --profile release
+cargo xtask build --board mks-tinybee-4mb --profile release
 cargo xtask flash --board t-deck-pro
 cargo xtask capabilities --board mks-tinybee --json
 ```
@@ -358,6 +359,14 @@ cargo xtask capabilities --board mks-tinybee --json
 `xtask` maps the selected board to the chip target, Cargo features, linker
 scripts, partition table, web bundle, and CI/HIL suite. Direct ambiguous builds
 fail with a useful error.
+
+TinyBee's short selector names the 8 MiB primary package. The 4 MiB variant has
+an independent board ID, Cargo feature, capacity field, canonical capability
+digest, and board-qualified ELF. They deliberately share the physical routing
+implementation, but a running image cannot probe flash and exchange one package
+for the other. Future partition/web/update layouts must be validated separately
+against each exact capacity; a successful 8 MiB build is never fit evidence for
+4 MiB.
 
 ### Runtime machine configuration
 

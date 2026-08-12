@@ -14,10 +14,10 @@ pub mod mks_esp32_foc_v1;
 #[cfg(feature = "board-mks-esp32-foc-v1")]
 pub use mks_esp32_foc_v1 as selected;
 
-#[cfg(feature = "board-mks-tinybee")]
+#[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
 pub mod mks_tinybee;
 #[cfg(all(
-    feature = "board-mks-tinybee",
+    any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"),
     not(feature = "hil-mks-tinybee-pcm-short-safe")
 ))]
 pub use mks_tinybee as selected;

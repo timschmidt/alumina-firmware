@@ -1,5 +1,5 @@
 #![no_std]
-#![doc = "Compile-time facts for the dual-core MKS TinyBee V1.x package."]
+#![doc = "Compile-time facts for dual-core MKS TinyBee V1.x flash variants."]
 
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
@@ -10,14 +10,25 @@ use alumina_board::{
 };
 use alumina_protocol::Digest;
 
-/// Stable board selection ID.
+/// Stable board selection ID for the primary 8 MiB package.
 pub const BOARD_ID: &str = "mks-tinybee-v1";
+/// Stable board selection ID for the opportunistic 4 MiB package.
+pub const BOARD_ID_4_MIB: &str = "mks-tinybee-v1-4mb";
 /// ESP Rust target required by this package.
 pub const TARGET: &str = "xtensa-esp32-none-elf";
-/// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
+/// Installed flash declared by the primary package.
+pub const PRIMARY_FLASH_BYTES: usize = 8 * 1_024 * 1_024;
+/// Installed flash declared by the smaller explicit variant.
+pub const FOUR_MIB_FLASH_BYTES: usize = 4 * 1_024 * 1_024;
+/// SHA-256 of the primary 8 MiB canonical `ALMCAP01` V1 document.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0xfc, 0x8d, 0x02, 0x0b, 0xb9, 0x99, 0x2f, 0x1f, 0xfd, 0xf9, 0x93, 0x88, 0x15, 0x08, 0x63, 0x12,
-    0xb9, 0xff, 0xf6, 0xfa, 0x2a, 0x7f, 0x83, 0xcb, 0xab, 0x1c, 0xf9, 0x6b, 0x00, 0x4c, 0xe8, 0x31,
+    0xc4, 0xe2, 0x34, 0x53, 0x14, 0xb3, 0x32, 0x76, 0x26, 0x3a, 0xba, 0x37, 0x9a, 0x02, 0x24, 0x9e,
+    0xc8, 0x1a, 0x1a, 0xd6, 0xda, 0x00, 0xc1, 0x08, 0xc0, 0x0c, 0xc9, 0x83, 0x7c, 0x31, 0xda, 0x0c,
+]);
+/// SHA-256 of the 4 MiB canonical `ALMCAP01` V1 document.
+pub const CAPABILITY_DIGEST_4_MIB: Digest = Digest([
+    0x17, 0x93, 0x60, 0xf5, 0x44, 0xc2, 0x15, 0xfc, 0xc7, 0x92, 0x73, 0x44, 0x82, 0xd5, 0xd9, 0x20,
+    0xa1, 0x1e, 0x26, 0x23, 0x26, 0xc5, 0x53, 0x09, 0x3e, 0x53, 0xfa, 0x55, 0xad, 0xdf, 0x9e, 0xe6,
 ]);
 /// Shift-register safe image inferred from active-high StepStick disable inputs.
 ///
@@ -961,49 +972,94 @@ pub static SAFE_IMAGES: &[SafeOutputImage] = &[SafeOutputImage {
     bench_verified: false,
 }];
 
-/// Canonical portable package. Hardware composition remains non-armable until HIL.
-pub static PACKAGE: BoardPackage<'static> = BoardPackage {
-    board: BoardDescriptor {
-        id: BOARD_ID,
-        revision: "1.x; exact fixture revision pending inspection",
-        chip: Chip::Esp32,
-        application_cores: 2,
-        qualification: Qualification::Compiles,
-        capability_digest: CAPABILITY_DIGEST,
-        resources: RESOURCES,
-    },
-    memory: MemoryDescriptor {
-        flash_bytes: 8 * 1_024 * 1_024,
-        internal_sram_bytes: 520 * 1_024,
-        psram_bytes: 0,
-        realtime_psram_allowed: false,
-    },
-    cores: CoreAssignment {
-        service_core: 0,
-        realtime_core: 1,
-    },
-    aliases: ALIASES,
-    buses: BUSES,
-    devices: DEVICES,
-    flash_regions: &[],
-    clocks: CLOCKS,
-    electrical_constraints: ELECTRICAL_CONSTRAINTS,
-    interrupts: INTERRUPTS,
-    safe_output_images: SAFE_IMAGES,
-    visuals: &[],
-    hil_requirements: HIL_REQUIREMENTS,
-    armable: false,
-};
+const fn package(
+    id: &'static str,
+    revision: &'static str,
+    capability_digest: Digest,
+    flash_bytes: usize,
+) -> BoardPackage<'static> {
+    BoardPackage {
+        board: BoardDescriptor {
+            id,
+            revision,
+            chip: Chip::Esp32,
+            application_cores: 2,
+            qualification: Qualification::Compiles,
+            capability_digest,
+            resources: RESOURCES,
+        },
+        memory: MemoryDescriptor {
+            flash_bytes,
+            internal_sram_bytes: 520 * 1_024,
+            psram_bytes: 0,
+            realtime_psram_allowed: false,
+        },
+        cores: CoreAssignment {
+            service_core: 0,
+            realtime_core: 1,
+        },
+        aliases: ALIASES,
+        buses: BUSES,
+        devices: DEVICES,
+        flash_regions: &[],
+        clocks: CLOCKS,
+        electrical_constraints: ELECTRICAL_CONSTRAINTS,
+        interrupts: INTERRUPTS,
+        safe_output_images: SAFE_IMAGES,
+        visuals: &[],
+        hil_requirements: HIL_REQUIREMENTS,
+        armable: false,
+    }
+}
+
+/// Primary canonical package for 8 MiB TinyBee modules.
+///
+/// The connected V1.0 fixture reports this capacity. Hardware composition
+/// remains non-armable until the remaining visual and electrical HIL gates.
+pub static PACKAGE: BoardPackage<'static> = package(
+    BOARD_ID,
+    "V1.x, 8 MiB primary; connected PCB marked V1.0",
+    CAPABILITY_DIGEST,
+    PRIMARY_FLASH_BYTES,
+);
+
+/// Explicit opportunistic package for TinyBee assemblies fitted with 4 MiB.
+///
+/// It shares physical routing with the primary package but has a different
+/// immutable board ID, flash capacity, and capability digest. No runtime flash
+/// probing is allowed to substitute it for the compiled package.
+pub static PACKAGE_4_MIB: BoardPackage<'static> = package(
+    BOARD_ID_4_MIB,
+    "V1.x, 4 MiB flash variant; physical fixture unavailable",
+    CAPABILITY_DIGEST_4_MIB,
+    FOUR_MIB_FLASH_BYTES,
+);
 
 #[cfg(test)]
 mod tests {
+    use alumina_capability::calculate_identity;
+
     use super::*;
 
     #[test]
     fn package_validates_but_cannot_arm_without_physical_evidence() {
         assert_eq!(PACKAGE.validate(), Ok(()));
+        assert_eq!(PACKAGE_4_MIB.validate(), Ok(()));
         assert!(!PACKAGE.armable);
+        assert!(!PACKAGE_4_MIB.armable);
         assert!(!SAFE_IMAGES[0].bench_verified);
+    }
+
+    #[test]
+    fn flash_variants_are_exact_and_have_distinct_identities() {
+        assert_eq!(PACKAGE.memory.flash_bytes, PRIMARY_FLASH_BYTES);
+        assert_eq!(PACKAGE_4_MIB.memory.flash_bytes, FOUR_MIB_FLASH_BYTES);
+        assert_ne!(PACKAGE.board.id, PACKAGE_4_MIB.board.id);
+        let primary = calculate_identity(&PACKAGE).unwrap();
+        let four_mib = calculate_identity(&PACKAGE_4_MIB).unwrap();
+        assert_eq!(primary.digest.0, CAPABILITY_DIGEST.0);
+        assert_eq!(four_mib.digest.0, CAPABILITY_DIGEST_4_MIB.0);
+        assert_ne!(primary.digest, four_mib.digest);
     }
 
     #[test]

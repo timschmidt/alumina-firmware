@@ -166,6 +166,14 @@ Exit gate:
   single-core targets fail before arming.
 - Logic-analyzer traces identify every TinyBee shifted bit and safe reset image.
 
+The TinyBee flash-identity follow-up now makes the observed 8 MiB module the
+primary `mks-tinybee` build and retains a separately identified 4 MiB variant.
+Both compile through the same physical-routing composition, export distinct
+canonical capability digests, and leave board-qualified ELFs; runtime probing
+cannot substitute them. The 4 MiB image currently fits, but its physical
+fixture and final partition/web/update budgets remain open. See the
+[flash-variant evidence](evidence/M2-TINYBEE-FLASH-VARIANTS.md).
+
 ### M3 — Native protocol, Wi-Fi/web service, simulator, and SD cache
 
 Work:

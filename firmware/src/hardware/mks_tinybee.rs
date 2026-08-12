@@ -398,7 +398,10 @@ pub struct SplitResources {
     pub realtime: RealtimeResources,
 }
 
+#[cfg(feature = "board-mks-tinybee")]
 pub const PACKAGE: &BoardPackage<'static> = &board_mks_tinybee::PACKAGE;
+#[cfg(feature = "board-mks-tinybee-4mb")]
+pub const PACKAGE: &BoardPackage<'static> = &board_mks_tinybee::PACKAGE_4_MIB;
 
 /// Consumes the HAL singleton once and creates physically disjoint domains.
 pub fn split(peripherals: Peripherals) -> SplitResources {

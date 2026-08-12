@@ -1,18 +1,18 @@
 schema = 1
-id = "mks-tinybee-v1"
-display_name = "MKS TinyBee V1.x (8 MiB primary)"
-revision = "V1.x, 8 MiB primary; connected PCB marked V1.0"
+id = "mks-tinybee-v1-4mb"
+display_name = "MKS TinyBee V1.x (4 MiB variant)"
+revision = "V1.x, 4 MiB flash variant; physical fixture unavailable"
 chip = "esp32"
 target = "xtensa-esp32-none-elf"
 cores = 2
-flash_bytes = 8388608
+flash_bytes = 4194304
 psram_bytes = 0
 qualification = "compiles"
 implementation = "implemented"
-hardware_available = true
+hardware_available = false
 service_core = 0
 realtime_core = 1
-firmware_feature = "board-mks-tinybee"
+firmware_feature = "board-mks-tinybee-4mb"
 armable = false
 
 [provenance]
@@ -22,8 +22,8 @@ fluidnc_evidence = "https://github.com/bdring/fluidnc-config-files/blob/main/off
 [safe_state]
 motion_enabled = false
 process_energy_enabled = false
-# Inferred from FluidNC's active-high StepStick disable outputs. This value is
-# deliberately not an arming claim until polarity and reset behavior pass HIL.
+# Shared physical routing only. This package has no matching 4 MiB fixture and
+# remains non-armable; it must never be selected by runtime flash probing.
 i2s_image = 4681
 bench_verified = false
 

@@ -4,6 +4,9 @@ schema = 1
 path = "mks-tinybee"
 
 [[board]]
+path = "mks-tinybee-4mb"
+
+[[board]]
 path = "t-deck-pro"
 
 [[board]]

@@ -444,6 +444,7 @@ fn expected_feature_for(id: &str) -> Option<&'static str> {
     match id {
         board_mks_esp32_foc_v1::BOARD_ID => Some("board-mks-esp32-foc-v1"),
         board_mks_tinybee::BOARD_ID => Some("board-mks-tinybee"),
+        board_mks_tinybee::BOARD_ID_4_MIB => Some("board-mks-tinybee-4mb"),
         board_t_deck_pro::BOARD_ID => Some("board-t-deck-pro"),
         _ => None,
     }
@@ -453,6 +454,7 @@ fn package_for(id: &str) -> Option<&'static BoardPackage<'static>> {
     match id {
         board_mks_esp32_foc_v1::BOARD_ID => Some(&board_mks_esp32_foc_v1::PACKAGE),
         board_mks_tinybee::BOARD_ID => Some(&board_mks_tinybee::PACKAGE),
+        board_mks_tinybee::BOARD_ID_4_MIB => Some(&board_mks_tinybee::PACKAGE_4_MIB),
         board_t_deck_pro::BOARD_ID => Some(&board_t_deck_pro::PACKAGE),
         _ => None,
     }
@@ -461,6 +463,8 @@ fn package_for(id: &str) -> Option<&'static BoardPackage<'static>> {
 fn find_board<'a>(boards: &'a [Board], id: &str) -> Result<&'a Board, String> {
     let canonical = match id {
         "mks-tinybee" => "mks-tinybee-v1",
+        "mks-tinybee-8mb" => "mks-tinybee-v1",
+        "mks-tinybee-4mb" => "mks-tinybee-v1-4mb",
         other => other,
     };
     boards
@@ -530,7 +534,37 @@ fn run_board_cargo(
             board.id
         ));
     }
+    if action == "build" {
+        let artifact = preserve_board_artifact(root, board, profile)?;
+        println!("board-qualified artifact: {}", artifact.display());
+    }
     Ok(())
+}
+
+fn preserve_board_artifact(root: &Path, board: &Board, profile: &str) -> Result<PathBuf, String> {
+    let profile_directory = if profile == "dev" { "debug" } else { profile };
+    let directory = root
+        .join("target")
+        .join(&board.target)
+        .join(profile_directory);
+    let source = directory.join("alumina-firmware");
+    let destination = directory.join(format!("alumina-firmware-{}", board.id));
+    fs::copy(&source, &destination).map_err(|error| {
+        format!(
+            "cannot preserve board-qualified artifact {} from {}: {error}",
+            destination.display(),
+            source.display()
+        )
+    })?;
+    destination
+        .strip_prefix(root)
+        .map(Path::to_path_buf)
+        .map_err(|_| {
+            format!(
+                "artifact escaped repository root: {}",
+                destination.display()
+            )
+        })
 }
 
 fn run_hil_build(root: &Path, boards: &[Board], id: &str) -> Result<(), String> {
@@ -1312,6 +1346,26 @@ mod tests {
             validate_board(&board)
                 .unwrap_err()
                 .contains("requires target")
+        );
+    }
+
+    #[test]
+    fn tinybee_short_selectors_choose_explicit_flash_packages() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must be inside the repository");
+        let boards = load_boards(root).unwrap();
+        assert_eq!(
+            find_board(&boards, "mks-tinybee").unwrap().id,
+            board_mks_tinybee::BOARD_ID
+        );
+        assert_eq!(
+            find_board(&boards, "mks-tinybee-8mb").unwrap().id,
+            board_mks_tinybee::BOARD_ID
+        );
+        assert_eq!(
+            find_board(&boards, "mks-tinybee-4mb").unwrap().id,
+            board_mks_tinybee::BOARD_ID_4_MIB
         );
     }
 }

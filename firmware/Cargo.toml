@@ -34,6 +34,16 @@ board-mks-tinybee = [
     "esp-rtos/esp32",
     "esp-rtos/esp-radio",
 ]
+board-mks-tinybee-4mb = [
+    "dep:board-mks-tinybee",
+    "esp-alloc/esp32",
+    "esp-bootloader-esp-idf/esp32",
+    "esp-hal/esp32",
+    "esp-radio/esp32",
+    "esp-rtos/esp-alloc",
+    "esp-rtos/esp32",
+    "esp-rtos/esp-radio",
+]
 board-mks-esp32-foc-v1 = [
     "dep:board-mks-esp32-foc-v1",
     "esp-alloc/esp32",

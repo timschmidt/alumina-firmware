@@ -9,13 +9,17 @@
 #[cfg(not(any(
     feature = "board-mks-esp32-foc-v1",
     feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb",
     feature = "board-t-deck-pro"
 )))]
 compile_error!("select exactly one board feature through `cargo xtask build --board <id>`");
 #[cfg(any(
+    all(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"),
     all(feature = "board-mks-esp32-foc-v1", feature = "board-mks-tinybee"),
+    all(feature = "board-mks-esp32-foc-v1", feature = "board-mks-tinybee-4mb"),
     all(feature = "board-mks-esp32-foc-v1", feature = "board-t-deck-pro"),
-    all(feature = "board-mks-tinybee", feature = "board-t-deck-pro")
+    all(feature = "board-mks-tinybee", feature = "board-t-deck-pro"),
+    all(feature = "board-mks-tinybee-4mb", feature = "board-t-deck-pro")
 ))]
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 #[cfg(feature = "hil-mks-tinybee-pcm-short-safe")]
@@ -29,7 +33,11 @@ mod job;
 mod motion;
 mod network;
 pub mod service;
-#[cfg(any(feature = "board-mks-tinybee", feature = "board-t-deck-pro"))]
+#[cfg(any(
+    feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb",
+    feature = "board-t-deck-pro"
+))]
 mod storage;
 
 use alumina_clock::{BootId, RealtimeClockReport};

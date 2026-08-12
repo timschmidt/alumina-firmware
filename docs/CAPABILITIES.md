@@ -13,6 +13,13 @@ qualification, or armability requires a new capability digest. This is a
 deliberately conservative V1 compatibility identity. Cached machine partitions
 bind that exact digest.
 
+Installed flash capacity is therefore an identity fact, not a boot-time hint.
+For example, the primary 8 MiB TinyBee and its opportunistic 4 MiB variant have
+different board IDs and capability digests even though they share routed PCB
+resources. Firmware cannot probe capacity and substitute one canonical package
+for another; configuration and cached jobs must bind the package actually
+compiled into the image.
+
 ## Common encoding
 
 Every integer is little-endian. Booleans are exactly `0` or `1`. Every string is

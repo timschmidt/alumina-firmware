@@ -338,6 +338,7 @@ name = "board-mks-tinybee"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
+ "alumina-capability",
  "alumina-protocol",
 ]
 

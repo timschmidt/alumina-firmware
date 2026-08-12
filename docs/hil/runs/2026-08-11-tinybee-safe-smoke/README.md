@@ -36,11 +36,13 @@ Features:          WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Codin
 Security features: None
 ```
 
-The observed 8 MB flash conflicts with the current `mks-tinybee-v1` package's
-4 MB declaration even though the PCB is marked MKS TinyBee v1.0. Until the
-ESP32 module marking/population is visually identified, this unit must not be
-treated as an exact match for that compiled capability identity. The existing
-package is not silently changed to fit one incompletely identified specimen.
+Correction recorded 2026-08-11: the package at the recorded `e91886a` commit
+declared 8 MiB, not 4 MiB. The earlier draft's conflict statement was erroneous.
+The read-only observation therefore agrees with the package capacity and later
+supports keeping 8 MiB as the primary build. It still does not identify the
+module marking/population, establish how frequently either capacity shipped, or
+raise the board above `compiles`. A separately identified 4 MiB variant is now
+retained without runtime package substitution.
 
 ## Flash observation
 

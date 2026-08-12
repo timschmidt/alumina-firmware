@@ -14,6 +14,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M2-BOARD-METADATA.md`](M2-BOARD-METADATA.md) — expanded board capabilities,
   electrical/timing/visual/HIL contracts, corrected T-Deck reset routing, and
   renewed host/ESP compile evidence.
+- [`M2-TINYBEE-FLASH-VARIANTS.md`](M2-TINYBEE-FLASH-VARIANTS.md) — 8 MiB
+  primary and separately identified 4 MiB TinyBee packages, distinct canonical
+  capabilities, board-qualified artifacts, and explicit current image-fit
+  evidence.
 - [`M3-PROTOCOL-STORAGE-SIM.md`](M3-PROTOCOL-STORAGE-SIM.md) — exact native wire
   foundations, resumable content-addressed transaction model, rebootable cache,
   and bounded service/RT prefetch simulation.

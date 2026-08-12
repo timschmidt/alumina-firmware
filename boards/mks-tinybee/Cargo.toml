@@ -12,5 +12,8 @@ publish.workspace = true
 alumina-board.workspace = true
 alumina-protocol.workspace = true
 
+[dev-dependencies]
+alumina-capability.workspace = true
+
 [lints]
 workspace = true
