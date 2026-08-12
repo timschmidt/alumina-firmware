@@ -16,8 +16,10 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use crate::{LatestSignal, SignalSnapshot};
 
 mod deployment;
+mod live;
 
 pub use deployment::*;
+pub use live::*;
 
 const NO_CHANNEL: u8 = u8::MAX;
 

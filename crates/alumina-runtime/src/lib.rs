@@ -244,6 +244,15 @@ impl LatestSignal {
             detail: (packed & 0xff) as u8,
         })
     }
+
+    /// Clear a session-scoped mailbox after all of its publishers have stopped.
+    ///
+    /// This remains crate-private because safety/urgent mailboxes are monotonic
+    /// for the entire boot. The reloadable graph bridge is the only owner that
+    /// can prove both graph actors acknowledged stop before starting a new run.
+    pub(crate) fn reset_session(&self) {
+        self.packed.store(0, Ordering::Release);
+    }
 }
 
 impl Default for LatestSignal {
