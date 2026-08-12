@@ -657,10 +657,16 @@ ownership. Cross-clock Stream feedthrough now requires an audited exact
 latest-at-or-before transition: rational clock analysis proves one shared root,
 the smallest repeating schedule, minimum queue capacity, and bounded held
 sample storage. A separate fixed HostExact implementation registry and bounded
-simulator now execute only external Stream sources, that audited transition,
-and Stream sinks using exact root time. Canonical `ALGT` traces bind graph and
-implementation identities and replay by independent simulation. The first
-portable deployed boundary is now a fixed 4 KiB `ALGRIR02` package with
+simulator now execute nine reviewed behaviors: external Stream source, that
+audited transition, Stream sink, exact add/subtract/dimensionless scale/clamp,
+explicit read-before-write unit delay, and fail-safe exact permit gating. Its
+`ALSI` V2 identity binds the complete unit/type and clock context. A visible
+50 Hz to 10 Hz fixture composes those primitives into a discrete
+PID/interlock, keeps both state values explicit, applies exact registered unit
+scales, produces deterministic controller and safe-gated traces, and replays
+independently through canonical `ALGT`. This remains HostExact authority only;
+none of those control behaviors yet grants firmware opcodes or physical output.
+The first portable deployed boundary is now a fixed 4 KiB `ALGRIR02` package with
 allocation-free independent admission, whitelisted Boolean Service/Realtime
 opcodes, integer device-cycle schedules, declared WCET plus executor reserve,
 and contiguous state/channel/bridge arenas. A third interface registry binds
@@ -689,8 +695,9 @@ now recovers the selected package only after configuration-first dual-core
 admission. The first resource opcode is a capability-bound realtime read of a
 known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
-palettes remain empty. Measured executor timing, physical input HIL, graph
-outputs, additional capability nodes, and graph UI remain open. A disconnected
+palettes remain empty. Measured executor timing, physical input HIL, deployed
+control/output opcodes, additional capability nodes, and the graph/front-panel
+UI remain open. A disconnected
 TinyBee prequalification run exposed a roughly 54 ms unarmed radio-startup
 suspension and proved that an ordinary core-1 executor could miss the 200 us
 dispatch reserve. The fixture now discards and re-debounces input state after
@@ -705,6 +712,7 @@ See the
 [bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), plus the
 [exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) and
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
+[exact-control graph](evidence/M9-EXACT-CONTROL-GRAPH.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and
