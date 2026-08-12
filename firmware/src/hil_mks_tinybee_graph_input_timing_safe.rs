@@ -26,10 +26,6 @@ mod storage;
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-extern crate alloc;
-
-use alloc::boxed::Box;
-
 use alumina_board::{OwnerDomain, ResourceId};
 use alumina_config::{
     BindingFlags, BindingRole, ConfigurationFlags, ConfigurationHeader, ConfigurationRecord,
@@ -41,7 +37,6 @@ use alumina_graph_ir::{
     encode_graph_resource_parameter, graph_ir_content_digest,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
-use alumina_runtime::APP_CORE_STACK_BYTES;
 use alumina_runtime::graph::{GraphRunIdentity, GraphRuntimeAuthority};
 use alumina_safety::{FaultCode, SafetyInputMonitor, SafetyInputReaction};
 use alumina_storage::{ContentHasher, sha256};
@@ -75,6 +70,7 @@ const GRAPH_START_LEAD: Duration = Duration::from_millis(250);
 const NETWORK_SETTLE: Duration = Duration::from_secs(1);
 const GENERAL_HEAP_BYTES: usize = 4 * 1_024;
 const HIL_SAFETY_INPUT_CAPACITY: usize = 1;
+const HIL_APP_CORE_STACK_BYTES: usize = 8 * 1_024;
 
 const _: () = {
     assert!(TICK_HZ >= 1_000 && TICK_HZ.is_multiple_of(1_000));
@@ -89,6 +85,7 @@ static REALTIME_ACTOR: StaticCell<RealtimeGraphActor> = StaticCell::new();
 static REALTIME_PROFILE: StaticCell<RealtimeConfigurationProfile> = StaticCell::new();
 static RUN_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, GraphRunIdentity>> =
     StaticCell::new();
+static APP_CORE_STACK: StaticCell<Stack<HIL_APP_CORE_STACK_BYTES>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 static BOOT_SAFE_READY: AtomicBool = AtomicBool::new(false);
@@ -127,13 +124,6 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
     let device_id = DeviceId::from_esp_base_mac(esp_hal::efuse::Efuse::read_base_mac_address());
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
-    // The reclaimed region is the sole registered heap at this point, so this
-    // permanent allocation deterministically reserves the core-1 stack there.
-    // The remaining half stays available to Wi-Fi and HTTP allocations.
-    let app_stack = Box::leak(Box::write(
-        Box::<Stack<APP_CORE_STACK_BYTES>>::new_uninit(),
-        Stack::new(),
-    ));
     esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
     let mut split = mks_tinybee::split(peripherals);
 
@@ -176,6 +166,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let run_signal: &'static Signal<CriticalSectionRawMutex, GraphRunIdentity> =
         RUN_SIGNAL.init(Signal::new());
+    let app_stack = APP_CORE_STACK.init(Stack::new());
     esp_rtos::start_second_core(
         split.runtime.cpu_control,
         software_interrupt.software_interrupt0,
