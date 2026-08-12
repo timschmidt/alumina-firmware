@@ -352,9 +352,13 @@ units, rational/interval/canonical/composite values, runtime event/stream types,
 resource/job handles, explicit clocks and execution domains, opaque versioned
 nodes, typed parameters/ports/wires, and a canonical SHA-256-identified `ALGR`
 V1 document. Replay enforces caller-owned admission limits and exact
-decode/re-encode equality. It intentionally has no executor, state/cycle
-semantics, capability palette, or firmware lowering yet. See
-[`M9-CANONICAL-GRAPH-DOCUMENT-V1.md`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md).
+decode/re-encode equality. A context-bound audited-node registry now adds exact
+shape/domain admission, complete feedthrough, explicit read-before-write state,
+declared-state bounds, and iterative port-level cycle witnesses. It
+intentionally has no evaluator, channel/rate semantics, static memory/WCET,
+capability palette, or firmware lowering yet. See the
+[`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
+[`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md) evidence.
 
 ### Execution semantics
 

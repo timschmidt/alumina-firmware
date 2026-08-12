@@ -155,3 +155,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   bounded exact unit/type/value registries, opaque versioned structural nodes,
   explicit domains/clocks, typed wires, and canonical digest-verified graph
   replay with hostile-input coverage.
+- [`M9-AUDITED-GRAPH-SEMANTICS.md`](M9-AUDITED-GRAPH-SEMANTICS.md) — exact
+  context-bound node schemas, complete current-tick feedthrough, explicit
+  read-before-write state, declared-state bounds, and deterministic
+  port-level combinational-cycle witnesses.
