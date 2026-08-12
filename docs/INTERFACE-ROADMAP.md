@@ -359,13 +359,17 @@ maximum canonical bytes for every literal/runtime payload and
 rejects undersized state declarations. Audited inputs now distinguish required
 and optional synchronous slots from bounded Event/Stream queues, retain an
 explicit full policy, reject synchronous cross-domain sharing, and report
-checked per-input/aggregate canonical memory ceilings. It intentionally has no
-evaluator, rate transitions, fixed firmware runtime layout or WCET, capability
-palette, or firmware lowering yet. See the
+checked per-input/aggregate canonical memory ceilings. Audited cross-clock
+Stream dependencies now use exact rational clock resolution and one explicit
+latest-at-or-before transition, with shared-root, smallest-pattern,
+minimum-queue, and held-sample proofs. It intentionally has no evaluator, fixed
+firmware runtime layout or WCET, capability palette, or firmware lowering yet.
+See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
-[`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md) evidence.
+[`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), and
+[`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) evidence.
 
 ### Execution semantics
 

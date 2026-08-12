@@ -653,13 +653,17 @@ typed-value bytes and rejects undersized state declarations. Every input now
 also declares required/optional and synchronous/bounded Event/Stream delivery,
 an explicit full-queue policy, and a checked allocation report including source
 tick/sequence envelopes; synchronous wires cannot cross concrete execution
-ownership. Runtime evaluation, rate transitions, fixed firmware runtime layout
-and WCET, compiler lowering, capability nodes, graph UI, and firmware graph IR
-remain open. See the
+ownership. Cross-clock Stream feedthrough now requires an audited exact
+latest-at-or-before transition: rational clock analysis proves one shared root,
+the smallest repeating schedule, minimum queue capacity, and bounded held
+sample storage. Runtime evaluation, fixed firmware runtime layout and WCET,
+compiler lowering, capability nodes, graph UI, and firmware graph IR remain
+open. See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
 [type-storage](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
-[bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md) evidence.
+[bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), plus the
+[exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) evidence.
 
 Exit gate:
 

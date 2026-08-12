@@ -165,3 +165,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-BOUNDED-GRAPH-CHANNELS.md`](M9-BOUNDED-GRAPH-CHANNELS.md) — required and
   optional input delivery, explicit synchronous/event/stream queue policy,
   cross-domain scalar rejection, and exact bounded channel-memory reports.
+- [`M9-EXACT-GRAPH-RATES.md`](M9-EXACT-GRAPH-RATES.md) — exact rational clock
+  resolution, explicit latest-at-or-before Stream transitions, smallest
+  repeating schedules, minimum queue capacity, and bounded retained samples.
