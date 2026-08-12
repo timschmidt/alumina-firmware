@@ -396,6 +396,13 @@ tokens inert, streams and refills only that same safe image, stops DMA, rewrites
 two safe samples, and parks. The `xtask` command builds but cannot flash. This
 adds no capture result: disconnected loads, raw logic-analyzer evidence, phase
 review, and explicit promotion remain required.
+The follow-on capture contract adds an analyzer-only GPIO4 phase/result marker,
+an exact SLogic16U3 four-channel probe and photo procedure, a bounded streaming
+VCD decoder, and a strict run record whose decoded measurements must replay the
+SHA-256-bound analysis report. It targets the separately identified primary
+8 MiB TinyBee package while preserving the 4 MiB build variant. No capture or
+qualification is implied, and production motion still cannot select this HIL
+path.
 
 Exit gate:
 

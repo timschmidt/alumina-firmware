@@ -163,8 +163,9 @@ the first and steady-state WS/latch phase, BCLK/data setup and hold, DMA refill
 boundaries, the relationship between software completion and the physical latch,
 and safe behavior for starvation, stop, reset, and static-to-stream handoff.
 The initial safe-only capture fixture and mandatory disconnected-load/run-record
-procedure are specified in [`HIL.md`](HIL.md); its build or software completion
-is not itself a HIL pass.
+procedure are specified in [`HIL.md`](HIL.md). Its bounded VCD analyzer binds
+decoded edge facts to the retained capture and the strict record validator
+replays them, but their build or software completion is not itself a HIL pass.
 
 ### 6. Core-isolation and load tests
 

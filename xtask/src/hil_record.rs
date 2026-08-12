@@ -9,8 +9,8 @@ const SCHEMA: u64 = 1;
 const FIXTURE_ID: &str = "m7-two-board-start";
 const TINYBEE_ID: &str = "mks-tinybee-v1";
 const T_DECK_ID: &str = "t-deck-pro";
-const EVIDENCE_PREFIX: &str = "docs/hil/runs";
-const ARTIFACT_PREFIX: &str = "target";
+pub(crate) const EVIDENCE_PREFIX: &str = "docs/hil/runs";
+pub(crate) const ARTIFACT_PREFIX: &str = "target";
 
 const FIELDS: &[&str] = &[
     "schema",
@@ -79,23 +79,30 @@ pub struct HilRunSummary {
 }
 
 #[derive(Debug)]
-struct ParsedField {
+pub(crate) struct ParsedField {
     value: String,
     line: usize,
 }
 
-struct Record<'a> {
+pub(crate) struct Record<'a> {
     fields: &'a BTreeMap<String, ParsedField>,
     source: &'a Path,
 }
 
 impl Record<'_> {
-    fn string(&self, key: &str) -> Result<String, String> {
+    pub(crate) const fn new<'a>(
+        fields: &'a BTreeMap<String, ParsedField>,
+        source: &'a Path,
+    ) -> Record<'a> {
+        Record { fields, source }
+    }
+
+    pub(crate) fn string(&self, key: &str) -> Result<String, String> {
         let field = self.field(key)?;
         super::parse_string(&field.value, self.source, field.line)
     }
 
-    fn nonempty(&self, key: &str) -> Result<String, String> {
+    pub(crate) fn nonempty(&self, key: &str) -> Result<String, String> {
         let value = self.string(key)?;
         if value.trim().is_empty() {
             Err(self.error(key, "cannot be empty"))
@@ -104,7 +111,7 @@ impl Record<'_> {
         }
     }
 
-    fn u64(&self, key: &str) -> Result<u64, String> {
+    pub(crate) fn u64(&self, key: &str) -> Result<u64, String> {
         let field = self.field(key)?;
         if field.value.is_empty()
             || !field.value.bytes().all(|byte| byte.is_ascii_digit())
@@ -121,7 +128,7 @@ impl Record<'_> {
         })
     }
 
-    fn boolean(&self, key: &str) -> Result<bool, String> {
+    pub(crate) fn boolean(&self, key: &str) -> Result<bool, String> {
         let field = self.field(key)?;
         field.value.parse().map_err(|error| {
             format!(
@@ -138,7 +145,7 @@ impl Record<'_> {
             .ok_or_else(|| format!("{}: missing `{key}`", self.source.display()))
     }
 
-    fn error(&self, key: &str, reason: &str) -> String {
+    pub(crate) fn error(&self, key: &str, reason: &str) -> String {
         let line = self.fields.get(key).map_or(0, |field| field.line);
         format!("{}:{line}: `{key}` {reason}", self.source.display())
     }
@@ -148,11 +155,8 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<HilRunSummary, String
     let record_path = repository_path(root, record_path, EVIDENCE_PREFIX, "run record")?;
     let source = fs::read_to_string(&record_path)
         .map_err(|error| format!("cannot read {}: {error}", record_path.display()))?;
-    let fields = parse_fields(&source, &record_path)?;
-    let record = Record {
-        fields: &fields,
-        source: &record_path,
-    };
+    let fields = parse_fields(&source, &record_path, FIELDS)?;
+    let record = Record::new(&fields, &record_path);
 
     if record.u64("schema")? != SCHEMA {
         return Err(record.error("schema", "is not the exact supported schema"));
@@ -318,7 +322,11 @@ fn validate_participant(
     Ok(())
 }
 
-fn parse_fields(source: &str, path: &Path) -> Result<BTreeMap<String, ParsedField>, String> {
+pub(crate) fn parse_fields(
+    source: &str,
+    path: &Path,
+    allowed_fields: &[&str],
+) -> Result<BTreeMap<String, ParsedField>, String> {
     let mut fields = BTreeMap::new();
     for (line_index, raw_line) in source.lines().enumerate() {
         let line_number = line_index + 1;
@@ -331,7 +339,7 @@ fn parse_fields(source: &str, path: &Path) -> Result<BTreeMap<String, ParsedFiel
             .ok_or_else(|| format!("{}:{line_number}: expected `key = value`", path.display()))?;
         let key = key.trim();
         let value = value.trim();
-        if !FIELDS.contains(&key) {
+        if !allowed_fields.contains(&key) {
             return Err(format!(
                 "{}:{line_number}: unknown HIL field `{key}`",
                 path.display()
@@ -359,8 +367,8 @@ fn parse_fields(source: &str, path: &Path) -> Result<BTreeMap<String, ParsedFiel
             ));
         }
     }
-    if fields.len() != FIELDS.len() {
-        let missing = FIELDS
+    if fields.len() != allowed_fields.len() {
+        let missing = allowed_fields
             .iter()
             .find(|field| !fields.contains_key(**field))
             .copied()
@@ -370,7 +378,7 @@ fn parse_fields(source: &str, path: &Path) -> Result<BTreeMap<String, ParsedFiel
     Ok(fields)
 }
 
-fn repository_path(
+pub(crate) fn repository_path(
     root: &Path,
     value: &Path,
     required_prefix: &str,
@@ -416,7 +424,7 @@ fn repository_path(
     Ok(canonical_candidate)
 }
 
-fn verify_evidence_asset(
+pub(crate) fn verify_evidence_asset(
     root: &Path,
     record: &Record<'_>,
     path_key: &str,
@@ -427,7 +435,11 @@ fn verify_evidence_asset(
     verify_digest(record, digest_key, &path)
 }
 
-fn verify_digest(record: &Record<'_>, digest_key: &str, path: &Path) -> Result<(), String> {
+pub(crate) fn verify_digest(
+    record: &Record<'_>,
+    digest_key: &str,
+    path: &Path,
+) -> Result<(), String> {
     let expected = require_hex(record, digest_key, 64)?;
     let actual = sha256_file(path)?;
     if actual != expected {
@@ -436,7 +448,7 @@ fn verify_digest(record: &Record<'_>, digest_key: &str, path: &Path) -> Result<(
     Ok(())
 }
 
-fn require_hex(record: &Record<'_>, key: &str, digits: usize) -> Result<String, String> {
+pub(crate) fn require_hex(record: &Record<'_>, key: &str, digits: usize) -> Result<String, String> {
     let value = record.string(key)?;
     if value.len() != digits
         || !value
@@ -454,7 +466,7 @@ fn require_hex(record: &Record<'_>, key: &str, digits: usize) -> Result<String, 
     Ok(value)
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path)
         .map_err(|error| format!("cannot open evidence {}: {error}", path.display()))?;
     let mut hasher = Sha256::new();
@@ -471,7 +483,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(super::bytes_hex(&hasher.finalize()))
 }
 
-fn valid_utc_timestamp(value: &str) -> bool {
+pub(crate) fn valid_utc_timestamp(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.len() < 20
         || bytes[4] != b'-'

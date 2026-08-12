@@ -9,6 +9,8 @@ use alumina_board::{BoardPackage, BusKind, DeviceRoute, OwnerDomain, ResourceId,
 use alumina_capability::{calculate_identity, verify_declared_identity};
 
 mod hil_record;
+mod tinybee_pcm_record;
+mod tinybee_pcm_vcd;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Board {
@@ -105,6 +107,21 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             );
             Ok(())
         }
+        [group, command, path] if group == "hil" && command == "validate-tinybee-record" => {
+            let summary = tinybee_pcm_record::validate(root, Path::new(path))?;
+            println!(
+                "TinyBee PCM HIL record {}: {} ({} Hz, {} ms, {} live frames)",
+                summary.run_id,
+                summary.disposition,
+                summary.sample_rate_hz,
+                summary.capture_milliseconds,
+                summary.decoded_live_frames
+            );
+            Ok(())
+        }
+        [group, command, vcd, report] if group == "hil" && command == "analyze-tinybee-vcd" => {
+            tinybee_pcm_vcd::analyze_to_report(root, Path::new(vcd), Path::new(report))
+        }
         [] => {
             print_help();
             Ok(())
@@ -128,6 +145,8 @@ fn print_help() {
     println!("  cargo xtask hil list");
     println!("  cargo xtask hil build mks-tinybee-pcm-short-safe");
     println!("  cargo xtask hil validate-record <repository-relative-record.toml>");
+    println!("  cargo xtask hil validate-tinybee-record <repository-relative-record.toml>");
+    println!("  cargo xtask hil analyze-tinybee-vcd <capture.vcd> <new-analysis.toml>");
 }
 
 fn repository_registry(root: &Path) -> PathBuf {

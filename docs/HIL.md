@@ -40,17 +40,44 @@ espflash flash --monitor --chip esp32 \
 
 ### Connections and expected phases
 
-Connect the logic analyzer to TinyBee ground and:
+The first reviewed analyzer is the Sipeed SLogic16U3. Its published digital
+input range is 0–10 V, its threshold is adjustable from 0–6 V, and its
+four-channel streaming mode supports up to 800 MHz. Use exactly four active
+channels at 400 MHz for the initial run, a 1.6 V threshold, at least one ground
+lead adjacent to the U1 probes, and a direct USB 3 connection. A 200 MHz run is
+the validator's lower bound; higher rates do not compensate for long probe
+grounds or an unmeasured signal voltage.
 
-| Signal | ESP32 pin | Role |
-| --- | ---: | --- |
-| BCLK | GPIO25 | shift clock |
-| WS/RCLK | GPIO26 | PCM-short pulse and register latch |
-| DATA | GPIO27 | serial data into the 74HC595 chain |
+Before connecting the analyzer, use the DSO or meter to confirm U1 VCC is
+3.0–3.6 V and the EXP1 marker high is within the analyzer's reviewed 0–10 V
+range. Do not connect either analyzer VCC pin to the TinyBee. Connect only
+analyzer inputs and ground.
 
-Use a sample rate adequate for a nominal 16 MHz BCLK; the available 10 MHz DSO
-is useful for slower envelope/electrical checks but cannot establish every
-serial bit. Record probe loading and logic thresholds.
+Use the first 74HC595, U1, as the preferred physical probe location. The
+V1.0_003 schematic identifies:
+
+| SLogic | Signal | Preferred board point | ESP32 route | Role |
+| --- | --- | --- | ---: | --- |
+| D0 | BCLK | U1 pin 11, `SRCLK` | GPIO25 | shift clock |
+| D1 | WS/RCLK | U1 pin 12, `RCLK` | GPIO26 | PCM-short pulse and register latch |
+| D2 | DATA | U1 pin 14, `SER` | GPIO27 | serial data into the 74HC595 chain |
+| D3 | MARKER | EXP1 pin 4, `LCD_RS_O` | GPIO4 | high only while circular DMA is live; post-stop result code |
+| GND | ground | U1 pin 8 or the nearest verified ground pad | — | common reference |
+
+EXP1, EXP2, the LCD/serial-display headers, all motor and process connectors,
+and every StepStick socket must be empty. The marker route is package-declared
+nonhazardous, begins and ends low, and may be level-shifted by the fitted
+74HCT125 path. Its level must therefore be measured before connecting D3. Do
+not infer EXP1 pin 1 from the keyed shroud: locate the square pin-1 pad and then
+confirm pin 4/LCD_RS against the actual board and annotated photo.
+
+Arm on the first D0/BCLK rising edge with at least 1 ms of pre-trigger history
+and at least 400 ms total capture at 400 MHz (160,000,000 samples). If streamed
+capture cannot retain that interval without drops, stop: do not lower the rate
+below 200 MHz or stitch separate captures into a pass record. Save both the raw
+Sigrok session and a VCD export. The available 10 MHz DSO is useful for marker
+level and slower electrical-envelope checks but cannot establish every 16 MHz
+serial bit.
 
 The artifact emits these RTT markers, with no RTT operation or await point while
 the circular transfer is live:
@@ -64,6 +91,15 @@ the circular transfer is live:
    reports the hypothesized model epoch, device-cycle bracket around the HAL
    start call, refill outcome, stop bracket, and safe-rewrite result, then parks
    without starting other services.
+
+D3 rises immediately before the HAL circular-start call and falls immediately
+after the stop call returns. After a 1 ms low gap, it emits a self-delimiting
+outcome: a 1 ms high sentinel, 1 ms low, `marker_code` pulses of 100 us high and
+100 us low, then a final 1 ms high sentinel and permanent low. Codes 1–7 name
+the software loop exit (`1` is complete); bit 3 means stop failed, bit 4 means
+the safe rewrite failed, and code 32 means start failed. A pass requires code
+1. The marker only brackets software calls; physical WS/BCLK remains the
+authority for start and stop timing.
 
 The model epoch is a hypothesis, not a physical timestamp. Correlate it with the
 captured first WS edge; do not promote it merely because the refill loop
@@ -96,6 +132,47 @@ cannot close `routing.i2s-all-bits`. A later disconnected-load fixture must
 exercise every shifted bit with bounded dwell before that requirement can pass.
 
 ### Run record
+
+Copy
+[`tinybee-pcm-short-slogic16u3.toml`](hil/templates/tinybee-pcm-short-slogic16u3.toml)
+to `docs/hil/runs/<run-id>/record.toml`, retain the unedited `.sr`, exported
+`.vcd`, analysis report, review notes, actual-fixture photo, and annotated copy,
+and label the four exported one-bit VCD references as `D0`–`D3` (the analyzer
+also accepts their reviewed signal or GPIO names). Generate a new canonical
+analysis report directly from the retained VCD:
+
+```console
+cargo xtask hil analyze-tinybee-vcd \
+  docs/hil/runs/<run-id>/tinybee-pcm-safe.vcd \
+  docs/hil/runs/<run-id>/analysis.toml
+```
+
+The analyzer streams the edge file with bounded frame state, rejects unknown
+selected levels, fractional-picosecond timestamps, missing/duplicate aliases,
+malformed marker grammar, and unsafe paths, and refuses to overwrite an
+existing report. It reconstructs the static, live, and post-stop 24-bit image
+suffixes, exact BCLK count per WS frame, marker result, live tail, BCLK/frame
+period extrema, and DATA setup/hold. The report binds those values to the VCD's
+SHA-256. Copy its decoded values exactly into the record, add every remaining
+asset digest and reviewed fact, then validate the complete record:
+
+```console
+cargo xtask hil validate-tinybee-record \
+  docs/hil/runs/<run-id>/record.toml
+```
+
+The validator independently verifies the VCD and report digests, replays the
+canonical report, and requires every copied measurement to match. A `pass`
+also requires marker code 1, safe static/live images, at least 50,000 complete
+live frames, no invalid or non-64-bit frame, at most one admitted final live
+frame, two complete post-stop frames with at least one observed safe latch, and
+all named timing intervals. Manual waveform review remains mandatory for pulse
+width, duty cycle, electrical integrity, anomalies at exact timestamps, and
+facts outside the four-channel decoder.
+
+The validator admits only the primary `mks-tinybee-v1` 8 MiB package. The 4 MiB
+variant remains build-supported but requires its own independently identified
+physical fixture before it can contribute hardware evidence.
 
 Record:
 

@@ -87,6 +87,11 @@ planning evidence trail, not a floating dependency specification.
 - [FluidNC issue 1295](https://github.com/bdring/FluidNC/issues/1295) — field report
   illustrating WebUI/flash activity and real-time behavior; treated as a risk
   signal, not the primary architectural proof.
+- [MKS TinyBee V1.0_003 schematic](https://github.com/makerbase-mks/MKS-TinyBee/blob/main/hardware/MKS%20TinyBee%20V1.0_003/MKS%20TinyBee%20V1.0_003%20SCH.pdf)
+  — revision-labeled U1 74HC595 SER/SRCLK/RCLK/GND probe identities and the
+  GPIO4-to-EXP1 LCD_RS buffer route used by the disconnected-load capture
+  procedure. Only this hardware artifact was used for those physical facts;
+  vendor firmware source is neither an implementation input nor imported.
 
 FluidNC material is used only to research physical boards and timing/resource
 ideas. The resolved plan does not import its YAML, protocol, WebUI, or GRBL
@@ -202,6 +207,20 @@ code cannot override those revision-specific hardware facts.
 
 These IDF documents describe the underlying ESP32 hardware/cache behavior even
 though aluminafw will not use ESP-IDF services.
+
+## Logic-analyzer fixture
+
+- [Sipeed SLogic16U3 introduction](https://wiki.sipeed.com/hardware/en/logic_analyzer/slogic16u3/Introduction.html)
+  — official 0–10 V digital input range, adjustable 0–6 V threshold, USB 3
+  interface, and 800/400/200 MHz limits for 4/8/16 active channels.
+- [SLogic16U3 hardware specification](https://wiki.sipeed.com/hardware/en/logic_analyzer/slogic16u3/Hardware_Specification.html)
+  — official input/ground header roles, directional cable warning, adjacent
+  ground guidance, and prohibition on treating analyzer VCC as a DUT input.
+- [SLogic16U3 software guide](https://wiki.sipeed.com/hardware/en/logic_analyzer/slogic16u3/Software_User_Guide.html)
+  — official threshold, active-channel/sample-rate, trigger, duration, and raw
+  session workflow. Alumina retains the unedited session plus a VCD export;
+  analyzer software is test tooling and is not linked, vendored, or distributed
+  by the firmware repository.
 
 ## SD memory transport
 

@@ -238,6 +238,11 @@ second core. Its repository command builds but never flashes, and its successful
 refill result is explicitly not a waveform verdict. See the
 [HIL procedure](docs/HIL.md) and
 [harness evidence](docs/evidence/M6-TINYBEE-PCM-SHORT-SAFE-HARNESS.md).
+A follow-on disconnected-load contract adds an analyzer-only phase/result
+marker, exact SLogic16U3 probe/photo requirements, bounded VCD reconstruction,
+and a digest-bound run-record replay without flashing or qualifying hardware.
+See the
+[capture-contract evidence](docs/evidence/M6-TINYBEE-SLOGIC-CAPTURE-CONTRACT.md).
 
 The first M8 portable FOC slice is also implemented without creating a hardware
 drive path. A new no-std crate carries exact Q2.30 points and outward intervals,

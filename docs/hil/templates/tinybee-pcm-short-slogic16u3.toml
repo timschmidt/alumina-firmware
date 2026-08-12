@@ -1,0 +1,90 @@
+# Copy this file to docs/hil/runs/<run-id>/record.toml and replace every
+# REPLACE or zero identity. The template is intentionally invalid evidence.
+schema = 1
+fixture_id = "mks-tinybee-pcm-short-slogic16u3"
+run_id = "REPLACE"
+started_utc = "REPLACE"
+operator = "REPLACE"
+reviewer = "REPLACE"
+disposition = "inconclusive"
+aluminafw_commit = "0000000000000000000000000000000000000000"
+
+board_id = "mks-tinybee-v1"
+pcb_marking = "MKS TinyBee v1.0"
+fixture_serial = "REPLACE"
+esp_mac = "000000000000"
+flash_bytes = 8388608
+artifact_path = "target/xtensa-esp32-none-elf/release/alumina-hil-mks-tinybee-pcm-short-safe"
+artifact_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+usb_logic_power_only = false
+main_power_disconnected = false
+motor_connectors_empty = false
+stepper_driver_sockets_empty = false
+heater_fan_connectors_empty = false
+exp1_display_disconnected = false
+meter_verified_main_power_absent = false
+measured_u1_vcc_mv = 0
+measured_marker_high_mv = 0
+
+fixture_photo_path = "docs/hil/runs/REPLACE/tinybee-fixture.webp"
+fixture_photo_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+fixture_photo_license = "CC0-1.0"
+fixture_photo_attribution = "REPLACE"
+annotated_photo_path = "docs/hil/runs/REPLACE/tinybee-annotated.webp"
+annotated_photo_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+annotated_photo_license = "CC0-1.0"
+annotated_photo_attribution = "REPLACE"
+
+analyzer_model = "Sipeed SLogic16U3"
+analyzer_serial = "REPLACE"
+analyzer_firmware = "REPLACE"
+capture_software = "REPLACE"
+capture_software_version = "REPLACE"
+sample_rate_hz = 400000000
+threshold_mv = 1600
+active_channel_count = 4
+bclk_channel = 0
+ws_channel = 1
+data_channel = 2
+marker_channel = 3
+ground_lead_count = 0
+trigger = "bclk-rising"
+pretrigger_samples = 400000
+sample_count = 160000000
+
+expected_safe_image = 4681
+expected_refills = 50000
+admitted_bclk_period_error_ps = 10000
+admitted_frame_period_error_ps = 20000
+required_min_data_setup_ps = 15000
+required_min_data_hold_ps = 15000
+
+# Generate this section with `cargo xtask hil analyze-tinybee-vcd`, retain that
+# immutable report, and copy its decimal fields exactly. Validation replays the
+# report and its source-VCD digest; these placeholders cannot constitute evidence.
+decoded_marker_code = 0
+decoded_static_image = 0
+decoded_stream_image = 0
+decoded_live_frames = 0
+decoded_live_tail_bclk_count = 0
+admitted_max_live_tail_bclk_count = 64
+decoded_post_stop_complete_frames = 0
+decoded_post_stop_safe_latches = 0
+decoded_invalid_image_count = 0
+decoded_non64_frame_count = 0
+minimum_bclk_period_ps = 0
+maximum_bclk_period_ps = 0
+minimum_frame_period_ps = 0
+maximum_frame_period_ps = 0
+minimum_data_setup_ps = 0
+minimum_data_hold_ps = 0
+
+raw_capture_path = "docs/hil/runs/REPLACE/tinybee-pcm-safe.sr"
+raw_capture_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+vcd_capture_path = "docs/hil/runs/REPLACE/tinybee-pcm-safe.vcd"
+vcd_capture_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+analysis_report_path = "docs/hil/runs/REPLACE/analysis.toml"
+analysis_report_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+review_notes_path = "docs/hil/runs/REPLACE/review.md"
+review_notes_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"

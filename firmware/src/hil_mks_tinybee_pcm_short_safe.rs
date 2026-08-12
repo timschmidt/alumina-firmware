@@ -23,6 +23,7 @@ use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::clock::CpuClock;
+use esp_hal::gpio::Output;
 use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
 
@@ -32,6 +33,10 @@ use hardware::mks_tinybee;
 const TARGET_REFILLS: u32 = 50_000;
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(2);
 const STATIC_CAPTURE_INTERVAL: Duration = Duration::from_millis(50);
+const MARKER_REPORT_GAP: Duration = Duration::from_millis(1);
+const MARKER_SENTINEL_HIGH: Duration = Duration::from_millis(1);
+const MARKER_CODE_HALF_PERIOD: Duration = Duration::from_micros(100);
+const MARKER_START_FAILURE: u8 = 32;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -53,6 +58,25 @@ struct CaptureReport {
     sealed_horizon: u64,
 }
 
+impl CaptureReport {
+    /// Pulse count between the two long marker sentinels.
+    ///
+    /// Bits 0–2 identify the exit; bit 3 means stop failed and bit 4 means the
+    /// post-stop safe rewrite failed. Code 32 is reserved for start failure.
+    const fn marker_code(self, stop_ok: bool, rewrite_ok: bool) -> u8 {
+        let exit = match self.exit {
+            CaptureExit::Complete => 1,
+            CaptureExit::Timeout => 2,
+            CaptureExit::Availability => 3,
+            CaptureExit::AvailabilityModel => 4,
+            CaptureExit::FrameModel => 5,
+            CaptureExit::TargetPush => 6,
+            CaptureExit::AcceptanceModel => 7,
+        };
+        exit | if stop_ok { 0 } else { 1 << 3 } | if rewrite_ok { 0 } else { 1 << 4 }
+    }
+}
+
 /// Safe-image-only waveform fixture. Its reachable path does not initialize
 /// Wi-Fi, storage, motion, the second core, or any process output API.
 #[esp_rtos::main]
@@ -67,6 +91,9 @@ async fn main(_spawner: Spawner) -> ! {
         service,
         realtime,
     } = split;
+    // GPIO4/LCD_RS is a package-declared nonhazardous safe-low output. The HIL
+    // procedure requires EXP1 and every display cable to remain disconnected.
+    let mut capture_marker = service.into_hil_capture_marker();
 
     // Establish the complete disabled/off image before starting a timer,
     // logging a capture phase, or configuring I2S. Unused service tokens remain
@@ -78,8 +105,6 @@ async fn main(_spawner: Spawner) -> ! {
             halt()
         }
     };
-    let _retained_service = service;
-
     let timer_group0 = TimerGroup::new(runtime.timer_group0);
     esp_rtos::start(timer_group0.timer0);
     let _retained_core_tokens = (runtime.cpu_control, runtime.software_interrupt);
@@ -116,9 +141,12 @@ async fn main(_spawner: Spawner) -> ! {
     };
 
     let start_call_before = Instant::now().as_ticks();
+    capture_marker.set_high();
     let mut transfer = match pcm.start_safe_capture() {
         Ok(transfer) => transfer,
         Err(_) => {
+            capture_marker.set_low();
+            emit_marker_report(&mut capture_marker, MARKER_START_FAILURE).await;
             error!("HIL_ABORT circular safe transfer did not start");
             park().await
         }
@@ -171,6 +199,7 @@ async fn main(_spawner: Spawner) -> ! {
 
     let stop_call_before = Instant::now().as_ticks();
     let stop_ok = transfer.stop().is_ok();
+    capture_marker.set_low();
     let stop_call_after = Instant::now().as_ticks();
     let rewrite_ok = pcm.rewrite_safe_pipeline().is_ok();
     let sealed_horizon = horizon.sealed_horizon().unwrap_or(0);
@@ -179,8 +208,10 @@ async fn main(_spawner: Spawner) -> ! {
         accepted_refills,
         sealed_horizon,
     };
+    let marker_code = report.marker_code(stop_ok, rewrite_ok);
+    emit_marker_report(&mut capture_marker, marker_code).await;
     info!(
-        "HIL_PCM_STOPPED model_epoch={} start_before={} start_after={} frames={} rate_hz={} report={} stop_before={} stop_after={} stop_ok={} safe_rewrite_ok={}",
+        "HIL_PCM_STOPPED model_epoch={} start_before={} start_after={} frames={} rate_hz={} report={} stop_before={} stop_after={} stop_ok={} safe_rewrite_ok={} marker_code={}",
         hypothesized_epoch.0,
         start_call_before,
         start_call_after,
@@ -190,7 +221,8 @@ async fn main(_spawner: Spawner) -> ! {
         stop_call_before,
         stop_call_after,
         stop_ok,
-        rewrite_ok
+        rewrite_ok,
+        marker_code
     );
     if !matches!(exit, CaptureExit::Complete) || !stop_ok || !rewrite_ok {
         error!("HIL_RESULT failed closed; no hardware qualification granted");
@@ -199,6 +231,31 @@ async fn main(_spawner: Spawner) -> ! {
     }
     Timer::after(STATIC_CAPTURE_INTERVAL).await;
     park().await
+}
+
+/// Emits one self-delimiting analyzer-only outcome after all I2S activity.
+///
+/// A 1 ms high sentinel, 1 ms low separator, `code` 100-us-high/100-us-low
+/// pulses, and a final 1 ms high sentinel are distinguishable from the long
+/// live-transfer high level. The marker always returns low before parking.
+async fn emit_marker_report(marker: &mut Output<'static>, code: u8) {
+    marker.set_low();
+    Timer::after(MARKER_REPORT_GAP).await;
+    marker.set_high();
+    Timer::after(MARKER_SENTINEL_HIGH).await;
+    marker.set_low();
+    Timer::after(MARKER_REPORT_GAP).await;
+    let mut emitted = 0;
+    while emitted < code {
+        marker.set_high();
+        Timer::after(MARKER_CODE_HALF_PERIOD).await;
+        marker.set_low();
+        Timer::after(MARKER_CODE_HALF_PERIOD).await;
+        emitted += 1;
+    }
+    marker.set_high();
+    Timer::after(MARKER_SENTINEL_HIGH).await;
+    marker.set_low();
 }
 
 async fn park() -> ! {

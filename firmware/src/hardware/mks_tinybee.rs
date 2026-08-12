@@ -106,6 +106,21 @@ pub struct ServiceResources {
 }
 
 impl ServiceResources {
+    /// Consumes otherwise dormant service tokens and establishes the
+    /// disconnected-load HIL marker on nonhazardous GPIO4/LCD_RS.
+    ///
+    /// The marker starts at the package's safe-low value. The isolated HIL
+    /// artifact is its only caller; production service composition cannot
+    /// select this feature or recover the discarded peripheral tokens.
+    #[cfg(feature = "hil-mks-tinybee-pcm-short-safe")]
+    pub fn into_hil_capture_marker(self) -> Output<'static> {
+        Output::new(
+            self.lcd_register_select,
+            Level::Low,
+            OutputConfig::default(),
+        )
+    }
+
     /// Moves the singleton radio token into core-0 network initialization once.
     pub fn take_wifi(&mut self) -> WIFI<'static> {
         self.wifi.take().expect("Wi-Fi token already consumed")
