@@ -304,6 +304,73 @@ pub struct LoweredFocAxisConfiguration {
     pub pwm_compare: PwmCompareContract,
 }
 
+impl LoweredFocAxisConfiguration {
+    /// Replays every digest, calibration, timer, and hardware-selection invariant.
+    ///
+    /// This lets simulator and target boundaries reject a copied or manually
+    /// assembled bundle without weakening the private `RealtimeConfiguration`
+    /// construction path used to create an executable profile.
+    pub fn validate(self) -> Result<(), ConfigurationError> {
+        let synchronization = self.current.snapshot().synchronization;
+        if self.instance != self.adc_channel0.instance
+            || self.instance != self.adc_channel1.instance
+            || self.instance != self.pwm_hardware.instance
+            || self.adc_channel0.channel != FocCurrentChannel::Channel0
+            || self.adc_channel1.channel != FocCurrentChannel::Channel1
+        {
+            return Err(ConfigurationError::FocHardware);
+        }
+        self.adc_channel0.validate_shape()?;
+        self.adc_channel1.validate_shape()?;
+        self.pwm_hardware.validate_shape()?;
+        self.parameters
+            .validate()
+            .map_err(|_| ConfigurationError::FocRuntime)?;
+        self.rotor
+            .observe(
+                self.rotor.count_at_reference,
+                DeviceCycle(0),
+                self.rotation_precision,
+            )
+            .map_err(|_| ConfigurationError::FocRotor)?;
+        self.current
+            .snapshot()
+            .validate()
+            .map_err(|_| ConfigurationError::FocCurrent)?;
+        if self.parameters.configuration_digest.is_zero()
+            || self.rotor.configuration_digest != self.parameters.configuration_digest
+            || self.current.snapshot().configuration_digest != self.parameters.configuration_digest
+            || self.rotor.pole_pairs != self.parameters.pole_pairs
+            || self.current.snapshot().maximum_phase_current
+                != self.parameters.maximum_phase_current
+            || self.pwm_compare.configuration_digest() != self.parameters.configuration_digest
+            || self.pwm_compare.counter_clock_hz() != self.pwm_hardware.counter_clock_hz
+            || self.pwm_compare.timer_peak_ticks() != self.pwm_hardware.timer_peak_ticks
+            || self.pwm_compare.minimum_active_ticks() != self.pwm_hardware.minimum_active_ticks
+            || self.pwm_compare.maximum_quantization_error_ulps()
+                != self.pwm_hardware.maximum_quantization_error_ulps
+            || self.pwm_dead_time_cycles == 0
+            || self.pwm_dead_time_cycles >= synchronization.pwm_period_cycles / 2
+            || synchronization.minimum_switching_guard_cycles < self.pwm_dead_time_cycles
+        {
+            return Err(ConfigurationError::FocHardware);
+        }
+        self.pwm_compare
+            .validate_for(&self.parameters, synchronization)
+            .map_err(|_| ConfigurationError::FocHardware)?;
+        if u64::from(self.pwm_hardware.minimum_active_ticks)
+            .checked_mul(u64::from(synchronization.device_cycle_hz))
+            .ok_or(ConfigurationError::FocHardware)?
+            < u64::from(self.pwm_dead_time_cycles)
+                .checked_mul(u64::from(self.pwm_hardware.counter_clock_hz))
+                .ok_or(ConfigurationError::FocHardware)?
+        {
+            return Err(ConfigurationError::FocHardware);
+        }
+        Ok(())
+    }
+}
+
 impl RealtimeConfiguration {
     /// Lowers one retained FOC slot only under this validated document identity.
     ///
@@ -443,7 +510,7 @@ fn lower_profile(
         return Err(ConfigurationError::FocHardware);
     }
 
-    Ok(LoweredFocAxisConfiguration {
+    let lowered = LoweredFocAxisConfiguration {
         instance,
         parameters,
         rotor,
@@ -454,7 +521,9 @@ fn lower_profile(
         adc_channel1: profile.adc_channel1,
         pwm_hardware: profile.pwm_hardware,
         pwm_compare,
-    })
+    };
+    lowered.validate()?;
+    Ok(lowered)
 }
 
 pub(crate) fn validate_profile(profile: FocAxisProfile) -> Result<(), ConfigurationError> {

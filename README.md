@@ -347,6 +347,19 @@ MCPWM selection. These remain synthetic qualification fixtures; the physical
 MKS target is non-armable, ADC1 commissioning is unqualified and unscheduled,
 and both MCPWM units remain disconnected closed owners.
 
+A configuration-derived hardware-loop simulator now joins those portable
+boundaries without introducing a drive path. It starts with a neutral compare
+image, derives each synchronized two-shunt observation from the active integer
+compare edges, runs calibrated current reconstruction, exact-angle Park control,
+interval SVPWM, and stages the next complete image at the sole expected
+timer-zero. Clock-grid, sample, command, compare-precision, or boundary
+disagreement terminally faults the virtual owner. An eight-period replay proves
+identical complete results and deliberately demonstrates that a
+1,000,000-ULP compare policy rejects an interval result accepted by the named
+1,200,000-ULP test policy. This is virtual timing evidence, not an electrical,
+WCET, ADC, PWM, or energization claim. See the
+[configured FOC-loop evidence](docs/evidence/M8-CONFIGURED-FOC-HARDWARE-LOOP.md).
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

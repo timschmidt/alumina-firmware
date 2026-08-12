@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 alumina-clock.workspace = true
+alumina-config.workspace = true
 alumina-foc.workspace = true
 alumina-job.workspace = true
 alumina-machine-ir.workspace = true
@@ -23,7 +24,6 @@ alumina-shift-register.workspace = true
 
 [dev-dependencies]
 alumina-board.workspace = true
-alumina-config.workspace = true
 critical-section = { workspace = true, features = ["std"] }
 embassy-futures.workspace = true
 embassy-sync.workspace = true

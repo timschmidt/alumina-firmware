@@ -5476,6 +5476,7 @@ mod tests {
         assert_eq!(configuration.profile().foc_axis_count(), 1);
 
         let lowered = configuration.lower_foc_axis(0).unwrap();
+        lowered.validate().unwrap();
         assert_eq!(lowered.instance, 0);
         assert_eq!(lowered.parameters.configuration_digest, digest);
         assert_eq!(lowered.parameters.pole_pairs, 7);
@@ -5493,6 +5494,12 @@ mod tests {
         assert_eq!(lowered.pwm_compare.configuration_digest(), digest);
         assert_eq!(lowered.pwm_compare.counter_clock_hz(), 80_000_000);
         assert_eq!(lowered.pwm_compare.timer_peak_ticks(), 2_000);
+        let mut forged_lowering = lowered;
+        forged_lowering.pwm_hardware.timer_peak_ticks = 1_999;
+        assert_eq!(
+            forged_lowering.validate(),
+            Err(ConfigurationError::FocHardware)
+        );
         assert_eq!(
             configuration
                 .profile()

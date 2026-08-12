@@ -2,6 +2,7 @@
 
 pub mod distributed;
 pub mod foc;
+pub mod foc_hardware;
 pub mod http_fixture;
 pub mod shift_register;
 

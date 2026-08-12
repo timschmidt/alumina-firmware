@@ -590,6 +590,21 @@ Physical electrical alignment, calibrated analog error, truthful device-cycle
 edge stamps, measured sensor latency, and any nonzero duty remain separate
 reviewed work.
 
+The first configuration-derived hardware-loop simulation now validates a
+lowered V4 axis as one indivisible bundle, primes neutral duty at an exact
+timer-zero, constructs a synchronized raw-ADC/current/rotor observation from
+the active integer compare image, executes dq current control, lowers the next
+interval-valued SVPWM image, and commits it at the next exact boundary. It
+supports one current update per PWM period and rejects fractional
+counter-to-device-cycle edges rather than inferring timestamps. Every command,
+token, boundary, raw-sample, precision, overflow, and clock-domain rejection
+terminally closes the virtual owner. Deterministic replay and an explicit
+1,000,000-versus-1,200,000 Q2.30 ULP policy case make accumulated numerical
+uncertainty visible. See the
+[configured hardware-loop evidence](evidence/M8-CONFIGURED-FOC-HARDWARE-LOOP.md).
+It remains portable simulation: no HAL peripheral, electrical plant, target
+task, or energizing operation is attached.
+
 Exit gate:
 
 - PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,

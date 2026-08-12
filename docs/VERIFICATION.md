@@ -66,6 +66,10 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   release credits, preview/push/accept refill identity, sealed versus writable
   horizons, untracked-write/underrun faults, and final-disable preplanning while
   the unique block remains retained;
+- configuration-derived FOC hardware-loop replay from active integer compare
+  edges through synchronized raw ADC/current/rotor observations, dq control,
+  interval SVPWM, complete-image staging, and the next exact timer-zero, with
+  explicit counter/device clock grids and compare-precision rejection;
 - bounded cross-block ownership: two independently validated tokens, successor
   prefill before predecessor release, per-block commit-count/terminal-cycle
   barriers, strict acknowledgement order, and a gap-free dense wire trace;
