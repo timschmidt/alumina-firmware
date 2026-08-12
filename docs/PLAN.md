@@ -664,14 +664,18 @@ explicit read-before-write unit delay, and fail-safe exact permit gating. Its
 50 Hz to 10 Hz fixture composes those primitives into a discrete
 PID/interlock, keeps both state values explicit, applies exact registered unit
 scales, produces deterministic controller and safe-gated traces, and replays
-independently through canonical `ALGT`. One fallible core construction now
-feeds tests plus the native/WASM application's first read-only graph inspector.
-That inspector bounds nodes, wires, and trace samples; derives deterministic
-layers from audited dependencies; routes delay captures as visible feedback;
-shows typed ports, exact parameters, and state facts; and retains exact
-rationals behind certified display enclosures. This remains HostExact authority
-only; none of those control behaviors yet grants firmware opcodes or physical
-output.
+independently through canonical `ALGT`. One fallible core construction feeds
+tests plus the native/WASM control workspace. Its separate canonical `ALGW` V1
+envelope embeds the unchanged graph and retains bounded integer canvas
+placement, monotonic editor identities, and workspace revision. The UI bounds
+nodes, wires, and trace samples; derives deterministic layers from audited
+dependencies; routes delay captures as visible feedback; shows typed ports,
+exact parameters, and state facts; and retains exact rationals behind certified
+display enclosures. Placement and typed wire connect/disconnect edits are
+transactional. Structural changes detach the graph-bound reference trace, and
+invalid or cyclic candidates cannot mutate the draft. This remains HostExact
+authority only; none of those control behaviors or editor values grants
+firmware opcodes or physical output.
 The first portable deployed boundary is now a fixed 4 KiB `ALGRIR02` package with
 allocation-free independent admission, whitelisted Boolean Service/Realtime
 opcodes, integer device-cycle schedules, declared WCET plus executor reserve,
@@ -702,9 +706,10 @@ admission. The first resource opcode is a capability-bound realtime read of a
 known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
-control/output opcodes, additional capability nodes, and the graph/front-panel
-editor, component/front-panel documents, and broader live plots remain open. A
-disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed radio-startup
+control/output opcodes, additional capability nodes, node/palette/parameter
+editing, component/front-panel documents, workspace history/persistence, and
+broader live plots remain open. A disconnected TinyBee
+prequalification run exposed a roughly 54 ms unarmed radio-startup
 suspension and proved that an ordinary core-1 executor could miss the 200 us
 dispatch reserve. The fixture now discards and re-debounces input state after
 radio startup and runs releases from a priority-3 core-1 interrupt executor;
@@ -720,6 +725,7 @@ See the
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [exact-control graph](evidence/M9-EXACT-CONTROL-GRAPH.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
+[canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and

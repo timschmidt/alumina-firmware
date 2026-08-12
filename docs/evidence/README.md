@@ -179,6 +179,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
   native/WASM browser-render evidence.
+- [`M9-CANONICAL-GRAPH-WORKSPACE.md`](M9-CANONICAL-GRAPH-WORKSPACE.md) —
+  canonical `ALGW` envelope, presentation-only integer placement, monotonic
+  identities, transactional typed-wire edits, semantic blockers, and
+  graph-bound reference-trace detachment.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.

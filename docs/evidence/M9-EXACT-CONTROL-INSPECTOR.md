@@ -13,6 +13,11 @@ authority in UI code. The implementation is `alumina-interface` commit
 target image, board configuration, workstation network configuration, or
 physical I/O.
 
+The later [canonical graph-workspace checkpoint](M9-CANONICAL-GRAPH-WORKSPACE.md)
+records the separate `ALGW` envelope, transactional integer placement and typed
+wire editing, and trace-detachment behavior. This document remains the
+historical read-only inspector checkpoint.
+
 The interface continued to build from the current sibling workspace stack,
 not from the obsolete released CSGRS baseline. Relevant committed source
 identities were CSGRS `b34a2f47b90e3d329028d6337d19dfbc9629fbb0`,
@@ -134,10 +139,11 @@ The 96,792-byte `Cargo.lock` has SHA-256
 
 ## Closed claims, licensing, and next gate
 
-This is a bounded inspector, not an arbitrary graph editor or front panel. It
-does not lower these control behaviors to Service/Realtime opcodes, deploy the
-fixture, claim a peripheral, arm firmware, command an output, prove WCET, or
-qualify safety. Editable placement/wiring, component/front-panel documents,
+This checkpoint was a bounded inspector, not an arbitrary graph editor or
+front panel. It does not lower these control behaviors to Service/Realtime
+opcodes, deploy the fixture, claim a peripheral, arm firmware, command an
+output, prove WCET, or qualify safety. Editable placement/wiring,
+component/front-panel documents,
 general probes and plots, live telemetry, board-photo overlays, and physical
 capture remain open.
 
@@ -152,7 +158,9 @@ The source-policy audit accepted only the local CSGRS/Hyper/Alumina stacks and
 the existing permissive native/WASM inventory. No GPL-family source, library,
 tool output, or asset was copied, linked, or vendored.
 
-The next offline graph/UI work is editable canonical graph placement and wiring,
-then component/front-panel state and broader bounded probes. Firmware lowering
-of selected control primitives remains a separately reviewed Service/Realtime
-slice. Physical Wi-Fi and input timing remain separate retained-capture gates.
+The immediate canonical placement/wiring foundation is now recorded by the
+linked follow-up. Remaining offline graph/UI work includes node/palette and
+parameter editing, history/persistence, component/front-panel state, and broader
+bounded probes. Firmware lowering of selected control primitives remains a
+separately reviewed Service/Realtime slice. Physical Wi-Fi and input timing
+remain separate retained-capture gates.
