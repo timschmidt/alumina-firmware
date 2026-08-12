@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 struct BoardSelection {
     feature_env: &'static str,
@@ -31,6 +31,7 @@ const BOARDS: &[BoardSelection] = &[
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=ld/alumina-esp32-linkall.x");
     println!("cargo:rerun-if-env-changed=ALUMINA_AP_PASSWORD");
     for board in BOARDS {
         println!("cargo:rerun-if-env-changed={}", board.feature_env);
@@ -61,7 +62,18 @@ fn main() {
     }
     println!("cargo:rustc-env=ALUMINA_BOARD_ID={}", board.id);
 
-    // Keep the ESP-HAL aggregate linker script last so its section definitions
-    // compose correctly with target-wide scripts such as defmt.x.
-    println!("cargo:rustc-link-arg=-Tlinkall.x");
+    // Keep the ESP-HAL aggregate section composition last so it composes with
+    // target-wide scripts such as defmt.x. esp-hal 1.0's classic-ESP32 pre-init
+    // shim uses a range-limited direct call, so that target uses the equivalent
+    // local composition which places the shim and its private target together.
+    if target == "xtensa-esp32-none-elf" {
+        let linker_dir = PathBuf::from(
+            env::var_os("CARGO_MANIFEST_DIR").expect("Cargo did not provide CARGO_MANIFEST_DIR"),
+        )
+        .join("ld");
+        println!("cargo:rustc-link-search={}", linker_dir.display());
+        println!("cargo:rustc-link-arg=-Talumina-esp32-linkall.x");
+    } else {
+        println!("cargo:rustc-link-arg=-Tlinkall.x");
+    }
 }
