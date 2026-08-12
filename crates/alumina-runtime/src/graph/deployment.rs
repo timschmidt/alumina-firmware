@@ -559,6 +559,20 @@ impl ServiceGraphValidation {
         }
     }
 
+    /// Exact independently validated package bytes after the complete transfer
+    /// command has been produced.
+    ///
+    /// These bytes remain core-0-owned and are suitable for a second admission
+    /// into its permanent executor actor. Their presence alone grants no start
+    /// or execution authority.
+    pub fn validated_package_bytes(&self) -> Option<&[u8; GRAPH_IR_PACKAGE_BYTES]> {
+        if self.state == ServiceGraphValidationState::Complete && self.identity.is_some() {
+            Some(&self.package)
+        } else {
+            None
+        }
+    }
+
     async fn next_inner<D>(
         &mut self,
         cache: &mut ProvisionedCache<D>,
@@ -1165,6 +1179,14 @@ impl RealtimeGraphDeployment {
         self.active
     }
 
+    /// Exact selected active bytes for independent permanent-actor admission.
+    ///
+    /// Selection is not execution authority. Callers must still require the
+    /// explicit dual-core authorization transition before any run is prepared.
+    pub fn selected_package_bytes(&self) -> Option<&[u8; GRAPH_IR_PACKAGE_BYTES]> {
+        self.active.as_ref().map(|_| &self.active_bytes)
+    }
+
     /// Exact active bytes only after dual-core authorization.
     pub fn authorized_package_bytes(&self) -> Option<&[u8; GRAPH_IR_PACKAGE_BYTES]> {
         if self.active_authorized {
@@ -1324,6 +1346,7 @@ mod tests {
         GraphIrChannelOwner, GraphIrDomain, GraphIrFullPolicy, GraphIrHeader, GraphIrNode,
         GraphIrOpcode, GraphIrPackage, GraphIrSchedule, GraphPublication,
     };
+    use alumina_protocol::DeviceCycle;
     use alumina_storage::media::{MEDIA_BLOCK_BYTES, MediaBlock, MediaId, MediaRegion};
     use alumina_storage::provisioning::CacheProvisionRequest;
     use alumina_storage::{
@@ -1333,6 +1356,9 @@ mod tests {
     use embassy_futures::block_on;
 
     use super::*;
+    use crate::graph::{
+        FixedGraphRealtimeActor, FixedGraphServiceActor, GraphRunIdentity, ReloadableGraphBridge,
+    };
 
     const TEST_DEVICE_BLOCKS: usize = 2_300;
     const TEST_REGION: MediaRegion = MediaRegion {
@@ -1703,7 +1729,7 @@ mod tests {
     }
 
     #[test]
-    fn published_sd_actor_and_core1_actor_independently_admit_identical_bytes() {
+    fn published_bytes_install_into_both_permanent_actors_and_run() {
         let package = package();
         let (mut cache, publication) = provisioned_graph(&package, 71, 173);
         let mut service = block_on(ServiceGraphValidation::open(
@@ -1745,6 +1771,77 @@ mod tests {
             service_status.identity.unwrap().package_digest,
             package.digest()
         );
+
+        let selected = realtime.apply(
+            CoreGraphCommand::activate(publication).unwrap(),
+            authority(),
+            true,
+        );
+        assert_eq!(selected.state, RealtimeGraphState::Active);
+        assert!(!selected.active_authorized);
+        assert_eq!(realtime.selected_package_bytes(), Some(package.bytes()));
+
+        let bridge = ReloadableGraphBridge::<42>::new();
+        let mut realtime_actor = FixedGraphRealtimeActor::<5, 21, 42>::new(&bridge);
+        let identity = realtime.active_identity().unwrap();
+        realtime_actor
+            .install(
+                realtime.selected_package_bytes().unwrap(),
+                identity.transaction_id,
+                identity.content_digest,
+                identity.package_digest,
+                authority(),
+                limits(),
+                true,
+            )
+            .unwrap();
+        let authorized = realtime.apply(
+            CoreGraphCommand::authorize(publication).unwrap(),
+            authority(),
+            true,
+        );
+        assert!(authorized.active_authorized);
+
+        let mut service_actor = FixedGraphServiceActor::<0, 0, 42>::new(&bridge);
+        service_actor
+            .install(
+                service.validated_package_bytes().unwrap(),
+                identity.transaction_id,
+                identity.content_digest,
+                identity.package_digest,
+                authority(),
+                limits(),
+                true,
+            )
+            .unwrap();
+        let run = GraphRunIdentity {
+            transaction_id: identity.transaction_id,
+            run_id: 1,
+            content_digest: identity.content_digest,
+            package_digest: identity.package_digest,
+            start_cycle: DeviceCycle(10_000),
+        };
+        service_actor.prepare_start(run, true).unwrap();
+        realtime_actor.prepare_start(run, true).unwrap();
+        realtime_actor.activate(run).unwrap();
+        service_actor.observe_realtime_started(run).unwrap();
+        assert_eq!(
+            realtime_actor
+                .release(DeviceCycle(10_000), true)
+                .unwrap()
+                .last_sink_value,
+            Some(true)
+        );
+        assert!(!service_actor.stop(run).unwrap().bridge_empty);
+        assert!(realtime_actor.stop(run).unwrap().bridge_empty);
+        realtime_actor.clear(true).unwrap();
+        let cleared = realtime.apply(
+            CoreGraphCommand::clear(publication).unwrap(),
+            authority(),
+            true,
+        );
+        assert_eq!(cleared.state, RealtimeGraphState::Cleared);
+        service_actor.clear(true).unwrap();
     }
 
     #[test]

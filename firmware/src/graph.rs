@@ -7,9 +7,10 @@ use alumina_protocol::{
     DeviceCycle, DeviceId, Digest, FrameHeader, FrameKind, Operation, StatusCode,
 };
 use alumina_runtime::graph::{
-    GRAPH_COORDINATOR_REPORT_BYTES, GraphCoordinatorFault, GraphCoordinatorPhase,
-    GraphCoordinatorReport, GraphRuntimeAuthority, GraphRuntimeLimits, RealtimeGraphReport,
-    RealtimeGraphState, ServiceGraphTransferError, ServiceGraphValidation,
+    FixedGraphRealtimeActor, FixedGraphServiceActor, GRAPH_COORDINATOR_REPORT_BYTES,
+    GraphActorPhase, GraphCoordinatorFault, GraphCoordinatorPhase, GraphCoordinatorReport,
+    GraphRuntimeAuthority, GraphRuntimeLimits, RealtimeGraphReport, RealtimeGraphState,
+    ReloadableGraphBridge, ServiceGraphTransferError, ServiceGraphValidation,
     ServiceGraphValidationState, ServiceGraphValidationStatus,
 };
 use alumina_runtime::{DefaultServiceEndpoint, IntercoreFrame};
@@ -29,18 +30,46 @@ const _: () = assert!(
         <= MAX_SERVICE_RESPONSE_BYTES
 );
 
+/// Core-0 graph state reservation.
+pub const GRAPH_SERVICE_STATE_BYTES: usize = 2 * 1_024;
+/// Core-1 graph state reservation.
+pub const GRAPH_REALTIME_STATE_BYTES: usize = 2 * 1_024;
+/// Core-0-local graph channel reservation.
+pub const GRAPH_SERVICE_CHANNEL_BYTES: usize = 4 * 1_024;
+/// Core-1-local graph channel reservation.
+pub const GRAPH_REALTIME_CHANNEL_BYTES: usize = 4 * 1_024;
+/// Cross-core graph channel reservation.
+pub const GRAPH_BRIDGE_BYTES: usize = 4 * 1_024;
+
+/// Permanently allocated cross-core graph bridge used by both application cores.
+pub type GraphBridge = ReloadableGraphBridge<GRAPH_BRIDGE_BYTES>;
+/// Permanent core-0 graph package and fixed executor arenas.
+pub type ServiceGraphActor = FixedGraphServiceActor<
+    'static,
+    GRAPH_SERVICE_STATE_BYTES,
+    GRAPH_SERVICE_CHANNEL_BYTES,
+    GRAPH_BRIDGE_BYTES,
+>;
+/// Permanent core-1 graph package and fixed executor arenas.
+pub type RealtimeGraphActor = FixedGraphRealtimeActor<
+    'static,
+    GRAPH_REALTIME_STATE_BYTES,
+    GRAPH_REALTIME_CHANNEL_BYTES,
+    GRAPH_BRIDGE_BYTES,
+>;
+
 /// Initial board-image graph arena reservations.
 ///
 /// These exact values are enforced independently on both cores. A later
 /// capability-schema slice will publish them for browser lowering before any
 /// resource-bearing opcode is admitted.
-pub const GRAPH_RUNTIME_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits {
-    service_state_bytes: 2 * 1_024,
-    realtime_state_bytes: 2 * 1_024,
-    service_channel_bytes: 4 * 1_024,
-    realtime_channel_bytes: 4 * 1_024,
-    bridge_channel_bytes: 4 * 1_024,
-};
+pub const GRAPH_RUNTIME_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits::fixed::<
+    GRAPH_SERVICE_STATE_BYTES,
+    GRAPH_REALTIME_STATE_BYTES,
+    GRAPH_SERVICE_CHANNEL_BYTES,
+    GRAPH_REALTIME_CHANNEL_BYTES,
+    GRAPH_BRIDGE_BYTES,
+>();
 
 /// Sole service-core owner of the published-reader and graph lifecycle state.
 pub struct GraphService {
@@ -57,12 +86,13 @@ pub struct GraphService {
     command_sequence: u32,
     control_sent: bool,
     transfer_sent: bool,
+    actor: ServiceGraphActor,
 }
 
 impl GraphService {
     /// Starts with no graph; graph selection is intentionally boot-ephemeral in
     /// this slice even though its package bytes are immutable on SD.
-    pub const fn new(device_id: DeviceId) -> Self {
+    pub const fn new(device_id: DeviceId, bridge: &'static GraphBridge) -> Self {
         Self {
             device_id,
             active_config: Digest::ZERO,
@@ -77,6 +107,7 @@ impl GraphService {
             command_sequence: 0,
             control_sent: false,
             transfer_sent: false,
+            actor: ServiceGraphActor::new(bridge),
         }
     }
 
@@ -456,6 +487,10 @@ impl GraphService {
             }
         }
         if self.realtime_active_matches(true) {
+            if self.install_active_actor(publication).is_err() {
+                self.reject(GraphCoordinatorFault::Internal);
+                return;
+            }
             self.active = Some(publication);
             self.validation = None;
             self.pending_command = None;
@@ -490,6 +525,10 @@ impl GraphService {
             && self.realtime.content_digest == publication.content_digest()
             && self.realtime.package_digest == publication.package_digest
         {
+            if self.clear_active_actor().is_err() {
+                self.reject(GraphCoordinatorFault::Internal);
+                return;
+            }
             self.active = None;
             self.finish_operation();
         }
@@ -659,6 +698,61 @@ impl GraphService {
                 && self.realtime.content_digest == publication.content_digest()
                 && self.realtime.package_digest == publication.package_digest
         })
+    }
+
+    fn install_active_actor(&mut self, publication: GraphPublication) -> Result<(), ()> {
+        let validation = self.validation.as_ref().ok_or(())?;
+        let identity = validation.status().identity.ok_or(())?;
+        if identity.transaction_id != publication.transaction_id
+            || identity.content_digest != publication.content_digest()
+            || identity.package_digest != publication.package_digest
+            || identity.implementation_digest != publication.implementation_digest
+        {
+            return Err(());
+        }
+        if self.actor.installed_identity() == Some(identity) {
+            return Ok(());
+        }
+        match self.actor.phase() {
+            GraphActorPhase::Empty => {}
+            GraphActorPhase::Installed => self.actor.clear(true).map_err(|_| ())?,
+            GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
+                return Err(());
+            }
+        }
+        let package = validation.validated_package_bytes().ok_or(())?;
+        let authority = GraphRuntimeAuthority {
+            device_id: self.device_id,
+            capability_digest: selected::PACKAGE.board.capability_digest,
+            config_digest: self.active_config,
+            implementation_digest: publication.implementation_digest,
+        };
+        let report = self
+            .actor
+            .install(
+                package,
+                publication.transaction_id,
+                publication.content_digest(),
+                publication.package_digest,
+                authority,
+                GRAPH_RUNTIME_LIMITS,
+                true,
+            )
+            .map_err(|_| ())?;
+        if report.package_digest != publication.package_digest || report.usage != identity.usage {
+            return Err(());
+        }
+        Ok(())
+    }
+
+    fn clear_active_actor(&mut self) -> Result<(), ()> {
+        match self.actor.phase() {
+            GraphActorPhase::Empty => Ok(()),
+            GraphActorPhase::Installed => self.actor.clear(true).map_err(|_| ()),
+            GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
+                Err(())
+            }
+        }
     }
 
     fn reject(&mut self, fault: GraphCoordinatorFault) {

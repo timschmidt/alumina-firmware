@@ -46,13 +46,15 @@ use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
-use alumina_graph_ir::CoreGraphCommand;
+use alumina_graph_ir::{CoreGraphAction, CoreGraphCommand};
 use alumina_job::{
     JobScheduleAction, JobScheduleReport, JobScheduleState, JobStartObservation,
     JobStartObservationSource, RealtimeJobReport, RealtimeJobState,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind};
-use alumina_runtime::graph::{GraphRuntimeAuthority, RealtimeGraphDeployment, RealtimeGraphReport};
+use alumina_runtime::graph::{
+    GraphActorPhase, GraphRuntimeAuthority, RealtimeGraphDeployment, RealtimeGraphReport,
+};
 use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
     DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
@@ -77,23 +79,25 @@ use static_cell::StaticCell;
 use capability::CapabilityService;
 use clock::ClockService;
 use configuration::ConfigurationService;
-use graph::{GRAPH_RUNTIME_LIMITS, GraphService};
+use graph::{GRAPH_RUNTIME_LIMITS, GraphBridge, GraphService, RealtimeGraphActor};
 use hardware::selected;
 use job::{JobService, RealtimeJobService};
 use motion::{MotionAction, MotionService};
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
+static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
-/// General internal heap retained alongside the separate 64 KiB reclaimed region.
+/// Small general internal heap retained alongside the separate 64 KiB reclaimed region.
 ///
-/// This was reduced from 36 KiB when fixed graph candidate/active images were
-/// introduced. The 4 KiB becomes reviewed static graph ownership rather than
-/// allocator capacity; target qualification must still measure heap low-water.
-const GENERAL_HEAP_BYTES: usize = 32 * 1_024;
+/// The permanent split-core graph actors now reserve both package images and
+/// every execution arena statically. Retaining those fail-closed bounds costs
+/// 28 KiB formerly available to this secondary region. Target qualification
+/// must measure both allocator regions' low-water marks under Wi-Fi load.
+const GENERAL_HEAP_BYTES: usize = 4 * 1_024;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -138,6 +142,7 @@ async fn main(spawner: Spawner) -> ! {
     esp_rtos::start(timer_group0.timer0);
 
     let boundary = BOUNDARY.init(DefaultBoundary::new());
+    let graph_bridge: &'static GraphBridge = GRAPH_BRIDGE.init(GraphBridge::new());
     let (mut service_endpoint, realtime_endpoint) = boundary.split();
     let app_stack = APP_CORE_STACK.init(Stack::new());
 
@@ -153,6 +158,7 @@ async fn main(spawner: Spawner) -> ! {
                     split.realtime,
                     realtime_endpoint,
                     device_id,
+                    graph_bridge,
                 ));
             });
         },
@@ -176,6 +182,7 @@ async fn main(spawner: Spawner) -> ! {
         service_endpoint,
         network,
         service_bridge,
+        graph_bridge,
     ));
     info!(
         "Alumina dual-core runtime started for {}",
@@ -240,6 +247,7 @@ async fn service_task(
     mut endpoint: DefaultServiceEndpoint,
     network: network::NetworkControl,
     service_bridge: &'static ServiceBridge,
+    graph_bridge: &'static GraphBridge,
 ) {
     if Cpu::current() != Cpu::ProCpu {
         panic!("service executor started on the wrong core");
@@ -257,7 +265,7 @@ async fn service_task(
     let mut clocks = ClockService::new(boot_id);
     let mut jobs = JobService::new(boot_id);
     let mut configurations = ConfigurationService::new();
-    let mut graphs = GraphService::new(network.device_id());
+    let mut graphs = GraphService::new(network.device_id(), graph_bridge);
     let mut last_fault_generation = 0_u16;
     loop {
         while let Ok(frame) = endpoint.try_receive_telemetry() {
@@ -461,6 +469,7 @@ async fn realtime_task(
     resources: selected::RealtimeResources,
     mut endpoint: DefaultRealtimeEndpoint,
     device_id: DeviceId,
+    graph_bridge: &'static GraphBridge,
 ) {
     if Cpu::current() != Cpu::AppCpu {
         endpoint.publish_fault(1, 0);
@@ -506,6 +515,7 @@ async fn realtime_task(
         selected::PACKAGE.board.capability_digest,
         GRAPH_RUNTIME_LIMITS,
     );
+    let mut graph_actor = RealtimeGraphActor::new(graph_bridge);
     let mut safety_inputs: Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>> = None;
     let mut safety_input_status = SafetyInputStatus::unconfigured();
     let mut last_job_active = false;
@@ -733,6 +743,7 @@ async fn realtime_task(
                     },
                     FrameKind::Graph => apply_graph_command(
                         &mut graphs,
+                        &mut graph_actor,
                         &configurations,
                         &jobs,
                         &safety,
@@ -1504,6 +1515,7 @@ fn publish_configuration_report(
 #[allow(clippy::too_many_arguments)]
 fn apply_graph_command(
     graphs: &mut RealtimeGraphDeployment,
+    actor: &mut RealtimeGraphActor,
     configurations: &RealtimeConfigurationService<'static, { selected::CONFIGURATION_BINDINGS }>,
     jobs: &RealtimeJobService,
     safety: &SafetyMachine,
@@ -1529,8 +1541,86 @@ fn apply_graph_command(
     let mutation_allowed = matches!(safety.state(), SafetyState::Safe | SafetyState::Configured)
         && !jobs.active()
         && endpoint.work_depth() == 0;
+    prepare_realtime_graph_actor(actor, graphs, command, authority, mutation_allowed)?;
     let report = graphs.apply(command, authority, mutation_allowed);
     publish_graph_report(endpoint, report_sequence, now, config_digest, report)
+}
+
+fn prepare_realtime_graph_actor(
+    actor: &mut RealtimeGraphActor,
+    deployment: &RealtimeGraphDeployment,
+    command: CoreGraphCommand,
+    authority: GraphRuntimeAuthority,
+    mutation_allowed: bool,
+) -> Result<(), ()> {
+    match command.action {
+        CoreGraphAction::Authorize => {
+            if !mutation_allowed {
+                return Ok(());
+            }
+            let identity = deployment.active_identity().ok_or(())?;
+            if identity.transaction_id != command.transaction_id
+                || identity.content_digest != command.content_digest
+                || identity.package_digest != command.package_digest
+                || identity.implementation_digest != command.implementation_digest
+            {
+                return Err(());
+            }
+            if actor.installed_identity() == Some(identity) {
+                return Ok(());
+            }
+            match actor.phase() {
+                GraphActorPhase::Empty => {}
+                GraphActorPhase::Installed => {
+                    actor.clear(true).map_err(|_| ())?;
+                }
+                GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
+                    return Err(());
+                }
+            }
+            let package = deployment.selected_package_bytes().ok_or(())?;
+            let report = actor
+                .install(
+                    package,
+                    command.transaction_id,
+                    command.content_digest,
+                    command.package_digest,
+                    authority,
+                    GRAPH_RUNTIME_LIMITS,
+                    true,
+                )
+                .map_err(|_| ())?;
+            if report.package_digest != command.package_digest || report.usage != identity.usage {
+                return Err(());
+            }
+        }
+        CoreGraphAction::Clear => {
+            if !mutation_allowed {
+                return Ok(());
+            }
+            let identity = deployment.active_identity().ok_or(())?;
+            if identity.transaction_id != command.transaction_id
+                || identity.content_digest != command.content_digest
+                || identity.package_digest != command.package_digest
+                || identity.implementation_digest != command.implementation_digest
+            {
+                return Err(());
+            }
+            match actor.phase() {
+                GraphActorPhase::Empty => {}
+                GraphActorPhase::Installed => actor.clear(true).map_err(|_| ())?,
+                GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
+                    return Err(());
+                }
+            }
+        }
+        CoreGraphAction::Begin
+        | CoreGraphAction::Data
+        | CoreGraphAction::Finish
+        | CoreGraphAction::Activate
+        | CoreGraphAction::Abort => {}
+    }
+    Ok(())
 }
 
 fn publish_graph_report(
