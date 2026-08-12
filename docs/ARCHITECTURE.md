@@ -1052,6 +1052,16 @@ and MKS ESP32 FOC expose no graph-addressable physical resource yet. There is
 still no graph output opcode, measured WCET, physical-input HIL, or physical
 timing claim at this checkpoint.
 
+The disconnected TinyBee graph fixture has refined the boot boundary. Core 1
+establishes safe outputs and a provisional debounced input state before radio
+startup, but classic ESP32 radio initialization may suspend it beyond a finite
+operational watchdog. While no arm or output authority exists, the fixture
+records that startup gap and keeps the complete safe image; after radio startup
+it discards the provisional monitor and requires a new full debounce. The
+strict watchdog begins at realtime readiness. Its 1 kHz actor runs on a
+priority-3 core-1 interrupt executor, leaving Wi-Fi/HTTP on core 0. This shape
+has passed idle-AP prequalification but not analyzer-backed or HTTP-loaded HIL.
+
 ## Security and update model
 
 - Provision unique device identity/credentials; no repository-shared private key.

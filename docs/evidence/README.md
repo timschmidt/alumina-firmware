@@ -195,4 +195,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-TINYBEE-GRAPH-INPUT-TIMING-HARNESS.md`](M9-TINYBEE-GRAPH-INPUT-TIMING-HARNESS.md)
   — production-sized dual-core graph-input timing under real Wi-Fi/web tasks,
   exact disconnected-load SLogic wiring, streaming VCD reanalysis, and strict
-  digest-bound run evidence with all physical claims still closed.
+  digest-bound run evidence; disconnected-board commissioning observations now
+  cover radio-startup suspension and priority-executor recovery while all
+  analyzer/HTTP-loaded qualification claims remain closed.

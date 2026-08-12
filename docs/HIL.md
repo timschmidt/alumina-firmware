@@ -251,7 +251,12 @@ lead, and every disconnected load group.
 ### Run and capture
 
 Leave J14 open through reset. The firmware establishes the safe shift image and
-a known debounced X input before core 0 is allowed to start Wi-Fi. Join
+a known debounced X input before core 0 is allowed to start Wi-Fi. Classic
+ESP32 radio initialization may suspend core 1 beyond the 10 ms operational
+watchdog. This is allowed only while the fixture is unarmed and all outputs are
+already safe: the firmware records the maximum startup gap, discards the old
+input monitor, and requires a fresh complete debounce after network startup.
+The 10 ms watchdog is then strict for the remainder of the run. Join
 `Alumina-mks-tinybee-v1` with the development-fixture password
 `alumina-development`, verify `http://192.168.4.1/api/v1/health`, and keep a
 request loop active throughout the analyzer capture. Retain a log that counts
@@ -281,6 +286,12 @@ Sparse `ALUMINA_HIL_BOOT`, `ALUMINA_HIL_RUNNING`, and
 `ALUMINA_HIL_*_FAULT` text is emitted on UART0 for commissioning. These writes
 occur only during staged startup or after a terminal failure; no UART write or
 formatting occurs in the graph release loop or analyzer capture path.
+
+The graph actor itself runs on core 1 from software interrupt 2 at interrupt
+priority 3. Core 0 owns the production radio/network/HTTP tasks. A run record
+must retain `ALUMINA_HIL_WIFI_STARTUP`; `watchdog_observed=true` is acceptable
+only for the unarmed radio-startup interval described above, never after
+`stage=realtime-ready`.
 
 The isolated fixture deliberately observes the configured interlock without
 feeding its active reaction into an armed safety machine: no arming or energy

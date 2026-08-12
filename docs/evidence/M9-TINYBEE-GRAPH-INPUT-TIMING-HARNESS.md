@@ -3,12 +3,16 @@
 Date: 2026-08-12
 
 Status: the disconnected-load, Wi-Fi-loaded graph-input timing fixture and its
-strict capture/record tooling are implemented at `aluminafw`
-`73fa08933b5b75f1a93e6f05aed6d00c5a8825f4`. No serial device was opened, and
-the available bare `MKS TinyBee v1.0` was not enumerated, erased, flashed,
-reset, or driven for this checkpoint. No motor or motor-power connection was
-present. The available SLogic16U3 remained disconnected. Consequently this
-record makes no physical timing, electrical, boot, Wi-Fi, or board-
+strict capture/record tooling were first implemented at `aluminafw`
+`73fa08933b5b75f1a93e6f05aed6d00c5a8825f4`. Subsequent prequalification on the
+available bare `MKS TinyBee v1.0` reached `3ee2369` and established the boot and
+executor facts recorded below. The board had no StepSticks, motors, motor
+power, or process loads. The SLogic16U3 leads were attached according to the
+fixture map, with analyzer VCC and D3 disconnected, but no permissively
+licensed capture stack was available and no capture was taken. No retained
+HTTP-load log, fixture photographs, raw serial log, or complete run record
+exists. Consequently this document records commissioning observations only;
+it makes no electrical, input-path, web-load, timing-policy, or board-
 qualification claim.
 
 ## Shared production boundary
@@ -28,16 +32,58 @@ actors. The realtime schedule is 1 kHz with 50 device cycles of declared WCET
 per node and 200 cycles of executor reserve. The package and configuration are
 bound to the actual ESP base MAC and the primary TinyBee capability identity.
 
-Core 1 establishes the complete static safe shift image before readiness and
-continues sampling GPIO33 through core-0 network startup, graph priming,
-confirmation, the future start epoch, and every release. A missing/stale
-sample, watchdog reaction, graph error, wrong execution count, or missing sink
-value reapplies the safe image, drives both observation markers low, and stops
-all future releases. The fixture never initializes storage, motion/I²S
-streaming, arming, or any process-output command API. It intentionally observes
-but does not route the active interlock reaction into an armed safety machine,
-because the isolated artifact contains neither arming nor energy-output
-authority.
+Core 1 establishes the complete static safe shift image and a debounced GPIO33
+state before allowing core-0 network initialization. Classic ESP32 radio
+initialization can then suspend the other core for longer than the configured
+10 ms operational input watchdog. During this explicitly unarmed boundary the
+fixture retains the largest observed sampling gap, notes whether the watchdog
+was crossed, and keeps every output at the complete safe image. It discards
+that monitor after radio initialization, constructs a fresh monitor, and
+requires a new complete debounce before reporting realtime readiness. The
+strict 10 ms watchdog applies without exception after that readiness boundary,
+through graph priming, confirmation, the future start epoch, and every release.
+A missing/stale operational sample, watchdog reaction, graph error, wrong
+execution count, or missing sink value reapplies the safe image, drives both
+observation markers low, and stops all future releases. The fixture never
+initializes storage, motion/I²S streaming, arming, or any process-output command
+API. It intentionally observes but does not route the active interlock reaction
+into an armed safety machine, because the isolated artifact contains neither
+arming nor energy-output authority.
+
+The realtime actor runs from a core-1 interrupt executor on software interrupt
+2 at ESP interrupt priority 3. The RTOS scheduler retains software interrupts
+0 and 1. Core 0 continues to own radio, network, DHCP, HTTP, and commissioning
+UART work; graph releases perform no allocation, formatting, socket access, or
+service-core locking.
+
+## Disconnected-board prequalification observations
+
+The flashed `3ee2369` image identified an original dual-core ESP32 revision 1,
+240 MHz CPU, 40 MHz crystal, 8 MiB flash, base MAC
+`c4:de:e2:f8:c4:ac`, and AP BSSID `c6:de:e2:f8:c4:ac`. UART commissioning
+reached these stages in order:
+
+```text
+ALUMINA_HIL_BOOT stage=entry
+ALUMINA_HIL_BOOT stage=graph-installed
+ALUMINA_HIL_BOOT stage=boot-safe-ready
+ALUMINA_HIL_BOOT stage=network-starting
+ALUMINA_HIL_BOOT stage=network-started
+ALUMINA_HIL_BOOT stage=realtime-ready
+ALUMINA_HIL_WIFI_STARTUP max_sample_gap=54017 watchdog_observed=true
+ALUMINA_HIL_RUNNING ssid=Alumina-mks-tinybee-v1 address=192.168.4.1
+```
+
+`TICK_HZ` is 1 MHz in this artifact, so the retained startup gap was 54.017 ms.
+An earlier ordinary core-1 executor run failed closed after 2,327 1 kHz
+releases with 517 us maximum dispatch lateness, beyond the unchanged 200 us
+reserve. The priority-3 interrupt-executor image then ran for more than 180,000
+releases without a terminal UART fault while the AP was idle. AP association
+was observed, but the workstation network path was needed for the development
+session before an HTTP load log could be retained; DHCP/addressing and HTTP
+interoperability therefore remain unverified here. Absence of a terminal fault
+is not a positive timing measurement and cannot substitute for the required
+logic-analyzer trace.
 
 Core 0 runs the production radio/AP, DHCP, network runner, and HTTP tasks. The
 future physical run must maintain requests to the static
@@ -116,8 +162,9 @@ cargo xtask build --board mks-tinybee-v1 --profile release
 git diff --check
 ```
 
-All 373 default-member tests and 23 focused `xtask` tests pass. Strict host
-Clippy and rustdoc pass. Strict target Clippy passes for the new HIL artifact,
+At the original construction checkpoint, all 373 default-member tests and 23
+focused `xtask` tests passed. Strict host Clippy and rustdoc passed. Strict
+target Clippy passed for the new HIL artifact,
 the ordinary primary TinyBee image, and the pre-existing PCM safe fixture. All
 four supported board selections pass target check. The ordinary primary
 TinyBee and new HIL release images link.
@@ -138,9 +185,11 @@ authored under the repository's `MIT OR Apache-2.0` terms. No dependency was
 added, and no GPL-family code, decoder, source, or asset was fetched, copied,
 linked, or vendored. The MKS schematic supplied hardware facts only.
 
-The next gate is physical operator coordination: inspect and photograph the
-actual bare board, verify the disconnected state and pin voltages, connect the
-SLogic16U3 exactly as documented, and review the wiring before the explicit
-flash. Only the retained capture and a passing human-reviewed run record can
-establish physical input/timing evidence. This harness record alone leaves the
-board at `Compiles` and cannot close the independent PCM safe-image gate.
+The next gate is a retained, permissively produced SLogic16U3 capture plus the
+simultaneous HTTP-load log. Before that run, retain actual and annotated fixture
+photographs, recheck the disconnected state and pin voltages, and independently
+review the already prepared wiring. The HTTP client must use a network path
+that does not disconnect the active development session. Only the retained
+capture and a passing human-reviewed run record can establish physical
+input/timing evidence. These prequalification observations leave the board at
+`Compiles` and cannot close the independent PCM safe-image gate.

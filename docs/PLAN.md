@@ -690,7 +690,14 @@ admission. The first resource opcode is a capability-bound realtime read of a
 known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, graph
-outputs, additional capability nodes, and graph UI remain open.
+outputs, additional capability nodes, and graph UI remain open. A disconnected
+TinyBee prequalification run exposed a roughly 54 ms unarmed radio-startup
+suspension and proved that an ordinary core-1 executor could miss the 200 us
+dispatch reserve. The fixture now discards and re-debounces input state after
+radio startup and runs releases from a priority-3 core-1 interrupt executor;
+an idle-AP soak exceeded 180,000 releases without a terminal fault. This is
+commissioning evidence only: the required analyzer trace and simultaneous
+HTTP-load log remain open.
 See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
