@@ -46,14 +46,14 @@ use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
-use alumina_graph_ir::{CoreGraphAction, CoreGraphCommand};
+use alumina_graph_ir::{CoreGraphCommand, CoreGraphExecutionCommand};
 use alumina_job::{
     JobScheduleAction, JobScheduleReport, JobScheduleState, JobStartObservation,
     JobStartObservationSource, RealtimeJobReport, RealtimeJobState,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind};
 use alumina_runtime::graph::{
-    GraphActorPhase, GraphRuntimeAuthority, RealtimeGraphDeployment, RealtimeGraphReport,
+    GraphRuntimeAuthority, RealtimeGraphExecutionReport, RealtimeGraphReport,
 };
 use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
@@ -79,7 +79,7 @@ use static_cell::StaticCell;
 use capability::CapabilityService;
 use clock::ClockService;
 use configuration::ConfigurationService;
-use graph::{GRAPH_RUNTIME_LIMITS, GraphBridge, GraphService, RealtimeGraphActor};
+use graph::{GraphBridge, GraphService, RealtimeGraphExecutor};
 use hardware::selected;
 use job::{JobService, RealtimeJobService};
 use motion::{MotionAction, MotionService};
@@ -327,11 +327,20 @@ async fn service_task(
                 FrameKind::Graph => {
                     frame.validate(FrameKind::Graph).is_ok()
                         && frame.payload().is_ok_and(|payload| {
-                            RealtimeGraphReport::decode(payload).is_ok_and(|report| {
+                            if let Ok(report) = RealtimeGraphReport::decode(payload) {
                                 graphs
                                     .observe_realtime(frame.header().config_digest, report)
                                     .is_ok()
-                            })
+                            } else {
+                                RealtimeGraphExecutionReport::decode(payload).is_ok_and(|report| {
+                                    graphs
+                                        .observe_realtime_execution(
+                                            frame.header().config_digest,
+                                            report,
+                                        )
+                                        .is_ok()
+                                })
+                            }
                         })
                 }
                 _ => false,
@@ -460,7 +469,11 @@ async fn service_task(
             network.supervisor(),
             network.credential_source(),
         );
-        Timer::after(Duration::from_millis(10)).await;
+        let ordinary_wake = Instant::now() + Duration::from_millis(10);
+        let wake = graphs.next_release_cycle().map_or(ordinary_wake, |cycle| {
+            ordinary_wake.min(Instant::from_ticks(cycle.0))
+        });
+        Timer::at(wake).await;
     }
 }
 
@@ -510,12 +523,7 @@ async fn realtime_task(
         RealtimeConfigurationService::<{ selected::CONFIGURATION_BINDINGS }>::new(
             selected::PACKAGE,
         );
-    let mut graphs = RealtimeGraphDeployment::new(
-        device_id,
-        selected::PACKAGE.board.capability_digest,
-        GRAPH_RUNTIME_LIMITS,
-    );
-    let mut graph_actor = RealtimeGraphActor::new(graph_bridge);
+    let mut graphs = RealtimeGraphExecutor::new(device_id, graph_bridge);
     let mut safety_inputs: Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>> = None;
     let mut safety_input_status = SafetyInputStatus::unconfigured();
     let mut last_job_active = false;
@@ -537,7 +545,9 @@ async fn realtime_task(
     loop {
         let schedule_wake = jobs.next_schedule_deadline();
         let motion_wake = motion.next_deadline();
+        let graph_wake = graphs.next_release_cycle();
         let wake = minimum_wake_cycle(DeviceCycle(expected.as_ticks()), schedule_wake, motion_wake);
+        let wake = graph_wake.map_or(wake, |deadline| wake.min(deadline));
         Timer::at(Instant::from_ticks(wake.0)).await;
         let observed = Instant::now();
         let management_due = observed >= expected;
@@ -743,7 +753,6 @@ async fn realtime_task(
                     },
                     FrameKind::Graph => apply_graph_command(
                         &mut graphs,
-                        &mut graph_actor,
                         &configurations,
                         &jobs,
                         &safety,
@@ -850,6 +859,23 @@ async fn realtime_task(
                     8,
                 ),
             }
+        }
+
+        let graph_before = graphs.execution_report();
+        let graph_execution_allowed =
+            matches!(safety.state(), SafetyState::Safe | SafetyState::Configured) && !jobs.active();
+        let graph_release = graphs.release_due(now, graph_execution_allowed);
+        let graph_after = graphs.execution_report();
+        if graph_release.is_err() || graph_after != graph_before {
+            let _ = publish_graph_execution_report(
+                &mut endpoint,
+                &mut graph_sequence,
+                now,
+                configurations
+                    .authorized_identity()
+                    .map_or(Digest::ZERO, |identity| identity.digest),
+                graph_after,
+            );
         }
 
         let schedule_action = if management_due || schedule_due {
@@ -1012,7 +1038,16 @@ async fn realtime_task(
                     configurations
                         .authorized_identity()
                         .map_or(Digest::ZERO, |identity| identity.digest),
-                    graphs.report(),
+                    graphs.lifecycle_report(),
+                );
+                let _ = publish_graph_execution_report(
+                    &mut endpoint,
+                    &mut graph_sequence,
+                    DeviceCycle(observed.as_ticks()),
+                    configurations
+                        .authorized_identity()
+                        .map_or(Digest::ZERO, |identity| identity.digest),
+                    graphs.execution_report(),
                 );
                 let _ = publish_clock_report(
                     &mut endpoint,
@@ -1412,7 +1447,7 @@ fn apply_configuration_command(
     now: DeviceCycle,
     nominal_scan_period_cycles: u64,
     report_sequence: &mut u32,
-    graphs: &RealtimeGraphDeployment,
+    graphs: &RealtimeGraphExecutor,
 ) -> Result<bool, ()> {
     frame.validate(FrameKind::Configuration).map_err(|_| ())?;
     let command =
@@ -1514,8 +1549,7 @@ fn publish_configuration_report(
 
 #[allow(clippy::too_many_arguments)]
 fn apply_graph_command(
-    graphs: &mut RealtimeGraphDeployment,
-    actor: &mut RealtimeGraphActor,
+    graphs: &mut RealtimeGraphExecutor,
     configurations: &RealtimeConfigurationService<'static, { selected::CONFIGURATION_BINDINGS }>,
     jobs: &RealtimeJobService,
     safety: &SafetyMachine,
@@ -1525,102 +1559,39 @@ fn apply_graph_command(
     report_sequence: &mut u32,
 ) -> Result<(), ()> {
     frame.validate(FrameKind::Graph).map_err(|_| ())?;
-    let command = CoreGraphCommand::decode(frame.payload().map_err(|_| ())?).map_err(|_| ())?;
+    let payload = frame.payload().map_err(|_| ())?;
     let config_digest = configurations
         .authorized_identity()
         .map_or(Digest::ZERO, |identity| identity.digest);
     if config_digest.is_zero() || frame.header().config_digest != config_digest {
         return Err(());
     }
-    let authority = GraphRuntimeAuthority {
-        device_id: graphs.device_id(),
-        capability_digest: selected::PACKAGE.board.capability_digest,
-        config_digest,
-        implementation_digest: command.implementation_digest,
-    };
-    let mutation_allowed = matches!(safety.state(), SafetyState::Safe | SafetyState::Configured)
-        && !jobs.active()
-        && endpoint.work_depth() == 0;
-    prepare_realtime_graph_actor(actor, graphs, command, authority, mutation_allowed)?;
-    let report = graphs.apply(command, authority, mutation_allowed);
-    publish_graph_report(endpoint, report_sequence, now, config_digest, report)
-}
-
-fn prepare_realtime_graph_actor(
-    actor: &mut RealtimeGraphActor,
-    deployment: &RealtimeGraphDeployment,
-    command: CoreGraphCommand,
-    authority: GraphRuntimeAuthority,
-    mutation_allowed: bool,
-) -> Result<(), ()> {
-    match command.action {
-        CoreGraphAction::Authorize => {
-            if !mutation_allowed {
-                return Ok(());
-            }
-            let identity = deployment.active_identity().ok_or(())?;
-            if identity.transaction_id != command.transaction_id
-                || identity.content_digest != command.content_digest
-                || identity.package_digest != command.package_digest
-                || identity.implementation_digest != command.implementation_digest
-            {
-                return Err(());
-            }
-            if actor.installed_identity() == Some(identity) {
-                return Ok(());
-            }
-            match actor.phase() {
-                GraphActorPhase::Empty => {}
-                GraphActorPhase::Installed => {
-                    actor.clear(true).map_err(|_| ())?;
-                }
-                GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
-                    return Err(());
-                }
-            }
-            let package = deployment.selected_package_bytes().ok_or(())?;
-            let report = actor
-                .install(
-                    package,
-                    command.transaction_id,
-                    command.content_digest,
-                    command.package_digest,
-                    authority,
-                    GRAPH_RUNTIME_LIMITS,
-                    true,
-                )
-                .map_err(|_| ())?;
-            if report.package_digest != command.package_digest || report.usage != identity.usage {
-                return Err(());
-            }
-        }
-        CoreGraphAction::Clear => {
-            if !mutation_allowed {
-                return Ok(());
-            }
-            let identity = deployment.active_identity().ok_or(())?;
-            if identity.transaction_id != command.transaction_id
-                || identity.content_digest != command.content_digest
-                || identity.package_digest != command.package_digest
-                || identity.implementation_digest != command.implementation_digest
-            {
-                return Err(());
-            }
-            match actor.phase() {
-                GraphActorPhase::Empty => {}
-                GraphActorPhase::Installed => actor.clear(true).map_err(|_| ())?,
-                GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
-                    return Err(());
-                }
-            }
-        }
-        CoreGraphAction::Begin
-        | CoreGraphAction::Data
-        | CoreGraphAction::Finish
-        | CoreGraphAction::Activate
-        | CoreGraphAction::Abort => {}
+    if let Ok(command) = CoreGraphCommand::decode(payload) {
+        let authority = GraphRuntimeAuthority {
+            device_id: graphs.device_id(),
+            capability_digest: selected::PACKAGE.board.capability_digest,
+            config_digest,
+            implementation_digest: command.implementation_digest,
+        };
+        let mutation_allowed =
+            matches!(safety.state(), SafetyState::Safe | SafetyState::Configured)
+                && !jobs.active()
+                && endpoint.work_depth() == 0;
+        let report = graphs.apply_lifecycle(command, authority, mutation_allowed)?;
+        publish_graph_report(endpoint, report_sequence, now, config_digest, report)?;
+        return publish_graph_execution_report(
+            endpoint,
+            report_sequence,
+            now,
+            config_digest,
+            graphs.execution_report(),
+        );
     }
-    Ok(())
+    let command = CoreGraphExecutionCommand::decode(payload).map_err(|_| ())?;
+    let execution_allowed =
+        matches!(safety.state(), SafetyState::Safe | SafetyState::Configured) && !jobs.active();
+    let report = graphs.apply_execution(command, now, execution_allowed)?;
+    publish_graph_execution_report(endpoint, report_sequence, now, config_digest, report)
 }
 
 fn publish_graph_report(
@@ -1629,6 +1600,23 @@ fn publish_graph_report(
     now: DeviceCycle,
     config_digest: Digest,
     report: RealtimeGraphReport,
+) -> Result<(), ()> {
+    let payload = report.encode().map_err(|_| ())?;
+    let sequence = next_nonzero(*report_sequence);
+    let frame = IntercoreFrame::new(FrameKind::Graph, sequence, now, config_digest, &payload)
+        .map_err(|_| ())?;
+    if endpoint.try_publish_telemetry(frame).is_ok() {
+        *report_sequence = sequence;
+    }
+    Ok(())
+}
+
+fn publish_graph_execution_report(
+    endpoint: &mut DefaultRealtimeEndpoint,
+    report_sequence: &mut u32,
+    now: DeviceCycle,
+    config_digest: Digest,
+    report: RealtimeGraphExecutionReport,
 ) -> Result<(), ()> {
     let payload = report.encode().map_err(|_| ())?;
     let sequence = next_nonzero(*report_sequence);

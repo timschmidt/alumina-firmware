@@ -307,6 +307,15 @@ pub struct GraphReleaseReport {
     pub last_sink_value: Option<bool>,
 }
 
+/// Exact scheduled release and the package-declared latest dispatch boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphReleaseWindow {
+    /// Exact cycle passed to the fixed executor.
+    pub scheduled_cycle: DeviceCycle,
+    /// Last cycle at which dispatch may begin within the declared reserve.
+    pub latest_dispatch_cycle: DeviceCycle,
+}
+
 impl GraphReleaseReport {
     const fn new(cycle: DeviceCycle, release_tick: u64) -> Self {
         Self {
@@ -337,6 +346,7 @@ struct DomainCursor {
     next_cycle: u64,
     next_tick: u64,
     period_cycles: u64,
+    executor_reserve_cycles: u64,
 }
 
 impl DomainCursor {
@@ -345,6 +355,7 @@ impl DomainCursor {
         next_cycle: 0,
         next_tick: 0,
         period_cycles: 0,
+        executor_reserve_cycles: 0,
     };
 }
 
@@ -1374,6 +1385,7 @@ fn cursor_after_prime(
         next_cycle,
         next_tick: 1,
         period_cycles: schedule.period_cycles,
+        executor_reserve_cycles: schedule.executor_reserve_cycles,
     })
 }
 
@@ -1389,8 +1401,25 @@ const fn cursor_at_start(
             next_cycle: start.0,
             next_tick: 0,
             period_cycles: schedule.period_cycles,
+            executor_reserve_cycles: schedule.executor_reserve_cycles,
         }
     }
+}
+
+fn cursor_release_window(
+    cursor: &DomainCursor,
+) -> Result<Option<GraphReleaseWindow>, GraphRuntimeError> {
+    if !cursor.present {
+        return Ok(None);
+    }
+    let latest_dispatch_cycle = cursor
+        .next_cycle
+        .checked_add(cursor.executor_reserve_cycles)
+        .ok_or(GraphRuntimeError::Arithmetic)?;
+    Ok(Some(GraphReleaseWindow {
+        scheduled_cycle: DeviceCycle(cursor.next_cycle),
+        latest_dispatch_cycle: DeviceCycle(latest_dispatch_cycle),
+    }))
 }
 
 fn release_prelude(

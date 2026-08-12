@@ -437,6 +437,10 @@ pub enum Operation {
     GraphActivate = 0x0e03,
     /// Discard a candidate or clear the selected active graph.
     GraphClear = 0x0e04,
+    /// Prepare and start one exact boot-local execution of the active graph.
+    GraphStart = 0x0e05,
+    /// Stop one exact boot-local graph execution and retain the active package.
+    GraphStop = 0x0e06,
 }
 
 impl Operation {
@@ -499,9 +503,12 @@ impl Operation {
             | Self::UpdateFinalize
             | Self::UpdateCommit
             | Self::UpdateRollback => FrameKind::Update,
-            Self::GraphGet | Self::GraphInstall | Self::GraphActivate | Self::GraphClear => {
-                FrameKind::Graph
-            }
+            Self::GraphGet
+            | Self::GraphInstall
+            | Self::GraphActivate
+            | Self::GraphClear
+            | Self::GraphStart
+            | Self::GraphStop => FrameKind::Graph,
         }
     }
 
@@ -563,6 +570,8 @@ impl Operation {
             0x0e02 => Some(Self::GraphInstall),
             0x0e03 => Some(Self::GraphActivate),
             0x0e04 => Some(Self::GraphClear),
+            0x0e05 => Some(Self::GraphStart),
+            0x0e06 => Some(Self::GraphStop),
             _ => None,
         }
     }
@@ -1025,7 +1034,9 @@ mod tests {
         );
         assert_eq!(Operation::from_wire(0x090b), None);
         assert_eq!(Operation::from_wire(0x0e04), Some(Operation::GraphClear));
-        assert_eq!(Operation::from_wire(0x0e05), None);
+        assert_eq!(Operation::from_wire(0x0e05), Some(Operation::GraphStart));
+        assert_eq!(Operation::from_wire(0x0e06), Some(Operation::GraphStop));
+        assert_eq!(Operation::from_wire(0x0e07), None);
     }
 
     #[test]

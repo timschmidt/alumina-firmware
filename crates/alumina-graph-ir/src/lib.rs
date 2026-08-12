@@ -3,7 +3,7 @@
 
 use core::fmt;
 
-use alumina_protocol::{DeviceId, Digest};
+use alumina_protocol::{DeviceCycle, DeviceId, Digest};
 use alumina_storage::{CacheLimits, ObjectKind, PublishedObject};
 use sha2::{Digest as _, Sha256};
 
@@ -39,6 +39,10 @@ pub const GRAPH_IR_VERSION: u16 = 1;
 pub const GRAPH_PUBLICATION_BYTES: usize = 168;
 /// Exact authenticated `GraphActivate` and `GraphClear` request bytes.
 pub const GRAPH_SELECTION_BYTES: usize = 88;
+/// Exact authenticated `GraphStart` and `GraphStop` request bytes.
+pub const GRAPH_RUN_REQUEST_BYTES: usize = 136;
+/// Exact initialized inter-core graph execution command bytes.
+pub const CORE_GRAPH_EXECUTION_COMMAND_BYTES: usize = 128;
 /// Fixed inter-core graph command prefix before initialized package bytes.
 pub const CORE_GRAPH_COMMAND_PREFIX_BYTES: usize = 128;
 /// Maximum package bytes carried by one default 336-byte inter-core command.
@@ -52,7 +56,9 @@ pub const GRAPH_IR_MAGIC: [u8; 8] = *b"ALGRIR01";
 const GRAPH_IR_FLAGS: u16 = 0;
 const GRAPH_PUBLICATION_MAGIC: [u8; 8] = *b"ALGRPQ01";
 const GRAPH_SELECTION_MAGIC: [u8; 8] = *b"ALGRPS01";
+const GRAPH_RUN_REQUEST_MAGIC: [u8; 8] = *b"ALGRPR01";
 const CORE_GRAPH_COMMAND_MAGIC: [u8; 4] = *b"ALGC";
+const CORE_GRAPH_EXECUTION_COMMAND_MAGIC: [u8; 4] = *b"ALGX";
 const CORE_GRAPH_WIRE_VERSION: u16 = 1;
 const GRAPH_OBJECT_LIMITS: CacheLimits = CacheLimits {
     maximum_object_bytes: GRAPH_IR_PACKAGE_BYTES as u64,
@@ -208,6 +214,195 @@ impl GraphSelection {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Exact boot-local execution of one selected graph package.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphRunRequest {
+    /// Transaction originally used to install the active package.
+    pub transaction_id: u64,
+    /// Nonzero boot-local execution identity.
+    pub run_id: u64,
+    /// Exact future device cycle used as release tick zero.
+    pub start_cycle: DeviceCycle,
+    /// Full stored-object SHA-256 identity.
+    pub content_digest: Digest,
+    /// Package-internal canonical digest.
+    pub package_digest: Digest,
+    /// Graph-bound fixed implementation-registry identity.
+    pub implementation_digest: Digest,
+}
+
+impl GraphRunRequest {
+    /// Exact active package selected by this run.
+    pub const fn selection(self) -> GraphSelection {
+        GraphSelection {
+            transaction_id: self.transaction_id,
+            content_digest: self.content_digest,
+            package_digest: self.package_digest,
+        }
+    }
+
+    /// Encode one canonical authenticated start/stop body.
+    pub fn encode(self) -> Result<[u8; GRAPH_RUN_REQUEST_BYTES], GraphDeploymentWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; GRAPH_RUN_REQUEST_BYTES];
+        encoded[..8].copy_from_slice(&GRAPH_RUN_REQUEST_MAGIC);
+        encoded[8..10].copy_from_slice(&GRAPH_IR_VERSION.to_le_bytes());
+        // Bytes 10..16 are reserved zero.
+        encoded[16..24].copy_from_slice(&self.transaction_id.to_le_bytes());
+        encoded[24..32].copy_from_slice(&self.run_id.to_le_bytes());
+        encoded[32..40].copy_from_slice(&self.start_cycle.0.to_le_bytes());
+        encoded[40..72].copy_from_slice(&self.content_digest.0);
+        encoded[72..104].copy_from_slice(&self.package_digest.0);
+        encoded[104..136].copy_from_slice(&self.implementation_digest.0);
+        Ok(encoded)
+    }
+
+    /// Decode only the exact canonical execution identity.
+    pub fn decode(encoded: &[u8]) -> Result<Self, GraphDeploymentWireError> {
+        if encoded.len() != GRAPH_RUN_REQUEST_BYTES {
+            return Err(GraphDeploymentWireError::Length);
+        }
+        if encoded[..8] != GRAPH_RUN_REQUEST_MAGIC {
+            return Err(GraphDeploymentWireError::Magic);
+        }
+        if get_u16(encoded, 8) != GRAPH_IR_VERSION {
+            return Err(GraphDeploymentWireError::Version);
+        }
+        if encoded[10..16].iter().any(|byte| *byte != 0) {
+            return Err(GraphDeploymentWireError::Reserved);
+        }
+        let request = Self {
+            transaction_id: get_u64(encoded, 16),
+            run_id: get_u64(encoded, 24),
+            start_cycle: DeviceCycle(get_u64(encoded, 32)),
+            content_digest: Digest(array::<32>(encoded, 40)),
+            package_digest: Digest(array::<32>(encoded, 72)),
+            implementation_digest: Digest(array::<32>(encoded, 104)),
+        };
+        request.validate()?;
+        if request.encode()? != encoded {
+            return Err(GraphDeploymentWireError::Noncanonical);
+        }
+        Ok(request)
+    }
+
+    /// Validate every exact package and boot-local execution identity.
+    pub fn validate(self) -> Result<(), GraphDeploymentWireError> {
+        if self.transaction_id == 0
+            || self.run_id == 0
+            || self.start_cycle.0 == 0
+            || self.content_digest.is_zero()
+            || self.package_digest.is_zero()
+            || self.implementation_digest.is_zero()
+        {
+            Err(GraphDeploymentWireError::Identity)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Ordered core-0 to core-1 graph execution action.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum CoreGraphExecutionAction {
+    /// Prepare the selected package and atomically admit scheduled releases.
+    Start = 1,
+    /// Stop the exact run and acknowledge no in-progress release remains.
+    Stop = 2,
+}
+
+impl CoreGraphExecutionAction {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Start),
+            2 => Some(Self::Stop),
+            _ => None,
+        }
+    }
+}
+
+/// Fixed exact execution command crossing from core 0 to core 1.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CoreGraphExecutionCommand {
+    /// Ordered execution action.
+    pub action: CoreGraphExecutionAction,
+    /// Complete exact run identity.
+    pub request: GraphRunRequest,
+}
+
+impl CoreGraphExecutionCommand {
+    /// Prepare and start the exact run on core 1.
+    pub fn start(request: GraphRunRequest) -> Result<Self, GraphDeploymentWireError> {
+        Self::new(CoreGraphExecutionAction::Start, request)
+    }
+
+    /// Stop the exact run on core 1.
+    pub fn stop(request: GraphRunRequest) -> Result<Self, GraphDeploymentWireError> {
+        Self::new(CoreGraphExecutionAction::Stop, request)
+    }
+
+    /// Encode one completely initialized fixed command.
+    pub fn encode(
+        self,
+    ) -> Result<[u8; CORE_GRAPH_EXECUTION_COMMAND_BYTES], GraphDeploymentWireError> {
+        self.request.validate()?;
+        let mut encoded = [0_u8; CORE_GRAPH_EXECUTION_COMMAND_BYTES];
+        encoded[..4].copy_from_slice(&CORE_GRAPH_EXECUTION_COMMAND_MAGIC);
+        encoded[4..6].copy_from_slice(&CORE_GRAPH_WIRE_VERSION.to_le_bytes());
+        encoded[6] = self.action as u8;
+        // Byte 7 is reserved zero.
+        encoded[8..16].copy_from_slice(&self.request.transaction_id.to_le_bytes());
+        encoded[16..24].copy_from_slice(&self.request.run_id.to_le_bytes());
+        encoded[24..32].copy_from_slice(&self.request.start_cycle.0.to_le_bytes());
+        encoded[32..64].copy_from_slice(&self.request.content_digest.0);
+        encoded[64..96].copy_from_slice(&self.request.package_digest.0);
+        encoded[96..128].copy_from_slice(&self.request.implementation_digest.0);
+        Ok(encoded)
+    }
+
+    /// Decode one exact initialized inter-core execution command.
+    pub fn decode(encoded: &[u8]) -> Result<Self, GraphDeploymentWireError> {
+        if encoded.len() != CORE_GRAPH_EXECUTION_COMMAND_BYTES {
+            return Err(GraphDeploymentWireError::Length);
+        }
+        if encoded[..4] != CORE_GRAPH_EXECUTION_COMMAND_MAGIC {
+            return Err(GraphDeploymentWireError::Magic);
+        }
+        if get_u16(encoded, 4) != CORE_GRAPH_WIRE_VERSION {
+            return Err(GraphDeploymentWireError::Version);
+        }
+        if encoded[7] != 0 {
+            return Err(GraphDeploymentWireError::Reserved);
+        }
+        let command = Self {
+            action: CoreGraphExecutionAction::from_wire(encoded[6])
+                .ok_or(GraphDeploymentWireError::Action)?,
+            request: GraphRunRequest {
+                transaction_id: get_u64(encoded, 8),
+                run_id: get_u64(encoded, 16),
+                start_cycle: DeviceCycle(get_u64(encoded, 24)),
+                content_digest: Digest(array::<32>(encoded, 32)),
+                package_digest: Digest(array::<32>(encoded, 64)),
+                implementation_digest: Digest(array::<32>(encoded, 96)),
+            },
+        };
+        command.request.validate()?;
+        if command.encode()? != encoded {
+            return Err(GraphDeploymentWireError::Noncanonical);
+        }
+        Ok(command)
+    }
+
+    fn new(
+        action: CoreGraphExecutionAction,
+        request: GraphRunRequest,
+    ) -> Result<Self, GraphDeploymentWireError> {
+        request.validate()?;
+        Ok(Self { action, request })
     }
 }
 
@@ -1813,6 +2008,27 @@ mod tests {
             Ok(selection)
         );
 
+        let run = GraphRunRequest {
+            transaction_id: publication.transaction_id,
+            run_id: 0x1112_1314_1516_1718,
+            start_cycle: DeviceCycle(0x2122_2324_2526_2728),
+            content_digest: publication.content_digest(),
+            package_digest: publication.package_digest,
+            implementation_digest: publication.implementation_digest,
+        };
+        let encoded_run = run.encode().unwrap();
+        assert_eq!(encoded_run.len(), GRAPH_RUN_REQUEST_BYTES);
+        assert_eq!(GraphRunRequest::decode(&encoded_run), Ok(run));
+        assert_eq!(run.selection(), selection);
+        for command in [
+            CoreGraphExecutionCommand::start(run).unwrap(),
+            CoreGraphExecutionCommand::stop(run).unwrap(),
+        ] {
+            let encoded = command.encode().unwrap();
+            assert_eq!(encoded.len(), CORE_GRAPH_EXECUTION_COMMAND_BYTES);
+            assert_eq!(CoreGraphExecutionCommand::decode(&encoded), Ok(command));
+        }
+
         let begin = CoreGraphCommand::begin(publication).unwrap();
         assert_eq!(
             CoreGraphCommand::decode(begin.encode().unwrap().as_bytes()),
@@ -1846,6 +2062,15 @@ mod tests {
             GraphPublication::decode(&reserved),
             Err(GraphDeploymentWireError::Reserved)
         );
+        let mut reserved_run = encoded_run;
+        reserved_run[10] = 1;
+        assert_eq!(
+            GraphRunRequest::decode(&reserved_run),
+            Err(GraphDeploymentWireError::Reserved)
+        );
+        let mut zero_start = run;
+        zero_start.start_cycle = DeviceCycle(0);
+        assert_eq!(zero_start.encode(), Err(GraphDeploymentWireError::Identity));
         let mut wrong_kind = publication;
         wrong_kind.publication.object.kind = ObjectKind::OpaqueData;
         assert_eq!(wrong_kind.encode(), Err(GraphDeploymentWireError::Identity));

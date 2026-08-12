@@ -12,11 +12,12 @@ use crate::LatestSignal;
 
 use super::{
     BridgeArena, DomainCursor, GraphDeploymentFault, GraphDeploymentIdentity, GraphExecutionError,
-    GraphFaultObservation, GraphInstallReport, GraphReleaseReport, GraphRuntimeArena,
-    GraphRuntimeAuthority, GraphRuntimeError, GraphRuntimeLimits, GraphRuntimeMetadata,
-    GraphStartReport, QueueCursor, check_capacity, checked_next_cycle, checked_next_tick,
-    cursor_after_prime, cursor_at_start, execute_realtime_release, execute_service_release,
-    release_prelude, validate_graph_package,
+    GraphExecutionFault, GraphFaultObservation, GraphInstallReport, GraphReleaseReport,
+    GraphReleaseWindow, GraphRuntimeArena, GraphRuntimeAuthority, GraphRuntimeError,
+    GraphRuntimeLimits, GraphRuntimeMetadata, GraphStartReport, QueueCursor, check_capacity,
+    checked_next_cycle, checked_next_tick, cursor_after_prime, cursor_at_start,
+    cursor_release_window, execute_realtime_release, execute_service_release, release_prelude,
+    validate_graph_package,
 };
 
 /// Exact boot-local identity for one execution of one selected package.
@@ -52,6 +53,7 @@ impl GraphRunIdentity {
 
 /// Stable lifecycle of one permanent core-local actor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum GraphActorPhase {
     /// No package is retained.
     Empty,
@@ -65,8 +67,22 @@ pub enum GraphActorPhase {
     Faulted,
 }
 
+impl GraphActorPhase {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Empty),
+            1 => Some(Self::Installed),
+            2 => Some(Self::Prepared),
+            3 => Some(Self::Running),
+            4 => Some(Self::Faulted),
+            _ => None,
+        }
+    }
+}
+
 /// Shared bridge lifecycle, advanced only by explicit actor handshakes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum GraphBridgePhase {
     /// Both prior actors acknowledged stop; no run owns bridge bytes.
     Empty,
@@ -78,6 +94,19 @@ pub enum GraphBridgePhase {
     Running,
     /// No new release may begin while both actors acknowledge stop.
     Stopping,
+}
+
+impl GraphBridgePhase {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Empty),
+            1 => Some(Self::Priming),
+            2 => Some(Self::Primed),
+            3 => Some(Self::Running),
+            4 => Some(Self::Stopping),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -389,6 +418,403 @@ pub struct GraphStopReport {
     pub bridge_empty: bool,
 }
 
+/// Exact bytes in one core-1 graph-execution telemetry report.
+pub const REALTIME_GRAPH_EXECUTION_REPORT_BYTES: usize = 64;
+/// Exact bytes appended to the authenticated combined graph status.
+pub const GRAPH_EXECUTION_REPORT_BYTES: usize = 64;
+
+const REALTIME_GRAPH_EXECUTION_MAGIC: [u8; 4] = *b"ALXR";
+const GRAPH_EXECUTION_REPORT_MAGIC: [u8; 4] = *b"ALXS";
+const GRAPH_EXECUTION_REPORT_VERSION: u16 = 1;
+const EXECUTION_FLAG_SERVICE_NEXT: u8 = 1 << 0;
+const EXECUTION_FLAG_REALTIME_NEXT: u8 = 1 << 1;
+const EXECUTION_FLAG_SERVICE_LAST: u8 = 1 << 2;
+const EXECUTION_FLAG_REALTIME_LAST: u8 = 1 << 3;
+const EXECUTION_FLAG_FAULT: u8 = 1 << 4;
+const EXECUTION_KNOWN_FLAGS: u8 = EXECUTION_FLAG_SERVICE_NEXT
+    | EXECUTION_FLAG_REALTIME_NEXT
+    | EXECUTION_FLAG_SERVICE_LAST
+    | EXECUTION_FLAG_REALTIME_LAST
+    | EXECUTION_FLAG_FAULT;
+const REALTIME_FLAG_NEXT: u8 = 1 << 0;
+const REALTIME_FLAG_LAST: u8 = 1 << 1;
+const REALTIME_FLAG_FAULT: u8 = 1 << 2;
+const REALTIME_KNOWN_FLAGS: u8 = REALTIME_FLAG_NEXT | REALTIME_FLAG_LAST | REALTIME_FLAG_FAULT;
+
+/// Canonical core-1 graph actor observation crossing the bounded telemetry queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeGraphExecutionReport {
+    /// Core-1 permanent actor phase.
+    pub actor_phase: GraphActorPhase,
+    /// Shared bridge phase observed by core 1.
+    pub bridge_phase: GraphBridgePhase,
+    /// Active graph installation transaction, or zero with no actor package.
+    pub transaction_id: u64,
+    /// Exact boot-local run, or zero when no run is being reconciled.
+    pub run_id: u64,
+    /// Exact release tick-zero cycle, or zero when `run_id` is zero.
+    pub start_cycle: DeviceCycle,
+    /// Exact next Realtime release, absent for an absent domain or stopped actor.
+    pub next_release_cycle: Option<DeviceCycle>,
+    /// Last completely executed Realtime release tick.
+    pub last_release_tick: Option<u64>,
+    /// Shared first-cause fault, when latched.
+    pub fault: Option<GraphFaultObservation>,
+}
+
+impl RealtimeGraphExecutionReport {
+    /// Canonical boot state before any package is selected.
+    pub const fn empty() -> Self {
+        Self {
+            actor_phase: GraphActorPhase::Empty,
+            bridge_phase: GraphBridgePhase::Empty,
+            transaction_id: 0,
+            run_id: 0,
+            start_cycle: DeviceCycle(0),
+            next_release_cycle: None,
+            last_release_tick: None,
+            fault: None,
+        }
+    }
+
+    /// Encode one exact fixed telemetry payload.
+    pub fn encode(
+        self,
+    ) -> Result<[u8; REALTIME_GRAPH_EXECUTION_REPORT_BYTES], GraphExecutionReportError> {
+        self.validate()?;
+        let mut encoded = [0_u8; REALTIME_GRAPH_EXECUTION_REPORT_BYTES];
+        encoded[..4].copy_from_slice(&REALTIME_GRAPH_EXECUTION_MAGIC);
+        encoded[4..6].copy_from_slice(&GRAPH_EXECUTION_REPORT_VERSION.to_le_bytes());
+        encoded[6] = self.actor_phase as u8;
+        encoded[7] = self.bridge_phase as u8;
+        encoded[8] = (u8::from(self.next_release_cycle.is_some()) * REALTIME_FLAG_NEXT)
+            | (u8::from(self.last_release_tick.is_some()) * REALTIME_FLAG_LAST)
+            | (u8::from(self.fault.is_some()) * REALTIME_FLAG_FAULT);
+        if let Some(fault) = self.fault {
+            encoded[9] = fault.fault as u8;
+            encoded[10] = fault.detail;
+            encoded[12..14].copy_from_slice(&fault.generation.to_le_bytes());
+        }
+        // Bytes 11, 14..16, and 56..64 are reserved zero.
+        encoded[16..24].copy_from_slice(&self.transaction_id.to_le_bytes());
+        encoded[24..32].copy_from_slice(&self.run_id.to_le_bytes());
+        encoded[32..40].copy_from_slice(&self.start_cycle.0.to_le_bytes());
+        if let Some(cycle) = self.next_release_cycle {
+            encoded[40..48].copy_from_slice(&cycle.0.to_le_bytes());
+        }
+        if let Some(tick) = self.last_release_tick {
+            encoded[48..56].copy_from_slice(&tick.to_le_bytes());
+        }
+        Ok(encoded)
+    }
+
+    /// Decode only the exact canonical core-1 report.
+    pub fn decode(encoded: &[u8]) -> Result<Self, GraphExecutionReportError> {
+        if encoded.len() != REALTIME_GRAPH_EXECUTION_REPORT_BYTES {
+            return Err(GraphExecutionReportError::Length);
+        }
+        if encoded[..4] != REALTIME_GRAPH_EXECUTION_MAGIC {
+            return Err(GraphExecutionReportError::Magic);
+        }
+        if read_u16(encoded, 4) != GRAPH_EXECUTION_REPORT_VERSION {
+            return Err(GraphExecutionReportError::Version);
+        }
+        let flags = encoded[8];
+        if flags & !REALTIME_KNOWN_FLAGS != 0
+            || encoded[11] != 0
+            || encoded[14..16].iter().any(|byte| *byte != 0)
+            || encoded[56..].iter().any(|byte| *byte != 0)
+        {
+            return Err(GraphExecutionReportError::Reserved);
+        }
+        let report = Self {
+            actor_phase: GraphActorPhase::from_wire(encoded[6])
+                .ok_or(GraphExecutionReportError::ActorPhase)?,
+            bridge_phase: GraphBridgePhase::from_wire(encoded[7])
+                .ok_or(GraphExecutionReportError::BridgePhase)?,
+            transaction_id: read_u64(encoded, 16),
+            run_id: read_u64(encoded, 24),
+            start_cycle: DeviceCycle(read_u64(encoded, 32)),
+            next_release_cycle: (flags & REALTIME_FLAG_NEXT != 0)
+                .then(|| DeviceCycle(read_u64(encoded, 40))),
+            last_release_tick: (flags & REALTIME_FLAG_LAST != 0).then(|| read_u64(encoded, 48)),
+            fault: decode_fault(encoded, flags & REALTIME_FLAG_FAULT != 0, 9, 10)?,
+        };
+        report.validate()?;
+        if report.encode()? != encoded {
+            return Err(GraphExecutionReportError::Noncanonical);
+        }
+        Ok(report)
+    }
+
+    fn validate(self) -> Result<(), GraphExecutionReportError> {
+        validate_run_shape(self.run_id, self.start_cycle)?;
+        if self.actor_phase == GraphActorPhase::Empty {
+            if self != Self::empty() {
+                return Err(GraphExecutionReportError::StateShape);
+            }
+            return Ok(());
+        }
+        if self.transaction_id == 0 {
+            return Err(GraphExecutionReportError::Identity);
+        }
+        if self.run_id == 0
+            && (self.actor_phase != GraphActorPhase::Installed
+                || self.bridge_phase != GraphBridgePhase::Empty
+                || self.next_release_cycle.is_some()
+                || self.last_release_tick.is_some()
+                || self.fault.is_some())
+        {
+            return Err(GraphExecutionReportError::StateShape);
+        }
+        if matches!(
+            self.actor_phase,
+            GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted
+        ) && self.run_id == 0
+        {
+            return Err(GraphExecutionReportError::StateShape);
+        }
+        if self.actor_phase == GraphActorPhase::Prepared
+            && !matches!(
+                self.bridge_phase,
+                GraphBridgePhase::Primed | GraphBridgePhase::Stopping
+            )
+            || self.actor_phase == GraphActorPhase::Running
+                && !matches!(
+                    self.bridge_phase,
+                    GraphBridgePhase::Running | GraphBridgePhase::Stopping
+                )
+            || self.actor_phase == GraphActorPhase::Faulted && self.fault.is_none()
+        {
+            return Err(GraphExecutionReportError::StateShape);
+        }
+        Ok(())
+    }
+}
+
+/// Canonical combined service/core-1 graph execution observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphExecutionReport {
+    /// Core-0 permanent actor phase.
+    pub service_phase: GraphActorPhase,
+    /// Latest accepted core-1 actor phase.
+    pub realtime_phase: GraphActorPhase,
+    /// Shared bridge phase observed by core 0.
+    pub bridge_phase: GraphBridgePhase,
+    /// Exact boot-local run, or zero when idle.
+    pub run_id: u64,
+    /// Exact release tick-zero cycle, or zero when idle.
+    pub start_cycle: DeviceCycle,
+    /// Exact next core-0 release.
+    pub service_next_cycle: Option<DeviceCycle>,
+    /// Exact next core-1 release.
+    pub realtime_next_cycle: Option<DeviceCycle>,
+    /// Last completely executed core-0 release tick.
+    pub service_last_tick: Option<u64>,
+    /// Last completely executed core-1 release tick.
+    pub realtime_last_tick: Option<u64>,
+    /// Shared first-cause execution fault.
+    pub fault: Option<GraphFaultObservation>,
+}
+
+impl GraphExecutionReport {
+    /// Canonical state before either actor owns a package.
+    pub const fn empty() -> Self {
+        Self {
+            service_phase: GraphActorPhase::Empty,
+            realtime_phase: GraphActorPhase::Empty,
+            bridge_phase: GraphBridgePhase::Empty,
+            run_id: 0,
+            start_cycle: DeviceCycle(0),
+            service_next_cycle: None,
+            realtime_next_cycle: None,
+            service_last_tick: None,
+            realtime_last_tick: None,
+            fault: None,
+        }
+    }
+
+    /// Encode one exact authenticated status suffix.
+    pub fn encode(self) -> Result<[u8; GRAPH_EXECUTION_REPORT_BYTES], GraphExecutionReportError> {
+        self.validate()?;
+        let mut encoded = [0_u8; GRAPH_EXECUTION_REPORT_BYTES];
+        encoded[..4].copy_from_slice(&GRAPH_EXECUTION_REPORT_MAGIC);
+        encoded[4..6].copy_from_slice(&GRAPH_EXECUTION_REPORT_VERSION.to_le_bytes());
+        encoded[6] = self.service_phase as u8;
+        encoded[7] = self.realtime_phase as u8;
+        encoded[8] = self.bridge_phase as u8;
+        encoded[9] = (u8::from(self.service_next_cycle.is_some()) * EXECUTION_FLAG_SERVICE_NEXT)
+            | (u8::from(self.realtime_next_cycle.is_some()) * EXECUTION_FLAG_REALTIME_NEXT)
+            | (u8::from(self.service_last_tick.is_some()) * EXECUTION_FLAG_SERVICE_LAST)
+            | (u8::from(self.realtime_last_tick.is_some()) * EXECUTION_FLAG_REALTIME_LAST)
+            | (u8::from(self.fault.is_some()) * EXECUTION_FLAG_FAULT);
+        if let Some(fault) = self.fault {
+            encoded[10] = fault.fault as u8;
+            encoded[11] = fault.detail;
+            encoded[12..14].copy_from_slice(&fault.generation.to_le_bytes());
+        }
+        // Bytes 14..16 are reserved zero.
+        encoded[16..24].copy_from_slice(&self.run_id.to_le_bytes());
+        encoded[24..32].copy_from_slice(&self.start_cycle.0.to_le_bytes());
+        if let Some(cycle) = self.service_next_cycle {
+            encoded[32..40].copy_from_slice(&cycle.0.to_le_bytes());
+        }
+        if let Some(cycle) = self.realtime_next_cycle {
+            encoded[40..48].copy_from_slice(&cycle.0.to_le_bytes());
+        }
+        if let Some(tick) = self.service_last_tick {
+            encoded[48..56].copy_from_slice(&tick.to_le_bytes());
+        }
+        if let Some(tick) = self.realtime_last_tick {
+            encoded[56..64].copy_from_slice(&tick.to_le_bytes());
+        }
+        Ok(encoded)
+    }
+
+    /// Decode only the exact canonical combined execution report.
+    pub fn decode(encoded: &[u8]) -> Result<Self, GraphExecutionReportError> {
+        if encoded.len() != GRAPH_EXECUTION_REPORT_BYTES {
+            return Err(GraphExecutionReportError::Length);
+        }
+        if encoded[..4] != GRAPH_EXECUTION_REPORT_MAGIC {
+            return Err(GraphExecutionReportError::Magic);
+        }
+        if read_u16(encoded, 4) != GRAPH_EXECUTION_REPORT_VERSION {
+            return Err(GraphExecutionReportError::Version);
+        }
+        let flags = encoded[9];
+        if flags & !EXECUTION_KNOWN_FLAGS != 0 || encoded[14..16].iter().any(|byte| *byte != 0) {
+            return Err(GraphExecutionReportError::Reserved);
+        }
+        let report = Self {
+            service_phase: GraphActorPhase::from_wire(encoded[6])
+                .ok_or(GraphExecutionReportError::ActorPhase)?,
+            realtime_phase: GraphActorPhase::from_wire(encoded[7])
+                .ok_or(GraphExecutionReportError::ActorPhase)?,
+            bridge_phase: GraphBridgePhase::from_wire(encoded[8])
+                .ok_or(GraphExecutionReportError::BridgePhase)?,
+            run_id: read_u64(encoded, 16),
+            start_cycle: DeviceCycle(read_u64(encoded, 24)),
+            service_next_cycle: (flags & EXECUTION_FLAG_SERVICE_NEXT != 0)
+                .then(|| DeviceCycle(read_u64(encoded, 32))),
+            realtime_next_cycle: (flags & EXECUTION_FLAG_REALTIME_NEXT != 0)
+                .then(|| DeviceCycle(read_u64(encoded, 40))),
+            service_last_tick: (flags & EXECUTION_FLAG_SERVICE_LAST != 0)
+                .then(|| read_u64(encoded, 48)),
+            realtime_last_tick: (flags & EXECUTION_FLAG_REALTIME_LAST != 0)
+                .then(|| read_u64(encoded, 56)),
+            fault: decode_fault(encoded, flags & EXECUTION_FLAG_FAULT != 0, 10, 11)?,
+        };
+        report.validate()?;
+        if report.encode()? != encoded {
+            return Err(GraphExecutionReportError::Noncanonical);
+        }
+        Ok(report)
+    }
+
+    fn validate(self) -> Result<(), GraphExecutionReportError> {
+        validate_run_shape(self.run_id, self.start_cycle)?;
+        if self.run_id == 0
+            && (self.service_next_cycle.is_some()
+                || self.realtime_next_cycle.is_some()
+                || self.service_last_tick.is_some()
+                || self.realtime_last_tick.is_some()
+                || self.fault.is_some()
+                || self.bridge_phase != GraphBridgePhase::Empty)
+        {
+            return Err(GraphExecutionReportError::StateShape);
+        }
+        if self.service_phase == GraphActorPhase::Empty
+            && self.realtime_phase != GraphActorPhase::Empty
+            || self.realtime_phase == GraphActorPhase::Empty
+                && self.service_phase != GraphActorPhase::Empty
+            || self.service_phase == GraphActorPhase::Faulted && self.fault.is_none()
+            || self.realtime_phase == GraphActorPhase::Faulted && self.fault.is_none()
+        {
+            return Err(GraphExecutionReportError::StateShape);
+        }
+        Ok(())
+    }
+}
+
+/// Canonical graph execution report rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphExecutionReportError {
+    /// Fixed report length differed.
+    Length,
+    /// Report magic differed.
+    Magic,
+    /// Report schema version differed.
+    Version,
+    /// A reserved or unknown flag byte was nonzero.
+    Reserved,
+    /// Actor phase byte was unknown.
+    ActorPhase,
+    /// Bridge phase byte was unknown.
+    BridgePhase,
+    /// Run or transaction identity was incomplete.
+    Identity,
+    /// Fault code or generation was incomplete.
+    Fault,
+    /// Phase, run, release, bridge, or fault facts contradicted one another.
+    StateShape,
+    /// Decode followed by encode changed the bytes.
+    Noncanonical,
+}
+
+fn validate_run_shape(
+    run_id: u64,
+    start_cycle: DeviceCycle,
+) -> Result<(), GraphExecutionReportError> {
+    if (run_id == 0) != (start_cycle.0 == 0) {
+        Err(GraphExecutionReportError::Identity)
+    } else {
+        Ok(())
+    }
+}
+
+fn decode_fault(
+    encoded: &[u8],
+    present: bool,
+    code_offset: usize,
+    detail_offset: usize,
+) -> Result<Option<GraphFaultObservation>, GraphExecutionReportError> {
+    if !present {
+        if encoded[code_offset..14].iter().any(|byte| *byte != 0) {
+            return Err(GraphExecutionReportError::Reserved);
+        }
+        return Ok(None);
+    }
+    let generation = read_u16(encoded, 12);
+    let fault = GraphExecutionFault::from_wire(encoded[code_offset])
+        .ok_or(GraphExecutionReportError::Fault)?;
+    if generation == 0 {
+        return Err(GraphExecutionReportError::Fault);
+    }
+    Ok(Some(GraphFaultObservation {
+        generation,
+        fault,
+        detail: encoded[detail_offset],
+    }))
+}
+
+fn read_u16(encoded: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([encoded[offset], encoded[offset + 1]])
+}
+
+fn read_u64(encoded: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        encoded[offset],
+        encoded[offset + 1],
+        encoded[offset + 2],
+        encoded[offset + 3],
+        encoded[offset + 4],
+        encoded[offset + 5],
+        encoded[offset + 6],
+        encoded[offset + 7],
+    ])
+}
+
 /// Permanent core-0 graph owner supporting repeated install/run/stop cycles.
 pub struct FixedGraphServiceActor<
     'a,
@@ -622,6 +1048,27 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
         } else {
             None
         }
+    }
+
+    /// Exact next release and package-declared latest dispatch boundary.
+    pub fn next_release_window(&self) -> Result<Option<GraphReleaseWindow>, GraphLiveError> {
+        if !matches!(
+            self.phase,
+            GraphActorPhase::Prepared | GraphActorPhase::Running
+        ) {
+            return Ok(None);
+        }
+        cursor_release_window(&self.cursor).map_err(GraphLiveError::Runtime)
+    }
+
+    /// Current shared bridge phase observed from core 0.
+    pub fn bridge_phase(&self) -> GraphBridgePhase {
+        self.bridge.phase()
+    }
+
+    /// Newest shared first-cause execution fault.
+    pub fn fault_after(&self, generation: u16) -> Option<GraphFaultObservation> {
+        self.bridge.fault_after(generation)
     }
 
     /// Stop new releases and acknowledge that core 0 owns no in-progress work.
@@ -888,6 +1335,27 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
         } else {
             None
         }
+    }
+
+    /// Exact next release and package-declared latest dispatch boundary.
+    pub fn next_release_window(&self) -> Result<Option<GraphReleaseWindow>, GraphLiveError> {
+        if !matches!(
+            self.phase,
+            GraphActorPhase::Prepared | GraphActorPhase::Running
+        ) {
+            return Ok(None);
+        }
+        cursor_release_window(&self.cursor).map_err(GraphLiveError::Runtime)
+    }
+
+    /// Current shared bridge phase observed from core 1.
+    pub fn bridge_phase(&self) -> GraphBridgePhase {
+        self.bridge.phase()
+    }
+
+    /// Newest shared first-cause execution fault.
+    pub fn fault_after(&self, generation: u16) -> Option<GraphFaultObservation> {
+        self.bridge.fault_after(generation)
     }
 
     /// Stop new releases and acknowledge that core 1 owns no in-progress work.
@@ -1424,5 +1892,96 @@ mod tests {
                 available: 41
             }))
         ));
+    }
+
+    #[test]
+    fn execution_reports_and_declared_dispatch_windows_are_canonical() {
+        let bridge = ReloadableGraphBridge::<42>::new();
+        let mut service = ServiceActor::new(&bridge);
+        let mut realtime = RealtimeActor::new(&bridge);
+        let identity = install(&mut service, &mut realtime, &package(), 41);
+        let run = run(identity, 7, 10_000);
+        start(&mut service, &mut realtime, run);
+
+        assert_eq!(
+            service.next_release_window().unwrap(),
+            Some(GraphReleaseWindow {
+                scheduled_cycle: DeviceCycle(11_000),
+                latest_dispatch_cycle: DeviceCycle(11_100),
+            })
+        );
+        assert_eq!(
+            realtime.next_release_window().unwrap(),
+            Some(GraphReleaseWindow {
+                scheduled_cycle: DeviceCycle(10_000),
+                latest_dispatch_cycle: DeviceCycle(10_100),
+            })
+        );
+
+        let realtime_report = RealtimeGraphExecutionReport {
+            actor_phase: realtime.phase(),
+            bridge_phase: realtime.bridge_phase(),
+            transaction_id: identity.transaction_id,
+            run_id: run.run_id,
+            start_cycle: run.start_cycle,
+            next_release_cycle: realtime.next_release_cycle(),
+            last_release_tick: None,
+            fault: realtime.fault_after(0),
+        };
+        assert_eq!(
+            RealtimeGraphExecutionReport::decode(&realtime_report.encode().unwrap()),
+            Ok(realtime_report)
+        );
+        let combined = GraphExecutionReport {
+            service_phase: service.phase(),
+            realtime_phase: realtime_report.actor_phase,
+            bridge_phase: service.bridge_phase(),
+            run_id: run.run_id,
+            start_cycle: run.start_cycle,
+            service_next_cycle: service.next_release_cycle(),
+            realtime_next_cycle: realtime_report.next_release_cycle,
+            service_last_tick: Some(0),
+            realtime_last_tick: None,
+            fault: service.fault_after(0),
+        };
+        assert_eq!(
+            GraphExecutionReport::decode(&combined.encode().unwrap()),
+            Ok(combined)
+        );
+
+        let mut noncanonical = combined.encode().unwrap();
+        noncanonical[14] = 1;
+        assert_eq!(
+            GraphExecutionReport::decode(&noncanonical),
+            Err(GraphExecutionReportError::Reserved)
+        );
+
+        assert!(service.release(DeviceCycle(11_000), false).is_err());
+        let shared_fault = service.fault_after(0).unwrap();
+        let realtime_observes_peer_fault = RealtimeGraphExecutionReport {
+            actor_phase: realtime.phase(),
+            bridge_phase: realtime.bridge_phase(),
+            transaction_id: identity.transaction_id,
+            run_id: run.run_id,
+            start_cycle: run.start_cycle,
+            next_release_cycle: realtime.next_release_cycle(),
+            last_release_tick: None,
+            fault: Some(shared_fault),
+        };
+        assert_eq!(
+            RealtimeGraphExecutionReport::decode(&realtime_observes_peer_fault.encode().unwrap()),
+            Ok(realtime_observes_peer_fault)
+        );
+
+        service.stop(run).unwrap();
+        let realtime_during_peer_stop = RealtimeGraphExecutionReport {
+            bridge_phase: GraphBridgePhase::Stopping,
+            ..realtime_observes_peer_fault
+        };
+        assert_eq!(
+            RealtimeGraphExecutionReport::decode(&realtime_during_peer_stop.encode().unwrap()),
+            Ok(realtime_during_peer_stop)
+        );
+        realtime.stop(run).unwrap();
     }
 }

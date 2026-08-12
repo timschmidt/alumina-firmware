@@ -1,15 +1,18 @@
 //! Core-0 ownership of authenticated published graph installation and lifecycle.
 
 use alumina_graph_ir::{
-    CoreGraphCommand, GRAPH_IR_PACKAGE_BYTES, GraphPublication, GraphSelection,
+    CoreGraphCommand, CoreGraphExecutionAction, CoreGraphExecutionCommand, GRAPH_IR_PACKAGE_BYTES,
+    GraphPublication, GraphRunRequest, GraphSelection,
 };
 use alumina_protocol::{
     DeviceCycle, DeviceId, Digest, FrameHeader, FrameKind, Operation, StatusCode,
 };
 use alumina_runtime::graph::{
     FixedGraphRealtimeActor, FixedGraphServiceActor, GRAPH_COORDINATOR_REPORT_BYTES,
-    GraphActorPhase, GraphCoordinatorFault, GraphCoordinatorPhase, GraphCoordinatorReport,
-    GraphRuntimeAuthority, GraphRuntimeLimits, RealtimeGraphReport, RealtimeGraphState,
+    GraphActorPhase, GraphBridgePhase, GraphCoordinatorFault, GraphCoordinatorPhase,
+    GraphCoordinatorReport, GraphDeploymentIdentity, GraphExecutionReport, GraphLiveError,
+    GraphReleaseReport, GraphRunIdentity, GraphRuntimeAuthority, GraphRuntimeLimits,
+    RealtimeGraphDeployment, RealtimeGraphExecutionReport, RealtimeGraphReport, RealtimeGraphState,
     ReloadableGraphBridge, ServiceGraphTransferError, ServiceGraphValidation,
     ServiceGraphValidationState, ServiceGraphValidationStatus,
 };
@@ -21,6 +24,7 @@ use alumina_storage::MutationContext;
 use alumina_storage::media::MediaError;
 use alumina_storage::provisioning::ProvisionedCacheError;
 
+use crate::clock::{MAXIMUM_START_HORIZON_CYCLES, MINIMUM_START_LEAD_CYCLES};
 use crate::hardware::selected;
 
 const _: () = assert!(
@@ -71,6 +75,238 @@ pub const GRAPH_RUNTIME_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits::fixed::
     GRAPH_BRIDGE_BYTES,
 >();
 
+/// Sole core-1 owner of selected bytes and the permanent Realtime executor.
+pub struct RealtimeGraphExecutor {
+    deployment: RealtimeGraphDeployment,
+    actor: RealtimeGraphActor,
+    current_run: Option<GraphRunRequest>,
+    last_started_run_id: u64,
+    last_release_tick: Option<u64>,
+}
+
+impl RealtimeGraphExecutor {
+    /// Bind package lifecycle and executor arenas to the physical target.
+    pub const fn new(device_id: DeviceId, bridge: &'static GraphBridge) -> Self {
+        Self {
+            deployment: RealtimeGraphDeployment::new(
+                device_id,
+                selected::PACKAGE.board.capability_digest,
+                GRAPH_RUNTIME_LIMITS,
+            ),
+            actor: RealtimeGraphActor::new(bridge),
+            current_run: None,
+            last_started_run_id: 0,
+            last_release_tick: None,
+        }
+    }
+
+    /// Stable target identity.
+    pub const fn device_id(&self) -> DeviceId {
+        self.deployment.device_id()
+    }
+
+    /// Independently validated inactive candidate.
+    pub const fn candidate_identity(&self) -> Option<GraphDeploymentIdentity> {
+        self.deployment.candidate_identity()
+    }
+
+    /// Independently selected active package.
+    pub const fn active_identity(&self) -> Option<GraphDeploymentIdentity> {
+        self.deployment.active_identity()
+    }
+
+    /// Latest package lifecycle report.
+    pub fn lifecycle_report(&self) -> RealtimeGraphReport {
+        self.deployment.report()
+    }
+
+    /// Apply one package transfer/selection command and keep actor selection atomic.
+    pub fn apply_lifecycle(
+        &mut self,
+        command: CoreGraphCommand,
+        authority: GraphRuntimeAuthority,
+        mutation_allowed: bool,
+    ) -> Result<RealtimeGraphReport, ()> {
+        match command.action {
+            alumina_graph_ir::CoreGraphAction::Authorize if mutation_allowed => {
+                let identity = self.deployment.active_identity().ok_or(())?;
+                if !command_matches_identity(command, identity) {
+                    return Err(());
+                }
+                if self.actor.installed_identity() != Some(identity) {
+                    match self.actor.phase() {
+                        GraphActorPhase::Empty => {}
+                        GraphActorPhase::Installed => self.actor.clear(true).map_err(|_| ())?,
+                        GraphActorPhase::Prepared
+                        | GraphActorPhase::Running
+                        | GraphActorPhase::Faulted => return Err(()),
+                    }
+                    let package = self.deployment.selected_package_bytes().ok_or(())?;
+                    let report = self
+                        .actor
+                        .install(
+                            package,
+                            command.transaction_id,
+                            command.content_digest,
+                            command.package_digest,
+                            authority,
+                            GRAPH_RUNTIME_LIMITS,
+                            true,
+                        )
+                        .map_err(|_| ())?;
+                    if report.package_digest != command.package_digest
+                        || report.usage != identity.usage
+                    {
+                        return Err(());
+                    }
+                    self.current_run = None;
+                    self.last_started_run_id = 0;
+                    self.last_release_tick = None;
+                }
+            }
+            alumina_graph_ir::CoreGraphAction::Clear if mutation_allowed => {
+                let identity = self.deployment.active_identity().ok_or(())?;
+                if !command_matches_identity(command, identity) {
+                    return Err(());
+                }
+                match self.actor.phase() {
+                    GraphActorPhase::Empty => {}
+                    GraphActorPhase::Installed => self.actor.clear(true).map_err(|_| ())?,
+                    GraphActorPhase::Prepared
+                    | GraphActorPhase::Running
+                    | GraphActorPhase::Faulted => return Err(()),
+                }
+                self.current_run = None;
+                self.last_started_run_id = 0;
+                self.last_release_tick = None;
+            }
+            alumina_graph_ir::CoreGraphAction::Begin
+            | alumina_graph_ir::CoreGraphAction::Data
+            | alumina_graph_ir::CoreGraphAction::Finish
+            | alumina_graph_ir::CoreGraphAction::Activate
+            | alumina_graph_ir::CoreGraphAction::Abort
+            | alumina_graph_ir::CoreGraphAction::Authorize
+            | alumina_graph_ir::CoreGraphAction::Clear => {}
+        }
+        Ok(self.deployment.apply(command, authority, mutation_allowed))
+    }
+
+    /// Apply one exact start/stop command after inter-core frame validation.
+    pub fn apply_execution(
+        &mut self,
+        command: CoreGraphExecutionCommand,
+        now: DeviceCycle,
+        execution_allowed: bool,
+    ) -> Result<RealtimeGraphExecutionReport, ()> {
+        let request = command.request;
+        let identity = self.deployment.active_identity().ok_or(())?;
+        if !request_matches_identity(request, identity)
+            || self.deployment.authorized_package_bytes().is_none()
+        {
+            return Err(());
+        }
+        let run = graph_run_identity(request);
+        match command.action {
+            CoreGraphExecutionAction::Start => {
+                if self.current_run == Some(request)
+                    && matches!(
+                        self.actor.phase(),
+                        GraphActorPhase::Prepared
+                            | GraphActorPhase::Running
+                            | GraphActorPhase::Faulted
+                    )
+                {
+                    return Ok(self.execution_report());
+                }
+                if !execution_allowed
+                    || request.run_id <= self.last_started_run_id
+                    || now.0 >= request.start_cycle.0
+                    || self.actor.phase() != GraphActorPhase::Installed
+                {
+                    return Err(());
+                }
+                self.actor.prepare_start(run, true).map_err(|_| ())?;
+                self.actor.activate(run).map_err(|_| ())?;
+                self.current_run = Some(request);
+                self.last_started_run_id = request.run_id;
+                self.last_release_tick = None;
+            }
+            CoreGraphExecutionAction::Stop => {
+                if self.current_run.is_some() && self.current_run != Some(request) {
+                    return Err(());
+                }
+                match (self.actor.phase(), self.actor.bridge_phase()) {
+                    (GraphActorPhase::Installed, GraphBridgePhase::Empty)
+                        if self.current_run == Some(request) => {}
+                    (GraphActorPhase::Installed, GraphBridgePhase::Stopping) => {
+                        self.actor.stop(run).map_err(|_| ())?;
+                    }
+                    (GraphActorPhase::Prepared, _)
+                    | (GraphActorPhase::Running, _)
+                    | (GraphActorPhase::Faulted, _) => {
+                        self.actor.stop(run).map_err(|_| ())?;
+                    }
+                    _ => return Err(()),
+                }
+                self.current_run = Some(request);
+            }
+        }
+        Ok(self.execution_report())
+    }
+
+    /// Exact next core-1 release cycle, when running.
+    pub fn next_release_cycle(&self) -> Option<DeviceCycle> {
+        self.actor.next_release_cycle()
+    }
+
+    /// Execute at most one due release with declared dispatch-lateness enforcement.
+    pub fn release_due(
+        &mut self,
+        now: DeviceCycle,
+        execution_allowed: bool,
+    ) -> Result<Option<GraphReleaseReport>, GraphLiveError> {
+        if self.actor.phase() != GraphActorPhase::Running
+            || self.actor.bridge_phase() != GraphBridgePhase::Running
+        {
+            return Ok(None);
+        }
+        let Some(window) = self.actor.next_release_window()? else {
+            return Ok(None);
+        };
+        if execution_allowed && now < window.scheduled_cycle {
+            return Ok(None);
+        }
+        let release_cycle = if execution_allowed && now <= window.latest_dispatch_cycle {
+            window.scheduled_cycle
+        } else if execution_allowed {
+            now
+        } else {
+            window.scheduled_cycle
+        };
+        let report = self.actor.release(release_cycle, execution_allowed)?;
+        self.last_release_tick = Some(report.release_tick);
+        Ok(Some(report))
+    }
+
+    /// Canonical execution telemetry, including a completed run awaiting service ack.
+    pub fn execution_report(&self) -> RealtimeGraphExecutionReport {
+        let Some(identity) = self.deployment.active_identity() else {
+            return RealtimeGraphExecutionReport::empty();
+        };
+        let run = self.current_run;
+        RealtimeGraphExecutionReport {
+            actor_phase: self.actor.phase(),
+            bridge_phase: self.actor.bridge_phase(),
+            transaction_id: identity.transaction_id,
+            run_id: run.map_or(0, |request| request.run_id),
+            start_cycle: run.map_or(DeviceCycle(0), |request| request.start_cycle),
+            next_release_cycle: self.actor.next_release_cycle(),
+            last_release_tick: self.last_release_tick,
+            fault: self.actor.fault_after(0),
+        }
+    }
+}
+
 /// Sole service-core owner of the published-reader and graph lifecycle state.
 pub struct GraphService {
     device_id: DeviceId,
@@ -82,11 +318,16 @@ pub struct GraphService {
     validation_status: Option<ServiceGraphValidationStatus>,
     active: Option<GraphPublication>,
     realtime: RealtimeGraphReport,
+    realtime_execution: RealtimeGraphExecutionReport,
     pending_command: Option<CoreGraphCommand>,
     command_sequence: u32,
     control_sent: bool,
     transfer_sent: bool,
     actor: ServiceGraphActor,
+    current_run: Option<GraphRunRequest>,
+    last_started_run_id: u64,
+    service_last_release_tick: Option<u64>,
+    execution_command_sent: bool,
 }
 
 impl GraphService {
@@ -103,11 +344,16 @@ impl GraphService {
             validation_status: None,
             active: None,
             realtime: RealtimeGraphReport::empty(),
+            realtime_execution: RealtimeGraphExecutionReport::empty(),
             pending_command: None,
             command_sequence: 0,
             control_sent: false,
             transfer_sent: false,
             actor: ServiceGraphActor::new(bridge),
+            current_run: None,
+            last_started_run_id: 0,
+            service_last_release_tick: None,
+            execution_command_sent: false,
         }
     }
 
@@ -149,6 +395,15 @@ impl GraphService {
                 | GraphCoordinatorPhase::Active
                 | GraphCoordinatorPhase::Rejected
         )
+    }
+
+    /// Exact next Service-domain release used to wake the core-0 executor.
+    pub fn next_release_cycle(&self) -> Option<DeviceCycle> {
+        if self.phase == GraphCoordinatorPhase::Running {
+            self.actor.next_release_cycle()
+        } else {
+            None
+        }
     }
 
     /// Install a canonical core-1 report only when every exposed identity is known.
@@ -207,6 +462,65 @@ impl GraphService {
         Ok(())
     }
 
+    /// Install one canonical core-1 executor observation and advance only an
+    /// exact matching start/stop handshake.
+    pub fn observe_realtime_execution(
+        &mut self,
+        config_digest: Digest,
+        report: RealtimeGraphExecutionReport,
+    ) -> Result<(), ()> {
+        if config_digest != self.active_config {
+            return Err(());
+        }
+        let Some(active) = self.active else {
+            if report != RealtimeGraphExecutionReport::empty() {
+                return Err(());
+            }
+            self.realtime_execution = report;
+            return Ok(());
+        };
+        if report.transaction_id != active.transaction_id {
+            return Err(());
+        }
+        if report.run_id != 0 {
+            let request = self.current_run.ok_or(())?;
+            if report.run_id != request.run_id || report.start_cycle != request.start_cycle {
+                return Err(());
+            }
+        }
+        self.realtime_execution = report;
+        if report.fault.is_some() {
+            if self.current_run.is_none() {
+                return Err(());
+            }
+            self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+            self.fault = GraphCoordinatorFault::Execution;
+            return Ok(());
+        }
+        match self.phase {
+            GraphCoordinatorPhase::Starting
+                if report.actor_phase == GraphActorPhase::Running
+                    && report.bridge_phase == GraphBridgePhase::Running
+                    && report.run_id != 0 =>
+            {
+                let run = graph_run_identity(self.current_run.ok_or(())?);
+                self.actor.observe_realtime_started(run).map_err(|_| ())?;
+                self.phase = GraphCoordinatorPhase::Running;
+            }
+            GraphCoordinatorPhase::Stopping
+                if report.actor_phase == GraphActorPhase::Installed
+                    && report.bridge_phase == GraphBridgePhase::Empty
+                    && report.run_id != 0 =>
+            {
+                self.execution_command_sent = false;
+                self.phase = GraphCoordinatorPhase::Active;
+                self.fault = GraphCoordinatorFault::None;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Dispatch one already authenticated graph lifecycle request.
     pub async fn dispatch(
         &mut self,
@@ -230,6 +544,8 @@ impl GraphService {
                     Operation::GraphInstall => self.begin_install(cache, native, mutation).await,
                     Operation::GraphActivate => self.request_activate(native, mutation),
                     Operation::GraphClear => self.request_clear(native, mutation),
+                    Operation::GraphStart => self.request_start(native, now, mutation),
+                    Operation::GraphStop => self.request_stop(native, mutation),
                     _ => StatusCode::Unsupported,
                 }
             };
@@ -248,7 +564,7 @@ impl GraphService {
             self.reject(GraphCoordinatorFault::Realtime);
             return;
         }
-        if mutation.validate().is_err() && self.lifecycle_busy() {
+        if mutation.validate().is_err() && self.package_lifecycle_busy() {
             return;
         }
         match self.phase {
@@ -257,10 +573,25 @@ impl GraphService {
             GraphCoordinatorPhase::Authorizing => self.authorization_step(endpoint, now),
             GraphCoordinatorPhase::Clearing => self.clear_step(endpoint, now),
             GraphCoordinatorPhase::Aborting => self.abort_step(endpoint, now),
+            GraphCoordinatorPhase::Starting => {
+                if mutation.validate().is_err() {
+                    self.cancel_unauthorized_start();
+                    self.execution_command_step(endpoint, now, CoreGraphExecutionAction::Stop);
+                } else {
+                    self.execution_command_step(endpoint, now, CoreGraphExecutionAction::Start);
+                }
+            }
+            GraphCoordinatorPhase::Running => {
+                self.execution_release_step(now, mutation.validate().is_ok());
+            }
+            GraphCoordinatorPhase::Stopping => {
+                self.execution_command_step(endpoint, now, CoreGraphExecutionAction::Stop)
+            }
             GraphCoordinatorPhase::Empty
             | GraphCoordinatorPhase::CandidateValid
             | GraphCoordinatorPhase::Active
-            | GraphCoordinatorPhase::Rejected => {}
+            | GraphCoordinatorPhase::Rejected
+            | GraphCoordinatorPhase::ExecutionFaulted => {}
         }
     }
 
@@ -391,6 +722,115 @@ impl GraphService {
             return StatusCode::Ok;
         }
         StatusCode::Conflict
+    }
+
+    fn request_start(
+        &mut self,
+        native: NativeRequest<'_>,
+        now: DeviceCycle,
+        mutation: MutationContext,
+    ) -> StatusCode {
+        let request = match GraphRunRequest::decode(native.body) {
+            Ok(request) => request,
+            Err(_) => return StatusCode::InvalidRequest,
+        };
+        if mutation.validate().is_err() {
+            return StatusCode::ForbiddenState;
+        }
+        let Some(active) = self.active else {
+            return StatusCode::Conflict;
+        };
+        if !request_matches_publication(request, active) {
+            return StatusCode::Conflict;
+        }
+        if self.current_run == Some(request)
+            && matches!(
+                self.phase,
+                GraphCoordinatorPhase::Starting
+                    | GraphCoordinatorPhase::Running
+                    | GraphCoordinatorPhase::ExecutionFaulted
+            )
+        {
+            return StatusCode::Ok;
+        }
+        if self.phase != GraphCoordinatorPhase::Active {
+            return StatusCode::Busy;
+        }
+        let Some(lead) = request.start_cycle.0.checked_sub(now.0) else {
+            return StatusCode::Deadline;
+        };
+        if lead < MINIMUM_START_LEAD_CYCLES
+            || lead > MAXIMUM_START_HORIZON_CYCLES
+            || request.run_id <= self.last_started_run_id
+            || self.actor.phase() != GraphActorPhase::Installed
+        {
+            return if request.run_id <= self.last_started_run_id {
+                StatusCode::Conflict
+            } else {
+                StatusCode::Deadline
+            };
+        }
+        self.current_run = Some(request);
+        self.last_started_run_id = request.run_id;
+        self.service_last_release_tick = None;
+        self.execution_command_sent = false;
+        match self.actor.prepare_start(graph_run_identity(request), true) {
+            Ok(report) => {
+                self.service_last_release_tick = report
+                    .primed_service_release
+                    .map(|release| release.release_tick);
+                self.phase = GraphCoordinatorPhase::Starting;
+                self.fault = GraphCoordinatorFault::None;
+                StatusCode::Ok
+            }
+            Err(_) => {
+                self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+                self.fault = GraphCoordinatorFault::Execution;
+                StatusCode::Internal
+            }
+        }
+    }
+
+    fn request_stop(
+        &mut self,
+        native: NativeRequest<'_>,
+        _mutation: MutationContext,
+    ) -> StatusCode {
+        let request = match GraphRunRequest::decode(native.body) {
+            Ok(request) => request,
+            Err(_) => return StatusCode::InvalidRequest,
+        };
+        let Some(active) = self.active else {
+            return StatusCode::Conflict;
+        };
+        if !request_matches_publication(request, active) || self.current_run != Some(request) {
+            return StatusCode::Conflict;
+        }
+        if self.phase == GraphCoordinatorPhase::Stopping {
+            return StatusCode::Ok;
+        }
+        if self.phase == GraphCoordinatorPhase::Active
+            && self.actor.phase() == GraphActorPhase::Installed
+            && self.actor.bridge_phase() == GraphBridgePhase::Empty
+        {
+            return StatusCode::Ok;
+        }
+        if !matches!(
+            self.phase,
+            GraphCoordinatorPhase::Starting
+                | GraphCoordinatorPhase::Running
+                | GraphCoordinatorPhase::ExecutionFaulted
+        ) {
+            return StatusCode::Conflict;
+        }
+        if self.actor.stop(graph_run_identity(request)).is_err() {
+            self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+            self.fault = GraphCoordinatorFault::Execution;
+            return StatusCode::Internal;
+        }
+        self.phase = GraphCoordinatorPhase::Stopping;
+        self.execution_command_sent = false;
+        StatusCode::Ok
     }
 
     async fn validation_step(
@@ -571,6 +1011,90 @@ impl GraphService {
         }
     }
 
+    fn execution_command_step(
+        &mut self,
+        endpoint: &mut DefaultServiceEndpoint,
+        now: DeviceCycle,
+        action: CoreGraphExecutionAction,
+    ) {
+        if self.execution_command_sent {
+            return;
+        }
+        let Some(request) = self.current_run else {
+            self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+            self.fault = GraphCoordinatorFault::Internal;
+            return;
+        };
+        let command = match action {
+            CoreGraphExecutionAction::Start => CoreGraphExecutionCommand::start(request),
+            CoreGraphExecutionAction::Stop => CoreGraphExecutionCommand::stop(request),
+        };
+        let Ok(command) = command else {
+            self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+            self.fault = GraphCoordinatorFault::Internal;
+            return;
+        };
+        match self.try_send_execution(endpoint, command, now) {
+            Ok(true) => self.execution_command_sent = true,
+            Ok(false) => {}
+            Err(()) => {
+                self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+                self.fault = GraphCoordinatorFault::Protocol;
+            }
+        }
+    }
+
+    fn execution_release_step(&mut self, now: DeviceCycle, execution_allowed: bool) {
+        if self.actor.phase() != GraphActorPhase::Running
+            || self.actor.bridge_phase() != GraphBridgePhase::Running
+        {
+            return;
+        }
+        let window = match self.actor.next_release_window() {
+            Ok(window) => window,
+            Err(_) => {
+                self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+                self.fault = GraphCoordinatorFault::Execution;
+                return;
+            }
+        };
+        let Some(window) = window else {
+            return;
+        };
+        if execution_allowed && now < window.scheduled_cycle {
+            return;
+        }
+        let release_cycle = if execution_allowed && now <= window.latest_dispatch_cycle {
+            window.scheduled_cycle
+        } else if execution_allowed {
+            now
+        } else {
+            window.scheduled_cycle
+        };
+        match self.actor.release(release_cycle, execution_allowed) {
+            Ok(report) => self.service_last_release_tick = Some(report.release_tick),
+            Err(_) => {
+                self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+                self.fault = GraphCoordinatorFault::Execution;
+            }
+        }
+    }
+
+    fn cancel_unauthorized_start(&mut self) {
+        let Some(request) = self.current_run else {
+            self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+            self.fault = GraphCoordinatorFault::Internal;
+            return;
+        };
+        if self.actor.stop(graph_run_identity(request)).is_err() {
+            self.phase = GraphCoordinatorPhase::ExecutionFaulted;
+            self.fault = GraphCoordinatorFault::Execution;
+            return;
+        }
+        self.phase = GraphCoordinatorPhase::Stopping;
+        self.execution_command_sent = false;
+    }
+
     fn try_send(
         &mut self,
         endpoint: &mut DefaultServiceEndpoint,
@@ -585,6 +1109,29 @@ impl GraphService {
             now,
             self.active_config,
             encoded.as_bytes(),
+        )
+        .map_err(|_| ())?;
+        if endpoint.try_send_command(frame).is_err() {
+            return Ok(false);
+        }
+        self.command_sequence = sequence;
+        Ok(true)
+    }
+
+    fn try_send_execution(
+        &mut self,
+        endpoint: &mut DefaultServiceEndpoint,
+        command: CoreGraphExecutionCommand,
+        now: DeviceCycle,
+    ) -> Result<bool, ()> {
+        let encoded = command.encode().map_err(|_| ())?;
+        let sequence = next_nonzero(self.command_sequence);
+        let frame = IntercoreFrame::new(
+            FrameKind::Graph,
+            sequence,
+            now,
+            self.active_config,
+            &encoded,
         )
         .map_err(|_| ())?;
         if endpoint.try_send_command(frame).is_err() {
@@ -619,7 +1166,16 @@ impl GraphService {
             package_digest: publication.map_or(Digest::ZERO, |value| value.package_digest),
             validated_bytes: status.map_or_else(
                 || {
-                    if publication.is_some() && self.phase == GraphCoordinatorPhase::Active {
+                    if publication.is_some()
+                        && matches!(
+                            self.phase,
+                            GraphCoordinatorPhase::Active
+                                | GraphCoordinatorPhase::Starting
+                                | GraphCoordinatorPhase::Running
+                                | GraphCoordinatorPhase::Stopping
+                                | GraphCoordinatorPhase::ExecutionFaulted
+                        )
+                    {
                         GRAPH_IR_PACKAGE_BYTES as u32
                     } else {
                         0
@@ -632,10 +1188,69 @@ impl GraphService {
                 .active
                 .map_or(Digest::ZERO, GraphPublication::content_digest),
             realtime: self.realtime,
+            execution: self.execution_report(),
+        }
+    }
+
+    fn execution_report(&self) -> GraphExecutionReport {
+        let Some(active) = self.active else {
+            return GraphExecutionReport::empty();
+        };
+        let run = self.current_run;
+        let realtime_matches_run = run.is_some_and(|request| {
+            self.realtime_execution.transaction_id == active.transaction_id
+                && self.realtime_execution.run_id == request.run_id
+                && self.realtime_execution.start_cycle == request.start_cycle
+        });
+        let realtime_phase = if realtime_matches_run {
+            self.realtime_execution.actor_phase
+        } else {
+            GraphActorPhase::Installed
+        };
+        let fault = self.actor.fault_after(0).or(if realtime_matches_run {
+            self.realtime_execution.fault
+        } else {
+            None
+        });
+        GraphExecutionReport {
+            service_phase: self.actor.phase(),
+            realtime_phase,
+            bridge_phase: self.actor.bridge_phase(),
+            run_id: run.map_or(0, |request| request.run_id),
+            start_cycle: run.map_or(DeviceCycle(0), |request| request.start_cycle),
+            service_next_cycle: self.actor.next_release_cycle(),
+            realtime_next_cycle: if realtime_matches_run {
+                self.realtime_execution.next_release_cycle
+            } else {
+                None
+            },
+            service_last_tick: self.service_last_release_tick,
+            realtime_last_tick: if realtime_matches_run {
+                self.realtime_execution.last_release_tick
+            } else {
+                None
+            },
+            fault,
         }
     }
 
     fn lifecycle_busy(&self) -> bool {
+        matches!(
+            self.phase,
+            GraphCoordinatorPhase::Validating
+                | GraphCoordinatorPhase::CandidateValid
+                | GraphCoordinatorPhase::Activating
+                | GraphCoordinatorPhase::Authorizing
+                | GraphCoordinatorPhase::Clearing
+                | GraphCoordinatorPhase::Aborting
+                | GraphCoordinatorPhase::Starting
+                | GraphCoordinatorPhase::Running
+                | GraphCoordinatorPhase::Stopping
+                | GraphCoordinatorPhase::ExecutionFaulted
+        )
+    }
+
+    fn package_lifecycle_busy(&self) -> bool {
         matches!(
             self.phase,
             GraphCoordinatorPhase::Validating
@@ -742,13 +1357,25 @@ impl GraphService {
         if report.package_digest != publication.package_digest || report.usage != identity.usage {
             return Err(());
         }
+        self.current_run = None;
+        self.last_started_run_id = 0;
+        self.service_last_release_tick = None;
+        self.execution_command_sent = false;
         Ok(())
     }
 
     fn clear_active_actor(&mut self) -> Result<(), ()> {
         match self.actor.phase() {
             GraphActorPhase::Empty => Ok(()),
-            GraphActorPhase::Installed => self.actor.clear(true).map_err(|_| ()),
+            GraphActorPhase::Installed => {
+                self.actor.clear(true).map_err(|_| ())?;
+                self.current_run = None;
+                self.last_started_run_id = 0;
+                self.service_last_release_tick = None;
+                self.execution_command_sent = false;
+                self.realtime_execution = RealtimeGraphExecutionReport::empty();
+                Ok(())
+            }
             GraphActorPhase::Prepared | GraphActorPhase::Running | GraphActorPhase::Faulted => {
                 Err(())
             }
@@ -777,6 +1404,37 @@ impl GraphService {
             GraphCoordinatorPhase::Empty
         };
     }
+}
+
+fn graph_run_identity(request: GraphRunRequest) -> GraphRunIdentity {
+    GraphRunIdentity {
+        transaction_id: request.transaction_id,
+        run_id: request.run_id,
+        content_digest: request.content_digest,
+        package_digest: request.package_digest,
+        start_cycle: request.start_cycle,
+    }
+}
+
+fn request_matches_identity(request: GraphRunRequest, identity: GraphDeploymentIdentity) -> bool {
+    request.transaction_id == identity.transaction_id
+        && request.content_digest == identity.content_digest
+        && request.package_digest == identity.package_digest
+        && request.implementation_digest == identity.implementation_digest
+}
+
+fn request_matches_publication(request: GraphRunRequest, publication: GraphPublication) -> bool {
+    request.transaction_id == publication.transaction_id
+        && request.content_digest == publication.content_digest()
+        && request.package_digest == publication.package_digest
+        && request.implementation_digest == publication.implementation_digest
+}
+
+fn command_matches_identity(command: CoreGraphCommand, identity: GraphDeploymentIdentity) -> bool {
+    command.transaction_id == identity.transaction_id
+        && command.content_digest == identity.content_digest
+        && command.package_digest == identity.package_digest
+        && command.implementation_digest == identity.implementation_digest
 }
 
 fn report_matches(publication: GraphPublication, report: RealtimeGraphReport) -> bool {

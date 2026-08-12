@@ -9,18 +9,19 @@ use alumina_storage::media::{AsyncBlockDevice, MAX_MEDIA_CHUNK_BYTES, PublishedR
 use alumina_storage::provisioning::{ProvisionedCache, ProvisionedCacheError};
 
 use super::{
-    GraphRuntimeAuthority, GraphRuntimeError, GraphRuntimeIdentity, GraphRuntimeLimits,
-    GraphRuntimeUsage, admit_package,
+    GraphExecutionReport, GraphRuntimeAuthority, GraphRuntimeError, GraphRuntimeIdentity,
+    GraphRuntimeLimits, GraphRuntimeUsage, admit_package,
 };
 
 /// Exact core-1 graph lifecycle report bytes.
 pub const REALTIME_GRAPH_REPORT_BYTES: usize = 128;
 /// Exact authenticated GraphGet and lifecycle response body.
-pub const GRAPH_COORDINATOR_REPORT_BYTES: usize = 256;
+pub const GRAPH_COORDINATOR_REPORT_BYTES: usize = 312;
 
 const REALTIME_GRAPH_REPORT_MAGIC: [u8; 4] = *b"ALGR";
 const GRAPH_COORDINATOR_REPORT_MAGIC: [u8; 4] = *b"ALGS";
 const REALTIME_GRAPH_REPORT_VERSION: u16 = 1;
+const GRAPH_COORDINATOR_REPORT_VERSION: u16 = 2;
 const REPORT_FLAG_SUMMARY: u8 = 1 << 0;
 const REPORT_FLAG_ACTIVE_AUTHORIZED: u8 = 1 << 1;
 const REPORT_KNOWN_FLAGS: u8 = REPORT_FLAG_SUMMARY | REPORT_FLAG_ACTIVE_AUTHORIZED;
@@ -47,6 +48,14 @@ pub enum GraphCoordinatorPhase {
     Aborting = 7,
     /// The latest service or realtime lifecycle operation failed closed.
     Rejected = 8,
+    /// Core 0 primed tick zero and is awaiting core-1 run admission.
+    Starting = 9,
+    /// Both permanent actors admitted the exact run and may release.
+    Running = 10,
+    /// Both actors are reconciling stop acknowledgements for the exact run.
+    Stopping = 11,
+    /// A shared first-cause execution fault is retained until exact stop.
+    ExecutionFaulted = 12,
 }
 
 impl GraphCoordinatorPhase {
@@ -61,6 +70,10 @@ impl GraphCoordinatorPhase {
             6 => Some(Self::Clearing),
             7 => Some(Self::Aborting),
             8 => Some(Self::Rejected),
+            9 => Some(Self::Starting),
+            10 => Some(Self::Running),
+            11 => Some(Self::Stopping),
+            12 => Some(Self::ExecutionFaulted),
             _ => None,
         }
     }
@@ -86,6 +99,8 @@ pub enum GraphCoordinatorFault {
     ForbiddenState = 6,
     /// Fixed coordinator state contradicted itself.
     Internal = 7,
+    /// A permanent graph actor latched a first-cause execution failure.
+    Execution = 8,
 }
 
 impl GraphCoordinatorFault {
@@ -99,6 +114,7 @@ impl GraphCoordinatorFault {
             5 => Some(Self::Realtime),
             6 => Some(Self::ForbiddenState),
             7 => Some(Self::Internal),
+            8 => Some(Self::Execution),
             _ => None,
         }
     }
@@ -125,6 +141,8 @@ pub struct GraphCoordinatorReport {
     pub active_content_digest: Digest,
     /// Latest independently decoded core-1 report.
     pub realtime: RealtimeGraphReport,
+    /// Combined permanent-actor execution observation.
+    pub execution: GraphExecutionReport,
 }
 
 impl GraphCoordinatorReport {
@@ -140,6 +158,7 @@ impl GraphCoordinatorReport {
             storage_chunks_read: 0,
             active_content_digest: Digest::ZERO,
             realtime: RealtimeGraphReport::empty(),
+            execution: GraphExecutionReport::empty(),
         }
     }
 
@@ -150,7 +169,7 @@ impl GraphCoordinatorReport {
         self.validate()?;
         let mut encoded = [0_u8; GRAPH_COORDINATOR_REPORT_BYTES];
         encoded[..4].copy_from_slice(&GRAPH_COORDINATOR_REPORT_MAGIC);
-        encoded[4..6].copy_from_slice(&REALTIME_GRAPH_REPORT_VERSION.to_le_bytes());
+        encoded[4..6].copy_from_slice(&GRAPH_COORDINATOR_REPORT_VERSION.to_le_bytes());
         encoded[6] = self.phase as u8;
         encoded[7] = self.fault as u8;
         encoded[8..16].copy_from_slice(&self.transaction_id.to_le_bytes());
@@ -165,7 +184,12 @@ impl GraphCoordinatorReport {
                 .encode()
                 .map_err(GraphCoordinatorReportError::Realtime)?,
         );
-        // Bytes 248..256 are reserved zero.
+        encoded[248..312].copy_from_slice(
+            &self
+                .execution
+                .encode()
+                .map_err(GraphCoordinatorReportError::Execution)?,
+        );
         Ok(encoded)
     }
 
@@ -177,11 +201,8 @@ impl GraphCoordinatorReport {
         if encoded[..4] != GRAPH_COORDINATOR_REPORT_MAGIC {
             return Err(GraphCoordinatorReportError::Magic);
         }
-        if read_u16(encoded, 4) != REALTIME_GRAPH_REPORT_VERSION {
+        if read_u16(encoded, 4) != GRAPH_COORDINATOR_REPORT_VERSION {
             return Err(GraphCoordinatorReportError::Version);
-        }
-        if encoded[248..].iter().any(|byte| *byte != 0) {
-            return Err(GraphCoordinatorReportError::Reserved);
         }
         let report = Self {
             phase: GraphCoordinatorPhase::from_wire(encoded[6])
@@ -196,6 +217,8 @@ impl GraphCoordinatorReport {
             active_content_digest: Digest(array::<32>(encoded, 88)),
             realtime: RealtimeGraphReport::decode(&encoded[120..248])
                 .map_err(GraphCoordinatorReportError::Realtime)?,
+            execution: GraphExecutionReport::decode(&encoded[248..312])
+                .map_err(GraphCoordinatorReportError::Execution)?,
         };
         report.validate()?;
         if report.encode()? != encoded {
@@ -223,7 +246,8 @@ impl GraphCoordinatorReport {
             GraphCoordinatorPhase::Empty
                 if operation_empty
                     && self.active_content_digest.is_zero()
-                    && self.fault == GraphCoordinatorFault::None =>
+                    && self.fault == GraphCoordinatorFault::None
+                    && self.execution == GraphExecutionReport::empty() =>
             {
                 Ok(())
             }
@@ -238,6 +262,34 @@ impl GraphCoordinatorReport {
             {
                 Ok(())
             }
+            GraphCoordinatorPhase::Starting
+            | GraphCoordinatorPhase::Running
+            | GraphCoordinatorPhase::Stopping
+                if operation_valid
+                    && self.validated_bytes == GRAPH_IR_PACKAGE_BYTES as u32
+                    && self.active_content_digest == self.content_digest
+                    && self.fault == GraphCoordinatorFault::None
+                    && self.realtime.state == RealtimeGraphState::Active
+                    && self.realtime.active_authorized
+                    && self.realtime.active_content_digest == self.active_content_digest
+                    && self.execution.run_id != 0 =>
+            {
+                Ok(())
+            }
+            GraphCoordinatorPhase::ExecutionFaulted
+                if operation_valid
+                    && self.validated_bytes == GRAPH_IR_PACKAGE_BYTES as u32
+                    && self.active_content_digest == self.content_digest
+                    && self.fault != GraphCoordinatorFault::None
+                    && self.realtime.state == RealtimeGraphState::Active
+                    && self.realtime.active_authorized
+                    && self.realtime.active_content_digest == self.active_content_digest
+                    && self.execution.run_id != 0
+                    && (self.fault != GraphCoordinatorFault::Execution
+                        || self.execution.fault.is_some()) =>
+            {
+                Ok(())
+            }
             GraphCoordinatorPhase::Rejected
                 if operation_valid && self.fault != GraphCoordinatorFault::None =>
             {
@@ -246,6 +298,10 @@ impl GraphCoordinatorReport {
             _ if self.phase != GraphCoordinatorPhase::Empty
                 && self.phase != GraphCoordinatorPhase::Active
                 && self.phase != GraphCoordinatorPhase::Rejected
+                && self.phase != GraphCoordinatorPhase::Starting
+                && self.phase != GraphCoordinatorPhase::Running
+                && self.phase != GraphCoordinatorPhase::Stopping
+                && self.phase != GraphCoordinatorPhase::ExecutionFaulted
                 && operation_valid
                 && self.fault == GraphCoordinatorFault::None =>
             {
@@ -281,6 +337,8 @@ pub enum GraphCoordinatorReportError {
     StateShape,
     /// Nested core-1 report was invalid.
     Realtime(RealtimeGraphReportError),
+    /// Nested split-core execution report was invalid.
+    Execution(super::GraphExecutionReportError),
 }
 
 /// Core-1 graph candidate/active lifecycle state.
@@ -1357,7 +1415,8 @@ mod tests {
 
     use super::*;
     use crate::graph::{
-        FixedGraphRealtimeActor, FixedGraphServiceActor, GraphRunIdentity, ReloadableGraphBridge,
+        FixedGraphRealtimeActor, FixedGraphServiceActor, GraphActorPhase, GraphBridgePhase,
+        GraphRunIdentity, ReloadableGraphBridge,
     };
 
     const TEST_DEVICE_BLOCKS: usize = 2_300;
@@ -1721,10 +1780,33 @@ mod tests {
             storage_chunks_read: 4,
             active_content_digest: publication.content_digest(),
             realtime: authorized,
+            execution: GraphExecutionReport::empty(),
         };
         assert_eq!(
             GraphCoordinatorReport::decode(&coordinator.encode().unwrap()),
             Ok(coordinator)
+        );
+
+        let handshake_fault = GraphCoordinatorReport {
+            phase: GraphCoordinatorPhase::ExecutionFaulted,
+            fault: GraphCoordinatorFault::Protocol,
+            execution: GraphExecutionReport {
+                service_phase: GraphActorPhase::Prepared,
+                realtime_phase: GraphActorPhase::Installed,
+                bridge_phase: GraphBridgePhase::Primed,
+                run_id: 9,
+                start_cycle: DeviceCycle(1_000),
+                service_next_cycle: Some(DeviceCycle(2_000)),
+                realtime_next_cycle: None,
+                service_last_tick: Some(0),
+                realtime_last_tick: None,
+                fault: None,
+            },
+            ..coordinator
+        };
+        assert_eq!(
+            GraphCoordinatorReport::decode(&handshake_fault.encode().unwrap()),
+            Ok(handshake_fault)
         );
     }
 
