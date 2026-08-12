@@ -73,6 +73,7 @@ alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-config.workspace = true
 alumina-foc.workspace = true
+alumina-graph-ir.workspace = true
 alumina-job.workspace = true
 alumina-motion.workspace = true
 alumina-net.workspace = true

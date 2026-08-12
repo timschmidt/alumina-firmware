@@ -19,6 +19,7 @@ use alumina_net::{
     NetworkSupervisor, PROVISIONING_ADDRESS, PROVISIONING_PREFIX, Route, WebLimits, classify_route,
     sign_response, write_lower_hex,
 };
+use alumina_protocol::DeviceId;
 use alumina_service::{ResponseMedia, ServiceRequest, ServiceResponse};
 use defmt::{error, info, warn};
 use edge_dhcp::io::{DEFAULT_SERVER_PORT, server as dhcp_io};
@@ -112,6 +113,7 @@ pub struct NetworkControl {
     supervisor: NetworkSupervisor,
     credential_source: CredentialSource,
     boot_nonce: BootNonce,
+    device_id: DeviceId,
 }
 
 impl NetworkControl {
@@ -129,6 +131,11 @@ impl NetworkControl {
     pub const fn boot_nonce(&self) -> BootNonce {
         self.boot_nonce
     }
+
+    /// Stable non-secret physical MCU identity used by targeted work.
+    pub const fn device_id(&self) -> DeviceId {
+        self.device_id
+    }
 }
 
 /// Initializes the radio on core 0 and starts all AP service tasks on its executor.
@@ -136,6 +143,7 @@ pub async fn start(
     spawner: Spawner,
     wifi: WIFI<'static>,
     service_bridge: &'static ServiceBridge,
+    device_id: DeviceId,
 ) -> NetworkControl {
     assert_service_core("network initialization");
     let capability_identity = verify_declared_identity(selected::PACKAGE)
@@ -217,6 +225,7 @@ pub async fn start(
         auth_state,
         service_bridge,
         capability_identity,
+        device_id,
     ));
     spawner.must_spawn(dhcp_task(stack));
     if supervisor.access_point_ready().is_err() {
@@ -230,6 +239,7 @@ pub async fn start(
         supervisor,
         credential_source: CREDENTIAL_SOURCE,
         boot_nonce: auth_nonce,
+        device_id,
     }
 }
 
@@ -247,6 +257,7 @@ async fn http_task(
     auth_state: &'static AuthState,
     service_bridge: &'static ServiceBridge,
     capability_identity: CapabilityIdentity,
+    device_id: DeviceId,
 ) -> ! {
     assert_service_core("HTTP service");
     stack.wait_config_up().await;
@@ -274,6 +285,7 @@ async fn http_task(
                 auth_state,
                 service_bridge,
                 capability_identity,
+                device_id,
             },
         );
 
@@ -330,6 +342,7 @@ struct AluminaHttpHandler {
     auth_state: &'static AuthState,
     service_bridge: &'static ServiceBridge,
     capability_identity: CapabilityIdentity,
+    device_id: DeviceId,
 }
 
 impl Handler for AluminaHttpHandler {
@@ -482,7 +495,13 @@ impl Handler for AluminaHttpHandler {
                         b"false"
                     })
                     .await?;
-                connection.write_all(b",\"capability_digest\":\"").await?;
+                connection.write_all(b",\"device_id\":\"").await?;
+                let mut device_id = [0_u8; 32];
+                if write_lower_hex(&self.device_id.0, &mut device_id).is_err() {
+                    panic!("device identity encoding failed");
+                }
+                connection.write_all(&device_id).await?;
+                connection.write_all(b"\",\"capability_digest\":\"").await?;
                 let mut digest = [0_u8; 64];
                 if write_lower_hex(&self.capability_identity.digest.0, &mut digest).is_err() {
                     panic!("capability digest encoding failed");

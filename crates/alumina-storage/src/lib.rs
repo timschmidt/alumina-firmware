@@ -107,6 +107,8 @@ pub enum ObjectKind {
     OpaqueData = 5,
     /// Canonical machine/resource configuration, inert until separately activated.
     MachineConfiguration = 6,
+    /// Canonical fixed graph-IR package, inert until independently installed.
+    DeployedGraph = 7,
 }
 
 impl ObjectKind {
@@ -118,6 +120,7 @@ impl ObjectKind {
             4 => Some(Self::UpdateBundle),
             5 => Some(Self::OpaqueData),
             6 => Some(Self::MachineConfiguration),
+            7 => Some(Self::DeployedGraph),
             _ => None,
         }
     }

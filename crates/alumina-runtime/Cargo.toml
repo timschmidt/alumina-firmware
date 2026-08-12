@@ -12,10 +12,12 @@ publish.workspace = true
 alumina-graph-ir.workspace = true
 alumina-machine-ir.workspace = true
 alumina-protocol.workspace = true
+alumina-storage.workspace = true
 embassy-sync.workspace = true
 
 [dev-dependencies]
 critical-section = { workspace = true, features = ["std"] }
+embassy-futures.workspace = true
 
 [lints]
 workspace = true

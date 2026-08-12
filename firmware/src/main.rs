@@ -28,6 +28,7 @@ compile_error!("the HIL feature is isolated to `--bin alumina-hil-mks-tinybee-pc
 mod capability;
 mod clock;
 mod configuration;
+mod graph;
 mod hardware;
 mod job;
 mod motion;
@@ -45,11 +46,13 @@ use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
+use alumina_graph_ir::CoreGraphCommand;
 use alumina_job::{
     JobScheduleAction, JobScheduleReport, JobScheduleState, JobStartObservation,
     JobStartObservationSource, RealtimeJobReport, RealtimeJobState,
 };
-use alumina_protocol::{DeviceCycle, Digest, FrameKind};
+use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind};
+use alumina_runtime::graph::{GraphRuntimeAuthority, RealtimeGraphDeployment, RealtimeGraphReport};
 use alumina_runtime::{
     APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
     DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
@@ -74,6 +77,7 @@ use static_cell::StaticCell;
 use capability::CapabilityService;
 use clock::ClockService;
 use configuration::ConfigurationService;
+use graph::{GRAPH_RUNTIME_LIMITS, GraphService};
 use hardware::selected;
 use job::{JobService, RealtimeJobService};
 use motion::{MotionAction, MotionService};
@@ -84,6 +88,12 @@ static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
+/// General internal heap retained alongside the separate 64 KiB reclaimed region.
+///
+/// This was reduced from 36 KiB when fixed graph candidate/active images were
+/// introduced. The 4 KiB becomes reviewed static graph ownership rather than
+/// allocator capacity; target qualification must still measure heap low-water.
+const GENERAL_HEAP_BYTES: usize = 32 * 1_024;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -118,8 +128,9 @@ async fn main(spawner: Spawner) -> ! {
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
+    let device_id = DeviceId::from_esp_base_mac(esp_hal::efuse::Efuse::read_base_mac_address());
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
-    esp_alloc::heap_allocator!(size: 36 * 1_024);
+    esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
     let mut split = selected::split(peripherals);
 
     let timer_group0 = TimerGroup::new(split.runtime.timer_group0);
@@ -138,7 +149,11 @@ async fn main(spawner: Spawner) -> ! {
         move || {
             let app_executor = APP_CORE_EXECUTOR.init(esp_rtos::embassy::Executor::new());
             app_executor.run(move |realtime_spawner| {
-                realtime_spawner.must_spawn(realtime_task(split.realtime, realtime_endpoint));
+                realtime_spawner.must_spawn(realtime_task(
+                    split.realtime,
+                    realtime_endpoint,
+                    device_id,
+                ));
             });
         },
     );
@@ -148,7 +163,13 @@ async fn main(spawner: Spawner) -> ! {
     // snapshot crosses the owned inter-core boundary.
     await_initial_safe_snapshot(&mut service_endpoint).await;
     let service_bridge = init_service_bridge();
-    let network = network::start(spawner, split.service.take_wifi(), service_bridge).await;
+    let network = network::start(
+        spawner,
+        split.service.take_wifi(),
+        service_bridge,
+        device_id,
+    )
+    .await;
 
     spawner.must_spawn(service_task(
         split.service,
@@ -236,6 +257,7 @@ async fn service_task(
     let mut clocks = ClockService::new(boot_id);
     let mut jobs = JobService::new(boot_id);
     let mut configurations = ConfigurationService::new();
+    let mut graphs = GraphService::new(network.device_id());
     let mut last_fault_generation = 0_u16;
     loop {
         while let Ok(frame) = endpoint.try_receive_telemetry() {
@@ -294,6 +316,16 @@ async fn service_task(
                             })
                         })
                 }
+                FrameKind::Graph => {
+                    frame.validate(FrameKind::Graph).is_ok()
+                        && frame.payload().is_ok_and(|payload| {
+                            RealtimeGraphReport::decode(payload).is_ok_and(|report| {
+                                graphs
+                                    .observe_realtime(frame.header().config_digest, report)
+                                    .is_ok()
+                            })
+                        })
+                }
                 _ => false,
             };
             if !valid {
@@ -311,8 +343,22 @@ async fn service_task(
 
         let now = DeviceCycle(Instant::now().as_ticks());
         storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
-        storage.set_configuration_transaction_active(configurations.blocks_job_admission());
+        storage.set_configuration_transaction_active(
+            configurations.blocks_job_admission() || graphs.blocks_storage_mutation(),
+        );
+        graphs.set_active_config(configurations.authorized_digest());
+        let mut configuration_mutation = storage.configuration_mutation_context(now);
+        configuration_mutation.realtime_job_active |= graphs.blocks_configuration_mutation();
         configurations
+            .step(
+                &mut storage_backend,
+                &mut endpoint,
+                now,
+                configuration_mutation,
+            )
+            .await;
+        graphs.set_active_config(configurations.authorized_digest());
+        graphs
             .step(
                 &mut storage_backend,
                 &mut endpoint,
@@ -320,16 +366,27 @@ async fn service_task(
                 storage.configuration_mutation_context(now),
             )
             .await;
-        jobs.set_configuration_transition(configurations.blocks_job_admission());
+        jobs.set_configuration_transition(
+            configurations.blocks_job_admission() || graphs.blocks_job_admission(),
+        );
         jobs.set_active_config(configurations.authorized_digest());
-        storage.set_configuration_active(configurations.has_durable_active());
+        storage.set_configuration_active(
+            configurations.has_durable_active() || graphs.blocks_configuration_mutation(),
+        );
 
         while let Some(request) = service_bridge.try_receive() {
             storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
-            storage.set_configuration_active(configurations.has_durable_active());
-            storage.set_configuration_transaction_active(configurations.blocks_job_admission());
-            jobs.set_configuration_transition(configurations.blocks_job_admission());
+            storage.set_configuration_active(
+                configurations.has_durable_active() || graphs.blocks_configuration_mutation(),
+            );
+            storage.set_configuration_transaction_active(
+                configurations.blocks_job_admission() || graphs.blocks_storage_mutation(),
+            );
+            jobs.set_configuration_transition(
+                configurations.blocks_job_admission() || graphs.blocks_job_admission(),
+            );
             jobs.set_active_config(configurations.authorized_digest());
+            graphs.set_active_config(configurations.authorized_digest());
             let now = DeviceCycle(Instant::now().as_ticks());
             let response = if ClockService::handles(request.request()) {
                 clocks.dispatch(
@@ -342,7 +399,13 @@ async fn service_task(
             } else if CapabilityService::handles(request.request()) {
                 CapabilityService::dispatch(request.request(), now)
             } else if ConfigurationService::handles(request.request()) {
+                let mut mutation = storage.configuration_mutation_context(now);
+                mutation.realtime_job_active |= graphs.blocks_configuration_mutation();
                 configurations
+                    .dispatch(&mut storage_backend, request.request(), now, mutation)
+                    .await
+            } else if GraphService::handles(request.request()) {
+                graphs
                     .dispatch(
                         &mut storage_backend,
                         request.request(),
@@ -385,6 +448,7 @@ async fn service_task(
             &jobs,
             &clocks,
             &configurations,
+            &graphs,
             network.supervisor(),
             network.credential_source(),
         );
@@ -396,6 +460,7 @@ async fn service_task(
 async fn realtime_task(
     resources: selected::RealtimeResources,
     mut endpoint: DefaultRealtimeEndpoint,
+    device_id: DeviceId,
 ) {
     if Cpu::current() != Cpu::AppCpu {
         endpoint.publish_fault(1, 0);
@@ -436,10 +501,16 @@ async fn realtime_task(
         RealtimeConfigurationService::<{ selected::CONFIGURATION_BINDINGS }>::new(
             selected::PACKAGE,
         );
+    let mut graphs = RealtimeGraphDeployment::new(
+        device_id,
+        selected::PACKAGE.board.capability_digest,
+        GRAPH_RUNTIME_LIMITS,
+    );
     let mut safety_inputs: Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>> = None;
     let mut safety_input_status = SafetyInputStatus::unconfigured();
     let mut last_job_active = false;
     let mut configuration_sequence = 0_u32;
+    let mut graph_sequence = 0_u32;
     let mut clock_sequence = 0_u32;
 
     publish_safety_snapshot(
@@ -629,7 +700,7 @@ async fn realtime_task(
             while let Ok(command) = endpoint.try_receive_command() {
                 let mut safety_changed = false;
                 let valid = match command.header().kind {
-                    FrameKind::Job => jobs
+                    FrameKind::Job if graphs.active_identity().is_none() => jobs
                         .apply_command(
                             &mut endpoint,
                             &command,
@@ -638,6 +709,7 @@ async fn realtime_task(
                             probe.misses() == 0,
                         )
                         .is_ok(),
+                    FrameKind::Job => false,
                     FrameKind::Configuration => match apply_configuration_command(
                         &mut configurations,
                         &mut resources,
@@ -651,6 +723,7 @@ async fn realtime_task(
                         DeviceCycle(observed.as_ticks()),
                         period.as_ticks(),
                         &mut configuration_sequence,
+                        &graphs,
                     ) {
                         Ok(changed) => {
                             safety_changed = changed;
@@ -658,6 +731,17 @@ async fn realtime_task(
                         }
                         Err(()) => false,
                     },
+                    FrameKind::Graph => apply_graph_command(
+                        &mut graphs,
+                        &configurations,
+                        &jobs,
+                        &safety,
+                        &mut endpoint,
+                        &command,
+                        DeviceCycle(observed.as_ticks()),
+                        &mut graph_sequence,
+                    )
+                    .is_ok(),
                     FrameKind::Command => command.validate(FrameKind::Command).is_ok(),
                     _ => false,
                 };
@@ -909,6 +993,15 @@ async fn realtime_task(
                     &mut configuration_sequence,
                     DeviceCycle(observed.as_ticks()),
                     configurations.report(),
+                );
+                let _ = publish_graph_report(
+                    &mut endpoint,
+                    &mut graph_sequence,
+                    DeviceCycle(observed.as_ticks()),
+                    configurations
+                        .authorized_identity()
+                        .map_or(Digest::ZERO, |identity| identity.digest),
+                    graphs.report(),
                 );
                 let _ = publish_clock_report(
                     &mut endpoint,
@@ -1308,6 +1401,7 @@ fn apply_configuration_command(
     now: DeviceCycle,
     nominal_scan_period_cycles: u64,
     report_sequence: &mut u32,
+    graphs: &RealtimeGraphDeployment,
 ) -> Result<bool, ()> {
     frame.validate(FrameKind::Configuration).map_err(|_| ())?;
     let command =
@@ -1318,6 +1412,8 @@ fn apply_configuration_command(
     let action = command.action;
     let mutation_allowed = matches!(safety.state(), SafetyState::Safe | SafetyState::Configured)
         && !jobs.active()
+        && graphs.active_identity().is_none()
+        && graphs.candidate_identity().is_none()
         && endpoint.work_depth() == 0;
     let report = configurations.apply(command, mutation_allowed);
     let mut safety_changed = false;
@@ -1399,6 +1495,55 @@ fn publish_configuration_report(
         &payload,
     )
     .map_err(|_| ())?;
+    if endpoint.try_publish_telemetry(frame).is_ok() {
+        *report_sequence = sequence;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_graph_command(
+    graphs: &mut RealtimeGraphDeployment,
+    configurations: &RealtimeConfigurationService<'static, { selected::CONFIGURATION_BINDINGS }>,
+    jobs: &RealtimeJobService,
+    safety: &SafetyMachine,
+    endpoint: &mut DefaultRealtimeEndpoint,
+    frame: &IntercoreFrame<{ alumina_runtime::COMMAND_PAYLOAD_BYTES }>,
+    now: DeviceCycle,
+    report_sequence: &mut u32,
+) -> Result<(), ()> {
+    frame.validate(FrameKind::Graph).map_err(|_| ())?;
+    let command = CoreGraphCommand::decode(frame.payload().map_err(|_| ())?).map_err(|_| ())?;
+    let config_digest = configurations
+        .authorized_identity()
+        .map_or(Digest::ZERO, |identity| identity.digest);
+    if config_digest.is_zero() || frame.header().config_digest != config_digest {
+        return Err(());
+    }
+    let authority = GraphRuntimeAuthority {
+        device_id: graphs.device_id(),
+        capability_digest: selected::PACKAGE.board.capability_digest,
+        config_digest,
+        implementation_digest: command.implementation_digest,
+    };
+    let mutation_allowed = matches!(safety.state(), SafetyState::Safe | SafetyState::Configured)
+        && !jobs.active()
+        && endpoint.work_depth() == 0;
+    let report = graphs.apply(command, authority, mutation_allowed);
+    publish_graph_report(endpoint, report_sequence, now, config_digest, report)
+}
+
+fn publish_graph_report(
+    endpoint: &mut DefaultRealtimeEndpoint,
+    report_sequence: &mut u32,
+    now: DeviceCycle,
+    config_digest: Digest,
+    report: RealtimeGraphReport,
+) -> Result<(), ()> {
+    let payload = report.encode().map_err(|_| ())?;
+    let sequence = next_nonzero(*report_sequence);
+    let frame = IntercoreFrame::new(FrameKind::Graph, sequence, now, config_digest, &payload)
+        .map_err(|_| ())?;
     if endpoint.try_publish_telemetry(frame).is_ok() {
         *report_sequence = sequence;
     }

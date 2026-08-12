@@ -15,6 +15,10 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
 use crate::{LatestSignal, SignalSnapshot};
 
+mod deployment;
+
+pub use deployment::*;
+
 const NO_CHANNEL: u8 = u8::MAX;
 
 /// Exact package identities implemented and active on one firmware target.
@@ -29,6 +33,40 @@ pub struct GraphRuntimeAuthority {
     /// Exact implementation-registry identity selected by immutable image or
     /// authenticated installation authority.
     pub implementation_digest: Digest,
+}
+
+/// Compile-time arena limits independently enforced before a package may run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphRuntimeLimits {
+    /// Core-0 node-state bytes.
+    pub service_state_bytes: usize,
+    /// Core-1 node-state bytes.
+    pub realtime_state_bytes: usize,
+    /// Core-0-local queue bytes.
+    pub service_channel_bytes: usize,
+    /// Core-1-local queue bytes.
+    pub realtime_channel_bytes: usize,
+    /// One-way core-0-to-core-1 queue bytes.
+    pub bridge_channel_bytes: usize,
+}
+
+impl GraphRuntimeLimits {
+    /// Limits represented by one concrete fixed runtime type.
+    pub const fn fixed<
+        const SERVICE_STATE: usize,
+        const REALTIME_STATE: usize,
+        const SERVICE_CHANNELS: usize,
+        const REALTIME_CHANNELS: usize,
+        const BRIDGE_CHANNELS: usize,
+    >() -> Self {
+        Self {
+            service_state_bytes: SERVICE_STATE,
+            realtime_state_bytes: REALTIME_STATE,
+            service_channel_bytes: SERVICE_CHANNELS,
+            realtime_channel_bytes: REALTIME_CHANNELS,
+            bridge_channel_bytes: BRIDGE_CHANNELS,
+        }
+    }
 }
 
 /// Statically reserved arena family used by a fixed graph runtime.
@@ -484,67 +522,18 @@ impl<
             return Err(GraphRuntimeError::MissingExpectedDigest);
         }
 
-        let package = GraphIrPackage::from_slice(bytes)?;
-        if package.digest() != expected_package_digest {
-            return Err(GraphRuntimeError::PackageDigest {
-                expected: expected_package_digest,
-                received: package.digest(),
-            });
-        }
-        let header = package.header();
-        if header.device_id != authority.device_id {
-            return Err(GraphRuntimeError::Identity(GraphRuntimeIdentity::Device));
-        }
-        if header.capability_digest != authority.capability_digest {
-            return Err(GraphRuntimeError::Identity(
-                GraphRuntimeIdentity::Capability,
-            ));
-        }
-        if header.config_digest != authority.config_digest {
-            return Err(GraphRuntimeError::Identity(
-                GraphRuntimeIdentity::Configuration,
-            ));
-        }
-        if header.implementation_digest != authority.implementation_digest {
-            return Err(GraphRuntimeError::Identity(
-                GraphRuntimeIdentity::Implementation,
-            ));
-        }
-
-        let metadata = GraphRuntimeMetadata::from_package(&package)?;
-        check_capacity(
-            GraphRuntimeArena::ServiceState,
-            header.service_state_bytes,
-            SERVICE_STATE,
+        let (package, metadata, usage) = admit_package(
+            bytes,
+            expected_package_digest,
+            authority,
+            GraphRuntimeLimits::fixed::<
+                SERVICE_STATE,
+                REALTIME_STATE,
+                SERVICE_CHANNELS,
+                REALTIME_CHANNELS,
+                BRIDGE_CHANNELS,
+            >(),
         )?;
-        check_capacity(
-            GraphRuntimeArena::RealtimeState,
-            header.realtime_state_bytes,
-            REALTIME_STATE,
-        )?;
-        check_capacity(
-            GraphRuntimeArena::ServiceChannels,
-            metadata.service_channel_bytes,
-            SERVICE_CHANNELS,
-        )?;
-        check_capacity(
-            GraphRuntimeArena::RealtimeChannels,
-            metadata.realtime_channel_bytes,
-            REALTIME_CHANNELS,
-        )?;
-        check_capacity(
-            GraphRuntimeArena::ServiceToRealtime,
-            metadata.bridge_channel_bytes,
-            BRIDGE_CHANNELS,
-        )?;
-
-        let usage = GraphRuntimeUsage {
-            service_state_bytes: header.service_state_bytes,
-            realtime_state_bytes: header.realtime_state_bytes,
-            service_channel_bytes: metadata.service_channel_bytes,
-            realtime_channel_bytes: metadata.realtime_channel_bytes,
-            bridge_channel_bytes: metadata.bridge_channel_bytes,
-        };
         self.service_state.fill(0);
         self.realtime_state.fill(0);
         self.service_channels.fill(0);
@@ -690,6 +679,78 @@ impl<
             })
         }
     }
+}
+
+fn admit_package(
+    bytes: &[u8],
+    expected_package_digest: Digest,
+    authority: GraphRuntimeAuthority,
+    limits: GraphRuntimeLimits,
+) -> Result<(GraphIrPackage, GraphRuntimeMetadata, GraphRuntimeUsage), GraphRuntimeError> {
+    if expected_package_digest.is_zero() {
+        return Err(GraphRuntimeError::MissingExpectedDigest);
+    }
+    let package = GraphIrPackage::from_slice(bytes)?;
+    if package.digest() != expected_package_digest {
+        return Err(GraphRuntimeError::PackageDigest {
+            expected: expected_package_digest,
+            received: package.digest(),
+        });
+    }
+    let header = package.header();
+    if header.device_id != authority.device_id {
+        return Err(GraphRuntimeError::Identity(GraphRuntimeIdentity::Device));
+    }
+    if header.capability_digest != authority.capability_digest {
+        return Err(GraphRuntimeError::Identity(
+            GraphRuntimeIdentity::Capability,
+        ));
+    }
+    if header.config_digest != authority.config_digest {
+        return Err(GraphRuntimeError::Identity(
+            GraphRuntimeIdentity::Configuration,
+        ));
+    }
+    if header.implementation_digest != authority.implementation_digest {
+        return Err(GraphRuntimeError::Identity(
+            GraphRuntimeIdentity::Implementation,
+        ));
+    }
+
+    let metadata = GraphRuntimeMetadata::from_package(&package)?;
+    check_capacity(
+        GraphRuntimeArena::ServiceState,
+        header.service_state_bytes,
+        limits.service_state_bytes,
+    )?;
+    check_capacity(
+        GraphRuntimeArena::RealtimeState,
+        header.realtime_state_bytes,
+        limits.realtime_state_bytes,
+    )?;
+    check_capacity(
+        GraphRuntimeArena::ServiceChannels,
+        metadata.service_channel_bytes,
+        limits.service_channel_bytes,
+    )?;
+    check_capacity(
+        GraphRuntimeArena::RealtimeChannels,
+        metadata.realtime_channel_bytes,
+        limits.realtime_channel_bytes,
+    )?;
+    check_capacity(
+        GraphRuntimeArena::ServiceToRealtime,
+        metadata.bridge_channel_bytes,
+        limits.bridge_channel_bytes,
+    )?;
+    let usage = GraphRuntimeUsage {
+        service_state_bytes: header.service_state_bytes,
+        realtime_state_bytes: header.realtime_state_bytes,
+        service_channel_bytes: metadata.service_channel_bytes,
+        realtime_channel_bytes: metadata.realtime_channel_bytes,
+        bridge_channel_bytes: metadata.bridge_channel_bytes,
+    };
+    Ok((package, metadata, usage))
 }
 
 impl<

@@ -46,6 +46,35 @@ impl fmt::Debug for Digest {
 #[repr(transparent)]
 pub struct DeviceId(pub [u8; 16]);
 
+impl DeviceId {
+    /// Canonical device identity derived from an ESP factory base MAC address.
+    ///
+    /// The ten-byte namespace prevents the six public MAC bytes from being
+    /// confused with another device-identity scheme. The result is stable
+    /// across firmware updates and contains no credential material.
+    pub const fn from_esp_base_mac(mac: [u8; 6]) -> Self {
+        let mut bytes = *b"ALUM-ESP1:\0\0\0\0\0\0";
+        let mut index = 0;
+        while index < mac.len() {
+            bytes[10 + index] = mac[index];
+            index += 1;
+        }
+        Self(bytes)
+    }
+
+    /// Whether no stable identity has been established.
+    pub const fn is_zero(self) -> bool {
+        let mut index = 0;
+        while index < self.0.len() {
+            if self.0[index] != 0 {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+}
+
 /// Boot-scoped identity. It changes on every restart and invalidates prepared work.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
@@ -86,6 +115,8 @@ pub enum FrameKind {
     Waveform = 12,
     /// Coupled firmware and interface update traffic.
     Update = 13,
+    /// Published fixed graph package installation and lifecycle traffic.
+    Graph = 14,
 }
 
 impl FrameKind {
@@ -110,6 +141,7 @@ impl FrameKind {
             11 => Some(Self::Fault),
             12 => Some(Self::Waveform),
             13 => Some(Self::Update),
+            14 => Some(Self::Graph),
             _ => None,
         }
     }
@@ -397,6 +429,14 @@ pub enum Operation {
     UpdateCommit = 0x0d05,
     /// Select the prior verified firmware/interface pair.
     UpdateRollback = 0x0d06,
+    /// Fetch candidate and active deployed-graph identities.
+    GraphGet = 0x0e01,
+    /// Independently validate one already-published graph package on both cores.
+    GraphInstall = 0x0e02,
+    /// Activate one independently validated graph package.
+    GraphActivate = 0x0e03,
+    /// Discard a candidate or clear the selected active graph.
+    GraphClear = 0x0e04,
 }
 
 impl Operation {
@@ -459,6 +499,9 @@ impl Operation {
             | Self::UpdateFinalize
             | Self::UpdateCommit
             | Self::UpdateRollback => FrameKind::Update,
+            Self::GraphGet | Self::GraphInstall | Self::GraphActivate | Self::GraphClear => {
+                FrameKind::Graph
+            }
         }
     }
 
@@ -516,6 +559,10 @@ impl Operation {
             0x0d04 => Some(Self::UpdateFinalize),
             0x0d05 => Some(Self::UpdateCommit),
             0x0d06 => Some(Self::UpdateRollback),
+            0x0e01 => Some(Self::GraphGet),
+            0x0e02 => Some(Self::GraphInstall),
+            0x0e03 => Some(Self::GraphActivate),
+            0x0e04 => Some(Self::GraphClear),
             _ => None,
         }
     }
@@ -904,6 +951,20 @@ mod tests {
     }
 
     #[test]
+    fn esp_factory_mac_has_one_namespaced_stable_device_identity() {
+        let device = DeviceId::from_esp_base_mac([0x24, 0x6f, 0x28, 0xaa, 0xbb, 0xcc]);
+        assert_eq!(
+            device.0,
+            [
+                b'A', b'L', b'U', b'M', b'-', b'E', b'S', b'P', b'1', b':', 0x24, 0x6f, 0x28, 0xaa,
+                0xbb, 0xcc,
+            ]
+        );
+        assert!(!device.is_zero());
+        assert!(DeviceId::default().is_zero());
+    }
+
+    #[test]
     fn frame_decode_rejects_unknown_kind_flags_and_length() {
         let header = FrameHeader::new(FrameKind::Identity, 0, 1, DeviceCycle(0), Digest::ZERO);
         let mut encoded = header.encode();
@@ -944,6 +1005,7 @@ mod tests {
             (Operation::FaultEvent, FrameKind::Fault),
             (Operation::WaveformChunk, FrameKind::Waveform),
             (Operation::UpdateCommit, FrameKind::Update),
+            (Operation::GraphInstall, FrameKind::Graph),
         ];
         for (operation, kind) in representatives {
             assert_eq!(operation.frame_kind(), kind);
@@ -962,6 +1024,8 @@ mod tests {
             Some(Operation::StorageInspect)
         );
         assert_eq!(Operation::from_wire(0x090b), None);
+        assert_eq!(Operation::from_wire(0x0e04), Some(Operation::GraphClear));
+        assert_eq!(Operation::from_wire(0x0e05), None);
     }
 
     #[test]

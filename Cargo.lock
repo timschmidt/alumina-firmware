@@ -67,6 +67,7 @@ dependencies = [
  "alumina-clock",
  "alumina-config",
  "alumina-foc",
+ "alumina-graph-ir",
  "alumina-job",
  "alumina-motion",
  "alumina-net",
@@ -117,6 +118,7 @@ name = "alumina-graph-ir"
 version = "0.1.0"
 dependencies = [
  "alumina-protocol",
+ "alumina-storage",
  "sha2",
 ]
 
@@ -172,7 +174,9 @@ dependencies = [
  "alumina-graph-ir",
  "alumina-machine-ir",
  "alumina-protocol",
+ "alumina-storage",
  "critical-section",
+ "embassy-futures",
  "embassy-sync 0.7.2",
 ]
 
