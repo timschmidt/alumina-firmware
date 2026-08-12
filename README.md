@@ -493,6 +493,9 @@ firmware. Datasheets and upstream root metadata are retained under
   resource coverage and staged support for wider ESP32 hardware.
 - [Interface roadmap](docs/INTERFACE-ROADMAP.md) — authoritative WASM CAM,
   Hypergraphics, graph programming, annotated-board diagnostics, and plotting.
+- [Fixed deployed graph IR](docs/GRAPH-IR.md) — canonical whitelisted opcodes,
+  device-cycle schedules, preallocated arenas, and independent firmware-side
+  admission without a graph-document interpreter.
 - [Verification strategy](docs/VERIFICATION.md) — simulation, exactness tests,
   HIL timing, synchronized-job, safety, and release evidence.
 - [Research sources](docs/SOURCES.md) — local and upstream evidence captured on

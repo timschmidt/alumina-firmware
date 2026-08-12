@@ -1017,6 +1017,15 @@ accepts only whitelisted node opcodes with bounded state and preallocated edges.
 No arbitrary WASM/native code, recursion, dynamic allocation, or unbounded loops
 execute in the real-time graph.
 
+The first portable boundary is the fixed 4 KiB `ALGRIR01` package documented in
+[`GRAPH-IR.md`](GRAPH-IR.md). Its allocation-free decoder admits only a
+Service Boolean Stream constant, a Realtime latest-at-or-before Boolean
+transition, a Realtime sink, fault-on-full realtime queues, one-way
+Service-to-Realtime bridges, contiguous arenas, and one integer device-cycle
+schedule per active domain. This is format/admission scaffolding only: no
+firmware route, installer, arena owner, executor, resource opcode, or physical
+timing claim exists at this checkpoint.
+
 ## Security and update model
 
 - Provision unique device identity/credentials; no repository-shared private key.

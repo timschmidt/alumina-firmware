@@ -113,6 +113,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-graph-ir"
+version = "0.1.0"
+dependencies = [
+ "alumina-protocol",
+ "sha2",
+]
+
+[[package]]
 name = "alumina-job"
 version = "0.1.0"
 dependencies = [

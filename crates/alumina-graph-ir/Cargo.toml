@@ -1,0 +1,16 @@
+[package]
+name = "alumina-graph-ir"
+description = "Canonical fixed-memory deployed graph IR for Alumina firmware"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alumina-protocol.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true
