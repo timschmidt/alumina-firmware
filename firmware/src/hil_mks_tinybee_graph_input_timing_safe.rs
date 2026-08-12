@@ -47,6 +47,7 @@ use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, TICK_HZ, Timer};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::Output;
+use esp_hal::interrupt::Priority;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ram;
 use esp_hal::system::{Cpu, Stack};
@@ -86,7 +87,7 @@ static REALTIME_PROFILE: StaticCell<RealtimeConfigurationProfile> = StaticCell::
 static RUN_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, GraphRunIdentity>> =
     StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<HIL_APP_CORE_STACK_BYTES>> = StaticCell::new();
-static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::InterruptExecutor<2>> = StaticCell::new();
 
 static BOOT_SAFE_READY: AtomicBool = AtomicBool::new(false);
 static NETWORK_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -129,6 +130,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let timer_group0 = TimerGroup::new(split.runtime.timer_group0);
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
+    let realtime_interrupt = software_interrupt.software_interrupt2;
     esp_rtos::start(timer_group0.timer0);
 
     let wifi = split.service.take_wifi();
@@ -173,17 +175,18 @@ async fn main(spawner: Spawner) -> ! {
         software_interrupt.software_interrupt1,
         app_stack,
         move || {
-            let executor = APP_CORE_EXECUTOR.init(esp_rtos::embassy::Executor::new());
-            executor.run(move |realtime_spawner| {
-                realtime_spawner.must_spawn(realtime_task(
-                    split.realtime,
-                    realtime_actor,
-                    realtime_profile,
-                    run_signal,
-                    timing_marker,
-                    sink_marker,
-                ));
-            });
+            let executor = APP_CORE_EXECUTOR.init(esp_rtos::embassy::InterruptExecutor::new(
+                realtime_interrupt,
+            ));
+            let realtime_spawner = executor.start(Priority::Priority3);
+            realtime_spawner.must_spawn(realtime_task(
+                split.realtime,
+                realtime_actor,
+                realtime_profile,
+                run_signal,
+                timing_marker,
+                sink_marker,
+            ));
         },
     );
 
