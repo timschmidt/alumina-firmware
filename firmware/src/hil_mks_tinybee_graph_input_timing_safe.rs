@@ -710,7 +710,13 @@ async fn realtime_fault(
     sink_marker.set_low();
     SINK_ACTIVE.store(false, Ordering::Release);
     HIL_FAULT.store(code, Ordering::Release);
-    esp_println_uart::println!("ALUMINA_HIL_RT_FAULT code={}", code);
+    esp_println_uart::println!(
+        "ALUMINA_HIL_RT_FAULT code={} releases={} max_dispatch_late={} input_transitions={}",
+        code,
+        RELEASE_COUNT.load(Ordering::Relaxed),
+        MAXIMUM_DISPATCH_LATENESS.load(Ordering::Relaxed),
+        INPUT_TRANSITION_COUNT.load(Ordering::Relaxed)
+    );
     error!("HIL_RT_FAULT code={}", code);
     park().await
 }
