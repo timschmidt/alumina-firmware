@@ -659,16 +659,23 @@ the smallest repeating schedule, minimum queue capacity, and bounded held
 sample storage. A separate fixed HostExact implementation registry and bounded
 simulator now execute only external Stream sources, that audited transition,
 and Stream sinks using exact root time. Canonical `ALGT` traces bind graph and
-implementation identities and replay by independent simulation. General node,
-state, or Event evaluation, fixed firmware runtime layout and WCET, compiler
-lowering, capability nodes, graph UI, and firmware graph IR remain open. See the
+implementation identities and replay by independent simulation. The first
+portable deployed boundary is now a fixed 4 KiB `ALGRIR01` package with
+allocation-free independent admission, whitelisted Boolean Service/Realtime
+opcodes, integer device-cycle schedules, declared WCET plus executor reserve,
+and contiguous state/channel/bridge arenas. A third interface registry binds
+the complete audited semantics and fixed implementations, then lowers one
+single-device graph into those independently replayed bytes. General node,
+state, or Event execution, package installation, actual arena/bridge ownership,
+executor timing, resource opcodes, capability nodes, and graph UI remain open.
+See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
 [type-storage](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
 [bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), plus the
 [exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) and
-[deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md)
-evidence.
+[deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
+[fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) evidence.
 
 Exit gate:
 

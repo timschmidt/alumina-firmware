@@ -122,14 +122,17 @@ Tests reject every nonexact package length, ordinary digest tampering,
 nonzero padding/reserved bytes, and semantic tampering followed by an attacker
 recomputing a valid digest. A digest is content identity, never permission.
 
-## Compiler obligations still outside the package
+## Interface compiler boundary
 
-The interface compiler must first replay the structural graph, run audited
-type/channel/rate/cycle analysis, bind a reviewed implementation descriptor,
-prove one target device, derive integer periods from that device's exact cycle
-root, topologically order nodes, and prove host-side arena policy. The package
-retains the results and identities; firmware rechecks all bounded invariants it
-can without arbitrary-precision or graph-schema machinery.
+The interface compiler now replays the structural graph, runs audited
+type/channel/rate/cycle analysis, binds a reviewed implementation descriptor,
+proves one target device, derives integer periods from that device's exact
+cycle root, topologically orders nodes and target-owned channels, and proves
+host-side arena policy. Its implementation digest binds the complete audited
+semantic registry, fixed opcode descriptors, schedule clocks, WCETs, analysis
+limits, and deployment limits. The emitted package is immediately decoded by
+this crate. Firmware will still recheck every bounded invariant it can without
+arbitrary-precision or graph-schema machinery.
 
 Installation, authentication, capability/configuration reconciliation,
 preallocated arena construction, core-0/core-1 bridge ownership, runtime

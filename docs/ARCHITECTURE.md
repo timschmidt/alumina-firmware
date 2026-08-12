@@ -1022,9 +1022,12 @@ The first portable boundary is the fixed 4 KiB `ALGRIR01` package documented in
 Service Boolean Stream constant, a Realtime latest-at-or-before Boolean
 transition, a Realtime sink, fault-on-full realtime queues, one-way
 Service-to-Realtime bridges, contiguous arenas, and one integer device-cycle
-schedule per active domain. This is format/admission scaffolding only: no
-firmware route, installer, arena owner, executor, resource opcode, or physical
-timing claim exists at this checkpoint.
+schedule per active domain. A separate browser compiler registry now binds the
+complete audited semantic and fixed implementation identities, proves one
+target, schedule, WCET reserve, and fixed arena policy, and emits bytes replayed
+by that decoder. This remains format/compiler scaffolding only: no firmware
+route, installer, arena owner, executor, resource opcode, or physical timing
+claim exists at this checkpoint.
 
 ## Security and update model
 

@@ -171,3 +171,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-DETERMINISTIC-GRAPH-SIMULATION.md`](M9-DETERMINISTIC-GRAPH-SIMULATION.md)
   — fixed HostExact Stream/rate simulation, exact source-first scheduling,
   canonical implementation identity, and independently replayed `ALGT` traces.
+- [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
+  package, allocation-free independent admission, complete implementation
+  identity, and browser lowering into bounded Service/Realtime arenas.

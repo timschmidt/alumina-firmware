@@ -364,16 +364,21 @@ Stream dependencies now use exact rational clock resolution and one explicit
 latest-at-or-before transition, with shared-root, smallest-pattern,
 minimum-queue, and held-sample proofs. A separate fixed HostExact registry now
 simulates external Stream sources, that transition, and Stream sinks in exact
-root time; canonical traces replay by independently regenerating every byte.
-General node/state/Event evaluation, fixed firmware runtime layout or WCET,
-capability palette, and firmware lowering remain open. See the
+root time; canonical traces replay by independently regenerating every byte. A
+third registry now binds complete audited semantics to fixed implementation,
+domain, clock, and WCET descriptors. It lowers the initial Boolean
+Service-to-Realtime subset into an independently replayed 4 KiB `ALGRIR01`
+package with integer device-cycle schedules and fixed state/channel/bridge
+arenas. General node/state/Event execution, firmware package installation,
+actual arena/bridge ownership, executor timing, resource opcodes, capability
+palette, and graph UI remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
 [`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), and
 [`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) and
-[`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md)
-evidence.
+[`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
+[`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) evidence.
 
 ### Execution semantics
 
