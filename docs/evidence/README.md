@@ -188,3 +188,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-DURABLE-GRAPH-SELECTION.md`](M9-DURABLE-GRAPH-SELECTION.md) — typed
   prepare/commit/abort journal, configuration-first dual-core boot replay,
   exhaustive modeled power-cut recovery, and renewed ESP/WASM artifacts.
+- [`M9-CAPABILITY-BOUND-GRAPH-INPUT.md`](M9-CAPABILITY-BOUND-GRAPH-INPUT.md) —
+  capability-derived split arenas and exact opcode/resource palettes,
+  `ALGRIR02` stable safety-input reads, independent dual-core admission,
+  fail-closed freshness semantics, and renewed ESP/WASM artifacts.
