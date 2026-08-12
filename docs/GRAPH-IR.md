@@ -175,3 +175,7 @@ uninstall/rollback, measured deadline/WCET monitoring, resource opcodes,
 telemetry, and HIL timing evidence remain later work. Fixed firmware safety
 continues to have authority over every graph release and every future physical
 operation.
+
+The reproduced compiler/runtime fixtures, target link results, artifact hashes,
+and closed claims are recorded in
+[`evidence/M9-FIXED-GRAPH-RUNTIME.md`](evidence/M9-FIXED-GRAPH-RUNTIME.md).

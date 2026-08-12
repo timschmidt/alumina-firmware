@@ -680,7 +680,8 @@ See the
 [bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), plus the
 [exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) and
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
-[fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) evidence.
+[fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
+[portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md) evidence.
 
 Exit gate:
 

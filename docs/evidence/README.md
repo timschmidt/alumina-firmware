@@ -174,3 +174,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.
+- [`M9-FIXED-GRAPH-RUNTIME.md`](M9-FIXED-GRAPH-RUNTIME.md) — transactional
+  const-generic admission, source-first start priming, split-core fixed-opcode
+  execution, first-cause faults, and direct browser-compiler/runtime replay.
