@@ -87,11 +87,15 @@ static RUN_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, GraphRunIdentity>>
 static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
+static BOOT_SAFE_READY: AtomicBool = AtomicBool::new(false);
+static NETWORK_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static REALTIME_READY: AtomicBool = AtomicBool::new(false);
 static REALTIME_ACTIVATED: AtomicBool = AtomicBool::new(false);
 static RUN_CONFIRMED: AtomicBool = AtomicBool::new(false);
 static RELEASE_COUNT: AtomicU32 = AtomicU32::new(0);
 static INPUT_TRANSITION_COUNT: AtomicU32 = AtomicU32::new(0);
+static NETWORK_STARTUP_MAXIMUM_SAMPLE_GAP: AtomicU32 = AtomicU32::new(0);
+static NETWORK_STARTUP_WATCHDOG_OBSERVED: AtomicBool = AtomicBool::new(false);
 static MAXIMUM_DISPATCH_LATENESS: AtomicU32 = AtomicU32::new(0);
 static SINK_ACTIVE: AtomicBool = AtomicBool::new(false);
 static HIL_FAULT: AtomicU32 = AtomicU32::new(0);
@@ -182,8 +186,8 @@ async fn main(spawner: Spawner) -> ! {
         },
     );
 
-    wait_for_flag_or_fault(&REALTIME_READY).await;
-    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=realtime-ready");
+    wait_for_flag_or_fault(&BOOT_SAFE_READY).await;
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=boot-safe-ready");
     info!(
         "HIL_STATIC_SAFE board={} image=0x{:06x}; DISCONNECT ALL MOTOR AND PROCESS LOADS",
         env!("ALUMINA_BOARD_ID"),
@@ -194,7 +198,24 @@ async fn main(spawner: Spawner) -> ! {
     esp_println_uart::println!("ALUMINA_HIL_BOOT stage=network-starting");
     let network = network::start(spawner, wifi, service_bridge, device_id).await;
     esp_println_uart::println!("ALUMINA_HIL_BOOT stage=network-started");
+    NETWORK_INITIALIZED.store(true, Ordering::Release);
+    wait_for_flag_or_fault(&REALTIME_READY).await;
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=realtime-ready");
+    esp_println_uart::println!(
+        "ALUMINA_HIL_WIFI_STARTUP max_sample_gap={} watchdog_observed={}",
+        NETWORK_STARTUP_MAXIMUM_SAMPLE_GAP.load(Ordering::Acquire),
+        NETWORK_STARTUP_WATCHDOG_OBSERVED.load(Ordering::Acquire)
+    );
     Timer::after(NETWORK_SETTLE).await;
+    let fault = HIL_FAULT.load(Ordering::Acquire);
+    if fault != 0 {
+        esp_println_uart::println!(
+            "ALUMINA_HIL_ABORT code={} stage=network-steady-state",
+            fault
+        );
+        error!("HIL_ABORT network steady-state fault={}", fault);
+        park().await
+    }
 
     let start_cycle = DeviceCycle((Instant::now() + GRAPH_START_LEAD).as_ticks());
     let run = GraphRunIdentity {
@@ -433,13 +454,66 @@ async fn realtime_task(
     };
 
     // Establish a known debounced state before core 0 may initialize Wi-Fi.
+    // Outputs are already at the complete board safe image and neither graph
+    // execution nor arm authority exists during this commissioning boundary.
     let mut next_scan = Instant::now();
-    loop {
-        next_scan += period;
-        Timer::at(next_scan).await;
-        let now = DeviceCycle(Instant::now().as_ticks());
+    let mut previous_sample = loop {
+        let now = wait_for_next_sample(&mut next_scan, period).await;
         if sample_input(&resources, &mut monitor, now).is_err() {
             realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 4).await;
+        }
+        if monitor
+            .stable_active_by_resource(ResourceId::Gpio(33), now)
+            .is_some()
+        {
+            break now;
+        }
+    };
+    BOOT_SAFE_READY.store(true, Ordering::Release);
+
+    // ESP radio initialization may briefly suspend the other core. This
+    // explicitly unarmed boot phase measures and retains that discontinuity;
+    // it never promotes a stale monitor into operational authority.
+    let mut startup_monitor_valid = true;
+    while !NETWORK_INITIALIZED.load(Ordering::Acquire) {
+        let now = wait_for_next_sample(&mut next_scan, period).await;
+        retain_network_startup_sample_gap(now.0.saturating_sub(previous_sample.0));
+        previous_sample = now;
+        if startup_monitor_valid {
+            match sample_input_allow_watchdog(&resources, &mut monitor, now) {
+                Ok(true) => {}
+                Ok(false) => {
+                    NETWORK_STARTUP_WATCHDOG_OBSERVED.store(true, Ordering::Release);
+                    startup_monitor_valid = false;
+                }
+                Err(()) => {
+                    realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 15)
+                        .await;
+                }
+            }
+        }
+    }
+    let operational_boundary = DeviceCycle(Instant::now().as_ticks());
+    let boundary_gap = operational_boundary.0.saturating_sub(previous_sample.0);
+    retain_network_startup_sample_gap(boundary_gap);
+    if boundary_gap > u64::from(INPUT_MAXIMUM_GAP_CYCLES) {
+        NETWORK_STARTUP_WATCHDOG_OBSERVED.store(true, Ordering::Release);
+    }
+
+    // Reconstruct the monitor after radio initialization. Only this fresh,
+    // fully debounced monitor may authorize graph activation, and every later
+    // missed 10 ms deadline fails closed.
+    let mut monitor = match resources.configure_safety_inputs(profile, RELEASE_PERIOD_CYCLES) {
+        Ok(Some(monitor)) => monitor,
+        Ok(None) | Err(_) => {
+            realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 16).await
+        }
+    };
+    next_scan = Instant::now();
+    loop {
+        let now = wait_for_next_sample(&mut next_scan, period).await;
+        if sample_input(&resources, &mut monitor, now).is_err() {
+            realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 17).await;
         }
         if monitor
             .stable_active_by_resource(ResourceId::Gpio(33), now)
@@ -450,15 +524,14 @@ async fn realtime_task(
     }
     REALTIME_READY.store(true, Ordering::Release);
 
-    // Network setup and graph priming happen on core 0. Keep the finite input
-    // watchdog alive while waiting; readiness never freezes an old sample.
+    // Network settling and graph priming happen on core 0. Keep the fresh
+    // finite input watchdog alive while waiting; readiness never freezes an
+    // old sample.
     let run = loop {
         if let Some(run) = run_signal.try_take() {
             break run;
         }
-        next_scan += period;
-        Timer::at(next_scan).await;
-        let now = DeviceCycle(Instant::now().as_ticks());
+        let now = wait_for_next_sample(&mut next_scan, period).await;
         if sample_input(&resources, &mut monitor, now).is_err()
             || monitor
                 .stable_active_by_resource(ResourceId::Gpio(33), now)
@@ -476,9 +549,7 @@ async fn realtime_task(
         if HIL_FAULT.load(Ordering::Acquire) != 0 {
             realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 7).await;
         }
-        next_scan += period;
-        Timer::at(next_scan).await;
-        let now = DeviceCycle(Instant::now().as_ticks());
+        let now = wait_for_next_sample(&mut next_scan, period).await;
         if sample_input(&resources, &mut monitor, now).is_err() {
             realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 8).await;
         }
@@ -488,9 +559,7 @@ async fn realtime_task(
     // first graph release so its resource read cannot inherit a stale value.
     let start = Instant::from_ticks(run.start_cycle.0);
     while next_scan + period < start {
-        next_scan += period;
-        Timer::at(next_scan).await;
-        let now = DeviceCycle(Instant::now().as_ticks());
+        let now = wait_for_next_sample(&mut next_scan, period).await;
         if sample_input(&resources, &mut monitor, now).is_err() {
             realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 9).await;
         }
@@ -551,24 +620,49 @@ fn sample_input(
     monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
     at: DeviceCycle,
 ) -> Result<(), ()> {
+    sample_input_allow_watchdog(resources, monitor, at)
+        .and_then(|healthy| healthy.then_some(()).ok_or(()))
+}
+
+fn sample_input_allow_watchdog(
+    resources: &mks_tinybee::EstablishedRealtimeResources,
+    monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+    at: DeviceCycle,
+) -> Result<bool, ()> {
     let scan = resources.scan_safety_inputs(monitor, at).map_err(|_| ())?;
     if matches!(
         scan.reaction,
         Some(SafetyInputReaction::Fault(FaultCode::Watchdog))
     ) {
-        return Err(());
+        return Ok(false);
     }
     if scan.transitioned_mask != 0 {
         INPUT_TRANSITION_COUNT.fetch_add(scan.transitioned_mask.count_ones(), Ordering::Relaxed);
     }
-    Ok(())
+    Ok(true)
+}
+
+async fn wait_for_next_sample(next_scan: &mut Instant, period: Duration) -> DeviceCycle {
+    let target = *next_scan + period;
+    Timer::at(target).await;
+    let observed = Instant::now();
+    *next_scan = if observed > target { observed } else { target };
+    DeviceCycle(observed.as_ticks())
+}
+
+fn retain_network_startup_sample_gap(value: u64) {
+    retain_atomic_maximum(&NETWORK_STARTUP_MAXIMUM_SAMPLE_GAP, value);
 }
 
 fn retain_maximum_lateness(value: u64) {
+    retain_atomic_maximum(&MAXIMUM_DISPATCH_LATENESS, value);
+}
+
+fn retain_atomic_maximum(destination: &AtomicU32, value: u64) {
     let value = u32::try_from(value).unwrap_or(u32::MAX);
-    let mut current = MAXIMUM_DISPATCH_LATENESS.load(Ordering::Relaxed);
+    let mut current = destination.load(Ordering::Relaxed);
     while value > current {
-        match MAXIMUM_DISPATCH_LATENESS.compare_exchange_weak(
+        match destination.compare_exchange_weak(
             current,
             value,
             Ordering::Relaxed,
