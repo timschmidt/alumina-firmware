@@ -24,6 +24,8 @@ pub const TELEMETRY_PAYLOAD_BYTES: usize = 128;
 pub const WORK_QUEUE_DEPTH: usize = 8;
 /// Default application-core stack size in 32-bit words.
 pub const APP_CORE_STACK_WORDS: usize = 8_192;
+/// Default application-core stack size at ESP-HAL's byte-count boundary.
+pub const APP_CORE_STACK_BYTES: usize = APP_CORE_STACK_WORDS * size_of::<u32>();
 
 /// The production-shaped boundary used by both initial board images.
 pub type DefaultBoundary = IntercoreBoundary<
@@ -929,9 +931,10 @@ mod tests {
             .unwrap();
         assert_eq!(DefaultBoundary::payload_storage_bytes(), 13_120);
         assert_eq!(required, 45_888);
+        assert_eq!(APP_CORE_STACK_BYTES, 32 * 1_024);
         assert_eq!(
             required,
-            APP_CORE_STACK_WORDS * size_of::<u32>() + DefaultBoundary::payload_storage_bytes()
+            APP_CORE_STACK_BYTES + DefaultBoundary::payload_storage_bytes()
         );
 
         let invalid = RuntimeBudget {

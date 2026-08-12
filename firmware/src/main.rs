@@ -60,8 +60,8 @@ use alumina_runtime::graph::{
     GraphRuntimeAuthority, RealtimeGraphExecutionReport, RealtimeGraphReport,
 };
 use alumina_runtime::{
-    APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
-    DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
+    APP_CORE_STACK_BYTES, APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary,
+    DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
 };
 use alumina_safety::{
     Conditions, Event as SafetyEvent, FaultCode, MAX_SAFETY_INPUTS,
@@ -91,7 +91,7 @@ use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
-static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
+static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_BYTES>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();

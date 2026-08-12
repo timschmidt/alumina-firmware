@@ -37,7 +37,7 @@ use alumina_graph_ir::{
     encode_graph_resource_parameter, graph_ir_content_digest,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
-use alumina_runtime::APP_CORE_STACK_WORDS;
+use alumina_runtime::APP_CORE_STACK_BYTES;
 use alumina_runtime::graph::{GraphRunIdentity, GraphRuntimeAuthority};
 use alumina_safety::{FaultCode, MAX_SAFETY_INPUTS, SafetyInputMonitor, SafetyInputReaction};
 use alumina_storage::{ContentHasher, sha256};
@@ -84,7 +84,7 @@ static REALTIME_ACTOR: StaticCell<RealtimeGraphActor> = StaticCell::new();
 static REALTIME_PROFILE: StaticCell<RealtimeConfigurationProfile> = StaticCell::new();
 static RUN_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, GraphRunIdentity>> =
     StaticCell::new();
-static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_WORDS>> = StaticCell::new();
+static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_BYTES>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 static BOOT_SAFE_READY: AtomicBool = AtomicBool::new(false);
