@@ -893,8 +893,27 @@ The MKS target can now consume ADC1 and its four fixed input pins into a
 software-started diagnostic owner with explicit approximate attenuation and a
 strict two-channel sequence. Its timestamps are conversion-completion
 observations, not sample apertures; it has no digest or PWM token and cannot
-implement `CurrentSense`. No current target constructs an MCPWM operator, and
-no portable duty interval has yet been reduced to an integer compare point.
+implement `CurrentSense`.
+
+The portable PWM boundary uses a center-aligned up/down counter contract. The
+device-cycle rate must equal PWM rate times the device-cycle period, while the
+post-prescaler counter clock must equal PWM rate times twice the integer timer
+peak. For each phase, midpoint selection with ties-to-even chooses one compare;
+the outward Q2.30 enclosure of that exact rational and the ceiling distance to
+both original interval endpoints remain attached. Minimum compare distance from
+both rails prevents a mathematically valid interval from silently producing an
+inadmissible high or low pulse. Counter-tick edges are `compare` and
+`2 * peak - compare`; converting either into `DeviceCycle` remains a later
+explicit clock-domain operation.
+
+Complete images retain digest, token, schedule, original duties, all selected
+compares, and their error/edge facts. The portable latch owner replays the image,
+accepts at most one future boundary on its exact period grid, and requires every
+timer zero to be observed once in sequence. MKS can separately consume each raw
+MCPWM token into a closed HAL owner: timer 0 is configured in up/down mode, then
+immediately stopped and reset to zero because the HAL exposes no
+configure-while-stopped call. No operator is attached to any pin and the owner
+exposes no controller, timer, compare write, or `PowerStage` implementation.
 
 `ALMCFG03` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
@@ -908,7 +927,8 @@ private real-time configuration container inject that digest and revalidate a
 `FocParameterSnapshot`, `RotorCalibration`, and proof-wrapped
 `TwoShuntCurrentCalibration`. This is lowering, not peripheral activation: the
 MKS stage remains non-armable, the diagnostic ADC1 transition is not connected
-to this lowering, and its MCPWM ownership stays sealed.
+to this lowering, and its stopped MCPWM owners are not connected to the
+portable latch model or configuration activation.
 
 ## Exact CAD-to-motor boundary
 

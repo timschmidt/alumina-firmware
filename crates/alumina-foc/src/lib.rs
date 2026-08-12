@@ -5,6 +5,7 @@ use alumina_protocol::{DeviceCycle, Digest};
 
 mod angle;
 mod current;
+mod pwm;
 
 pub use angle::{
     CountUncertainty, ElectricalPhase, ElectricalPhaseEstimate, HALF_TURN_BITS,
@@ -16,6 +17,10 @@ pub use current::{
     PwmAdcSynchronization, SequentialAdcAcquisition, SequentialAdcAcquisitionError,
     SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest, TwoShuntCurrentCalibration,
     TwoShuntPhasePair, ValidatedTwoShuntCurrentCalibration,
+};
+pub use pwm::{
+    PwmCompareContract, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
+    PwmCompareLatchOwner, PwmCompareValue,
 };
 
 /// Fractional bits in the signed Q2.30 real-time representation.

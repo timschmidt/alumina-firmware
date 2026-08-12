@@ -321,6 +321,18 @@ token, digest, sample-aperture time, edge witness, calibration lowering, or
 loop. The transition is not scheduled and has not run on hardware. See the
 [classic ESP32 ADC1 evidence](docs/evidence/M8-CLASSIC-ESP32-ADC1-OWNER.md).
 
+Exact center-aligned PWM lowering is now portable and replayable as well. A
+digest-bound contract proves the device-cycle/PWM/counter-clock ratios, selects
+the midpoint of each conservative duty interval on an integer compare lattice
+with ties-to-even, retains the full interval-plus-quantization error, enforces
+minimum active and inactive pulse widths, and derives both switching edges in
+counter ticks. A bounded owner stages only complete three-phase images and
+latches them on an exact timer-zero sequence. The MKS compile-only transition
+can configure, immediately stop, and zero timer 0 in both MCPWM units while all
+six phase GPIOs remain no-pull inputs. It attaches no operator or pin, exposes
+no compare-write method, and implements no `PowerStage`. See the
+[MCPWM compare evidence](docs/evidence/M8-EXACT-MCPWM-COMPARE.md).
+
 The MKS capability document now identifies each independent 400 kHz encoder
 connector as its own compile-supported AS5600 endpoint at address `0x36`, while
 keeping the two unqualified power stages separate. A canonical FOC profile must
@@ -330,7 +342,7 @@ retained integer pole-pair, encoder-modulus, loop-rate, PWM-period, and dead-tim
 facts. The portable V3 tests replay all fixed record forms and every two-chunk
 byte boundary before lowering. These remain synthetic qualification fixtures;
 the physical MKS target is non-armable, ADC1 commissioning is unqualified and
-unscheduled, and both MCPWM tokens remain sealed.
+unscheduled, and both MCPWM units remain disconnected closed owners.
 
 ## Developer checks
 

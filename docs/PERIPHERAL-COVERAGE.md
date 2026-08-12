@@ -186,9 +186,11 @@ Representative generated nodes:
   explicit dormant-to-I²C type state; portable exact current-calibration,
   two-shunt reconstruction, and PWM/ADC timing-witness contracts are present.
   An unscheduled ADC1 diagnostic owner now compiles for all four routed inputs
-  with explicit attenuation and ordered software-started reads; a synchronized
-  ADC1 producer, MCPWM compare-image owner, measured phase-high-impedance
-  shutdown, and a safe power profile remain;
+  with explicit attenuation and ordered software-started reads. Exact portable
+  center-aligned compare lowering/latching and a stopped, pin-disconnected
+  dual-MCPWM ownership transition also compile; a synchronized ADC1 producer,
+  physical compare commit, measured phase-high-impedance shutdown, and a safe
+  power profile remain;
 - TWAI/CAN, RS-485 and selected Modbus modes;
 - TMC UART/SPI devices, encoder/capture modes, DAC/touch where selected;
 - Ethernet or USB for the first board that physically requires it.

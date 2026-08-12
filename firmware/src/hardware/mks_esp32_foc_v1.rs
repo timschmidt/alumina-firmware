@@ -11,8 +11,8 @@ use alumina_as5600::{As5600, MagnetStatus, Observation, RawAngle};
 use alumina_board::BoardPackage;
 use alumina_config::RealtimeConfigurationProfile;
 use alumina_foc::{
-    SequentialAdcAcquisition, SequentialAdcAcquisitionError, SequentialAdcChannel,
-    SequentialAdcPair, SequentialAdcRequest,
+    PwmCompareContract, PwmCompareError, SequentialAdcAcquisition, SequentialAdcAcquisitionError,
+    SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest,
 };
 use alumina_motion::{
     OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
@@ -26,6 +26,8 @@ use defmt::warn;
 use esp_hal::analog::adc::{Adc, AdcConfig, AdcPin, Attenuation};
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, Error as I2cError, I2c};
+use esp_hal::mcpwm::timer::{CounterDirection, PwmWorkingMode, TimerClockConfig};
+use esp_hal::mcpwm::{McPwm, PeripheralClockConfig, PwmPeripheral};
 use esp_hal::peripherals::{
     ADC1, GPIO0, GPIO1, GPIO2, GPIO3, GPIO5, GPIO13, GPIO14, GPIO15, GPIO18, GPIO19, GPIO23,
     GPIO25, GPIO26, GPIO27, GPIO32, GPIO33, GPIO34, GPIO35, GPIO36, GPIO39, I2C0, I2C1, MCPWM0,
@@ -174,11 +176,52 @@ pub struct RealtimeResources {
     dead_code,
     reason = "closed state intentionally has no energizing operation"
 )]
-struct ClosedPowerStage<Pwm> {
+pub struct ClosedPowerStage<Pwm> {
     controller: Pwm,
     phase_u: Input<'static>,
     phase_v: Input<'static>,
     phase_w: Input<'static>,
+}
+
+/// Exact portable contract plus the two HAL prescalers used by one MCPWM unit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClosedMcpwmConfiguration {
+    pub contract: PwmCompareContract,
+    pub peripheral_prescaler: u8,
+    pub timer_prescaler: u8,
+}
+
+/// MCPWM ownership after timer 0 is configured, stopped, and reset to zero.
+///
+/// All three physical phase pins remain no-pull GPIO inputs. The controller is
+/// private, there is no pin attachment or compare-write method, and this type
+/// deliberately does not implement [`alumina_foc::PowerStage`].
+#[allow(
+    dead_code,
+    reason = "closed MCPWM owner is retained until a qualified output transition exists"
+)]
+pub struct ClosedMcpwmStage<Pwm: 'static> {
+    controller: McPwm<'static, Pwm>,
+    phase_u: Input<'static>,
+    phase_v: Input<'static>,
+    phase_w: Input<'static>,
+    configuration: ClosedMcpwmConfiguration,
+}
+
+impl<Pwm: 'static> ClosedMcpwmStage<Pwm> {
+    /// Returns the exact validated clock/compare facts retained by this owner.
+    pub const fn configuration(&self) -> ClosedMcpwmConfiguration {
+        self.configuration
+    }
+}
+
+/// Failure before either MCPWM singleton changes ownership.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClosedMcpwmInitializationError {
+    /// The portable clock/compare contract is invalid.
+    Contract(PwmCompareError),
+    /// The live HAL clock tree cannot represent the requested counter clock exactly.
+    Clock,
 }
 
 /// ADC1 and all four typed input-only GPIOs before analog calibration exists.
@@ -408,10 +451,12 @@ pub struct As5600EncoderResources {
 pub struct EstablishedRealtimeResources<
     Encoders = DormantEncoderResources,
     Current = UncalibratedCurrentSense,
+    Stage0 = ClosedPowerStage<MCPWM0<'static>>,
+    Stage1 = ClosedPowerStage<MCPWM1<'static>>,
 > {
     timer_group1: TIMG1<'static>,
-    stage0: ClosedPowerStage<MCPWM0<'static>>,
-    stage1: ClosedPowerStage<MCPWM1<'static>>,
+    stage0: Stage0,
+    stage1: Stage1,
     current_sense: Current,
     encoders: Encoders,
     safety_inputs: SafetyInputBank<0>,
@@ -506,7 +551,9 @@ impl RealtimeResources {
     }
 }
 
-impl<Current> EstablishedRealtimeResources<DormantEncoderResources, Current> {
+impl<Current, Stage0, Stage1>
+    EstablishedRealtimeResources<DormantEncoderResources, Current, Stage0, Stage1>
+{
     /// Selects read-only AS5600 mode for both independent encoder connectors.
     ///
     /// The phase, ADC, timer, and safety owners are moved unchanged. Connecting
@@ -518,7 +565,7 @@ impl<Current> EstablishedRealtimeResources<DormantEncoderResources, Current> {
     )]
     pub fn activate_as5600_encoders(
         self,
-    ) -> EstablishedRealtimeResources<As5600EncoderResources, Current> {
+    ) -> EstablishedRealtimeResources<As5600EncoderResources, Current, Stage0, Stage1> {
         let EstablishedRealtimeResources {
             timer_group1,
             stage0,
@@ -565,7 +612,9 @@ impl<Current> EstablishedRealtimeResources<DormantEncoderResources, Current> {
     }
 }
 
-impl<Encoders> EstablishedRealtimeResources<Encoders, UncalibratedCurrentSense> {
+impl<Encoders, Stage0, Stage1>
+    EstablishedRealtimeResources<Encoders, UncalibratedCurrentSense, Stage0, Stage1>
+{
     /// Gives ADC1 sole ownership of all four current-amplifier routes.
     ///
     /// Construction selects the caller-supplied approximate attenuation for
@@ -580,7 +629,7 @@ impl<Encoders> EstablishedRealtimeResources<Encoders, UncalibratedCurrentSense> 
     pub fn activate_unqualified_adc1(
         self,
         configuration: Adc1AcquisitionConfiguration,
-    ) -> EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSense> {
+    ) -> EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSense, Stage0, Stage1> {
         let EstablishedRealtimeResources {
             timer_group1,
             stage0,
@@ -628,7 +677,130 @@ impl<Encoders> EstablishedRealtimeResources<Encoders, UncalibratedCurrentSense> 
     }
 }
 
-impl<Encoders> EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSense> {
+impl<Encoders, Current>
+    EstablishedRealtimeResources<
+        Encoders,
+        Current,
+        ClosedPowerStage<MCPWM0<'static>>,
+        ClosedPowerStage<MCPWM1<'static>>,
+    >
+{
+    /// Configures and immediately stops timer 0 in each disconnected MCPWM unit.
+    ///
+    /// Both contracts and both live clock representations are checked before
+    /// either singleton is consumed. Timer start/stop is needed because the
+    /// current HAL has no configure-while-stopped operation; no operator is
+    /// connected to a pin, and all six phase pins remain no-pull inputs.
+    #[allow(
+        dead_code,
+        reason = "closed MCPWM ownership compiles but awaits stored selection and HIL"
+    )]
+    pub fn activate_closed_mcpwm(
+        self,
+        motor0: ClosedMcpwmConfiguration,
+        motor1: ClosedMcpwmConfiguration,
+    ) -> Result<
+        EstablishedRealtimeResources<
+            Encoders,
+            Current,
+            ClosedMcpwmStage<MCPWM0<'static>>,
+            ClosedMcpwmStage<MCPWM1<'static>>,
+        >,
+        ClosedMcpwmInitializationError,
+    > {
+        let motor0_hal = validate_closed_mcpwm_configuration(motor0)?;
+        let motor1_hal = validate_closed_mcpwm_configuration(motor1)?;
+        let EstablishedRealtimeResources {
+            timer_group1,
+            stage0,
+            stage1,
+            current_sense,
+            encoders,
+            safety_inputs,
+        } = self;
+        Ok(EstablishedRealtimeResources {
+            timer_group1,
+            stage0: initialize_closed_mcpwm_stage(stage0, motor0, motor0_hal),
+            stage1: initialize_closed_mcpwm_stage(stage1, motor1, motor1_hal),
+            current_sense,
+            encoders,
+            safety_inputs,
+        })
+    }
+}
+
+impl<Encoders, Current>
+    EstablishedRealtimeResources<
+        Encoders,
+        Current,
+        ClosedMcpwmStage<MCPWM0<'static>>,
+        ClosedMcpwmStage<MCPWM1<'static>>,
+    >
+{
+    /// Returns both configured-but-disconnected MCPWM clock contracts.
+    #[allow(
+        dead_code,
+        reason = "closed MCPWM ownership compiles but is not reported before HIL"
+    )]
+    pub const fn closed_mcpwm_configurations(&self) -> [ClosedMcpwmConfiguration; 2] {
+        [self.stage0.configuration(), self.stage1.configuration()]
+    }
+}
+
+fn validate_closed_mcpwm_configuration(
+    configuration: ClosedMcpwmConfiguration,
+) -> Result<(PeripheralClockConfig, TimerClockConfig), ClosedMcpwmInitializationError> {
+    configuration
+        .contract
+        .validate()
+        .map_err(ClosedMcpwmInitializationError::Contract)?;
+    let peripheral_clock =
+        PeripheralClockConfig::with_prescaler(configuration.peripheral_prescaler);
+    let peripheral_hz = peripheral_clock.frequency().as_hz();
+    let timer_divisor = u32::from(configuration.timer_prescaler) + 1;
+    if !peripheral_hz.is_multiple_of(timer_divisor)
+        || peripheral_hz / timer_divisor != configuration.contract.counter_clock_hz()
+    {
+        return Err(ClosedMcpwmInitializationError::Clock);
+    }
+    let timer_clock = peripheral_clock.timer_clock_with_prescaler(
+        configuration.contract.timer_peak_ticks(),
+        PwmWorkingMode::UpDown,
+        configuration.timer_prescaler,
+    );
+    if timer_clock.frequency().as_hz() != configuration.contract.pwm_hz() {
+        return Err(ClosedMcpwmInitializationError::Clock);
+    }
+    Ok((peripheral_clock, timer_clock))
+}
+
+fn initialize_closed_mcpwm_stage<Pwm>(
+    stage: ClosedPowerStage<Pwm>,
+    configuration: ClosedMcpwmConfiguration,
+    hal_configuration: (PeripheralClockConfig, TimerClockConfig),
+) -> ClosedMcpwmStage<Pwm>
+where
+    Pwm: PwmPeripheral + 'static,
+{
+    let (peripheral_clock, timer_clock) = hal_configuration;
+    let mut controller = McPwm::new(stage.controller, peripheral_clock);
+    controller.timer0.start(timer_clock);
+    controller.timer0.stop();
+    controller
+        .timer0
+        .set_counter(0, CounterDirection::Increasing);
+    ClosedMcpwmStage {
+        controller,
+        phase_u: stage.phase_u,
+        phase_v: stage.phase_v,
+        phase_w: stage.phase_w,
+        configuration,
+    }
+}
+
+impl<Encoders, Stage0, Stage1>
+    EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSense, Stage0, Stage1>
+{
     /// Returns the programmed but unqualified ADC1 attenuation selections.
     #[allow(
         dead_code,
@@ -674,7 +846,9 @@ impl<Encoders> EstablishedRealtimeResources<Encoders, UnqualifiedAdc1CurrentSens
     }
 }
 
-impl<Current> EstablishedRealtimeResources<As5600EncoderResources, Current> {
+impl<Current, Stage0, Stage1>
+    EstablishedRealtimeResources<As5600EncoderResources, Current, Stage0, Stage1>
+{
     /// Reads one exact 12-bit mechanical count without changing sensor state.
     #[allow(
         dead_code,
@@ -718,7 +892,9 @@ impl<Current> EstablishedRealtimeResources<As5600EncoderResources, Current> {
     }
 }
 
-impl<Encoders, Current> EstablishedRealtimeResources<Encoders, Current> {
+impl<Encoders, Current, Stage0, Stage1>
+    EstablishedRealtimeResources<Encoders, Current, Stage0, Stage1>
+{
     /// Rejects configured safety routes because none is established on V1.0.
     pub fn configure_safety_inputs(
         &mut self,

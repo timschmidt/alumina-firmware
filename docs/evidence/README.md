@@ -141,3 +141,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M8-CLASSIC-ESP32-ADC1-OWNER.md`](M8-CLASSIC-ESP32-ADC1-OWNER.md) — ordered
   software-started ADC1 commissioning ownership for all four MKS current routes,
   with synchronization and torque-control claims kept closed.
+- [`M8-EXACT-MCPWM-COMPARE.md`](M8-EXACT-MCPWM-COMPARE.md) — exact
+  duty-interval to center-aligned compare lowering, fail-closed timer-zero
+  staging, and stopped pin-disconnected MKS MCPWM ownership.

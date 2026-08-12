@@ -274,6 +274,13 @@ by device-cycle Hz. The device-cycle rate must equal PWM Hz times period cycles.
 Two channel records, this timing record, and the selected two ADC bindings lower
 as one validated current-calibration object; none is independently executable.
 
+V3 does not yet encode ADC attenuation, the MCPWM post-prescaler counter clock,
+integer timer peak, minimum active/inactive pulse ticks, or maximum accepted
+Q2.30 compare error. The compile-only owners require these facts separately and
+cannot be reached from configuration activation. They will be added by the next
+green-field schema revision rather than inferred from the current record or a
+board default.
+
 ## Cross-record admission
 
 A stepper axis requires unique step and direction bindings plus exactly one

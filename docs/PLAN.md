@@ -559,12 +559,22 @@ a sample-aperture or PWM-edge witness and does not implement `CurrentSense`.
 The transition is unscheduled and untested on hardware. See the
 [ADC1-owner evidence](evidence/M8-CLASSIC-ESP32-ADC1-OWNER.md).
 
-The next target slice implements exact interval-to-integer MCPWM compare
-lowering and a timer-zero latch owner while all six phase pins remain no-pull
-inputs. Joining ADC attenuation and MCPWM clock facts to canonical
-configuration, physical electrical alignment, calibrated analog error,
-truthful edge stamps, measured sensor latency, and any nonzero duty remain
-separate reviewed work.
+The exact MCPWM compare checkpoint now binds device-cycle, PWM-period, and
+center-aligned counter clocks; lowers each conservative Q2.30 duty interval by
+midpoint/ties-to-even; retains its whole interval-to-lattice error; enforces
+minimum high/low pulses; and derives both compare edges in counter ticks. A
+portable complete-image owner accepts one future image and faults on identity,
+grid, timer-zero sequence, or cycle-overflow disagreement. On MKS, an
+unscheduled type-state transition validates both HAL clock trees before it
+configures, stops, and zeroes timer 0 in both MCPWM units. No operator or GPIO
+is attached, no compare is written, and all phase pins remain inputs. See the
+[MCPWM compare evidence](evidence/M8-EXACT-MCPWM-COMPARE.md).
+
+The next target slice joins ADC attenuation, MCPWM clocks/resolution/minimum
+pulse, and quantization policy to canonical configuration and the qualified
+safety/fault gate. Physical electrical alignment, calibrated analog error,
+truthful device-cycle edge stamps, measured sensor latency, and any nonzero
+duty remain separate reviewed work.
 
 Exit gate:
 

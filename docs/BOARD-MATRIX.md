@@ -213,8 +213,11 @@ measurement claim. Configuration V3 can retain a complete rotor/current/timing
 profile only behind the still-unqualified stage gate. A separate unscheduled
 diagnostic transition can configure all four ADC1 inputs with explicit
 attenuation and perform ordered software-started raw reads; it creates no
-synchronized or calibrated sample. This is a `compiles`, non-armable safe
-composition: reset behavior, inverter both-off behavior, MCPWM operation,
+synchronized or calibrated sample. Another unscheduled transition can validate
+both MCPWM clock trees, configure timer 0 center-aligned, immediately stop it,
+and reset its counter while the phase pins remain inputs; it cannot attach an
+operator or write a compare. This is a `compiles`, non-armable safe composition:
+reset behavior, inverter both-off behavior, driven MCPWM operation,
 ADC timing/accuracy, sensor traffic, current measurement, safety inputs, and
 energization remain unverified.
 
