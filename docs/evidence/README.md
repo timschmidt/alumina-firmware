@@ -168,3 +168,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-GRAPH-RATES.md`](M9-EXACT-GRAPH-RATES.md) — exact rational clock
   resolution, explicit latest-at-or-before Stream transitions, smallest
   repeating schedules, minimum queue capacity, and bounded retained samples.
+- [`M9-DETERMINISTIC-GRAPH-SIMULATION.md`](M9-DETERMINISTIC-GRAPH-SIMULATION.md)
+  — fixed HostExact Stream/rate simulation, exact source-first scheduling,
+  canonical implementation identity, and independently replayed `ALGT` traces.

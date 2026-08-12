@@ -656,14 +656,19 @@ tick/sequence envelopes; synchronous wires cannot cross concrete execution
 ownership. Cross-clock Stream feedthrough now requires an audited exact
 latest-at-or-before transition: rational clock analysis proves one shared root,
 the smallest repeating schedule, minimum queue capacity, and bounded held
-sample storage. Runtime evaluation, fixed firmware runtime layout and WCET,
-compiler lowering, capability nodes, graph UI, and firmware graph IR remain
-open. See the
+sample storage. A separate fixed HostExact implementation registry and bounded
+simulator now execute only external Stream sources, that audited transition,
+and Stream sinks using exact root time. Canonical `ALGT` traces bind graph and
+implementation identities and replay by independent simulation. General node,
+state, or Event evaluation, fixed firmware runtime layout and WCET, compiler
+lowering, capability nodes, graph UI, and firmware graph IR remain open. See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
 [type-storage](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
 [bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), plus the
-[exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) evidence.
+[exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) and
+[deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md)
+evidence.
 
 Exit gate:
 

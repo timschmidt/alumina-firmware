@@ -362,14 +362,18 @@ explicit full policy, reject synchronous cross-domain sharing, and report
 checked per-input/aggregate canonical memory ceilings. Audited cross-clock
 Stream dependencies now use exact rational clock resolution and one explicit
 latest-at-or-before transition, with shared-root, smallest-pattern,
-minimum-queue, and held-sample proofs. It intentionally has no evaluator, fixed
-firmware runtime layout or WCET, capability palette, or firmware lowering yet.
-See the
+minimum-queue, and held-sample proofs. A separate fixed HostExact registry now
+simulates external Stream sources, that transition, and Stream sinks in exact
+root time; canonical traces replay by independently regenerating every byte.
+General node/state/Event evaluation, fixed firmware runtime layout or WCET,
+capability palette, and firmware lowering remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
 [`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), and
-[`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) evidence.
+[`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) and
+[`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md)
+evidence.
 
 ### Execution semantics
 
