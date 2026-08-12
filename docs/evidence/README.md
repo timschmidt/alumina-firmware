@@ -151,3 +151,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M8-EXACT-MCPWM-COMPARE.md`](M8-EXACT-MCPWM-COMPARE.md) — exact
   duty-interval to center-aligned compare lowering, fail-closed timer-zero
   staging, and stopped pin-disconnected MKS MCPWM ownership.
+- [`M9-CANONICAL-GRAPH-DOCUMENT-V1.md`](M9-CANONICAL-GRAPH-DOCUMENT-V1.md) —
+  bounded exact unit/type/value registries, opaque versioned structural nodes,
+  explicit domains/clocks, typed wires, and canonical digest-verified graph
+  replay with hostile-input coverage.

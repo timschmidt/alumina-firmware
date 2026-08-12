@@ -347,6 +347,15 @@ timestamps/durations/clocks, events, bounded streams/waveforms, and typed
 resource/config/job/fault handles. Exact values and measured/display floats
 require explicit conversion nodes.
 
+Implementation checkpoint: the window-free core now retains bounded exact
+units, rational/interval/canonical/composite values, runtime event/stream types,
+resource/job handles, explicit clocks and execution domains, opaque versioned
+nodes, typed parameters/ports/wires, and a canonical SHA-256-identified `ALGR`
+V1 document. Replay enforces caller-owned admission limits and exact
+decode/re-encode equality. It intentionally has no executor, state/cycle
+semantics, capability palette, or firmware lowering yet. See
+[`M9-CANONICAL-GRAPH-DOCUMENT-V1.md`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md).
+
 ### Execution semantics
 
 - Pure nodes run when inputs are available and memoize exact values by identity.

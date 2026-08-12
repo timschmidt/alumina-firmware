@@ -640,6 +640,16 @@ Work:
   oscilloscope, event/state plotter, XY/spectrum tools, triggers, cursors,
   capture/replay, exact path correlation, experiment records, and export.
 
+Implementation checkpoint: `alumina-interface-core` now owns the first
+greenfield structural graph document. It provides bounded exact unit/type/value
+registries, explicit clocks and HostExact/Service/Realtime placement, opaque
+versioned nodes, typed ports/wires, and canonical digest-verified `ALGR` V1
+replay under an independent admission policy. Unknown nodes round-trip and
+hostile alternate encodings reject. State, execution semantics, compiler
+admission/lowering, capability nodes, graph UI, and firmware graph IR remain
+open. See the
+[canonical graph-document evidence](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md).
+
 Exit gate:
 
 - A saved multi-rate producer/consumer/PID/interlock graph simulates, validates,
