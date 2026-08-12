@@ -26,6 +26,12 @@ pub const MAX_GRAPH_IR_QUEUE_ITEMS: u32 = 4_096;
 pub const BOOLEAN_STREAM_ITEM_BYTES: u32 = 21;
 /// Canonical retained Boolean typed value for latest-at-or-before.
 pub const BOOLEAN_LATEST_STATE_BYTES: u32 = 5;
+/// Deployment-local type tag in every graph-IR Boolean value.
+///
+/// This is deliberately not an `ALGR` document-local type ID. The reviewed
+/// implementation digest binds the source schema; deployed runtime bytes use
+/// this fixed tag so firmware never needs the arbitrary-precision schema.
+pub const GRAPH_IR_BOOLEAN_TYPE_TAG: u32 = 1;
 /// Exact graph-IR schema implemented by this crate.
 pub const GRAPH_IR_VERSION: u16 = 1;
 
@@ -238,6 +244,91 @@ pub struct GraphIrChannel {
     pub storage_bytes: u32,
 }
 
+/// Canonical deployment-local Boolean value retained in node state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphIrBooleanValue {
+    /// Exact Boolean payload.
+    pub value: bool,
+}
+
+impl GraphIrBooleanValue {
+    /// Encode the fixed deployment tag followed by one canonical Boolean byte.
+    pub fn encode(self) -> [u8; BOOLEAN_LATEST_STATE_BYTES as usize] {
+        let mut bytes = [0_u8; BOOLEAN_LATEST_STATE_BYTES as usize];
+        put_u32(&mut bytes, 0, GRAPH_IR_BOOLEAN_TYPE_TAG);
+        bytes[4] = u8::from(self.value);
+        bytes
+    }
+
+    /// Decode one exact deployment-local Boolean value.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, GraphIrValueError> {
+        if bytes.len() != BOOLEAN_LATEST_STATE_BYTES as usize {
+            return Err(GraphIrValueError::Length);
+        }
+        let tag = get_u32(bytes, 0);
+        if tag != GRAPH_IR_BOOLEAN_TYPE_TAG {
+            return Err(GraphIrValueError::TypeTag(tag));
+        }
+        let value = match bytes[4] {
+            0 => false,
+            1 => true,
+            value => return Err(GraphIrValueError::Boolean(value)),
+        };
+        Ok(Self { value })
+    }
+}
+
+/// One timestamped canonical Boolean queue item used by every V1 opcode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphIrBooleanStreamItem {
+    /// Deployment-local Boolean payload.
+    pub value: bool,
+    /// Release tick in the source node's package schedule.
+    pub source_tick: u64,
+    /// Monotonic source sequence; fixed V1 opcodes emit their release tick.
+    pub sequence: u64,
+}
+
+impl GraphIrBooleanStreamItem {
+    /// Encode the five-byte Boolean value, source tick, and sequence.
+    pub fn encode(self) -> [u8; BOOLEAN_STREAM_ITEM_BYTES as usize] {
+        let mut bytes = [0_u8; BOOLEAN_STREAM_ITEM_BYTES as usize];
+        bytes[..BOOLEAN_LATEST_STATE_BYTES as usize]
+            .copy_from_slice(&GraphIrBooleanValue { value: self.value }.encode());
+        put_u64(
+            &mut bytes,
+            BOOLEAN_LATEST_STATE_BYTES as usize,
+            self.source_tick,
+        );
+        put_u64(&mut bytes, 13, self.sequence);
+        bytes
+    }
+
+    /// Decode one exact queue item and reject noncanonical tags or Booleans.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, GraphIrValueError> {
+        if bytes.len() != BOOLEAN_STREAM_ITEM_BYTES as usize {
+            return Err(GraphIrValueError::Length);
+        }
+        let value = GraphIrBooleanValue::from_slice(&bytes[..BOOLEAN_LATEST_STATE_BYTES as usize])?;
+        Ok(Self {
+            value: value.value,
+            source_tick: get_u64(bytes, BOOLEAN_LATEST_STATE_BYTES as usize),
+            sequence: get_u64(bytes, 13),
+        })
+    }
+}
+
+/// Canonical deployed-value rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphIrValueError {
+    /// Input has the wrong fixed width.
+    Length,
+    /// The deployment-local type tag is not Boolean.
+    TypeTag(u32),
+    /// A Boolean byte was neither zero nor one.
+    Boolean(u8),
+}
+
 /// Totals independently reconstructed while decoding one package.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GraphIrSummary {
@@ -404,6 +495,34 @@ impl GraphIrPackage {
             next: 0,
             count: self.summary.channel_count,
         }
+    }
+
+    /// Decode one already-admitted node by topological record index.
+    pub fn node(&self, index: u16) -> Option<GraphIrNode> {
+        if index >= self.summary.node_count {
+            return None;
+        }
+        let offset = GRAPH_IR_HEADER_BYTES + usize::from(index) * GRAPH_IR_NODE_BYTES;
+        decode_node(
+            &self.bytes[offset..offset + GRAPH_IR_NODE_BYTES],
+            usize::from(index),
+        )
+        .ok()
+    }
+
+    /// Decode one already-admitted channel by target-ordered record index.
+    pub fn channel(&self, index: u16) -> Option<GraphIrChannel> {
+        if index >= self.summary.channel_count {
+            return None;
+        }
+        let offset = GRAPH_IR_HEADER_BYTES
+            + usize::from(self.summary.node_count) * GRAPH_IR_NODE_BYTES
+            + usize::from(index) * GRAPH_IR_CHANNEL_BYTES;
+        decode_channel(
+            &self.bytes[offset..offset + GRAPH_IR_CHANNEL_BYTES],
+            usize::from(index),
+        )
+        .ok()
     }
 }
 
@@ -1173,6 +1292,10 @@ mod tests {
         assert_eq!(package.header(), header);
         assert_eq!(package.nodes().collect::<std::vec::Vec<_>>(), nodes);
         assert_eq!(package.channels().collect::<std::vec::Vec<_>>(), channels);
+        assert_eq!(package.node(1), Some(nodes[1]));
+        assert_eq!(package.node(3), None);
+        assert_eq!(package.channel(0), Some(channels[0]));
+        assert_eq!(package.channel(2), None);
         assert_eq!(
             package.summary(),
             GraphIrSummary {
@@ -1196,6 +1319,41 @@ mod tests {
                 0xfb, 0x55, 0xce, 0x2d, 0x20, 0x99, 0x2f, 0x76, 0x36, 0x32, 0xf8, 0x59, 0xe4, 0xf0,
                 0x5f, 0xac, 0x58, 0x76,
             ])
+        );
+    }
+
+    #[test]
+    fn boolean_value_and_stream_item_have_one_deployment_local_encoding() {
+        let value = GraphIrBooleanValue { value: true };
+        assert_eq!(value.encode(), [1, 0, 0, 0, 1]);
+        assert_eq!(GraphIrBooleanValue::from_slice(&value.encode()), Ok(value));
+
+        let item = GraphIrBooleanStreamItem {
+            value: false,
+            source_tick: 0x0102_0304_0506_0708,
+            sequence: 0x1112_1314_1516_1718,
+        };
+        let encoded = item.encode();
+        assert_eq!(&encoded[..5], &[1, 0, 0, 0, 0]);
+        assert_eq!(&encoded[5..13], &item.source_tick.to_le_bytes());
+        assert_eq!(&encoded[13..], &item.sequence.to_le_bytes());
+        assert_eq!(GraphIrBooleanStreamItem::from_slice(&encoded), Ok(item));
+
+        let mut wrong_tag = encoded;
+        wrong_tag[0] = 2;
+        assert_eq!(
+            GraphIrBooleanStreamItem::from_slice(&wrong_tag),
+            Err(GraphIrValueError::TypeTag(2))
+        );
+        let mut wrong_boolean = encoded;
+        wrong_boolean[4] = 2;
+        assert_eq!(
+            GraphIrBooleanStreamItem::from_slice(&wrong_boolean),
+            Err(GraphIrValueError::Boolean(2))
+        );
+        assert_eq!(
+            GraphIrBooleanStreamItem::from_slice(&encoded[..20]),
+            Err(GraphIrValueError::Length)
         );
     }
 

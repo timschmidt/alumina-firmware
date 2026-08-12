@@ -33,6 +33,15 @@ evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
 evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
 evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
+The first deployed graphical-control path is also portable end to end. The
+interface lowers one audited Boolean Service-to-Realtime graph into a fixed
+4 KiB package; firmware independently decodes exact identities and arena
+requirements, primes source tick zero, splits compile-time storage between core
+owners, and executes only the three whitelisted opcodes through a bounded
+bridge with a first-cause fault latch. No authenticated install route, live
+firmware task, resource opcode, target timing, or physical side effect is
+claimed yet. See the [fixed graph-IR boundary](docs/GRAPH-IR.md).
+
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
 publication checkpoints, and a deterministic reboot/cache/prefetch simulator.
@@ -494,8 +503,8 @@ firmware. Datasheets and upstream root metadata are retained under
 - [Interface roadmap](docs/INTERFACE-ROADMAP.md) — authoritative WASM CAM,
   Hypergraphics, graph programming, annotated-board diagnostics, and plotting.
 - [Fixed deployed graph IR](docs/GRAPH-IR.md) — canonical whitelisted opcodes,
-  device-cycle schedules, preallocated arenas, and independent firmware-side
-  admission without a graph-document interpreter.
+  device-cycle schedules, const-generic arenas, independent admission, and
+  split-core portable execution without a graph-document interpreter.
 - [Verification strategy](docs/VERIFICATION.md) — simulation, exactness tests,
   HIL timing, synchronized-job, safety, and release evidence.
 - [Research sources](docs/SOURCES.md) — local and upstream evidence captured on

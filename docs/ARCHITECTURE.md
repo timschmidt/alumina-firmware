@@ -1025,9 +1025,13 @@ Service-to-Realtime bridges, contiguous arenas, and one integer device-cycle
 schedule per active domain. A separate browser compiler registry now binds the
 complete audited semantic and fixed implementation identities, proves one
 target, schedule, WCET reserve, and fixed arena policy, and emits bytes replayed
-by that decoder. This remains format/compiler scaffolding only: no firmware
-route, installer, arena owner, executor, resource opcode, or physical timing
-claim exists at this checkpoint.
+by that decoder. A portable runtime now admits the requested package and exact
+device/capability/configuration/implementation identities into const-generic
+state and queue arrays, primes Service tick zero, uniquely splits core-local
+owners, and executes the three fixed opcodes through a bounded critical-section
+bridge with a first-cause fault latch. It has no authenticated firmware route,
+live core-command transfer, board composition, resource opcode, measured WCET,
+or physical timing claim at this checkpoint.
 
 ## Security and update model
 

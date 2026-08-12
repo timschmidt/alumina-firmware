@@ -9,6 +9,9 @@ use alumina_protocol::{DeviceCycle, Digest, FrameHeader, FrameKind, HeaderError}
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, Receiver, Sender, TryReceiveError, TrySendError};
 
+/// Fixed deployed-graph package ownership and split-core execution.
+pub mod graph;
+
 /// Default number of admitted service-to-realtime commands.
 pub const COMMAND_QUEUE_DEPTH: usize = 8;
 /// Default number of lossy realtime-to-service telemetry samples.
@@ -210,6 +213,22 @@ impl LatestSignal {
             generation = 1;
         }
         generation
+    }
+
+    /// Atomically retain the first value and return its generation.
+    ///
+    /// This is for fail-stop causes that must not be overwritten by a racing
+    /// second publisher. Unlike [`Self::publish`], there is deliberately no
+    /// update or clear operation.
+    pub fn latch(&self, code: u8, detail: u8) -> u16 {
+        let first = pack_signal(1, code, detail);
+        match self
+            .packed
+            .compare_exchange(0, first, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => 1,
+            Err(existing) => (existing >> 16) as u16,
+        }
     }
 
     /// Returns the current value only when it is newer than `last_generation`.
@@ -863,6 +882,23 @@ mod tests {
         assert_eq!(
             service.try_receive_telemetry().unwrap().header().sequence,
             1
+        );
+    }
+
+    #[test]
+    fn latched_signal_retains_the_first_cause() {
+        let signal = LatestSignal::new();
+        let first = signal.latch(17, 3);
+        let second = signal.latch(99, 8);
+        assert_eq!(first, 1);
+        assert_eq!(second, first);
+        assert_eq!(
+            signal.after(0),
+            Some(SignalSnapshot {
+                generation: 1,
+                code: 17,
+                detail: 3,
+            })
         );
     }
 

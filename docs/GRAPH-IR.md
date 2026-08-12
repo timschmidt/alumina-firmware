@@ -7,8 +7,9 @@ single-device `ALGRIR01` package containing only reviewed opcodes, integer
 device-cycle schedules, fixed state/queue arenas, and the identities needed to
 reject stale or substituted work.
 
-This is a format and validator checkpoint. No firmware API installs a package,
-no executor invokes an opcode, and no physical resource is claimed yet.
+This is a format, portable-admission, and fixed-opcode execution checkpoint. No
+authenticated firmware API or board composition installs a package yet, and no
+physical resource is claimed.
 
 ## Fixed package
 
@@ -81,8 +82,11 @@ operation is in V1.
 Each 32-byte channel record retains graph wire ID, topological source/target
 indices, owning arena, full policy, capacity, item size, arena offset, and
 storage size. Records are ordered by unique target. V1 uses only a timestamped
-Boolean Stream item: 5 canonical typed-value bytes plus an 8-byte source-clock
-tick and 8-byte monotonic sequence, or 21 bytes total.
+Boolean Stream item: a four-byte little-endian deployment-local Boolean tag
+`1`, one canonical `0`/`1` value byte, an eight-byte source-schedule tick, and
+an eight-byte monotonic sequence, or 21 bytes total. The deployment tag is not
+an `ALGR` document-local type ID; the implementation digest binds that source
+schema while firmware receives one fixed independently decodable runtime type.
 
 The validator independently requires:
 
@@ -134,8 +138,40 @@ limits, and deployment limits. The emitted package is immediately decoded by
 this crate. Firmware will still recheck every bounded invariant it can without
 arbitrary-precision or graph-schema machinery.
 
-Installation, authentication, capability/configuration reconciliation,
-preallocated arena construction, core-0/core-1 bridge ownership, runtime
-semantics, deadline monitoring, fault propagation, uninstall/rollback,
+## Portable split-core runtime
+
+`alumina-runtime::graph::FixedGraphRuntime` owns one package plus caller-chosen
+compile-time capacities for Service state, Realtime state, both local queue
+arenas, and the one-way bridge. Admission copies and independently decodes the
+exact 4 KiB package, requires its requested package digest, and matches device,
+capability, configuration, and implementation identities before changing any
+runtime state. It derives per-owner requirements again and rejects any package
+that exceeds the concrete const-generic arrays. The installation report exposes
+both selected payload bytes and `size_of::<Self>()`, so fixed queue cursors,
+adjacency metadata, mutex, fault mailbox, and package storage are not hidden by
+the 68-byte representative payload figure.
+
+Start preparation is separately safety-gated. It fixes one device-cycle epoch
+and executes Service release tick zero before issuing a Realtime owner, which
+establishes the audited source-first initial value without inventing a default.
+`split` then uniquely borrows disjoint Service and Realtime state/local queues.
+Only the declared bridge arena and a first-cause fault mailbox remain shared;
+the bridge uses the existing cross-core critical-section mechanism and copies
+only canonical 21-byte items.
+
+Each endpoint accepts only its exact next `DeviceCycle`, performs no allocation
+or wait, and advances only after a complete release. The fixed executor runs
+Boolean constants, consumes every due source item for latest-at-or-before,
+retains the canonical five-byte Boolean, emits one target-tick item, and drains
+the sink without a side effect. Queue full/corruption, missing initialization,
+wrong-cycle release, arithmetic failure, invalid runtime shape, or absent safety
+authority atomically latches the first fault and stops both domains. This is a
+portable functional executor; the declared WCET/reserve is not target timing
+evidence.
+
+Authenticated upload/storage lifecycle, independent transfer through the live
+core boundary, firmware task composition, active/candidate replacement,
+uninstall/rollback, measured deadline/WCET monitoring, resource opcodes,
 telemetry, and HIL timing evidence remain later work. Fixed firmware safety
-continues to have authority over every future graph operation.
+continues to have authority over every graph release and every future physical
+operation.

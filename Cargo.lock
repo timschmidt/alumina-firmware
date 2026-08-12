@@ -169,6 +169,7 @@ version = "0.1.0"
 name = "alumina-runtime"
 version = "0.1.0"
 dependencies = [
+ "alumina-graph-ir",
  "alumina-machine-ir",
  "alumina-protocol",
  "critical-section",

@@ -369,9 +369,13 @@ third registry now binds complete audited semantics to fixed implementation,
 domain, clock, and WCET descriptors. It lowers the initial Boolean
 Service-to-Realtime subset into an independently replayed 4 KiB `ALGRIR01`
 package with integer device-cycle schedules and fixed state/channel/bridge
-arenas. General node/state/Event execution, firmware package installation,
-actual arena/bridge ownership, executor timing, resource opcodes, capability
-palette, and graph UI remain open. See the
+arenas. A portable firmware runtime now transactionally admits those exact
+bytes/identities into const-generic storage, primes Service tick zero, splits
+unique Service/Realtime owners, executes the three fixed opcodes at exact
+release cycles, and shares only the bounded bridge and first-cause fault latch.
+General node/state/Event execution, authenticated upload/core transfer, live
+task composition, replacement lifecycle, measured executor timing, resource
+opcodes, capability palette, and graph UI remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and

@@ -666,8 +666,13 @@ opcodes, integer device-cycle schedules, declared WCET plus executor reserve,
 and contiguous state/channel/bridge arenas. A third interface registry binds
 the complete audited semantics and fixed implementations, then lowers one
 single-device graph into those independently replayed bytes. General node,
-state, or Event execution, package installation, actual arena/bridge ownership,
-executor timing, resource opcodes, capability nodes, and graph UI remain open.
+state, or Event execution remains open, but the fixed package now has a portable
+firmware runtime: transactional exact-identity admission into const-generic
+arenas, safety-gated Service tick-zero priming, unique Service/Realtime endpoint
+ownership, canonical queue execution, exact-cycle release admission, and a
+shared first-cause fault latch. Authenticated upload/core transfer, live task
+composition, active/candidate replacement, measured executor timing, resource
+opcodes, capability nodes, and graph UI remain open.
 See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
