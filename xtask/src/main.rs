@@ -9,6 +9,8 @@ use alumina_board::{BoardPackage, BusKind, DeviceRoute, OwnerDomain, ResourceId,
 use alumina_capability::{calculate_identity, verify_declared_identity};
 
 mod hil_record;
+mod tinybee_graph_record;
+mod tinybee_graph_vcd;
 mod tinybee_pcm_record;
 mod tinybee_pcm_vcd;
 
@@ -90,6 +92,9 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         }
         [group, command] if group == "hil" && command == "list" => {
             println!("mks-tinybee-pcm-short-safe  mks-tinybee-v1  build-only, disconnected-load");
+            println!(
+                "mks-tinybee-graph-input-timing-safe  mks-tinybee-v1  build-only, disconnected-load, Wi-Fi load"
+            );
             Ok(())
         }
         [group, command, id] if group == "hil" && command == "build" => {
@@ -119,8 +124,26 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             );
             Ok(())
         }
+        [group, command, path] if group == "hil" && command == "validate-tinybee-graph-record" => {
+            let summary = tinybee_graph_record::validate(root, Path::new(path))?;
+            println!(
+                "TinyBee graph HIL record {}: {} ({} Hz, {} ms, {} releases, input-to-sink={} ps)",
+                summary.run_id,
+                summary.disposition,
+                summary.sample_rate_hz,
+                summary.capture_milliseconds,
+                summary.release_pulse_count,
+                summary.input_to_sink_ps
+            );
+            Ok(())
+        }
         [group, command, vcd, report] if group == "hil" && command == "analyze-tinybee-vcd" => {
             tinybee_pcm_vcd::analyze_to_report(root, Path::new(vcd), Path::new(report))
+        }
+        [group, command, vcd, report]
+            if group == "hil" && command == "analyze-tinybee-graph-vcd" =>
+        {
+            tinybee_graph_vcd::analyze_to_report(root, Path::new(vcd), Path::new(report))
         }
         [] => {
             print_help();
@@ -144,9 +167,12 @@ fn print_help() {
     println!("  cargo xtask build --board <board-id> [--profile <name>]");
     println!("  cargo xtask hil list");
     println!("  cargo xtask hil build mks-tinybee-pcm-short-safe");
+    println!("  cargo xtask hil build mks-tinybee-graph-input-timing-safe");
     println!("  cargo xtask hil validate-record <repository-relative-record.toml>");
     println!("  cargo xtask hil validate-tinybee-record <repository-relative-record.toml>");
+    println!("  cargo xtask hil validate-tinybee-graph-record <repository-relative-record.toml>");
     println!("  cargo xtask hil analyze-tinybee-vcd <capture.vcd> <new-analysis.toml>");
+    println!("  cargo xtask hil analyze-tinybee-graph-vcd <capture.vcd> <new-analysis.toml>");
 }
 
 fn repository_registry(root: &Path) -> PathBuf {
@@ -587,16 +613,28 @@ fn preserve_board_artifact(root: &Path, board: &Board, profile: &str) -> Result<
 }
 
 fn run_hil_build(root: &Path, boards: &[Board], id: &str) -> Result<(), String> {
-    if id != "mks-tinybee-pcm-short-safe" {
-        return Err(format!(
-            "unknown HIL fixture `{id}`; run `cargo xtask hil list`"
-        ));
-    }
+    let (binary, feature, description) = match id {
+        "mks-tinybee-pcm-short-safe" => (
+            "alumina-hil-mks-tinybee-pcm-short-safe",
+            "hil-mks-tinybee-pcm-short-safe",
+            "safe-image capture",
+        ),
+        "mks-tinybee-graph-input-timing-safe" => (
+            "alumina-hil-mks-tinybee-graph-input-timing-safe",
+            "hil-mks-tinybee-graph-input-timing-safe",
+            "safe graph-input timing and Wi-Fi-load capture",
+        ),
+        _ => {
+            return Err(format!(
+                "unknown HIL fixture `{id}`; run `cargo xtask hil list`"
+            ));
+        }
+    };
     let board = find_board(boards, "mks-tinybee-v1")?;
     validate_board(board)?;
     println!(
-        "building release-only safe-image capture for {}; this command never flashes hardware",
-        board.id
+        "building release-only {description} for {}; this command never flashes hardware",
+        board.id,
     );
     println!(
         "the resulting binary still requires all motor and process loads to be physically disconnected"
@@ -606,14 +644,9 @@ fn run_hil_build(root: &Path, boards: &[Board], id: &str) -> Result<(), String> 
         .current_dir(root)
         .arg("+esp")
         .arg("build")
-        .args([
-            "-p",
-            "alumina-firmware",
-            "--bin",
-            "alumina-hil-mks-tinybee-pcm-short-safe",
-        ])
+        .args(["-p", "alumina-firmware", "--bin", binary])
         .arg("--no-default-features")
-        .args(["--features", "hil-mks-tinybee-pcm-short-safe"])
+        .args(["--features", feature])
         .args(["--target", &board.target])
         .args(["--profile", "release"])
         .args(["--locked", "--offline"]);
@@ -624,10 +657,7 @@ fn run_hil_build(root: &Path, boards: &[Board], id: &str) -> Result<(), String> 
     if !status.success() {
         return Err(format!("HIL build failed for `{id}` with {status}"));
     }
-    println!(
-        "artifact: target/{}/release/alumina-hil-mks-tinybee-pcm-short-safe",
-        board.target
-    );
+    println!("artifact: target/{}/release/{binary}", board.target,);
     Ok(())
 }
 

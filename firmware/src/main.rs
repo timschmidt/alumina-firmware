@@ -22,13 +22,17 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
     all(feature = "board-mks-tinybee-4mb", feature = "board-t-deck-pro")
 ))]
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
-#[cfg(feature = "hil-mks-tinybee-pcm-short-safe")]
-compile_error!("the HIL feature is isolated to `--bin alumina-hil-mks-tinybee-pcm-short-safe`");
+#[cfg(any(
+    feature = "hil-mks-tinybee-pcm-short-safe",
+    feature = "hil-mks-tinybee-graph-input-timing-safe"
+))]
+compile_error!("HIL features are isolated to their named `alumina-hil-*` binaries");
 
 mod capability;
 mod clock;
 mod configuration;
 mod graph;
+mod graph_platform;
 mod hardware;
 mod job;
 mod motion;

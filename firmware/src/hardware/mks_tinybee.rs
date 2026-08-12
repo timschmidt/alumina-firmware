@@ -121,6 +121,26 @@ impl ServiceResources {
         )
     }
 
+    /// Consumes otherwise dormant service tokens and establishes the two
+    /// disconnected-load graph HIL observations on EXP1 pins 4 and 3.
+    ///
+    /// GPIO4/LCD_RS marks only the fixed graph release call. GPIO21/LCD_EN
+    /// mirrors the value observed at the graph sink after that call. Both
+    /// outputs start low, every display cable must remain disconnected, and
+    /// the returned pins may be transferred to core 1 only by the isolated
+    /// HIL artifact.
+    #[cfg(feature = "hil-mks-tinybee-graph-input-timing-safe")]
+    pub fn into_graph_hil_markers(self) -> (Output<'static>, Output<'static>) {
+        (
+            Output::new(
+                self.lcd_register_select,
+                Level::Low,
+                OutputConfig::default(),
+            ),
+            Output::new(self.lcd_enable, Level::Low, OutputConfig::default()),
+        )
+    }
+
     /// Moves the singleton radio token into core-0 network initialization once.
     pub fn take_wifi(&mut self) -> WIFI<'static> {
         self.wifi.take().expect("Wi-Fi token already consumed")

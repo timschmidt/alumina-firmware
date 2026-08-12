@@ -2,6 +2,10 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[allow(
+    unused_imports,
+    reason = "isolated network HIL binaries use the bridge without the storage coordinator"
+)]
 pub use alumina_service::StorageServiceState;
 use alumina_service::{ServiceRequest, ServiceResponse};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;

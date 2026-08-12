@@ -3,20 +3,18 @@
 use alumina_board::ResourceId;
 use alumina_graph_ir::{
     CoreGraphCommand, CoreGraphExecutionAction, CoreGraphExecutionCommand, GRAPH_IR_PACKAGE_BYTES,
-    GRAPH_IR_VERSION, GraphPublication, GraphRunRequest, GraphSelection, MAX_GRAPH_IR_CHANNELS,
-    MAX_GRAPH_IR_NODES, MAX_GRAPH_IR_QUEUE_ITEMS,
+    GraphPublication, GraphRunRequest, GraphSelection,
 };
 use alumina_protocol::{
     DeviceCycle, DeviceId, Digest, FrameHeader, FrameKind, Operation, StatusCode,
 };
 use alumina_runtime::graph::{
-    FixedGraphRealtimeActor, FixedGraphServiceActor, GRAPH_COORDINATOR_REPORT_BYTES,
-    GraphActorPhase, GraphBridgePhase, GraphCoordinatorFault, GraphCoordinatorPhase,
-    GraphCoordinatorReport, GraphDeploymentIdentity, GraphExecutionReport, GraphLiveError,
-    GraphReleaseReport, GraphRunIdentity, GraphRuntimeAuthority, GraphRuntimeLimits,
+    GRAPH_COORDINATOR_REPORT_BYTES, GraphActorPhase, GraphBridgePhase, GraphCoordinatorFault,
+    GraphCoordinatorPhase, GraphCoordinatorReport, GraphDeploymentIdentity, GraphExecutionReport,
+    GraphLiveError, GraphReleaseReport, GraphRunIdentity, GraphRuntimeAuthority,
     RealtimeGraphDeployment, RealtimeGraphExecutionReport, RealtimeGraphReport, RealtimeGraphState,
-    ReloadableGraphBridge, ServiceGraphTransferError, ServiceGraphValidation,
-    ServiceGraphValidationState, ServiceGraphValidationStatus,
+    ServiceGraphTransferError, ServiceGraphValidation, ServiceGraphValidationState,
+    ServiceGraphValidationStatus,
 };
 use alumina_runtime::{DefaultServiceEndpoint, IntercoreFrame};
 use alumina_service::{
@@ -29,6 +27,9 @@ use alumina_storage::media::{
 use alumina_storage::provisioning::ProvisionedCacheError;
 
 use crate::clock::{MAXIMUM_START_HORIZON_CYCLES, MINIMUM_START_LEAD_CYCLES};
+pub use crate::graph_platform::{
+    GRAPH_RUNTIME_LIMITS, GraphBridge, RealtimeGraphActor, ServiceGraphActor,
+};
 use crate::hardware::selected;
 
 const _: () = assert!(
@@ -37,61 +38,6 @@ const _: () = assert!(
         + GRAPH_COORDINATOR_REPORT_BYTES
         <= MAX_SERVICE_RESPONSE_BYTES
 );
-
-/// Core-0 graph state reservation.
-pub const GRAPH_SERVICE_STATE_BYTES: usize = 2 * 1_024;
-/// Core-1 graph state reservation.
-pub const GRAPH_REALTIME_STATE_BYTES: usize = 2 * 1_024;
-/// Core-0-local graph channel reservation.
-pub const GRAPH_SERVICE_CHANNEL_BYTES: usize = 4 * 1_024;
-/// Core-1-local graph channel reservation.
-pub const GRAPH_REALTIME_CHANNEL_BYTES: usize = 4 * 1_024;
-/// Cross-core graph channel reservation.
-pub const GRAPH_BRIDGE_BYTES: usize = 4 * 1_024;
-
-/// Permanently allocated cross-core graph bridge used by both application cores.
-pub type GraphBridge = ReloadableGraphBridge<GRAPH_BRIDGE_BYTES>;
-/// Permanent core-0 graph package and fixed executor arenas.
-pub type ServiceGraphActor = FixedGraphServiceActor<
-    'static,
-    GRAPH_SERVICE_STATE_BYTES,
-    GRAPH_SERVICE_CHANNEL_BYTES,
-    GRAPH_BRIDGE_BYTES,
->;
-/// Permanent core-1 graph package and fixed executor arenas.
-pub type RealtimeGraphActor = FixedGraphRealtimeActor<
-    'static,
-    GRAPH_REALTIME_STATE_BYTES,
-    GRAPH_REALTIME_CHANNEL_BYTES,
-    GRAPH_BRIDGE_BYTES,
->;
-
-/// Exact board-published graph arena, opcode, and resource authority.
-pub const GRAPH_RUNTIME_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits::fixed_with_capabilities::<
-    GRAPH_SERVICE_STATE_BYTES,
-    GRAPH_REALTIME_STATE_BYTES,
-    GRAPH_SERVICE_CHANNEL_BYTES,
-    GRAPH_REALTIME_CHANNEL_BYTES,
-    GRAPH_BRIDGE_BYTES,
->(
-    selected::PACKAGE.graph.opcodes,
-    selected::PACKAGE.graph.resources,
-);
-
-const _: () = {
-    assert!(selected::PACKAGE.graph.ir_version == GRAPH_IR_VERSION);
-    assert!(selected::PACKAGE.graph.package_bytes as usize == GRAPH_IR_PACKAGE_BYTES);
-    assert!(selected::PACKAGE.graph.maximum_nodes as usize == MAX_GRAPH_IR_NODES);
-    assert!(selected::PACKAGE.graph.maximum_channels as usize == MAX_GRAPH_IR_CHANNELS);
-    assert!(selected::PACKAGE.graph.maximum_queue_items == MAX_GRAPH_IR_QUEUE_ITEMS);
-    assert!(selected::PACKAGE.graph.service_state_bytes as usize == GRAPH_SERVICE_STATE_BYTES);
-    assert!(selected::PACKAGE.graph.realtime_state_bytes as usize == GRAPH_REALTIME_STATE_BYTES);
-    assert!(selected::PACKAGE.graph.service_channel_bytes as usize == GRAPH_SERVICE_CHANNEL_BYTES);
-    assert!(
-        selected::PACKAGE.graph.realtime_channel_bytes as usize == GRAPH_REALTIME_CHANNEL_BYTES
-    );
-    assert!(selected::PACKAGE.graph.bridge_channel_bytes as usize == GRAPH_BRIDGE_BYTES);
-};
 
 /// Sole core-1 owner of selected bytes and the permanent Realtime executor.
 pub struct RealtimeGraphExecutor {
@@ -1014,8 +960,7 @@ impl GraphService {
         let Some(lead) = request.start_cycle.0.checked_sub(now.0) else {
             return StatusCode::Deadline;
         };
-        if lead < MINIMUM_START_LEAD_CYCLES
-            || lead > MAXIMUM_START_HORIZON_CYCLES
+        if !(MINIMUM_START_LEAD_CYCLES..=MAXIMUM_START_HORIZON_CYCLES).contains(&lead)
             || request.run_id <= self.last_started_run_id
             || self.actor.phase() != GraphActorPhase::Installed
         {
@@ -1346,14 +1291,14 @@ impl GraphService {
                 self.control_sent = false;
                 return;
             }
-            if let Some(transition) = self.durable_pending {
-                if transition.action() == GraphTransitionAction::Activate {
-                    match cache.abort_graph_transition(transition, mutation).await {
-                        Ok(_) => self.durable_pending = None,
-                        Err(_) => {
-                            self.reject(GraphCoordinatorFault::Durability);
-                            return;
-                        }
+            if let Some(transition) = self.durable_pending
+                && transition.action() == GraphTransitionAction::Activate
+            {
+                match cache.abort_graph_transition(transition, mutation).await {
+                    Ok(_) => self.durable_pending = None,
+                    Err(_) => {
+                        self.reject(GraphCoordinatorFault::Durability);
+                        return;
                     }
                 }
             }
@@ -1391,14 +1336,14 @@ impl GraphService {
                 self.phase = GraphCoordinatorPhase::Clearing;
                 return;
             }
-            if let Some(transition) = self.durable_pending {
-                if transition.action() == GraphTransitionAction::Activate {
-                    match cache.abort_graph_transition(transition, mutation).await {
-                        Ok(_) => self.durable_pending = None,
-                        Err(_) => {
-                            self.reject(GraphCoordinatorFault::Durability);
-                            return;
-                        }
+            if let Some(transition) = self.durable_pending
+                && transition.action() == GraphTransitionAction::Activate
+            {
+                match cache.abort_graph_transition(transition, mutation).await {
+                    Ok(_) => self.durable_pending = None,
+                    Err(_) => {
+                        self.reject(GraphCoordinatorFault::Durability);
+                        return;
                     }
                 }
             }

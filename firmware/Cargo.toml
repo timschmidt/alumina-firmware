@@ -22,6 +22,13 @@ test = false
 bench = false
 required-features = ["hil-mks-tinybee-pcm-short-safe"]
 
+[[bin]]
+name = "alumina-hil-mks-tinybee-graph-input-timing-safe"
+path = "src/hil_mks_tinybee_graph_input_timing_safe.rs"
+test = false
+bench = false
+required-features = ["hil-mks-tinybee-graph-input-timing-safe"]
+
 [features]
 default = []
 board-mks-tinybee = [
@@ -65,6 +72,7 @@ board-t-deck-pro = [
     "esp-rtos/esp-radio",
 ]
 hil-mks-tinybee-pcm-short-safe = ["board-mks-tinybee"]
+hil-mks-tinybee-graph-input-timing-safe = ["board-mks-tinybee"]
 
 [dependencies]
 alumina-board.workspace = true

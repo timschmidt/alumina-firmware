@@ -188,6 +188,137 @@ Photographs and capture assets must be repository-owned or permissively
 licensed with explicit provenance. GPL-family source, decoders, code, and assets
 are not accepted into the implementation or evidence bundle.
 
+## TinyBee capability-bound graph-input timing capture
+
+Fixture ID: `mks-tinybee-graph-input-timing-safe`
+
+Purpose: measure the first capability-bound graph opcode on its real target and
+prove the complete physical-to-graph path under production Wi-Fi/web load. The
+fixture samples the protected X-endstop/GPIO33 route, applies the exact stored
+configuration's active-low pull-up, 2 ms assertion/release debounce, and 10 ms
+sampling watchdog, then executes `StableBooleanInput -> BooleanStreamSink` at
+1 kHz on core 1. Core 0 runs the production AP, DHCP, network runner, and HTTP
+tasks. Storage, motion streaming, and every process-output command path remain
+uninitialized.
+
+This is still a disconnected-load fixture. It synchronously installs the full
+24-bit disabled/off image `0x001249` before reporting core 1 ready, but it does
+not replace or satisfy the independent PCM startup/safe-image qualification.
+Motor power, main/process power, all motor and heater/fan connectors, every
+StepStick socket, and both display headers must remain disconnected.
+
+Build only:
+
+```console
+cargo xtask hil build mks-tinybee-graph-input-timing-safe
+```
+
+The command never flashes hardware. After the physical checklist and analyzer
+wiring have been independently reviewed, the explicit operator action is:
+
+```console
+espflash flash --monitor --chip esp32 \
+  target/xtensa-esp32-none-elf/release/alumina-hil-mks-tinybee-graph-input-timing-safe
+```
+
+### Connections
+
+The V1.0_003 schematic gives J14/X- pin 1 as ground, pin 2 as +5 V, and pin 3
+as the protected X-endstop signal. Never bridge or probe pin 2 as part of this
+fixture. With J14 open, first measure pin 3 at 2.7–3.6 V. The assertion action
+is an insulated jumper from J14 pin 3 to J14 pin 1 only.
+
+Use three active SLogic16U3 channels, a 1.6 V threshold, and at least one short
+ground lead. Do not connect either analyzer VCC pin to the TinyBee.
+
+| SLogic | Signal | Board point | ESP32 route | Meaning |
+| --- | --- | --- | ---: | --- |
+| D0 | TIMING | EXP1 pin 4, `LCD_RS_O` | GPIO4 | high only around the fixed graph `release` call |
+| D1 | INPUT | J14/X- pin 3 | GPIO33 through the protected endstop network | raw active-low assertion |
+| D2 | SINK | EXP1 pin 3, `LCD_EN_O` | GPIO21 | graph sink value, changed only after a completed release |
+| GND | ground | J14/X- pin 1 or another verified ground | — | common reference |
+
+Locate EXP1 pin 1 from the square PCB pad, not from an assumed cable
+orientation. EXP1 pin 3 and pin 4 traverse the fitted display buffer and may be
+near 5 V. Measure both high levels within 3.0–5.5 V before the recorded run;
+the SLogic16U3's reviewed 0–10 V input range is required here. EXP1 and EXP2
+must otherwise remain empty. The retained annotated photograph must visibly
+label J14 pins 1/2/3, EXP1 pins 3/4, every analyzer lead, and every disconnected
+load group.
+
+### Run and capture
+
+Leave J14 open through reset. The firmware establishes the safe shift image and
+a known debounced X input before core 0 is allowed to start Wi-Fi. Join
+`Alumina-mks-tinybee-v1` with the development-fixture password
+`alumina-development`, verify `http://192.168.4.1/api/v1/health`, and keep a
+request loop active throughout the analyzer capture. Retain a log that counts
+at least 25 successful responses and zero failures; this is the independent
+proof that the real AP/web tasks were scheduled on core 0 during the trace.
+
+Arm the analyzer on the D1 falling edge with at least 20 ms pre-trigger history
+and at least 200 ms total capture. The preferred initial setting is 400 MHz,
+50 ms pre-trigger (20,000,000 samples), and 300 ms total (120,000,000 samples).
+Once armed, bridge only J14 pin 3 to pin 1 and hold it through the remainder of
+the capture. Contact bounce is accepted as raw evidence, but a pass allows at
+most 16 raw transitions and derives the 2 ms debounce interval from the final
+falling edge before D2 asserts.
+
+Each D0 pulse conservatively includes both GPIO writes around the graph call.
+The graph package declares 50 device cycles per node and 200 cycles of executor
+reserve: its complete release budget is therefore 300 us inside the 1 ms
+period. D2 must rise only after D1 is low, no earlier than the configured 2 ms
+debounce (with a 100 us capture/dispatch allowance), no later than 3.2 ms, and
+within 10 us after the correlated D0 falling edge. A missed graph window,
+unavailable/stale resource, malformed report, or hardware sampling error
+forces both markers low, reapplies the complete safe image, and permanently
+stops releases.
+
+The isolated fixture deliberately observes the configured interlock without
+feeding its active reaction into an armed safety machine: no arming or energy
+output API exists in the artifact. Production firmware continues to treat an
+active interlock as a local fail-closed safety event.
+
+### Analysis and record
+
+Label exported one-bit VCD references `D0`, `D1`, and `D2`. Retain the unedited
+analyzer session, VCD, HTTP-load log, actual-fixture photograph, distinct
+annotated derivative, and review notes. Generate the immutable analysis report:
+
+```console
+cargo xtask hil analyze-tinybee-graph-vcd \
+  docs/hil/runs/<run-id>/tinybee-graph-input.vcd \
+  docs/hil/runs/<run-id>/analysis.toml
+```
+
+The streaming decoder rejects unknown levels, missing or duplicate aliases,
+sink assertion without raw input authority, sink changes inside a release,
+multiple sink assertions, and non-integer-picosecond time. It reconstructs all
+complete release pulses and periods, pre/post horizons, raw bounce count, the
+qualifying assertion edge, graph-sink edge, end-to-end debounce/dispatch time,
+and sink-update latency after the completed graph call. Its report is bound to
+the VCD SHA-256.
+
+Copy
+[`tinybee-graph-input-timing-slogic16u3.toml`](hil/templates/tinybee-graph-input-timing-slogic16u3.toml)
+to the run directory, copy every generated measurement exactly, complete all
+physical/network/instrument identities and asset digests, then validate:
+
+```console
+cargo xtask hil validate-tinybee-graph-record \
+  docs/hil/runs/<run-id>/record.toml
+```
+
+A `pass` requires at least 150 complete releases, at least 20 before the raw
+assertion and 20 after the sink assertion, every period within the reviewed
+1 ms ±100 us interval, a maximum D0 pulse no greater than the package's 300 us
+budget, bounded end-to-end latency, one graph-sink assertion, active Wi-Fi, and
+the retained successful HTTP load. The validator independently verifies every
+artifact/evidence digest, streams and decodes the retained VCD again, and
+requires the VCD, immutable analysis report, and copied record fields to agree
+exactly. It cannot replace manual electrical and waveform review and cannot
+change the TinyBee package's `Compiles` qualification by itself.
+
 ## M7 two-board start record
 
 The cross-device start gate uses a strict repository-owned run record in
