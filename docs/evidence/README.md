@@ -185,3 +185,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
   permanent core-local actors, authenticated exact start/stop epochs,
   pinned-task release scheduling, retained first-cause faults, browser
   reconciliation, and explicit resource-free/timing-unqualified boundaries.
+- [`M9-DURABLE-GRAPH-SELECTION.md`](M9-DURABLE-GRAPH-SELECTION.md) — typed
+  prepare/commit/abort journal, configuration-first dual-core boot replay,
+  exhaustive modeled power-cut recovery, and renewed ESP/WASM artifacts.
