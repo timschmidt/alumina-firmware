@@ -648,10 +648,13 @@ replay under an independent admission policy. A separate registry binds audited
 node shapes to that exact type/clock context, declares complete feedthrough and
 read-before-write state, bounds declared state, and produces exact deterministic
 combinational-cycle witnesses. Unknown nodes still round-trip but cannot pass
-semantic analysis. Runtime evaluation, queues/rates, static memory/WCET,
-compiler lowering, capability nodes, graph UI, and firmware graph IR remain
-open. See the [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md)
-and [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md) evidence.
+semantic analysis. Checked recursive analysis now proves maximum canonical
+typed-value bytes and rejects undersized state declarations. Runtime evaluation,
+queues/rates, fixed runtime/queue memory and WCET, compiler lowering, capability
+nodes, graph UI, and firmware graph IR remain open. See the
+[canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
+[audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
+[type-storage](evidence/M9-CANONICAL-TYPE-STORAGE.md) evidence.
 
 Exit gate:
 

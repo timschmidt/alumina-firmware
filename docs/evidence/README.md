@@ -159,3 +159,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
   context-bound node schemas, complete current-tick feedthrough, explicit
   read-before-write state, declared-state bounds, and deterministic
   port-level combinational-cycle witnesses.
+- [`M9-CANONICAL-TYPE-STORAGE.md`](M9-CANONICAL-TYPE-STORAGE.md) — checked
+  maximum canonical bytes for exact/composite/runtime-payload types and
+  rejection of state declarations smaller than their complete value domain.

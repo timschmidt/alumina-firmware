@@ -354,11 +354,14 @@ nodes, typed parameters/ports/wires, and a canonical SHA-256-identified `ALGR`
 V1 document. Replay enforces caller-owned admission limits and exact
 decode/re-encode equality. A context-bound audited-node registry now adds exact
 shape/domain admission, complete feedthrough, explicit read-before-write state,
-declared-state bounds, and iterative port-level cycle witnesses. It
-intentionally has no evaluator, channel/rate semantics, static memory/WCET,
-capability palette, or firmware lowering yet. See the
+declared-state bounds, and iterative port-level cycle witnesses. It also proves
+maximum canonical bytes for every literal/runtime payload and
+rejects undersized state declarations. It intentionally has no evaluator,
+channel/rate semantics, fixed runtime/queue layout or WCET, capability palette,
+or firmware lowering yet. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
-[`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md) evidence.
+[`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
+[`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) evidence.
 
 ### Execution semantics
 
