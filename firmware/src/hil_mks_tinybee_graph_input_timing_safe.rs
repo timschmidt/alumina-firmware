@@ -26,6 +26,10 @@ mod storage;
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 use alumina_board::{OwnerDomain, ResourceId};
 use alumina_config::{
     BindingFlags, BindingRole, ConfigurationFlags, ConfigurationHeader, ConfigurationRecord,
@@ -39,7 +43,7 @@ use alumina_graph_ir::{
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
 use alumina_runtime::APP_CORE_STACK_BYTES;
 use alumina_runtime::graph::{GraphRunIdentity, GraphRuntimeAuthority};
-use alumina_safety::{FaultCode, MAX_SAFETY_INPUTS, SafetyInputMonitor, SafetyInputReaction};
+use alumina_safety::{FaultCode, SafetyInputMonitor, SafetyInputReaction};
 use alumina_storage::{ContentHasher, sha256};
 use defmt::{error, info};
 use embassy_executor::Spawner;
@@ -70,6 +74,7 @@ const GRAPH_RUN_ID: u64 = 1;
 const GRAPH_START_LEAD: Duration = Duration::from_millis(250);
 const NETWORK_SETTLE: Duration = Duration::from_secs(1);
 const GENERAL_HEAP_BYTES: usize = 4 * 1_024;
+const HIL_SAFETY_INPUT_CAPACITY: usize = 1;
 
 const _: () = {
     assert!(TICK_HZ >= 1_000 && TICK_HZ.is_multiple_of(1_000));
@@ -84,7 +89,6 @@ static REALTIME_ACTOR: StaticCell<RealtimeGraphActor> = StaticCell::new();
 static REALTIME_PROFILE: StaticCell<RealtimeConfigurationProfile> = StaticCell::new();
 static RUN_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, GraphRunIdentity>> =
     StaticCell::new();
-static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_BYTES>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 static BOOT_SAFE_READY: AtomicBool = AtomicBool::new(false);
@@ -123,6 +127,13 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
     let device_id = DeviceId::from_esp_base_mac(esp_hal::efuse::Efuse::read_base_mac_address());
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
+    // The reclaimed region is the sole registered heap at this point, so this
+    // permanent allocation deterministically reserves the core-1 stack there.
+    // The remaining half stays available to Wi-Fi and HTTP allocations.
+    let app_stack = Box::leak(Box::write(
+        Box::<Stack<APP_CORE_STACK_BYTES>>::new_uninit(),
+        Stack::new(),
+    ));
     esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
     let mut split = mks_tinybee::split(peripherals);
 
@@ -165,7 +176,6 @@ async fn main(spawner: Spawner) -> ! {
 
     let run_signal: &'static Signal<CriticalSectionRawMutex, GraphRunIdentity> =
         RUN_SIGNAL.init(Signal::new());
-    let app_stack = APP_CORE_STACK.init(Stack::new());
     esp_rtos::start_second_core(
         split.runtime.cpu_control,
         software_interrupt.software_interrupt0,
@@ -450,7 +460,9 @@ async fn realtime_task(
     };
     esp_println_uart::println!("ALUMINA_HIL_RT_INIT stage=safe-outputs");
     let period = Duration::from_ticks(RELEASE_PERIOD_CYCLES);
-    let mut monitor = match resources.configure_safety_inputs(profile, RELEASE_PERIOD_CYCLES) {
+    let mut monitor = match resources
+        .configure_safety_inputs::<HIL_SAFETY_INPUT_CAPACITY>(profile, RELEASE_PERIOD_CYCLES)
+    {
         Ok(Some(monitor)) => monitor,
         Ok(None) | Err(_) => realtime_fault(&mut timing_marker, &mut sink_marker, 3).await,
     };
@@ -512,7 +524,9 @@ async fn realtime_task(
     // Reconstruct the monitor after radio initialization. Only this fresh,
     // fully debounced monitor may authorize graph activation, and every later
     // missed 10 ms deadline fails closed.
-    let mut monitor = match resources.configure_safety_inputs(profile, RELEASE_PERIOD_CYCLES) {
+    let mut monitor = match resources
+        .configure_safety_inputs::<HIL_SAFETY_INPUT_CAPACITY>(profile, RELEASE_PERIOD_CYCLES)
+    {
         Ok(Some(monitor)) => monitor,
         Ok(None) | Err(_) => {
             realtime_safe_fault(&mut resources, &mut timing_marker, &mut sink_marker, 16).await
@@ -626,7 +640,7 @@ async fn realtime_task(
 
 fn sample_input(
     resources: &mks_tinybee::EstablishedRealtimeResources,
-    monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+    monitor: &mut SafetyInputMonitor<HIL_SAFETY_INPUT_CAPACITY>,
     at: DeviceCycle,
 ) -> Result<(), ()> {
     sample_input_allow_watchdog(resources, monitor, at)
@@ -635,7 +649,7 @@ fn sample_input(
 
 fn sample_input_allow_watchdog(
     resources: &mks_tinybee::EstablishedRealtimeResources,
-    monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+    monitor: &mut SafetyInputMonitor<HIL_SAFETY_INPUT_CAPACITY>,
     at: DeviceCycle,
 ) -> Result<bool, ()> {
     let scan = resources.scan_safety_inputs(monitor, at).map_err(|_| ())?;

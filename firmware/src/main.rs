@@ -6,6 +6,10 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 #[cfg(not(any(
     feature = "board-mks-esp32-foc-v1",
     feature = "board-mks-tinybee",
@@ -64,10 +68,10 @@ use alumina_runtime::{
     DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
 };
 use alumina_safety::{
-    Conditions, Event as SafetyEvent, FaultCode, MAX_SAFETY_INPUTS,
-    SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE, SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetyInputMonitor,
-    SafetyInputReaction, SafetyInputStatus, SafetyMachine, SafetyObservationPolicy, SafetyObserver,
-    SafetySnapshot, SafetyState, safety_input_facts_changed,
+    Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE,
+    SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetyInputMonitor, SafetyInputReaction,
+    SafetyInputStatus, SafetyMachine, SafetyObservationPolicy, SafetyObserver, SafetySnapshot,
+    SafetyState, safety_input_facts_changed,
 };
 use defmt::{error, info};
 use embassy_executor::Spawner;
@@ -89,9 +93,10 @@ use job::{JobService, RealtimeJobService};
 use motion::{MotionAction, MotionService};
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
+type TargetSafetyInputMonitor = SafetyInputMonitor<{ selected::SAFETY_INPUT_CAPACITY }>;
+
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
-static APP_CORE_STACK: StaticCell<Stack<APP_CORE_STACK_BYTES>> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
@@ -138,6 +143,13 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
     let device_id = DeviceId::from_esp_base_mac(esp_hal::efuse::Efuse::read_base_mac_address());
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
+    // The reclaimed region is the sole registered heap at this point, so this
+    // permanent allocation deterministically reserves the core-1 stack there.
+    // The remaining half stays available to later allocations.
+    let app_stack = Box::leak(Box::write(
+        Box::<Stack<APP_CORE_STACK_BYTES>>::new_uninit(),
+        Stack::new(),
+    ));
     esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
     let mut split = selected::split(peripherals);
 
@@ -148,8 +160,6 @@ async fn main(spawner: Spawner) -> ! {
     let boundary = BOUNDARY.init(DefaultBoundary::new());
     let graph_bridge: &'static GraphBridge = GRAPH_BRIDGE.init(GraphBridge::new());
     let (mut service_endpoint, realtime_endpoint) = boundary.split();
-    let app_stack = APP_CORE_STACK.init(Stack::new());
-
     esp_rtos::start_second_core(
         split.runtime.cpu_control,
         software_interrupt.software_interrupt0,
@@ -528,7 +538,7 @@ async fn realtime_task(
             selected::PACKAGE,
         );
     let mut graphs = RealtimeGraphExecutor::new(device_id, graph_bridge);
-    let mut safety_inputs: Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>> = None;
+    let mut safety_inputs: Option<TargetSafetyInputMonitor> = None;
     let mut safety_input_status = SafetyInputStatus::unconfigured();
     let mut last_job_active = false;
     let mut configuration_sequence = 0_u32;
@@ -1446,7 +1456,7 @@ fn apply_configuration_command(
     >,
     resources: &mut selected::EstablishedRealtimeResources,
     motion: &mut MotionService,
-    safety_inputs: &mut Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>,
+    safety_inputs: &mut Option<TargetSafetyInputMonitor>,
     safety_input_status: &mut SafetyInputStatus,
     jobs: &mut RealtimeJobService,
     safety: &mut SafetyMachine,

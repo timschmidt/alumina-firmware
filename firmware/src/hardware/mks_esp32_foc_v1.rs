@@ -20,7 +20,7 @@ use alumina_motion::{
     OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
 };
 use alumina_protocol::DeviceCycle;
-use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
+use alumina_safety::{SafetyContractId, SafetyInputMonitor};
 use alumina_service::CACHE_LIMITS;
 use alumina_storage::media::{AsyncBlockDevice, MediaBlock};
 use alumina_storage::provisioning::ProvisionedCache;
@@ -81,6 +81,8 @@ pub type StorageBackend = ProvisionedCache<UnavailableStorage>;
 pub const JOB_AXES: usize = 2;
 /// Maximum unique resource claims retained by each configuration validator.
 pub const CONFIGURATION_BINDINGS: usize = 64;
+/// This board currently exposes no configuration-derived safety-input route.
+pub const SAFETY_INPUT_CAPACITY: usize = 0;
 /// No MCPWM/ADC FOC backend is implemented in this safe-only composition.
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
 /// No physical PWM/current/sensor timing has been qualified.
@@ -1110,19 +1112,19 @@ impl<Encoders, Current, Stage0, Stage1>
     EstablishedRealtimeResources<Encoders, Current, Stage0, Stage1>
 {
     /// Rejects configured safety routes because none is established on V1.0.
-    pub fn configure_safety_inputs(
+    pub fn configure_safety_inputs<const INPUTS: usize>(
         &mut self,
         profile: &RealtimeConfigurationProfile,
         nominal_scan_period_cycles: u64,
-    ) -> Result<Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>, SafetyInputBackendError> {
+    ) -> Result<Option<SafetyInputMonitor<INPUTS>>, SafetyInputBackendError> {
         self.safety_inputs
             .configure(profile, nominal_scan_period_cycles)
     }
 
     /// Samples the necessarily empty active safety-input set.
-    pub fn scan_safety_inputs(
+    pub fn scan_safety_inputs<const INPUTS: usize>(
         &self,
-        monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+        monitor: &mut SafetyInputMonitor<INPUTS>,
         at: DeviceCycle,
     ) -> Result<SafetyInputScan, SafetyInputBackendError> {
         self.safety_inputs.scan(monitor, at)

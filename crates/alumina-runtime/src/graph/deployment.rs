@@ -438,7 +438,7 @@ impl GraphDeploymentFault {
         }
     }
 
-    const fn from_runtime(error: GraphRuntimeError) -> Self {
+    pub(super) const fn from_runtime(error: GraphRuntimeError) -> Self {
         match error {
             GraphRuntimeError::MutationForbidden | GraphRuntimeError::ExecutionForbidden => {
                 Self::ForbiddenState

@@ -4,7 +4,7 @@ use core::cell::RefCell;
 use core::mem::size_of;
 
 use alumina_board::ResourceId;
-use alumina_graph_ir::{GRAPH_IR_PACKAGE_BYTES, GraphIrPackage};
+use alumina_graph_ir::{GraphIrPackage, graph_ir_content_digest};
 use alumina_protocol::{DeviceCycle, Digest};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -15,10 +15,9 @@ use super::{
     BridgeArena, DomainCursor, GraphDeploymentFault, GraphDeploymentIdentity, GraphExecutionError,
     GraphExecutionFault, GraphFaultObservation, GraphInstallReport, GraphReleaseReport,
     GraphReleaseWindow, GraphRuntimeArena, GraphRuntimeAuthority, GraphRuntimeError,
-    GraphRuntimeLimits, GraphRuntimeMetadata, GraphStartReport, QueueCursor, check_capacity,
-    checked_next_cycle, checked_next_tick, cursor_after_prime, cursor_at_start,
+    GraphRuntimeLimits, GraphRuntimeMetadata, GraphStartReport, QueueCursor, admit_package,
+    check_capacity, checked_next_cycle, checked_next_tick, cursor_after_prime, cursor_at_start,
     cursor_release_window, execute_realtime_release, execute_service_release, release_prelude,
-    validate_graph_package,
 };
 
 /// Exact boot-local identity for one execution of one selected package.
@@ -892,14 +891,26 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
             return Err(GraphLiveError::MutationForbidden);
         }
         self.require_phase(GraphActorPhase::Empty)?;
-        let (package, metadata, identity) = admit_live_package(
-            bytes,
+        if transaction_id == 0 || content_digest.is_zero() {
+            return Err(GraphLiveError::Deployment(GraphDeploymentFault::Sequence));
+        }
+        if graph_ir_content_digest(bytes) != content_digest {
+            return Err(GraphLiveError::Deployment(
+                GraphDeploymentFault::ContentDigest,
+            ));
+        }
+        let (package, metadata, usage) = admit_package(bytes, package_digest, authority, limits)
+            .map_err(GraphDeploymentFault::from_runtime)
+            .map_err(GraphLiveError::Deployment)?;
+        let identity = GraphDeploymentIdentity {
             transaction_id,
             content_digest,
             package_digest,
-            authority,
-            limits,
-        )?;
+            implementation_digest: authority.implementation_digest,
+            graph_digest: package.header().graph_digest,
+            summary: package.summary(),
+            usage,
+        };
         check_capacity(
             GraphRuntimeArena::ServiceState,
             identity.usage.service_state_bytes,
@@ -1211,14 +1222,26 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
             return Err(GraphLiveError::MutationForbidden);
         }
         self.require_phase(GraphActorPhase::Empty)?;
-        let (package, metadata, identity) = admit_live_package(
-            bytes,
+        if transaction_id == 0 || content_digest.is_zero() {
+            return Err(GraphLiveError::Deployment(GraphDeploymentFault::Sequence));
+        }
+        if graph_ir_content_digest(bytes) != content_digest {
+            return Err(GraphLiveError::Deployment(
+                GraphDeploymentFault::ContentDigest,
+            ));
+        }
+        let (package, metadata, usage) = admit_package(bytes, package_digest, authority, limits)
+            .map_err(GraphDeploymentFault::from_runtime)
+            .map_err(GraphLiveError::Deployment)?;
+        let identity = GraphDeploymentIdentity {
             transaction_id,
             content_digest,
             package_digest,
-            authority,
-            limits,
-        )?;
+            implementation_digest: authority.implementation_digest,
+            graph_digest: package.header().graph_digest,
+            summary: package.summary(),
+            usage,
+        };
         check_capacity(
             GraphRuntimeArena::RealtimeState,
             identity.usage.realtime_state_bytes,
@@ -1424,43 +1447,6 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
         self.queues.fill(QueueCursor::EMPTY);
         self.initialized.fill(false);
     }
-}
-
-fn admit_live_package(
-    bytes: &[u8],
-    transaction_id: u64,
-    content_digest: Digest,
-    package_digest: Digest,
-    authority: GraphRuntimeAuthority,
-    limits: GraphRuntimeLimits,
-) -> Result<
-    (
-        GraphIrPackage,
-        GraphRuntimeMetadata,
-        GraphDeploymentIdentity,
-    ),
-    GraphLiveError,
-> {
-    let identity = validate_graph_package(
-        bytes,
-        transaction_id,
-        content_digest,
-        package_digest,
-        authority,
-        limits,
-    )
-    .map_err(GraphLiveError::Deployment)?;
-    let package = GraphIrPackage::from_slice(bytes)
-        .map_err(GraphRuntimeError::Package)
-        .map_err(GraphLiveError::Runtime)?;
-    let metadata = GraphRuntimeMetadata::from_package(&package).map_err(GraphLiveError::Runtime)?;
-    if package.summary() != identity.summary
-        || package.header().implementation_digest != identity.implementation_digest
-        || bytes.len() != GRAPH_IR_PACKAGE_BYTES
-    {
-        return Err(GraphLiveError::Internal);
-    }
-    Ok((package, metadata, identity))
 }
 
 fn install_report<T>(identity: GraphDeploymentIdentity) -> GraphInstallReport {

@@ -4,7 +4,7 @@ use alumina_motion::{
     OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
 };
 use alumina_protocol::DeviceCycle;
-use alumina_safety::{MAX_SAFETY_INPUTS, SafetyContractId, SafetyInputMonitor};
+use alumina_safety::{SafetyContractId, SafetyInputMonitor};
 use alumina_sd_spi::{Config as SdConfig, SdSpiCard};
 use alumina_service::CACHE_LIMITS;
 use alumina_shift_register::{
@@ -40,6 +40,8 @@ pub type StorageBackend = ProvisionedCache<StorageCard>;
 pub const JOB_AXES: usize = 3;
 /// Maximum unique resource claims retained by each configuration validator.
 pub const CONFIGURATION_BINDINGS: usize = 64;
+/// Maximum configuration-derived safety inputs physically routed by this board.
+pub const SAFETY_INPUT_CAPACITY: usize = 4;
 /// A complete-image writer exists, but its blocking GPIO timing has not been
 /// qualified as a motion serializer and therefore cannot authorize arming.
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = true;
@@ -320,19 +322,19 @@ impl RealtimeResources {
 
 impl EstablishedRealtimeResources {
     /// Applies a complete configuration-derived GPIO-input transaction.
-    pub fn configure_safety_inputs(
+    pub fn configure_safety_inputs<const INPUTS: usize>(
         &mut self,
         profile: &RealtimeConfigurationProfile,
         nominal_scan_period_cycles: u64,
-    ) -> Result<Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>, SafetyInputBackendError> {
+    ) -> Result<Option<SafetyInputMonitor<INPUTS>>, SafetyInputBackendError> {
         self.safety_inputs
             .configure(profile, nominal_scan_period_cycles)
     }
 
     /// Samples all active safety inputs from their sole core-1 owner.
-    pub fn scan_safety_inputs(
+    pub fn scan_safety_inputs<const INPUTS: usize>(
         &self,
-        monitor: &mut SafetyInputMonitor<MAX_SAFETY_INPUTS>,
+        monitor: &mut SafetyInputMonitor<INPUTS>,
         at: DeviceCycle,
     ) -> Result<SafetyInputScan, SafetyInputBackendError> {
         self.safety_inputs.scan(monitor, at)

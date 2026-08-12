@@ -4,8 +4,7 @@ use alumina_board::ResourceId;
 use alumina_config::RealtimeConfigurationProfile;
 use alumina_protocol::DeviceCycle;
 use alumina_safety::{
-    InputBias, MAX_SAFETY_INPUTS, SafetyInputError, SafetyInputMonitor, SafetyInputReaction,
-    SafetyInputStatus,
+    InputBias, SafetyInputError, SafetyInputMonitor, SafetyInputReaction, SafetyInputStatus,
 };
 use esp_hal::gpio::{Input, InputConfig, InputPin, Pull};
 
@@ -90,11 +89,11 @@ impl<const ROUTES: usize> SafetyInputBank<ROUTES> {
 
     /// Validates all routes and timing before atomically replacing applied
     /// pull modes. Empty profiles leave every retained route floating.
-    pub fn configure(
+    pub fn configure<const INPUTS: usize>(
         &mut self,
         profile: &RealtimeConfigurationProfile,
         nominal_scan_period_cycles: u64,
-    ) -> Result<Option<SafetyInputMonitor<MAX_SAFETY_INPUTS>>, SafetyInputBackendError> {
+    ) -> Result<Option<SafetyInputMonitor<INPUTS>>, SafetyInputBackendError> {
         if nominal_scan_period_cycles == 0 {
             return Err(SafetyInputBackendError::Cadence {
                 maximum_gap_cycles: 0,
@@ -105,7 +104,7 @@ impl<const ROUTES: usize> SafetyInputBank<ROUTES> {
             self.clear();
             return Ok(None);
         }
-        let monitor = SafetyInputMonitor::<MAX_SAFETY_INPUTS>::from_specs(profile.safety_inputs())
+        let monitor = SafetyInputMonitor::<INPUTS>::from_specs(profile.safety_inputs())
             .map_err(SafetyInputBackendError::Monitor)?;
 
         for spec in profile.safety_inputs() {
