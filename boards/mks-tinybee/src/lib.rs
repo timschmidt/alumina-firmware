@@ -4,9 +4,10 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
-    ElectricalConstraintDescriptor, ElectricalConstraintKind, HilKind, HilRequirement,
-    InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain, Qualification,
-    ResourceDescriptor, ResourceId, SafeOutputImage, SafeValue, SupportLevel,
+    ElectricalConstraintDescriptor, ElectricalConstraintKind, GraphExecutorDescriptor,
+    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor,
+    HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain,
+    Qualification, ResourceDescriptor, ResourceId, SafeOutputImage, SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
 
@@ -20,15 +21,91 @@ pub const TARGET: &str = "xtensa-esp32-none-elf";
 pub const PRIMARY_FLASH_BYTES: usize = 8 * 1_024 * 1_024;
 /// Installed flash declared by the smaller explicit variant.
 pub const FOUR_MIB_FLASH_BYTES: usize = 4 * 1_024 * 1_024;
-/// SHA-256 of the primary 8 MiB canonical `ALMCAP01` V1 document.
+/// Stable graph-palette class for fresh, debounced configured safety inputs.
+pub const GRAPH_STABLE_BOOLEAN_INPUT_CLASS: GraphResourceClass = GraphResourceClass::new(1);
+/// Fixed graph opcode palette implemented by both TinyBee image variants.
+pub static GRAPH_OPCODES: &[GraphOpcodeDescriptor] = &[
+    GraphOpcodeDescriptor {
+        opcode: 1,
+        domain: OwnerDomain::Service,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 2,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 3,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 4,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: Some(GRAPH_STABLE_BOOLEAN_INPUT_CLASS),
+        resource_access: Some(GraphResourceAccess::StableBooleanInput),
+    },
+];
+/// Read-only graph resources already owned by the core-1 safety-input bank.
+pub static GRAPH_RESOURCES: &[GraphResourceDescriptor] = &[
+    GraphResourceDescriptor {
+        resource: ResourceId::Gpio(33),
+        class: GRAPH_STABLE_BOOLEAN_INPUT_CLASS,
+        access: GraphResourceAccess::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+    GraphResourceDescriptor {
+        resource: ResourceId::Gpio(32),
+        class: GRAPH_STABLE_BOOLEAN_INPUT_CLASS,
+        access: GraphResourceAccess::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+    GraphResourceDescriptor {
+        resource: ResourceId::Gpio(22),
+        class: GRAPH_STABLE_BOOLEAN_INPUT_CLASS,
+        access: GraphResourceAccess::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+    GraphResourceDescriptor {
+        resource: ResourceId::Gpio(35),
+        class: GRAPH_STABLE_BOOLEAN_INPUT_CLASS,
+        access: GraphResourceAccess::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+];
+/// Exact permanently allocated graph executor published by both variants.
+pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescriptor {
+    ir_version: 2,
+    package_bytes: 4_096,
+    maximum_nodes: 32,
+    maximum_channels: 64,
+    maximum_queue_items: 4_096,
+    service_state_bytes: 2 * 1_024,
+    realtime_state_bytes: 2 * 1_024,
+    service_channel_bytes: 4 * 1_024,
+    realtime_channel_bytes: 4 * 1_024,
+    bridge_channel_bytes: 4 * 1_024,
+    support: SupportLevel::Compiles,
+    opcodes: GRAPH_OPCODES,
+    resources: GRAPH_RESOURCES,
+};
+/// SHA-256 of the primary 8 MiB canonical `ALMCAP02` V2 document.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0xc4, 0xe2, 0x34, 0x53, 0x14, 0xb3, 0x32, 0x76, 0x26, 0x3a, 0xba, 0x37, 0x9a, 0x02, 0x24, 0x9e,
-    0xc8, 0x1a, 0x1a, 0xd6, 0xda, 0x00, 0xc1, 0x08, 0xc0, 0x0c, 0xc9, 0x83, 0x7c, 0x31, 0xda, 0x0c,
+    0x0e, 0x82, 0x51, 0x38, 0x96, 0xe5, 0x2e, 0x0a, 0x58, 0xfb, 0x92, 0xde, 0x91, 0x30, 0xc4, 0x46,
+    0xd5, 0x90, 0xbf, 0x64, 0x9f, 0xbc, 0x22, 0x74, 0x22, 0x09, 0xb2, 0xd0, 0x4c, 0x8c, 0xb0, 0xa5,
 ]);
-/// SHA-256 of the 4 MiB canonical `ALMCAP01` V1 document.
+/// SHA-256 of the 4 MiB canonical `ALMCAP02` V2 document.
 pub const CAPABILITY_DIGEST_4_MIB: Digest = Digest([
-    0x17, 0x93, 0x60, 0xf5, 0x44, 0xc2, 0x15, 0xfc, 0xc7, 0x92, 0x73, 0x44, 0x82, 0xd5, 0xd9, 0x20,
-    0xa1, 0x1e, 0x26, 0x23, 0x26, 0xc5, 0x53, 0x09, 0x3e, 0x53, 0xfa, 0x55, 0xad, 0xdf, 0x9e, 0xe6,
+    0xba, 0x06, 0xff, 0xad, 0x44, 0x12, 0x5a, 0x4c, 0xf5, 0xb7, 0x2b, 0xa1, 0xa1, 0x42, 0x96, 0xa0,
+    0xfb, 0x3d, 0x91, 0xf4, 0x36, 0x4a, 0xf0, 0x50, 0x61, 0x6b, 0xdf, 0x0c, 0xeb, 0xb0, 0xed, 0x04,
 ]);
 /// Shift-register safe image inferred from active-high StepStick disable inputs.
 ///
@@ -998,6 +1075,7 @@ const fn package(
             service_core: 0,
             realtime_core: 1,
         },
+        graph: GRAPH_EXECUTOR,
         aliases: ALIASES,
         buses: BUSES,
         devices: DEVICES,

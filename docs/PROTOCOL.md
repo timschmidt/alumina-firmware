@@ -164,7 +164,7 @@ cannot yield a start cycle.
 
 ## Board capabilities
 
-`CapabilitiesGet` reads the immutable canonical `ALMCAP01` board document in
+`CapabilitiesGet` reads the immutable canonical `ALMCAP02` board document in
 authenticated ranges of at most 240 bytes. Public identity reports its SHA-256
 and total length; every range repeats both, and the browser verifies the complete
 reassembly before decoding or caching by digest. Request/response layouts, enum

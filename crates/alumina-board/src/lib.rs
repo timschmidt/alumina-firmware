@@ -103,6 +103,93 @@ pub struct ResourceDescriptor {
     pub hazardous_output: bool,
 }
 
+/// Stable capability-derived class used by graph resource handles.
+///
+/// A class is semantic authority, not a display category. Graph packages bind
+/// both this class and one canonical [`ResourceId`] selector.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct GraphResourceClass(u32);
+
+impl GraphResourceClass {
+    /// Construct a class identifier. Board validation rejects zero.
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Canonical integer representation.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Bounded operation a reviewed graph opcode may perform on one resource.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum GraphResourceAccess {
+    /// Read the fresh, debounced semantic state of a configured safety input.
+    StableBooleanInput = 1,
+}
+
+/// One fixed graph opcode implemented by this exact board image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphOpcodeDescriptor {
+    /// Nonzero graph-IR opcode value.
+    pub opcode: u8,
+    /// Sole executor domain implementing the opcode.
+    pub domain: OwnerDomain,
+    /// Evidence level for the implementation and its declared timing.
+    pub support: SupportLevel,
+    /// Required resource class, absent for resource-free opcodes.
+    pub resource_class: Option<GraphResourceClass>,
+    /// Required access, present exactly when `resource_class` is present.
+    pub resource_access: Option<GraphResourceAccess>,
+}
+
+/// One physical resource explicitly admitted to a graph opcode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphResourceDescriptor {
+    /// Typed board resource selected by the graph parameter.
+    pub resource: ResourceId,
+    /// Semantic class accepted by the matching opcode.
+    pub class: GraphResourceClass,
+    /// Sole bounded operation permitted on the resource.
+    pub access: GraphResourceAccess,
+    /// Evidence level for the complete board-to-runtime path.
+    pub support: SupportLevel,
+}
+
+/// Exact fixed-memory graph executor published by one board image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphExecutorDescriptor<'a> {
+    /// Exact deployed graph-IR schema understood by the image.
+    pub ir_version: u16,
+    /// Exact fixed package bytes admitted by the decoder.
+    pub package_bytes: u32,
+    /// Format and image node-count ceiling.
+    pub maximum_nodes: u16,
+    /// Format and image channel-count ceiling.
+    pub maximum_channels: u16,
+    /// Per-channel item-count ceiling.
+    pub maximum_queue_items: u32,
+    /// Permanently reserved core-0 node-state bytes.
+    pub service_state_bytes: u32,
+    /// Permanently reserved core-1 node-state bytes.
+    pub realtime_state_bytes: u32,
+    /// Permanently reserved core-0 queue bytes.
+    pub service_channel_bytes: u32,
+    /// Permanently reserved core-1 queue bytes.
+    pub realtime_channel_bytes: u32,
+    /// Permanently reserved one-way core-0-to-core-1 bridge bytes.
+    pub bridge_channel_bytes: u32,
+    /// Evidence level for the fixed executor as a whole.
+    pub support: SupportLevel,
+    /// Exact opcode palette in ascending wire-value order.
+    pub opcodes: &'a [GraphOpcodeDescriptor],
+    /// Explicit graph-addressable resource palette.
+    pub resources: &'a [GraphResourceDescriptor],
+}
+
 /// Compile-time flash and RAM facts for one PCB/module revision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryDescriptor {
@@ -455,6 +542,8 @@ pub struct BoardPackage<'a> {
     pub memory: MemoryDescriptor,
     /// Physical executor assignment.
     pub cores: CoreAssignment,
+    /// Fixed graph executor, arenas, opcodes, and resource palette.
+    pub graph: GraphExecutorDescriptor<'a>,
     /// Canonical configuration aliases.
     pub aliases: &'a [AliasDescriptor<'a>],
     /// Routed controller/pin groups.
@@ -558,6 +647,8 @@ impl BoardPackage<'_> {
                 available: self.board.application_cores,
             });
         }
+
+        self.validate_graph_executor()?;
 
         for (index, alias) in self.aliases.iter().enumerate() {
             if alias.name.is_empty() {
@@ -926,6 +1017,71 @@ impl BoardPackage<'_> {
             .iter()
             .find(|resource| resource.id == id)
     }
+
+    fn validate_graph_executor(&self) -> Result<(), BoardError> {
+        let graph = self.graph;
+        if graph.ir_version == 0
+            || graph.package_bytes == 0
+            || graph.maximum_nodes == 0
+            || graph.maximum_channels == 0
+            || graph.maximum_queue_items == 0
+            || graph.service_state_bytes == 0
+            || graph.realtime_state_bytes == 0
+            || graph.service_channel_bytes == 0
+            || graph.realtime_channel_bytes == 0
+            || graph.bridge_channel_bytes == 0
+            || graph.opcodes.is_empty()
+        {
+            return Err(BoardError::IncompleteGraphExecutor);
+        }
+        for (index, opcode) in graph.opcodes.iter().copied().enumerate() {
+            if opcode.opcode == 0
+                || opcode.resource_class.is_some() != opcode.resource_access.is_some()
+                || index != 0 && graph.opcodes[index - 1].opcode >= opcode.opcode
+                || opcode
+                    .resource_class
+                    .is_some_and(|resource_class| resource_class.get() == 0)
+            {
+                return Err(BoardError::InvalidGraphOpcode { index });
+            }
+        }
+        for (index, resource) in graph.resources.iter().copied().enumerate() {
+            let physical =
+                self.resource(resource.resource)
+                    .ok_or(BoardError::GraphMissingResource {
+                        index,
+                        resource: resource.resource,
+                    })?;
+            if resource.class.get() == 0
+                || physical.owner != OwnerDomain::Realtime
+                || physical.hazardous_output
+                || physical.safe_value != SafeValue::HighImpedance
+                || !matches!(
+                    resource.resource,
+                    ResourceId::Gpio(_) | ResourceId::SafetyInput(_)
+                )
+                || !graph.opcodes.iter().any(|opcode| {
+                    opcode.domain == OwnerDomain::Realtime
+                        && opcode.resource_class == Some(resource.class)
+                        && opcode.resource_access == Some(resource.access)
+                })
+            {
+                return Err(BoardError::InvalidGraphResource {
+                    index,
+                    resource: resource.resource,
+                });
+            }
+            if graph.resources[..index]
+                .iter()
+                .any(|prior| prior.class == resource.class && prior.resource == resource.resource)
+            {
+                return Err(BoardError::DuplicateGraphResource {
+                    resource: resource.resource,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 const fn bus_kind_matches(kind: BusKind, resource: ResourceId) -> bool {
@@ -985,6 +1141,32 @@ pub enum BoardError {
         realtime: u8,
         /// Available application cores.
         available: u8,
+    },
+    /// Fixed graph executor omitted a nonzero format, capacity, arena, or opcode palette.
+    IncompleteGraphExecutor,
+    /// One graph opcode used zero, duplicate/out-of-order, or inconsistent resource facts.
+    InvalidGraphOpcode {
+        /// Opcode palette index.
+        index: usize,
+    },
+    /// A graph resource referenced no typed board resource.
+    GraphMissingResource {
+        /// Graph resource palette index.
+        index: usize,
+        /// Missing typed resource.
+        resource: ResourceId,
+    },
+    /// A graph resource was hazardous, misowned, or incompatible with its opcode class.
+    InvalidGraphResource {
+        /// Graph resource palette index.
+        index: usize,
+        /// Rejected resource.
+        resource: ResourceId,
+    },
+    /// One class exposed the same physical resource more than once.
+    DuplicateGraphResource {
+        /// Duplicate resource.
+        resource: ResourceId,
     },
     /// Alias was empty.
     EmptyAlias {
@@ -1243,6 +1425,28 @@ mod tests {
         safe_value: SafeValue::EngineImage,
         hazardous_output: true,
     };
+    const TEST_GRAPH_OPCODES: &[GraphOpcodeDescriptor] = &[GraphOpcodeDescriptor {
+        opcode: 1,
+        domain: OwnerDomain::Service,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    }];
+    const TEST_GRAPH: GraphExecutorDescriptor<'static> = GraphExecutorDescriptor {
+        ir_version: 2,
+        package_bytes: 4_096,
+        maximum_nodes: 32,
+        maximum_channels: 64,
+        maximum_queue_items: 4_096,
+        service_state_bytes: 2_048,
+        realtime_state_bytes: 2_048,
+        service_channel_bytes: 4_096,
+        realtime_channel_bytes: 4_096,
+        bridge_channel_bytes: 4_096,
+        support: SupportLevel::Compiles,
+        opcodes: TEST_GRAPH_OPCODES,
+        resources: &[],
+    };
 
     fn board(resources: &[ResourceDescriptor]) -> BoardDescriptor<'_> {
         BoardDescriptor {
@@ -1322,6 +1526,7 @@ mod tests {
                 service_core: 0,
                 realtime_core: 1,
             },
+            graph: TEST_GRAPH,
             aliases,
             buses,
             devices,
@@ -1401,6 +1606,74 @@ mod tests {
         assert_eq!(
             package(&resources, &aliases, &buses, &devices, &images).validate(),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn graph_resource_authority_is_exact_and_read_only() {
+        let input = ResourceDescriptor {
+            id: ResourceId::Gpio(33),
+            owner: OwnerDomain::Realtime,
+            safe_value: SafeValue::HighImpedance,
+            hazardous_output: false,
+        };
+        let opcodes = [GraphOpcodeDescriptor {
+            opcode: 4,
+            domain: OwnerDomain::Realtime,
+            support: SupportLevel::Compiles,
+            resource_class: Some(GraphResourceClass::new(1)),
+            resource_access: Some(GraphResourceAccess::StableBooleanInput),
+        }];
+        let admitted = [GraphResourceDescriptor {
+            resource: input.id,
+            class: GraphResourceClass::new(1),
+            access: GraphResourceAccess::StableBooleanInput,
+            support: SupportLevel::Compiles,
+        }];
+        let graph = GraphExecutorDescriptor {
+            opcodes: &opcodes,
+            resources: &admitted,
+            ..TEST_GRAPH
+        };
+        let resources = [input];
+        let mut valid = package(&resources, &[], &[], &[], &[]);
+        valid.graph = graph;
+        assert_eq!(valid.validate(), Ok(()));
+
+        let missing_resources = [GraphResourceDescriptor {
+            resource: ResourceId::Gpio(32),
+            ..admitted[0]
+        }];
+        let mut missing = valid;
+        missing.graph.resources = &missing_resources;
+        assert_eq!(
+            missing.validate(),
+            Err(BoardError::GraphMissingResource {
+                index: 0,
+                resource: ResourceId::Gpio(32),
+            })
+        );
+
+        let unsafe_physical = [ResourceDescriptor {
+            hazardous_output: true,
+            ..input
+        }];
+        let mut unsafe_package = package(&unsafe_physical, &[], &[], &[], &[]);
+        unsafe_package.graph = graph;
+        assert_eq!(
+            unsafe_package.validate(),
+            Err(BoardError::InvalidGraphResource {
+                index: 0,
+                resource: input.id,
+            })
+        );
+
+        let duplicate_resources = [admitted[0], admitted[0]];
+        let mut duplicate = valid;
+        duplicate.graph.resources = &duplicate_resources;
+        assert_eq!(
+            duplicate.validate(),
+            Err(BoardError::DuplicateGraphResource { resource: input.id })
         );
     }
 

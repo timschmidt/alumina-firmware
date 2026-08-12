@@ -3,14 +3,15 @@
 
 use alumina_board::{
     BoardError, BoardPackage, BusKind, Chip, ClockDomain, ClockSource, DeviceRoute,
-    ElectricalConstraintKind, FlashRegionKind, HilKind, InterruptTrigger, OwnerDomain,
-    Qualification, ResourceId, SafeValue, SupportLevel,
+    ElectricalConstraintKind, FlashRegionKind, GraphExecutorDescriptor, GraphOpcodeDescriptor,
+    GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor, HilKind, InterruptTrigger,
+    OwnerDomain, Qualification, ResourceId, SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
 use sha2::{Digest as ShaDigest, Sha256};
 
 /// Exact capability-document schema version.
-pub const CAPABILITY_DOCUMENT_VERSION: u16 = 1;
+pub const CAPABILITY_DOCUMENT_VERSION: u16 = 2;
 /// Bytes in the fixed canonical document header.
 pub const CAPABILITY_DOCUMENT_HEADER_BYTES: usize = 16;
 /// Exact `CapabilitiesGet` range-request body length.
@@ -19,10 +20,17 @@ pub const CAPABILITY_READ_REQUEST_BYTES: usize = 56;
 pub const CAPABILITY_READ_RESPONSE_PREFIX_BYTES: usize = 64;
 /// Largest capability range returned in one native response.
 pub const MAX_CAPABILITY_CHUNK_BYTES: usize = 240;
+/// Bytes in the fixed graph-executor prefix before opcode/resource records.
+pub const GRAPH_EXECUTOR_HEADER_BYTES: usize = 72;
+/// Bytes in one graph opcode-capability record.
+pub const GRAPH_OPCODE_CAPABILITY_BYTES: usize = 12;
+/// Bytes in one graph resource-capability record.
+pub const GRAPH_RESOURCE_CAPABILITY_BYTES: usize = 12;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP01";
-const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ01";
-const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR01";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP02";
+const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ02";
+const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR02";
+const GRAPH_EXECUTOR_MAGIC: [u8; 8] = *b"ALMGRC02";
 const RESPONSE_FLAG_COMPLETE: u8 = 1 << 0;
 
 /// Exact identity of one canonical immutable capability document.
@@ -32,6 +40,145 @@ pub struct CapabilityIdentity {
     pub byte_len: u32,
     /// SHA-256 over every document byte.
     pub digest: Digest,
+}
+
+/// Independently decoded fixed graph-executor section of one complete V2
+/// capability document.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphExecutionCapability<'a> {
+    identity: CapabilityIdentity,
+    ir_version: u16,
+    package_bytes: u32,
+    maximum_nodes: u16,
+    maximum_channels: u16,
+    maximum_queue_items: u32,
+    service_state_bytes: u32,
+    realtime_state_bytes: u32,
+    service_channel_bytes: u32,
+    realtime_channel_bytes: u32,
+    bridge_channel_bytes: u32,
+    support: SupportLevel,
+    opcode_records: &'a [u8],
+    resource_records: &'a [u8],
+}
+
+impl<'a> GraphExecutionCapability<'a> {
+    /// Complete capability-document identity containing this graph section.
+    pub const fn identity(self) -> CapabilityIdentity {
+        self.identity
+    }
+
+    /// Exact deployed graph-IR version understood by the image.
+    pub const fn ir_version(self) -> u16 {
+        self.ir_version
+    }
+
+    /// Exact fixed package length.
+    pub const fn package_bytes(self) -> u32 {
+        self.package_bytes
+    }
+
+    /// Maximum admitted node records.
+    pub const fn maximum_nodes(self) -> u16 {
+        self.maximum_nodes
+    }
+
+    /// Maximum admitted channel records.
+    pub const fn maximum_channels(self) -> u16 {
+        self.maximum_channels
+    }
+
+    /// Maximum queue capacity in items.
+    pub const fn maximum_queue_items(self) -> u32 {
+        self.maximum_queue_items
+    }
+
+    /// Permanently reserved Service state bytes.
+    pub const fn service_state_bytes(self) -> u32 {
+        self.service_state_bytes
+    }
+
+    /// Permanently reserved Realtime state bytes.
+    pub const fn realtime_state_bytes(self) -> u32 {
+        self.realtime_state_bytes
+    }
+
+    /// Permanently reserved Service-local channel bytes.
+    pub const fn service_channel_bytes(self) -> u32 {
+        self.service_channel_bytes
+    }
+
+    /// Permanently reserved Realtime-local channel bytes.
+    pub const fn realtime_channel_bytes(self) -> u32 {
+        self.realtime_channel_bytes
+    }
+
+    /// Permanently reserved Service-to-Realtime bridge bytes.
+    pub const fn bridge_channel_bytes(self) -> u32 {
+        self.bridge_channel_bytes
+    }
+
+    /// Evidence level for the fixed executor and its declared timing.
+    pub const fn support(self) -> SupportLevel {
+        self.support
+    }
+
+    /// Number of opcode records in the exact capability palette.
+    pub const fn opcode_count(self) -> usize {
+        self.opcode_records.len() / GRAPH_OPCODE_CAPABILITY_BYTES
+    }
+
+    /// Number of explicitly graph-addressable resources.
+    pub const fn resource_count(self) -> usize {
+        self.resource_records.len() / GRAPH_RESOURCE_CAPABILITY_BYTES
+    }
+
+    /// Iterate independently decoded opcode records in canonical order.
+    pub fn opcodes(self) -> impl ExactSizeIterator<Item = GraphOpcodeDescriptor> + 'a {
+        self.opcode_records
+            .chunks_exact(GRAPH_OPCODE_CAPABILITY_BYTES)
+            .map(decode_graph_opcode_unchecked)
+    }
+
+    /// Iterate independently decoded resource records in canonical order.
+    pub fn resources(self) -> impl ExactSizeIterator<Item = GraphResourceDescriptor> + 'a {
+        self.resource_records
+            .chunks_exact(GRAPH_RESOURCE_CAPABILITY_BYTES)
+            .map(decode_graph_resource_unchecked)
+    }
+
+    /// Whether this exact class/selector/access tuple is published.
+    pub fn admits_resource(
+        self,
+        class: GraphResourceClass,
+        resource: ResourceId,
+        access: GraphResourceAccess,
+    ) -> bool {
+        self.resources().any(|candidate| {
+            candidate.class == class
+                && candidate.resource == resource
+                && candidate.access == access
+                && candidate.support >= SupportLevel::Compiles
+        })
+    }
+}
+
+/// Failure while independently locating and decoding the fixed graph section
+/// of an untrusted complete capability document.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CapabilityDocumentError {
+    /// Document or a length-prefixed prefix field was truncated.
+    Length,
+    /// Document or graph-section magic was not exact V2.
+    Magic,
+    /// Document version was not exactly V2.
+    Version,
+    /// Reserved bytes or a Boolean were noncanonical.
+    Reserved,
+    /// Graph capacities, counts, class, access, or support were invalid.
+    Graph,
+    /// One graph resource identifier was malformed.
+    Resource(ResourceWireError),
 }
 
 /// Result of one caller-buffer range read.
@@ -52,7 +199,7 @@ pub struct CapabilityRead {
 pub enum CapabilityError {
     /// The board package failed its structural validation.
     Board(BoardError),
-    /// A count, string, address, or total length exceeded V1 integer bounds.
+    /// A count, string, address, or total length exceeded V2 integer bounds.
     Length,
     /// The requested offset was beyond the exact document end.
     Range,
@@ -146,6 +293,138 @@ pub fn read_verified_range(
         complete: offset
             .checked_add(u32::from(byte_len))
             .is_some_and(|end| end == identity.byte_len),
+    })
+}
+
+/// Locates and independently decodes the graph-executor section of a complete
+/// canonical V2 capability document.
+///
+/// The caller must still compare [`GraphExecutionCapability::identity`] with
+/// the device identity it authenticated. This function hashes all supplied
+/// bytes and requires the document's own total length, but a digest is content
+/// identity rather than authorization.
+pub fn decode_graph_execution(
+    document: &[u8],
+) -> Result<GraphExecutionCapability<'_>, CapabilityDocumentError> {
+    if document.len() < CAPABILITY_DOCUMENT_HEADER_BYTES {
+        return Err(CapabilityDocumentError::Length);
+    }
+    if document[..8] != DOCUMENT_MAGIC {
+        return Err(CapabilityDocumentError::Magic);
+    }
+    if read_u16(document, 8) != CAPABILITY_DOCUMENT_VERSION {
+        return Err(CapabilityDocumentError::Version);
+    }
+    if document[10..12].iter().any(|byte| *byte != 0)
+        || usize::try_from(read_u32(document, 12)).ok() != Some(document.len())
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+
+    let mut cursor = CAPABILITY_DOCUMENT_HEADER_BYTES;
+    cursor = skip_capability_string(document, cursor)?;
+    cursor = skip_capability_string(document, cursor)?;
+    let fixed_end = cursor
+        .checked_add(33)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let fixed = document
+        .get(cursor..fixed_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    if !matches!(fixed[0], 1 | 2)
+        || fixed[1] < 2
+        || !matches!(fixed[2], 1..=5)
+        || fixed[3] > 1
+        || fixed[28] > 1
+        || fixed[31..33].iter().any(|byte| *byte != 0)
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    cursor = fixed_end;
+
+    let graph_end = cursor
+        .checked_add(GRAPH_EXECUTOR_HEADER_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let header = document
+        .get(cursor..graph_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    if header[..8] != GRAPH_EXECUTOR_MAGIC {
+        return Err(CapabilityDocumentError::Magic);
+    }
+    if header[11] != 0 || header[48..72].iter().any(|byte| *byte != 0) {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    let support = support_from_wire(header[10]).ok_or(CapabilityDocumentError::Graph)?;
+    let ir_version = read_u16(header, 8);
+    let package_bytes = read_u32(header, 12);
+    let maximum_nodes = read_u16(header, 16);
+    let maximum_channels = read_u16(header, 18);
+    let maximum_queue_items = read_u32(header, 20);
+    let service_state_bytes = read_u32(header, 24);
+    let realtime_state_bytes = read_u32(header, 28);
+    let service_channel_bytes = read_u32(header, 32);
+    let realtime_channel_bytes = read_u32(header, 36);
+    let bridge_channel_bytes = read_u32(header, 40);
+    let opcode_count = usize::from(read_u16(header, 44));
+    let resource_count = usize::from(read_u16(header, 46));
+    if ir_version == 0
+        || package_bytes == 0
+        || maximum_nodes == 0
+        || maximum_channels == 0
+        || maximum_queue_items == 0
+        || service_state_bytes == 0
+        || realtime_state_bytes == 0
+        || service_channel_bytes == 0
+        || realtime_channel_bytes == 0
+        || bridge_channel_bytes == 0
+        || opcode_count == 0
+    {
+        return Err(CapabilityDocumentError::Graph);
+    }
+
+    cursor = graph_end;
+    let opcode_bytes = opcode_count
+        .checked_mul(GRAPH_OPCODE_CAPABILITY_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let opcode_end = cursor
+        .checked_add(opcode_bytes)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let opcode_records = document
+        .get(cursor..opcode_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    validate_graph_opcode_records(opcode_records)?;
+    cursor = opcode_end;
+    let resource_bytes = resource_count
+        .checked_mul(GRAPH_RESOURCE_CAPABILITY_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let resource_end = cursor
+        .checked_add(resource_bytes)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let resource_records = document
+        .get(cursor..resource_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    validate_graph_resource_records(opcode_records, resource_records)?;
+
+    let digest = Sha256::digest(document);
+    let mut digest_bytes = [0_u8; 32];
+    digest_bytes.copy_from_slice(&digest);
+    Ok(GraphExecutionCapability {
+        identity: CapabilityIdentity {
+            byte_len: u32::try_from(document.len()).map_err(|_| CapabilityDocumentError::Length)?,
+            digest: Digest(digest_bytes),
+        },
+        ir_version,
+        package_bytes,
+        maximum_nodes,
+        maximum_channels,
+        maximum_queue_items,
+        service_state_bytes,
+        realtime_state_bytes,
+        service_channel_bytes,
+        realtime_channel_bytes,
+        bridge_channel_bytes,
+        support,
+        opcode_records,
+        resource_records,
     })
 }
 
@@ -320,7 +599,7 @@ pub enum CapabilityWireError {
     Length,
     /// Magic did not select the expected schema.
     Magic,
-    /// Version was not exactly V1.
+    /// Version was not exactly V2.
     Version,
     /// Flags or reserved bytes were nonzero.
     Reserved,
@@ -470,6 +749,7 @@ fn encode_payload<S: ByteSink>(
         0,
         0,
     ])?;
+    write_graph_executor(sink, package.graph)?;
 
     write_count(sink, package.board.resources.len())?;
     for resource in package.board.resources {
@@ -607,6 +887,57 @@ fn encode_payload<S: ByteSink>(
         for resource in requirement.resources {
             write_resource(sink, *resource)?;
         }
+    }
+    Ok(())
+}
+
+fn write_graph_executor<S: ByteSink>(
+    sink: &mut S,
+    graph: GraphExecutorDescriptor<'_>,
+) -> Result<(), CapabilityError> {
+    let opcode_count = u16::try_from(graph.opcodes.len()).map_err(|_| CapabilityError::Length)?;
+    let resource_count =
+        u16::try_from(graph.resources.len()).map_err(|_| CapabilityError::Length)?;
+    let mut header = [0_u8; GRAPH_EXECUTOR_HEADER_BYTES];
+    header[..8].copy_from_slice(&GRAPH_EXECUTOR_MAGIC);
+    header[8..10].copy_from_slice(&graph.ir_version.to_le_bytes());
+    header[10] = support(graph.support);
+    // Byte 11 and bytes 48..72 are reserved zero.
+    header[12..16].copy_from_slice(&graph.package_bytes.to_le_bytes());
+    header[16..18].copy_from_slice(&graph.maximum_nodes.to_le_bytes());
+    header[18..20].copy_from_slice(&graph.maximum_channels.to_le_bytes());
+    header[20..24].copy_from_slice(&graph.maximum_queue_items.to_le_bytes());
+    header[24..28].copy_from_slice(&graph.service_state_bytes.to_le_bytes());
+    header[28..32].copy_from_slice(&graph.realtime_state_bytes.to_le_bytes());
+    header[32..36].copy_from_slice(&graph.service_channel_bytes.to_le_bytes());
+    header[36..40].copy_from_slice(&graph.realtime_channel_bytes.to_le_bytes());
+    header[40..44].copy_from_slice(&graph.bridge_channel_bytes.to_le_bytes());
+    header[44..46].copy_from_slice(&opcode_count.to_le_bytes());
+    header[46..48].copy_from_slice(&resource_count.to_le_bytes());
+    sink.write(&header)?;
+    for opcode in graph.opcodes {
+        let mut encoded = [0_u8; GRAPH_OPCODE_CAPABILITY_BYTES];
+        encoded[0] = opcode.opcode;
+        encoded[1] = owner(opcode.domain);
+        encoded[2] = support(opcode.support);
+        encoded[3] = opcode.resource_access.map_or(0, graph_resource_access);
+        encoded[4..8].copy_from_slice(
+            &opcode
+                .resource_class
+                .map_or(0, GraphResourceClass::get)
+                .to_le_bytes(),
+        );
+        // Bytes 8..12 are reserved zero.
+        sink.write(&encoded)?;
+    }
+    for resource in graph.resources {
+        let mut encoded = [0_u8; GRAPH_RESOURCE_CAPABILITY_BYTES];
+        encoded[..4].copy_from_slice(&encode_resource_id(resource.resource));
+        encoded[4] = graph_resource_access(resource.access);
+        encoded[5] = support(resource.support);
+        // Bytes 6..8 are reserved zero.
+        encoded[8..12].copy_from_slice(&resource.class.get().to_le_bytes());
+        sink.write(&encoded)?;
     }
     Ok(())
 }
@@ -768,6 +1099,123 @@ pub enum ResourceWireError {
     Noncanonical,
 }
 
+fn skip_capability_string(
+    document: &[u8],
+    offset: usize,
+) -> Result<usize, CapabilityDocumentError> {
+    let length_end = offset
+        .checked_add(4)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let length_prefix = document
+        .get(offset..length_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let length =
+        usize::try_from(read_u32(length_prefix, 0)).map_err(|_| CapabilityDocumentError::Length)?;
+    let end = length_end
+        .checked_add(length)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let value = document
+        .get(length_end..end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    if value.is_empty() || core::str::from_utf8(value).is_err() {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    Ok(end)
+}
+
+fn validate_graph_opcode_records(records: &[u8]) -> Result<(), CapabilityDocumentError> {
+    let mut previous = 0_u8;
+    for record in records.chunks_exact(GRAPH_OPCODE_CAPABILITY_BYTES) {
+        let opcode = decode_graph_opcode(record)?;
+        if opcode.opcode <= previous {
+            return Err(CapabilityDocumentError::Graph);
+        }
+        previous = opcode.opcode;
+    }
+    Ok(())
+}
+
+fn validate_graph_resource_records(
+    opcodes: &[u8],
+    resources: &[u8],
+) -> Result<(), CapabilityDocumentError> {
+    for (index, record) in resources
+        .chunks_exact(GRAPH_RESOURCE_CAPABILITY_BYTES)
+        .enumerate()
+    {
+        let resource = decode_graph_resource(record)?;
+        if resource.class.get() == 0
+            || !opcodes
+                .chunks_exact(GRAPH_OPCODE_CAPABILITY_BYTES)
+                .map(decode_graph_opcode_unchecked)
+                .any(|opcode| {
+                    opcode.domain == OwnerDomain::Realtime
+                        && opcode.resource_class == Some(resource.class)
+                        && opcode.resource_access == Some(resource.access)
+                })
+        {
+            return Err(CapabilityDocumentError::Graph);
+        }
+        for previous in resources[..index * GRAPH_RESOURCE_CAPABILITY_BYTES]
+            .chunks_exact(GRAPH_RESOURCE_CAPABILITY_BYTES)
+        {
+            let previous = decode_graph_resource_unchecked(previous);
+            if previous.class == resource.class && previous.resource == resource.resource {
+                return Err(CapabilityDocumentError::Graph);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn decode_graph_opcode(encoded: &[u8]) -> Result<GraphOpcodeDescriptor, CapabilityDocumentError> {
+    if encoded.len() != GRAPH_OPCODE_CAPABILITY_BYTES
+        || encoded[8..12].iter().any(|byte| *byte != 0)
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    let resource_class = read_u32(encoded, 4);
+    let resource_access = graph_resource_access_from_wire(encoded[3]);
+    if encoded[0] == 0
+        || resource_access.is_none() != (resource_class == 0)
+        || encoded[3] != 0 && resource_access.is_none()
+    {
+        return Err(CapabilityDocumentError::Graph);
+    }
+    Ok(GraphOpcodeDescriptor {
+        opcode: encoded[0],
+        domain: owner_from_wire(encoded[1]).ok_or(CapabilityDocumentError::Graph)?,
+        support: support_from_wire(encoded[2]).ok_or(CapabilityDocumentError::Graph)?,
+        resource_class: (resource_class != 0).then_some(GraphResourceClass::new(resource_class)),
+        resource_access,
+    })
+}
+
+fn decode_graph_opcode_unchecked(encoded: &[u8]) -> GraphOpcodeDescriptor {
+    decode_graph_opcode(encoded).expect("graph capability view was independently validated")
+}
+
+fn decode_graph_resource(
+    encoded: &[u8],
+) -> Result<GraphResourceDescriptor, CapabilityDocumentError> {
+    if encoded.len() != GRAPH_RESOURCE_CAPABILITY_BYTES
+        || encoded[6..8].iter().any(|byte| *byte != 0)
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    Ok(GraphResourceDescriptor {
+        resource: decode_resource_id(&encoded[..4]).map_err(CapabilityDocumentError::Resource)?,
+        class: GraphResourceClass::new(read_u32(encoded, 8)),
+        access: graph_resource_access_from_wire(encoded[4])
+            .ok_or(CapabilityDocumentError::Graph)?,
+        support: support_from_wire(encoded[5]).ok_or(CapabilityDocumentError::Graph)?,
+    })
+}
+
+fn decode_graph_resource_unchecked(encoded: &[u8]) -> GraphResourceDescriptor {
+    decode_graph_resource(encoded).expect("graph capability view was independently validated")
+}
+
 const fn chip(value: Chip) -> u8 {
     match value {
         Chip::Esp32 => 1,
@@ -789,6 +1237,14 @@ const fn owner(value: OwnerDomain) -> u8 {
     match value {
         OwnerDomain::Service => 1,
         OwnerDomain::Realtime => 2,
+    }
+}
+
+const fn owner_from_wire(value: u8) -> Option<OwnerDomain> {
+    match value {
+        1 => Some(OwnerDomain::Service),
+        2 => Some(OwnerDomain::Realtime),
+        _ => None,
     }
 }
 
@@ -816,6 +1272,30 @@ const fn support(value: SupportLevel) -> u8 {
         SupportLevel::Compiles => 2,
         SupportLevel::Bench => 3,
         SupportLevel::Qualified => 4,
+    }
+}
+
+const fn support_from_wire(value: u8) -> Option<SupportLevel> {
+    match value {
+        1 => Some(SupportLevel::Described),
+        2 => Some(SupportLevel::Compiles),
+        3 => Some(SupportLevel::Bench),
+        4 => Some(SupportLevel::Qualified),
+        _ => None,
+    }
+}
+
+const fn graph_resource_access(value: GraphResourceAccess) -> u8 {
+    match value {
+        GraphResourceAccess::StableBooleanInput => 1,
+    }
+}
+
+const fn graph_resource_access_from_wire(value: u8) -> Option<GraphResourceAccess> {
+    match value {
+        0 => None,
+        1 => Some(GraphResourceAccess::StableBooleanInput),
+        _ => None,
     }
 }
 
@@ -906,6 +1386,25 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    fn complete_document(package: &BoardPackage<'_>) -> alloc::vec::Vec<u8> {
+        let identity = calculate_identity(package).unwrap();
+        let mut document = vec![0_u8; usize::try_from(identity.byte_len).unwrap()];
+        let mut sink = RangeSink::new(0, &mut document);
+        sink.write(&document_header(identity.byte_len)).unwrap();
+        encode_payload(package, &mut sink).unwrap();
+        assert_eq!(sink.finish(), Ok(document.len()));
+        document
+    }
+
+    fn graph_section_offset(package: &BoardPackage<'_>) -> usize {
+        CAPABILITY_DOCUMENT_HEADER_BYTES
+            + 4
+            + package.board.id.len()
+            + 4
+            + package.board.revision.len()
+            + 33
+    }
+
     #[test]
     fn request_and_response_prefixes_are_exact_and_canonical() {
         for resource in [
@@ -965,22 +1464,8 @@ mod tests {
         for package in [&board_mks_tinybee::PACKAGE, &board_t_deck_pro::PACKAGE] {
             let identity = calculate_identity(package).unwrap();
             assert!(!identity.digest.is_zero());
-            let mut document = vec![0_u8; usize::try_from(identity.byte_len).unwrap()];
-            let mut offset = 0_u32;
-            while offset < identity.byte_len {
-                let start = usize::try_from(offset).unwrap();
-                let mut chunk = [0_u8; 73];
-                let maximum = chunk
-                    .len()
-                    .min(usize::try_from(identity.byte_len - offset).unwrap());
-                let mut sink = RangeSink::new(offset, &mut chunk[..maximum]);
-                sink.write(&document_header(identity.byte_len)).unwrap();
-                encode_payload(package, &mut sink).unwrap();
-                let written = sink.finish().unwrap();
-                document[start..start + written].copy_from_slice(&chunk[..written]);
-                offset += u32::try_from(written).unwrap();
-            }
-            assert_eq!(&document[..8], b"ALMCAP01");
+            let document = complete_document(package);
+            assert_eq!(&document[..8], b"ALMCAP02");
             assert_eq!(read_u32(&document, 12), identity.byte_len);
             let mut hasher = Sha256::new();
             hasher.update(&document);
@@ -988,7 +1473,120 @@ mod tests {
             digest.copy_from_slice(&hasher.finalize());
             assert_eq!(Digest(digest), identity.digest);
             assert_eq!(calculate_identity(package).unwrap(), identity);
+            let graph = decode_graph_execution(&document).unwrap();
+            assert_eq!(graph.identity(), identity);
+            assert_eq!(graph.ir_version(), package.graph.ir_version);
+            assert_eq!(graph.package_bytes(), package.graph.package_bytes);
+            assert_eq!(graph.maximum_nodes(), package.graph.maximum_nodes);
+            assert_eq!(graph.maximum_channels(), package.graph.maximum_channels);
+            assert_eq!(
+                graph.maximum_queue_items(),
+                package.graph.maximum_queue_items
+            );
+            assert_eq!(
+                graph.service_state_bytes(),
+                package.graph.service_state_bytes
+            );
+            assert_eq!(
+                graph.realtime_state_bytes(),
+                package.graph.realtime_state_bytes
+            );
+            assert_eq!(
+                graph.service_channel_bytes(),
+                package.graph.service_channel_bytes
+            );
+            assert_eq!(
+                graph.realtime_channel_bytes(),
+                package.graph.realtime_channel_bytes
+            );
+            assert_eq!(
+                graph.bridge_channel_bytes(),
+                package.graph.bridge_channel_bytes
+            );
+            assert_eq!(graph.support(), package.graph.support);
+            assert!(graph.opcodes().eq(package.graph.opcodes.iter().copied()));
+            assert!(
+                graph
+                    .resources()
+                    .eq(package.graph.resources.iter().copied())
+            );
         }
+    }
+
+    #[test]
+    fn graph_capability_tamper_fails_closed_and_palettes_are_exact() {
+        let package = &board_mks_tinybee::PACKAGE;
+        let document = complete_document(package);
+        let graph_offset = graph_section_offset(package);
+        let graph = decode_graph_execution(&document).unwrap();
+        assert_eq!(graph.opcode_count(), 4);
+        assert_eq!(graph.resource_count(), 4);
+        assert!(graph.resources().eq([
+            GraphResourceDescriptor {
+                resource: ResourceId::Gpio(33),
+                class: GraphResourceClass::new(1),
+                access: GraphResourceAccess::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            GraphResourceDescriptor {
+                resource: ResourceId::Gpio(32),
+                class: GraphResourceClass::new(1),
+                access: GraphResourceAccess::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            GraphResourceDescriptor {
+                resource: ResourceId::Gpio(22),
+                class: GraphResourceClass::new(1),
+                access: GraphResourceAccess::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            GraphResourceDescriptor {
+                resource: ResourceId::Gpio(35),
+                class: GraphResourceClass::new(1),
+                access: GraphResourceAccess::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+        ]));
+        let t_deck = complete_document(&board_t_deck_pro::PACKAGE);
+        assert_eq!(decode_graph_execution(&t_deck).unwrap().resource_count(), 0);
+
+        let mut reserved = document.clone();
+        reserved[graph_offset + 48] = 1;
+        assert_eq!(
+            decode_graph_execution(&reserved),
+            Err(CapabilityDocumentError::Reserved)
+        );
+
+        let opcode_offset = graph_offset + GRAPH_EXECUTOR_HEADER_BYTES;
+        let mut unknown_access = document.clone();
+        unknown_access[opcode_offset + 3 * GRAPH_OPCODE_CAPABILITY_BYTES + 3] = 0xff;
+        assert_eq!(
+            decode_graph_execution(&unknown_access),
+            Err(CapabilityDocumentError::Graph)
+        );
+
+        let resource_offset =
+            opcode_offset + package.graph.opcodes.len() * GRAPH_OPCODE_CAPABILITY_BYTES;
+        let mut malformed_resource = document.clone();
+        malformed_resource[resource_offset] = 0xff;
+        assert_eq!(
+            decode_graph_execution(&malformed_resource),
+            Err(CapabilityDocumentError::Resource(ResourceWireError::Kind(
+                0xff
+            )))
+        );
+
+        let mut duplicate_resource = document;
+        let first = duplicate_resource
+            [resource_offset..resource_offset + GRAPH_RESOURCE_CAPABILITY_BYTES]
+            .to_vec();
+        duplicate_resource[resource_offset + GRAPH_RESOURCE_CAPABILITY_BYTES
+            ..resource_offset + 2 * GRAPH_RESOURCE_CAPABILITY_BYTES]
+            .copy_from_slice(&first);
+        assert_eq!(
+            decode_graph_execution(&duplicate_resource),
+            Err(CapabilityDocumentError::Graph)
+        );
     }
 
     #[test]
@@ -1016,7 +1614,7 @@ mod tests {
         assert_eq!(read.identity, identity);
         assert_eq!(read.byte_len, 32);
         assert!(!read.complete);
-        assert_eq!(&chunk[..8], b"ALMCAP01");
+        assert_eq!(&chunk[..8], b"ALMCAP02");
     }
 
     #[test]

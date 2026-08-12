@@ -330,7 +330,7 @@ constructs owned resources, and returns separate `ServiceResources` and
 motion, network, or application code.
 
 `alumina-capability` serializes the same package as the canonical allocation-free
-`ALMCAP01` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
+`ALMCAP02` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
 own declared field, is compiled into the board package, and is recomputed by
 `xtask` and firmware. Public identity advertises digest/length; authenticated
 `CapabilitiesGet` reads contiguous bounded ranges through the single native

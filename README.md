@@ -155,7 +155,7 @@ publishes correlated status. Core 1 retains one initial block, or two for a
 multi-block job, without acknowledging or executing them. See the
 [cross-block prefill evidence](docs/evidence/M6-CROSS-BLOCK-PREFILL.md).
 `alumina-capability` now encodes every typed board
-fact as an allocation-free canonical `ALMCAP01` document. Both first packages
+fact as an allocation-free canonical `ALMCAP02` document. Both first packages
 compile its independently recomputed SHA-256, firmware verifies it before Wi-Fi,
 identity advertises it, and authenticated `CapabilitiesGet` returns bounded
 digest-stable ranges. Preparation still returns `Unsupported` on both current

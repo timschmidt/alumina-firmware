@@ -4,7 +4,8 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
-    ElectricalConstraintDescriptor, ElectricalConstraintKind, HilKind, HilRequirement,
+    ElectricalConstraintDescriptor, ElectricalConstraintKind, GraphExecutorDescriptor,
+    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, HilKind, HilRequirement,
     InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain, Qualification,
     ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
 };
@@ -14,10 +15,56 @@ use alumina_protocol::Digest;
 pub const BOARD_ID: &str = "mks-esp32-foc-v1";
 /// ESP Rust target required by the fitted ESP32-WROOM-32D module.
 pub const TARGET: &str = "xtensa-esp32-none-elf";
-/// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
+pub const GRAPH_STABLE_BOOLEAN_INPUT_CLASS: GraphResourceClass = GraphResourceClass::new(1);
+pub static GRAPH_OPCODES: &[GraphOpcodeDescriptor] = &[
+    GraphOpcodeDescriptor {
+        opcode: 1,
+        domain: OwnerDomain::Service,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 2,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 3,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 4,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: Some(GRAPH_STABLE_BOOLEAN_INPUT_CLASS),
+        resource_access: Some(GraphResourceAccess::StableBooleanInput),
+    },
+];
+pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescriptor {
+    ir_version: 2,
+    package_bytes: 4_096,
+    maximum_nodes: 32,
+    maximum_channels: 64,
+    maximum_queue_items: 4_096,
+    service_state_bytes: 2 * 1_024,
+    realtime_state_bytes: 2 * 1_024,
+    service_channel_bytes: 4 * 1_024,
+    realtime_channel_bytes: 4 * 1_024,
+    bridge_channel_bytes: 4 * 1_024,
+    support: SupportLevel::Compiles,
+    opcodes: GRAPH_OPCODES,
+    resources: &[],
+};
+/// SHA-256 of the canonical `ALMCAP02` V2 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x8b, 0x14, 0xc1, 0x7f, 0xc2, 0x78, 0x7b, 0xce, 0x93, 0xe1, 0x06, 0x10, 0xa3, 0x91, 0x57, 0xe3,
-    0x3a, 0x5a, 0x10, 0xfa, 0xc4, 0x77, 0xe9, 0x10, 0x02, 0x1f, 0x16, 0x6b, 0x56, 0x25, 0x32, 0xe3,
+    0x62, 0x7b, 0x2c, 0x01, 0x8f, 0x44, 0x01, 0x3d, 0xec, 0x83, 0xf1, 0xff, 0x11, 0x8f, 0x41, 0x58,
+    0xb4, 0xde, 0x31, 0xbb, 0x2d, 0xb6, 0xd0, 0x22, 0xc2, 0x97, 0x9a, 0x8f, 0xd0, 0x53, 0x10, 0x7f,
 ]);
 
 /// Stable board-local fitted-device namespace.
@@ -805,6 +852,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
         service_core: 0,
         realtime_core: 1,
     },
+    graph: GRAPH_EXECUTOR,
     aliases: ALIASES,
     buses: BUSES,
     devices: DEVICES,

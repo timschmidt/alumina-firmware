@@ -8,7 +8,7 @@ The complete bytes are uploaded as storage object kind `MachineConfiguration`
 
 SHA-256 over the complete document is the configuration digest carried by jobs,
 commands, status, and both core-local active identities. The document embeds the
-exact immutable `ALMCAP01` board digest, so a configuration cannot move silently
+exact immutable `ALMCAP02` board digest, so a configuration cannot move silently
 between revisions or capability/qualification changes.
 
 ## Common rules and header

@@ -4,7 +4,8 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
-    ElectricalConstraintDescriptor, ElectricalConstraintKind, HilKind, HilRequirement,
+    ElectricalConstraintDescriptor, ElectricalConstraintKind, GraphExecutorDescriptor,
+    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, HilKind, HilRequirement,
     InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain, Qualification,
     ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
 };
@@ -12,10 +13,56 @@ use alumina_protocol::Digest;
 
 pub const BOARD_ID: &str = "t-deck-pro";
 pub const TARGET: &str = "xtensa-esp32s3-none-elf";
-/// SHA-256 of the canonical `ALMCAP01` V1 document exported by this package.
+pub const GRAPH_STABLE_BOOLEAN_INPUT_CLASS: GraphResourceClass = GraphResourceClass::new(1);
+pub static GRAPH_OPCODES: &[GraphOpcodeDescriptor] = &[
+    GraphOpcodeDescriptor {
+        opcode: 1,
+        domain: OwnerDomain::Service,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 2,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 3,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: 4,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: Some(GRAPH_STABLE_BOOLEAN_INPUT_CLASS),
+        resource_access: Some(GraphResourceAccess::StableBooleanInput),
+    },
+];
+pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescriptor {
+    ir_version: 2,
+    package_bytes: 4_096,
+    maximum_nodes: 32,
+    maximum_channels: 64,
+    maximum_queue_items: 4_096,
+    service_state_bytes: 2 * 1_024,
+    realtime_state_bytes: 2 * 1_024,
+    service_channel_bytes: 4 * 1_024,
+    realtime_channel_bytes: 4 * 1_024,
+    bridge_channel_bytes: 4 * 1_024,
+    support: SupportLevel::Compiles,
+    opcodes: GRAPH_OPCODES,
+    resources: &[],
+};
+/// SHA-256 of the canonical `ALMCAP02` V2 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x61, 0x7a, 0x1b, 0x62, 0xb7, 0xe7, 0xf6, 0x87, 0x62, 0xa8, 0x95, 0x0e, 0xbe, 0x58, 0x2f, 0x47,
-    0xbf, 0xd2, 0x0b, 0x66, 0xd8, 0xcd, 0x05, 0x23, 0x63, 0xa4, 0xd8, 0x41, 0xe0, 0x8e, 0xec, 0x10,
+    0x6c, 0x37, 0xb5, 0x09, 0x08, 0x0f, 0x40, 0xa0, 0xea, 0x54, 0xe8, 0x6b, 0x9f, 0x9a, 0xad, 0xfe,
+    0xd4, 0xd2, 0x84, 0xc9, 0x74, 0x94, 0xf7, 0xe3, 0x27, 0x5a, 0xf6, 0xb3, 0x90, 0x5a, 0x80, 0x61,
 ]);
 
 pub mod device {
@@ -784,6 +831,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
         service_core: 0,
         realtime_core: 1,
     },
+    graph: GRAPH_EXECUTOR,
     aliases: ALIASES,
     buses: BUSES,
     devices: DEVICES,
@@ -799,7 +847,15 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
 
 #[cfg(test)]
 mod tests {
+    use alumina_capability::calculate_identity;
+
     use super::*;
+
+    #[test]
+    fn capability_identity_matches_canonical_document() {
+        let calculated = calculate_identity(&PACKAGE).unwrap();
+        assert_eq!(CAPABILITY_DIGEST.0, calculated.digest.0);
+    }
 
     #[test]
     fn imported_device_topology_validates_without_arm_claim() {
