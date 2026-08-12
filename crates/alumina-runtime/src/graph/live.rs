@@ -3,6 +3,7 @@
 use core::cell::RefCell;
 use core::mem::size_of;
 
+use alumina_board::ResourceId;
 use alumina_graph_ir::{GRAPH_IR_PACKAGE_BYTES, GraphIrPackage};
 use alumina_protocol::{DeviceCycle, Digest};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -1279,11 +1280,15 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
     }
 
     /// Execute the exact next Realtime release without waiting or allocation.
-    pub fn release(
+    pub fn release<F>(
         &mut self,
         cycle: DeviceCycle,
         safety_authorized: bool,
-    ) -> Result<GraphReleaseReport, GraphLiveError> {
+        mut resource_input: F,
+    ) -> Result<GraphReleaseReport, GraphLiveError>
+    where
+        F: FnMut(ResourceId) -> Option<bool>,
+    {
         self.require_phase(GraphActorPhase::Running)?;
         let run = self.run.ok_or(GraphLiveError::RunIdentity)?;
         self.bridge.require_running(run)?;
@@ -1310,6 +1315,7 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
                 self.start_cycle,
                 cycle,
                 self.cursor.next_tick,
+                &mut resource_input,
             )?;
             self.cursor.next_cycle = next_cycle;
             self.cursor.next_tick = next_tick;
@@ -1535,10 +1541,14 @@ pub enum GraphLiveError {
 mod tests {
     extern crate std;
 
+    use alumina_board::{
+        GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor,
+        OwnerDomain, ResourceId, SupportLevel,
+    };
     use alumina_graph_ir::{
         BOOLEAN_LATEST_STATE_BYTES, BOOLEAN_STREAM_ITEM_BYTES, GraphIrChannel, GraphIrChannelOwner,
         GraphIrDomain, GraphIrFullPolicy, GraphIrHeader, GraphIrNode, GraphIrOpcode,
-        GraphIrSchedule, graph_ir_content_digest,
+        GraphIrSchedule, encode_graph_resource_parameter, graph_ir_content_digest,
     };
     use alumina_protocol::DeviceId;
 
@@ -1552,6 +1562,46 @@ mod tests {
         service_channel_bytes: 0,
         realtime_channel_bytes: 21,
         bridge_channel_bytes: 42,
+        opcodes: crate::graph::RESOURCE_FREE_GRAPH_OPCODES,
+        resources: &[],
+    };
+    const INPUT_CLASS: GraphResourceClass = GraphResourceClass::new(1);
+    const INPUT_OPCODES: &[GraphOpcodeDescriptor] = &[
+        GraphOpcodeDescriptor {
+            opcode: GraphIrOpcode::BooleanStreamSink as u8,
+            domain: OwnerDomain::Realtime,
+            support: SupportLevel::Compiles,
+            resource_class: None,
+            resource_access: None,
+        },
+        GraphOpcodeDescriptor {
+            opcode: GraphIrOpcode::StableBooleanInput as u8,
+            domain: OwnerDomain::Realtime,
+            support: SupportLevel::Compiles,
+            resource_class: Some(INPUT_CLASS),
+            resource_access: Some(GraphResourceAccess::StableBooleanInput),
+        },
+    ];
+    const INPUT_RESOURCES: &[GraphResourceDescriptor] = &[GraphResourceDescriptor {
+        resource: ResourceId::Gpio(33),
+        class: INPUT_CLASS,
+        access: GraphResourceAccess::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    }];
+    const WRONG_INPUT_RESOURCES: &[GraphResourceDescriptor] = &[GraphResourceDescriptor {
+        resource: ResourceId::Gpio(32),
+        class: INPUT_CLASS,
+        access: GraphResourceAccess::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    }];
+    const INPUT_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits {
+        service_state_bytes: 0,
+        realtime_state_bytes: 5,
+        service_channel_bytes: 0,
+        realtime_channel_bytes: 21,
+        bridge_channel_bytes: 42,
+        opcodes: INPUT_OPCODES,
+        resources: INPUT_RESOURCES,
     };
 
     fn digest(byte: u8) -> Digest {
@@ -1658,6 +1708,67 @@ mod tests {
         .unwrap()
     }
 
+    fn input_package() -> GraphIrPackage {
+        GraphIrPackage::encode(
+            GraphIrHeader {
+                device_id: DeviceId([1; 16]),
+                graph_digest: digest(2),
+                implementation_digest: digest(3),
+                capability_digest: digest(4),
+                config_digest: digest(5),
+                service_schedule: GraphIrSchedule::EMPTY,
+                realtime_schedule: GraphIrSchedule {
+                    clock_id: 20,
+                    period_cycles: 2_000,
+                    total_wcet_cycles: 40,
+                    executor_reserve_cycles: 100,
+                    node_count: 2,
+                },
+                total_state_bytes: 0,
+                service_state_bytes: 0,
+                realtime_state_bytes: 0,
+                channel_storage_bytes: BOOLEAN_STREAM_ITEM_BYTES,
+                bridge_storage_bytes: 0,
+            },
+            &[
+                GraphIrNode {
+                    graph_node_id: 1,
+                    domain: GraphIrDomain::Realtime,
+                    opcode: GraphIrOpcode::StableBooleanInput,
+                    schedule_clock_id: 20,
+                    period_cycles: 2_000,
+                    wcet_cycles: 20,
+                    state_offset: 0,
+                    state_bytes: 0,
+                    parameter: encode_graph_resource_parameter(ResourceId::Gpio(33)),
+                },
+                GraphIrNode {
+                    graph_node_id: 2,
+                    domain: GraphIrDomain::Realtime,
+                    opcode: GraphIrOpcode::BooleanStreamSink,
+                    schedule_clock_id: 20,
+                    period_cycles: 2_000,
+                    wcet_cycles: 20,
+                    state_offset: 0,
+                    state_bytes: 0,
+                    parameter: 0,
+                },
+            ],
+            &[GraphIrChannel {
+                graph_wire_id: 1,
+                source_node: 0,
+                target_node: 1,
+                owner: GraphIrChannelOwner::Realtime,
+                full_policy: GraphIrFullPolicy::Fault,
+                capacity: 1,
+                item_bytes: BOOLEAN_STREAM_ITEM_BYTES,
+                storage_offset: 0,
+                storage_bytes: BOOLEAN_STREAM_ITEM_BYTES,
+            }],
+        )
+        .unwrap()
+    }
+
     fn install(
         service: &mut ServiceActor<'_>,
         realtime: &mut RealtimeActor<'_>,
@@ -1741,11 +1852,15 @@ mod tests {
         assert_eq!(service.next_release_cycle(), Some(DeviceCycle(11_000)));
         assert_eq!(realtime.next_release_cycle(), Some(DeviceCycle(10_000)));
 
-        let realtime_tick_zero = realtime.release(DeviceCycle(10_000), true).unwrap();
+        let realtime_tick_zero = realtime
+            .release(DeviceCycle(10_000), true, |_| None)
+            .unwrap();
         assert_eq!(realtime_tick_zero.last_sink_value, Some(true));
         service.release(DeviceCycle(11_000), true).unwrap();
         service.release(DeviceCycle(12_000), true).unwrap();
-        let realtime_tick_one = realtime.release(DeviceCycle(12_000), true).unwrap();
+        let realtime_tick_one = realtime
+            .release(DeviceCycle(12_000), true, |_| None)
+            .unwrap();
         assert_eq!(realtime_tick_one.last_sink_value, Some(true));
         assert_eq!(realtime_tick_one.items_consumed, 3);
 
@@ -1758,7 +1873,7 @@ mod tests {
         start(&mut service, &mut realtime, second);
         assert_eq!(
             realtime
-                .release(DeviceCycle(20_000), true)
+                .release(DeviceCycle(20_000), true, |_| None)
                 .unwrap()
                 .last_sink_value,
             Some(true)
@@ -1768,6 +1883,112 @@ mod tests {
         realtime.clear(true).unwrap();
         assert_eq!(service.phase(), GraphActorPhase::Empty);
         assert_eq!(realtime.phase(), GraphActorPhase::Empty);
+    }
+
+    #[test]
+    fn stable_input_requires_exact_palette_and_faults_when_sample_is_unavailable() {
+        let package = input_package();
+        let missing_opcode = match super::super::admit_package(
+            package.bytes(),
+            package.digest(),
+            authority(),
+            LIMITS,
+        ) {
+            Ok(_) => panic!("resource-bearing package passed a resource-free palette"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            missing_opcode,
+            GraphRuntimeError::OpcodeCapability {
+                node: 0,
+                opcode: GraphIrOpcode::StableBooleanInput as u8,
+            }
+        );
+        let wrong_limits = GraphRuntimeLimits {
+            resources: WRONG_INPUT_RESOURCES,
+            ..INPUT_LIMITS
+        };
+        let wrong_resource = match super::super::admit_package(
+            package.bytes(),
+            package.digest(),
+            authority(),
+            wrong_limits,
+        ) {
+            Ok(_) => panic!("package passed a palette containing only another resource"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            wrong_resource,
+            GraphRuntimeError::ResourceCapability {
+                node: 0,
+                resource: ResourceId::Gpio(33),
+            }
+        );
+
+        let bridge = ReloadableGraphBridge::<42>::new();
+        let mut service = ServiceActor::new(&bridge);
+        let mut realtime = RealtimeActor::new(&bridge);
+        let content = graph_ir_content_digest(package.bytes());
+        service
+            .install(
+                package.bytes(),
+                51,
+                content,
+                package.digest(),
+                authority(),
+                INPUT_LIMITS,
+                true,
+            )
+            .unwrap();
+        realtime
+            .install(
+                package.bytes(),
+                51,
+                content,
+                package.digest(),
+                authority(),
+                INPUT_LIMITS,
+                true,
+            )
+            .unwrap();
+        let identity = service.installed_identity().unwrap();
+        let run = run(identity, 1, 10_000);
+        let prepared = service.prepare_start(run, true).unwrap();
+        assert_eq!(prepared.primed_service_release, None);
+        realtime.prepare_start(run, true).unwrap();
+        realtime.activate(run).unwrap();
+        service.observe_realtime_started(run).unwrap();
+
+        let mut reads = 0;
+        let report = realtime
+            .release(DeviceCycle(10_000), true, |resource| {
+                assert_eq!(resource, ResourceId::Gpio(33));
+                reads += 1;
+                Some(true)
+            })
+            .unwrap();
+        assert_eq!(reads, 1);
+        assert_eq!(report.nodes_executed, 2);
+        assert_eq!(report.items_emitted, 1);
+        assert_eq!(report.items_consumed, 1);
+        assert_eq!(report.sink_items, 1);
+        assert_eq!(report.last_sink_value, Some(true));
+
+        let unavailable = realtime
+            .release(DeviceCycle(12_000), true, |_| None)
+            .unwrap_err();
+        assert!(matches!(
+            unavailable,
+            GraphLiveError::Execution(GraphExecutionError {
+                observation: GraphFaultObservation {
+                    fault: GraphExecutionFault::ResourceUnavailable,
+                    detail: 0,
+                    ..
+                },
+                ..
+            })
+        ));
+        assert_eq!(realtime.phase(), GraphActorPhase::Faulted);
     }
 
     #[test]
@@ -1785,7 +2006,7 @@ mod tests {
         let shared = bridge.fault_after(0).unwrap();
         assert_eq!(shared.fault, super::super::GraphExecutionFault::QueueFull);
         assert!(matches!(
-            realtime.release(DeviceCycle(10_000), true),
+            realtime.release(DeviceCycle(10_000), true, |_| None),
             Err(GraphLiveError::Execution(error)) if error.observation == shared
         ));
 

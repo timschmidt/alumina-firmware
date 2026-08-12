@@ -453,6 +453,8 @@ impl GraphDeploymentFault {
             GraphRuntimeError::Identity(GraphRuntimeIdentity::Implementation) => {
                 Self::Implementation
             }
+            GraphRuntimeError::OpcodeCapability { .. }
+            | GraphRuntimeError::ResourceCapability { .. } => Self::Capability,
             GraphRuntimeError::Capacity { .. } => Self::Capacity,
             GraphRuntimeError::Arithmetic => Self::Arithmetic,
             GraphRuntimeError::Phase { .. }
@@ -1719,6 +1721,8 @@ mod tests {
             service_channel_bytes: 0,
             realtime_channel_bytes: 21,
             bridge_channel_bytes: 42,
+            opcodes: crate::graph::RESOURCE_FREE_GRAPH_OPCODES,
+            resources: &[],
         }
     }
 
@@ -2125,7 +2129,7 @@ mod tests {
         service_actor.observe_realtime_started(run).unwrap();
         assert_eq!(
             realtime_actor
-                .release(DeviceCycle(10_000), true)
+                .release(DeviceCycle(10_000), true, |_| None)
                 .unwrap()
                 .last_sink_value,
             Some(true)

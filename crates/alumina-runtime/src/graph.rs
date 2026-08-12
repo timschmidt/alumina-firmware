@@ -3,11 +3,15 @@
 use core::cell::RefCell;
 use core::mem::size_of;
 
+use alumina_board::{
+    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceDescriptor, OwnerDomain, ResourceId,
+    SupportLevel,
+};
 use alumina_graph_ir::{
     BOOLEAN_LATEST_STATE_BYTES, BOOLEAN_STREAM_ITEM_BYTES, GraphIrBooleanStreamItem,
     GraphIrBooleanValue, GraphIrChannel, GraphIrChannelOwner, GraphIrDomain, GraphIrError,
     GraphIrFullPolicy, GraphIrOpcode, GraphIrPackage, GraphIrSummary, MAX_GRAPH_IR_CHANNELS,
-    MAX_GRAPH_IR_NODES,
+    MAX_GRAPH_IR_NODES, decode_graph_resource_parameter,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -22,6 +26,33 @@ pub use deployment::*;
 pub use live::*;
 
 const NO_CHANNEL: u8 = u8::MAX;
+
+/// Resource-free V2 opcode palette used by portable fixed-runtime fixtures.
+///
+/// Physical graph I/O always requires an explicitly supplied board palette.
+pub const RESOURCE_FREE_GRAPH_OPCODES: &[GraphOpcodeDescriptor] = &[
+    GraphOpcodeDescriptor {
+        opcode: GraphIrOpcode::BooleanStreamConstant as u8,
+        domain: OwnerDomain::Service,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: GraphIrOpcode::BooleanLatest as u8,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+    GraphOpcodeDescriptor {
+        opcode: GraphIrOpcode::BooleanStreamSink as u8,
+        domain: OwnerDomain::Realtime,
+        support: SupportLevel::Compiles,
+        resource_class: None,
+        resource_access: None,
+    },
+];
 
 /// Exact package identities implemented and active on one firmware target.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +81,10 @@ pub struct GraphRuntimeLimits {
     pub realtime_channel_bytes: usize,
     /// One-way core-0-to-core-1 queue bytes.
     pub bridge_channel_bytes: usize,
+    /// Exact opcode palette implemented by this firmware image.
+    pub opcodes: &'static [GraphOpcodeDescriptor],
+    /// Exact physical resources and bounded accesses admitted by this image.
+    pub resources: &'static [GraphResourceDescriptor],
 }
 
 impl GraphRuntimeLimits {
@@ -67,6 +102,30 @@ impl GraphRuntimeLimits {
             service_channel_bytes: SERVICE_CHANNELS,
             realtime_channel_bytes: REALTIME_CHANNELS,
             bridge_channel_bytes: BRIDGE_CHANNELS,
+            opcodes: RESOURCE_FREE_GRAPH_OPCODES,
+            resources: &[],
+        }
+    }
+
+    /// Limits represented by one concrete fixed runtime and board palette.
+    pub const fn fixed_with_capabilities<
+        const SERVICE_STATE: usize,
+        const REALTIME_STATE: usize,
+        const SERVICE_CHANNELS: usize,
+        const REALTIME_CHANNELS: usize,
+        const BRIDGE_CHANNELS: usize,
+    >(
+        opcodes: &'static [GraphOpcodeDescriptor],
+        resources: &'static [GraphResourceDescriptor],
+    ) -> Self {
+        Self {
+            service_state_bytes: SERVICE_STATE,
+            realtime_state_bytes: REALTIME_STATE,
+            service_channel_bytes: SERVICE_CHANNELS,
+            realtime_channel_bytes: REALTIME_CHANNELS,
+            bridge_channel_bytes: BRIDGE_CHANNELS,
+            opcodes,
+            resources,
         }
     }
 }
@@ -190,7 +249,21 @@ pub enum GraphRuntimeError {
         /// Compile-time bytes available.
         available: usize,
     },
-    /// A validated package contradicted the fixed V1 executor shape.
+    /// A node opcode/domain was absent or unqualified in the image palette.
+    OpcodeCapability {
+        /// Rejected node record.
+        node: u16,
+        /// Exact opcode requested by that node.
+        opcode: u8,
+    },
+    /// A typed selector/access was absent or unqualified in the image palette.
+    ResourceCapability {
+        /// Rejected node record.
+        node: u16,
+        /// Exact canonical selector requested by that node.
+        resource: ResourceId,
+    },
+    /// A validated package contradicted the fixed V2 executor shape.
     RuntimeShape,
     /// Checked release or storage arithmetic overflowed.
     Arithmetic,
@@ -237,6 +310,8 @@ pub enum GraphExecutionFault {
     RuntimeShape = 7,
     /// A release was requested for an absent package domain.
     DomainAbsent = 8,
+    /// A capability-admitted input had no known fresh semantic sample.
+    ResourceUnavailable = 9,
 }
 
 impl GraphExecutionFault {
@@ -250,6 +325,7 @@ impl GraphExecutionFault {
             6 => Some(Self::Arithmetic),
             7 => Some(Self::RuntimeShape),
             8 => Some(Self::DomainAbsent),
+            9 => Some(Self::ResourceUnavailable),
             _ => None,
         }
     }
@@ -730,6 +806,7 @@ fn admit_package(
         ));
     }
 
+    validate_capability_palette(&package, limits)?;
     let metadata = GraphRuntimeMetadata::from_package(&package)?;
     check_capacity(
         GraphRuntimeArena::ServiceState,
@@ -764,6 +841,79 @@ fn admit_package(
         bridge_channel_bytes: metadata.bridge_channel_bytes,
     };
     Ok((package, metadata, usage))
+}
+
+fn validate_capability_palette(
+    package: &GraphIrPackage,
+    limits: GraphRuntimeLimits,
+) -> Result<(), GraphRuntimeError> {
+    for index in 0..package.summary().node_count {
+        let node = package.node(index).ok_or(GraphRuntimeError::RuntimeShape)?;
+        let opcode = node.opcode.wire_value();
+        let mut candidates = limits
+            .opcodes
+            .iter()
+            .copied()
+            .filter(|candidate| candidate.opcode == opcode);
+        let descriptor = candidates
+            .next()
+            .ok_or(GraphRuntimeError::OpcodeCapability {
+                node: index,
+                opcode,
+            })?;
+        if candidates.next().is_some()
+            || descriptor.domain != owner_domain(node.domain)
+            || descriptor.support < SupportLevel::Compiles
+        {
+            return Err(GraphRuntimeError::OpcodeCapability {
+                node: index,
+                opcode,
+            });
+        }
+        match node.opcode {
+            GraphIrOpcode::StableBooleanInput => {
+                let resource = decode_graph_resource_parameter(node.parameter)
+                    .map_err(|_| GraphRuntimeError::RuntimeShape)?;
+                let Some(class) = descriptor.resource_class else {
+                    return Err(GraphRuntimeError::OpcodeCapability {
+                        node: index,
+                        opcode,
+                    });
+                };
+                if descriptor.resource_access != Some(GraphResourceAccess::StableBooleanInput)
+                    || !limits.resources.iter().any(|candidate| {
+                        candidate.resource == resource
+                            && candidate.class == class
+                            && candidate.access == GraphResourceAccess::StableBooleanInput
+                            && candidate.support >= SupportLevel::Compiles
+                    })
+                {
+                    return Err(GraphRuntimeError::ResourceCapability {
+                        node: index,
+                        resource,
+                    });
+                }
+            }
+            GraphIrOpcode::BooleanStreamConstant
+            | GraphIrOpcode::BooleanLatest
+            | GraphIrOpcode::BooleanStreamSink => {
+                if descriptor.resource_class.is_some() || descriptor.resource_access.is_some() {
+                    return Err(GraphRuntimeError::OpcodeCapability {
+                        node: index,
+                        opcode,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+const fn owner_domain(domain: GraphIrDomain) -> OwnerDomain {
+    match domain {
+        GraphIrDomain::Service => OwnerDomain::Service,
+        GraphIrDomain::Realtime => OwnerDomain::Realtime,
+    }
 }
 
 impl<
@@ -864,11 +1014,15 @@ impl<const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
     FixedGraphRealtimeEndpoint<'_, STATE, CHANNELS, BRIDGE>
 {
     /// Execute exactly the next Realtime release without waiting or allocating.
-    pub fn release(
+    pub fn release<F>(
         &mut self,
         cycle: DeviceCycle,
         safety_authorized: bool,
-    ) -> Result<GraphReleaseReport, GraphExecutionError> {
+        mut resource_input: F,
+    ) -> Result<GraphReleaseReport, GraphExecutionError>
+    where
+        F: FnMut(ResourceId) -> Option<bool>,
+    {
         release_prelude(self.fault, self.cursor, cycle, safety_authorized, 0)?;
         let next_cycle = checked_next_cycle(self.fault, self.cursor, 0)?;
         let next_tick = checked_next_tick(self.fault, self.cursor, 0)?;
@@ -884,6 +1038,7 @@ impl<const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
             self.start_cycle,
             cycle,
             self.cursor.next_tick,
+            &mut resource_input,
         )?;
         self.cursor.next_cycle = next_cycle;
         self.cursor.next_tick = next_tick;
@@ -962,7 +1117,7 @@ fn execute_service_release<const STATE: usize, const CHANNELS: usize, const BRID
     clippy::too_many_arguments,
     reason = "the executor keeps each statically owned arena explicit"
 )]
-fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>(
+fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRIDGE: usize, F>(
     package: &GraphIrPackage,
     metadata: &GraphRuntimeMetadata,
     state: &mut [u8; STATE],
@@ -974,7 +1129,11 @@ fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRI
     start_cycle: u64,
     cycle: DeviceCycle,
     tick: u64,
-) -> Result<GraphReleaseReport, GraphExecutionError> {
+    resource_input: &mut F,
+) -> Result<GraphReleaseReport, GraphExecutionError>
+where
+    F: FnMut(ResourceId) -> Option<bool>,
+{
     let mut report = GraphReleaseReport::new(cycle, tick);
     for index in 0..package.summary().node_count {
         let node = package
@@ -989,17 +1148,9 @@ fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRI
             index,
             GraphExecutionFault::Arithmetic,
         )?;
-        let input = metadata.input_channel[usize::from(index)];
-        if input == NO_CHANNEL {
-            return Err(latch_fault(
-                fault,
-                GraphExecutionFault::RuntimeShape,
-                index,
-                None,
-            ));
-        }
         match node.opcode {
             GraphIrOpcode::BooleanLatest => {
+                let input = required_input(metadata, index, fault)?;
                 let mut newest = None;
                 while let Some(item) = pop_realtime_due(
                     package,
@@ -1061,6 +1212,7 @@ fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRI
                 )?;
             }
             GraphIrOpcode::BooleanStreamSink => {
+                let input = required_input(metadata, index, fault)?;
                 while let Some(item) = pop_realtime_due(
                     package,
                     input,
@@ -1086,6 +1238,36 @@ fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRI
                     report.last_sink_value = Some(item.value);
                 }
             }
+            GraphIrOpcode::StableBooleanInput => {
+                let node_index = usize::from(index);
+                if metadata.input_channel[node_index] != NO_CHANNEL {
+                    return Err(latch_fault(
+                        fault,
+                        GraphExecutionFault::RuntimeShape,
+                        index,
+                        None,
+                    ));
+                }
+                let resource = decode_graph_resource_parameter(node.parameter).map_err(|_| {
+                    latch_fault(fault, GraphExecutionFault::RuntimeShape, index, None)
+                })?;
+                let value = resource_input(resource).ok_or_else(|| {
+                    latch_fault(fault, GraphExecutionFault::ResourceUnavailable, index, None)
+                })?;
+                emit_realtime_outputs(
+                    package,
+                    metadata.output_channels[node_index],
+                    channels,
+                    queues,
+                    fault,
+                    GraphIrBooleanStreamItem {
+                        value,
+                        source_tick: tick,
+                        sequence: tick,
+                    },
+                    &mut report,
+                )?;
+            }
             _ => {
                 return Err(latch_fault(
                     fault,
@@ -1097,6 +1279,24 @@ fn execute_realtime_release<const STATE: usize, const CHANNELS: usize, const BRI
         }
     }
     Ok(report)
+}
+
+fn required_input(
+    metadata: &GraphRuntimeMetadata,
+    node: u16,
+    fault: &LatestSignal,
+) -> Result<u8, GraphExecutionError> {
+    let input = metadata.input_channel[usize::from(node)];
+    if input == NO_CHANNEL {
+        Err(latch_fault(
+            fault,
+            GraphExecutionFault::RuntimeShape,
+            node,
+            None,
+        ))
+    } else {
+        Ok(input)
+    }
 }
 
 #[allow(
@@ -1728,7 +1928,9 @@ mod tests {
         assert_eq!(primed.items_emitted, 1);
 
         let (mut service, mut realtime) = runtime.split().unwrap();
-        let first = realtime.release(DeviceCycle(10_000), true).unwrap();
+        let first = realtime
+            .release(DeviceCycle(10_000), true, |_| None)
+            .unwrap();
         assert_eq!(first.release_tick, 0);
         assert_eq!(first.nodes_executed, 2);
         assert_eq!(first.items_consumed, 2);
@@ -1750,7 +1952,9 @@ mod tests {
                 .release_tick,
             2
         );
-        let second = realtime.release(DeviceCycle(12_000), true).unwrap();
+        let second = realtime
+            .release(DeviceCycle(12_000), true, |_| None)
+            .unwrap();
         assert_eq!(second.release_tick, 1);
         assert_eq!(second.items_consumed, 3);
         assert_eq!(second.items_emitted, 1);
@@ -1774,7 +1978,9 @@ mod tests {
         assert_eq!(overflow.observation.fault, GraphExecutionFault::QueueFull);
         assert_eq!(overflow.observation.detail, 0);
         assert_eq!(service.fault_after(0), Some(overflow.observation));
-        let stopped = realtime.release(DeviceCycle(10_000), true).unwrap_err();
+        let stopped = realtime
+            .release(DeviceCycle(10_000), true, |_| None)
+            .unwrap_err();
         assert_eq!(stopped.observation, overflow.observation);
     }
 
@@ -1789,15 +1995,21 @@ mod tests {
         runtime.prepare_start(DeviceCycle(10_000), true).unwrap();
         let (mut service, mut realtime) = runtime.split().unwrap();
 
-        let first = realtime.release(DeviceCycle(10_000), true).unwrap();
+        let first = realtime
+            .release(DeviceCycle(10_000), true, |_| None)
+            .unwrap();
         assert_eq!(first.items_consumed, 2);
         assert_eq!(first.last_sink_value, Some(true));
-        let held = realtime.release(DeviceCycle(11_000), true).unwrap();
+        let held = realtime
+            .release(DeviceCycle(11_000), true, |_| None)
+            .unwrap();
         assert_eq!(held.items_consumed, 1);
         assert_eq!(held.items_emitted, 1);
         assert_eq!(held.last_sink_value, Some(true));
         service.release(DeviceCycle(12_000), true).unwrap();
-        let refreshed = realtime.release(DeviceCycle(12_000), true).unwrap();
+        let refreshed = realtime
+            .release(DeviceCycle(12_000), true, |_| None)
+            .unwrap();
         assert_eq!(refreshed.items_consumed, 2);
         assert_eq!(refreshed.last_sink_value, Some(true));
     }
@@ -1811,7 +2023,9 @@ mod tests {
             .unwrap();
         runtime.prepare_start(DeviceCycle(10_000), true).unwrap();
         let (mut service, mut realtime) = runtime.split().unwrap();
-        let denied = realtime.release(DeviceCycle(10_000), false).unwrap_err();
+        let denied = realtime
+            .release(DeviceCycle(10_000), false, |_| None)
+            .unwrap_err();
         assert_eq!(
             denied.observation.fault,
             GraphExecutionFault::SafetyNotAuthorized
@@ -1830,7 +2044,9 @@ mod tests {
         runtime.prepare_start(DeviceCycle(10_000), true).unwrap();
         runtime.bridge.lock(|cell| cell.borrow_mut().bytes[0] = 2);
         let (_, mut realtime) = runtime.split().unwrap();
-        let corrupt = realtime.release(DeviceCycle(10_000), true).unwrap_err();
+        let corrupt = realtime
+            .release(DeviceCycle(10_000), true, |_| None)
+            .unwrap_err();
         assert_eq!(corrupt.observation.fault, GraphExecutionFault::QueueCorrupt);
 
         let package = fixture_package();

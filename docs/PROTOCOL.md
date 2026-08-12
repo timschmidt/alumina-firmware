@@ -75,7 +75,7 @@ the `/api/v1/control` path, so a proof cannot be replayed against another route.
 | fault `0x0bxx` | fault event, reset request, physical/policy confirmation |
 | waveform `0x0cxx` | configure, arm, chunk, stop |
 | update `0x0dxx` | inspect, begin, put chunk, finalize, commit, rollback |
-| graph `0x0exx` | get, install published package, activate, clear/abort |
+| graph `0x0exx` | get, install published package, activate, clear/abort, start, stop |
 
 The Rust enum assigns all 55 values explicitly and rejects every unassigned
 number. Operation-specific bodies are added only with fixed budgets and golden
@@ -569,12 +569,12 @@ assigned.
 
 Graph objects use storage kind `DeployedGraph` (`7`) and are exactly 4,096
 bytes. Publication alone is inert. `GraphInstall` (`0x0e02`) names an already
-published object in one exact 168-byte `ALGRPQ01` body:
+published object in one exact 168-byte `ALGRPQ02` body:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | magic `ALGRPQ01` |
-| 8 | 2 | exact graph-IR version `1` |
+| 0 | 8 | magic `ALGRPQ02` |
+| 8 | 2 | exact graph-IR version `2` |
 | 10 | 6 | reserved zero |
 | 16 | 8 | nonzero boot-local transaction ID |
 | 24 | 80 | canonical typed `PublishedObject` |
@@ -586,10 +586,17 @@ The embedded package digest is SHA-256 over the canonical padded prefix before
 its final digest field. Both are required and must remain distinct roles.
 
 `GraphActivate` (`0x0e03`) and `GraphClear` (`0x0e04`) use one 88-byte
-`ALGRPS01` body: magic/version/reserved through byte 16, transaction at 16,
+`ALGRPS02` body: magic/version/reserved through byte 16, transaction at 16,
 complete storage-content digest at 24, and embedded package digest at 56.
 `GraphGet` (`0x0e01`) has an empty request body. There is no raw graph-document,
 G-code, source geometry, or arbitrary-code operation.
+
+`GraphStart` (`0x0e05`) and `GraphStop` (`0x0e06`) use one canonical 136-byte
+`ALGRPR02` body. It binds the original install transaction, nonzero boot-local
+run ID, exact device-cycle start epoch, storage-content digest, embedded package
+digest, and implementation digest. Start acceptance is distinct from both
+permanent actors reporting Running; stop retains first-cause fault evidence
+until both actors reconcile the same run.
 
 Core 0 transfers an independently validated package to core 1 with a canonical
 `ALGC` command. The fixed prefix is 128 bytes and Data appends at most 208

@@ -864,7 +864,11 @@ async fn realtime_task(
         let graph_before = graphs.execution_report();
         let graph_execution_allowed =
             matches!(safety.state(), SafetyState::Safe | SafetyState::Configured) && !jobs.active();
-        let graph_release = graphs.release_due(now, graph_execution_allowed);
+        let graph_release = graphs.release_due(now, graph_execution_allowed, |resource| {
+            safety_inputs
+                .as_ref()
+                .and_then(|monitor| monitor.stable_active_by_resource(resource, now))
+        });
         let graph_after = graphs.execution_report();
         if graph_release.is_err() || graph_after != graph_before {
             let _ = publish_graph_execution_report(

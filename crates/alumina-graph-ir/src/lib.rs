@@ -3,6 +3,8 @@
 
 use core::fmt;
 
+use alumina_board::ResourceId;
+use alumina_capability::{ResourceWireError, decode_resource_id, encode_resource_id};
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
 use alumina_storage::{CacheLimits, ObjectKind, PublishedObject};
 use sha2::{Digest as _, Sha256};
@@ -17,11 +19,11 @@ pub const GRAPH_IR_DIGEST_OFFSET: usize = GRAPH_IR_PACKAGE_BYTES - 32;
 pub const GRAPH_IR_NODE_BYTES: usize = 48;
 /// Exact deployed-channel record bytes.
 pub const GRAPH_IR_CHANNEL_BYTES: usize = 32;
-/// Largest node count admitted by graph-IR V1 independent of package fit.
+/// Largest node count admitted by graph-IR V2 independent of package fit.
 pub const MAX_GRAPH_IR_NODES: usize = 32;
-/// Largest channel count admitted by graph-IR V1 independent of package fit.
+/// Largest channel count admitted by graph-IR V2 independent of package fit.
 pub const MAX_GRAPH_IR_CHANNELS: usize = 64;
-/// Largest queue capacity admitted by graph-IR V1.
+/// Largest queue capacity admitted by graph-IR V2.
 pub const MAX_GRAPH_IR_QUEUE_ITEMS: u32 = 4_096;
 /// Canonical Boolean typed sample plus `u64` tick and `u64` sequence.
 pub const BOOLEAN_STREAM_ITEM_BYTES: u32 = 21;
@@ -34,7 +36,7 @@ pub const BOOLEAN_LATEST_STATE_BYTES: u32 = 5;
 /// this fixed tag so firmware never needs the arbitrary-precision schema.
 pub const GRAPH_IR_BOOLEAN_TYPE_TAG: u32 = 1;
 /// Exact graph-IR schema implemented by this crate.
-pub const GRAPH_IR_VERSION: u16 = 1;
+pub const GRAPH_IR_VERSION: u16 = 2;
 /// Exact authenticated `GraphInstall` request bytes.
 pub const GRAPH_PUBLICATION_BYTES: usize = 168;
 /// Exact authenticated `GraphActivate` and `GraphClear` request bytes.
@@ -51,15 +53,15 @@ pub const MAX_CORE_GRAPH_DATA_BYTES: usize = 208;
 pub const CORE_GRAPH_COMMAND_CAPACITY: usize =
     CORE_GRAPH_COMMAND_PREFIX_BYTES + MAX_CORE_GRAPH_DATA_BYTES;
 
-/// Magic bytes at the beginning of every graph-IR V1 package.
-pub const GRAPH_IR_MAGIC: [u8; 8] = *b"ALGRIR01";
+/// Magic bytes at the beginning of every graph-IR V2 package.
+pub const GRAPH_IR_MAGIC: [u8; 8] = *b"ALGRIR02";
 const GRAPH_IR_FLAGS: u16 = 0;
-const GRAPH_PUBLICATION_MAGIC: [u8; 8] = *b"ALGRPQ01";
-const GRAPH_SELECTION_MAGIC: [u8; 8] = *b"ALGRPS01";
-const GRAPH_RUN_REQUEST_MAGIC: [u8; 8] = *b"ALGRPR01";
+const GRAPH_PUBLICATION_MAGIC: [u8; 8] = *b"ALGRPQ02";
+const GRAPH_SELECTION_MAGIC: [u8; 8] = *b"ALGRPS02";
+const GRAPH_RUN_REQUEST_MAGIC: [u8; 8] = *b"ALGRPR02";
 const CORE_GRAPH_COMMAND_MAGIC: [u8; 4] = *b"ALGC";
 const CORE_GRAPH_EXECUTION_COMMAND_MAGIC: [u8; 4] = *b"ALGX";
-const CORE_GRAPH_WIRE_VERSION: u16 = 1;
+const CORE_GRAPH_WIRE_VERSION: u16 = 2;
 const GRAPH_OBJECT_LIMITS: CacheLimits = CacheLimits {
     maximum_object_bytes: GRAPH_IR_PACKAGE_BYTES as u64,
     maximum_chunk_bytes: GRAPH_IR_PACKAGE_BYTES as u32,
@@ -690,7 +692,7 @@ pub enum GraphDeploymentWireError {
     DataLength,
 }
 
-/// Fixed firmware execution domain admitted by graph-IR V1.
+/// Fixed firmware execution domain admitted by graph-IR V2.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum GraphIrDomain {
@@ -710,7 +712,7 @@ impl GraphIrDomain {
     }
 }
 
-/// Whitelisted fixed implementation opcode in graph-IR V1.
+/// Whitelisted fixed implementation opcode in graph-IR V2.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum GraphIrOpcode {
@@ -720,6 +722,8 @@ pub enum GraphIrOpcode {
     BooleanLatest = 2,
     /// Consume one Boolean Stream without a modeled side effect.
     BooleanStreamSink = 3,
+    /// Read one capability-admitted fresh debounced safety-input state.
+    StableBooleanInput = 4,
 }
 
 impl GraphIrOpcode {
@@ -728,17 +732,48 @@ impl GraphIrOpcode {
             1 => Some(Self::BooleanStreamConstant),
             2 => Some(Self::BooleanLatest),
             3 => Some(Self::BooleanStreamSink),
+            4 => Some(Self::StableBooleanInput),
             _ => None,
         }
     }
 
+    /// Canonical nonzero opcode value used by capability palettes.
+    pub const fn wire_value(self) -> u8 {
+        self as u8
+    }
+
     const fn has_input(self) -> bool {
-        !matches!(self, Self::BooleanStreamConstant)
+        !matches!(self, Self::BooleanStreamConstant | Self::StableBooleanInput)
     }
 
     const fn has_output(self) -> bool {
         !matches!(self, Self::BooleanStreamSink)
     }
+}
+
+/// Encode one typed physical-resource selector into a node parameter.
+///
+/// The low 32 bits are exactly the shared four-byte resource representation;
+/// the high 32 bits are reserved zero and independently checked on decode.
+pub const fn encode_graph_resource_parameter(resource: ResourceId) -> u64 {
+    u32::from_le_bytes(encode_resource_id(resource)) as u64
+}
+
+/// Decode one exact typed physical-resource selector from a node parameter.
+pub fn decode_graph_resource_parameter(
+    parameter: u64,
+) -> Result<ResourceId, GraphIrResourceParameterError> {
+    let selector = u32::try_from(parameter).map_err(|_| GraphIrResourceParameterError::Reserved)?;
+    decode_resource_id(&selector.to_le_bytes()).map_err(GraphIrResourceParameterError::Resource)
+}
+
+/// Canonical graph resource-parameter rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphIrResourceParameterError {
+    /// High parameter bits were nonzero.
+    Reserved,
+    /// The low four bytes were not one canonical typed resource ID.
+    Resource(ResourceWireError),
 }
 
 /// Fixed owner of one preallocated channel arena.
@@ -929,14 +964,14 @@ impl GraphIrBooleanValue {
     }
 }
 
-/// One timestamped canonical Boolean queue item used by every V1 opcode.
+/// One timestamped canonical Boolean queue item used by every V2 opcode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GraphIrBooleanStreamItem {
     /// Deployment-local Boolean payload.
     pub value: bool,
     /// Release tick in the source node's package schedule.
     pub source_tick: u64,
-    /// Monotonic source sequence; fixed V1 opcodes emit their release tick.
+    /// Monotonic source sequence; fixed V2 opcodes emit their release tick.
     pub sequence: u64,
 }
 
@@ -1611,6 +1646,11 @@ fn validate_node(
         {
             Ok(())
         }
+        (GraphIrDomain::Realtime, GraphIrOpcode::StableBooleanInput)
+            if node.state_bytes == 0 && decode_graph_resource_parameter(node.parameter).is_ok() =>
+        {
+            Ok(())
+        }
         _ => Err(node_error(index, "opcode/domain/state/parameter")),
     }
 }
@@ -1936,6 +1976,69 @@ mod tests {
         )
     }
 
+    fn safety_input_fixture() -> (GraphIrHeader, [GraphIrNode; 2], [GraphIrChannel; 1]) {
+        let realtime_schedule = GraphIrSchedule {
+            clock_id: 11,
+            period_cycles: 2_000,
+            total_wcet_cycles: 60,
+            executor_reserve_cycles: 100,
+            node_count: 2,
+        };
+        let nodes = [
+            GraphIrNode {
+                graph_node_id: 100,
+                domain: GraphIrDomain::Realtime,
+                opcode: GraphIrOpcode::StableBooleanInput,
+                schedule_clock_id: 11,
+                period_cycles: 2_000,
+                wcet_cycles: 40,
+                state_offset: 0,
+                state_bytes: 0,
+                parameter: encode_graph_resource_parameter(ResourceId::Gpio(33)),
+            },
+            GraphIrNode {
+                graph_node_id: 200,
+                domain: GraphIrDomain::Realtime,
+                opcode: GraphIrOpcode::BooleanStreamSink,
+                schedule_clock_id: 11,
+                period_cycles: 2_000,
+                wcet_cycles: 20,
+                state_offset: 0,
+                state_bytes: 0,
+                parameter: 0,
+            },
+        ];
+        let channels = [GraphIrChannel {
+            graph_wire_id: 1,
+            source_node: 0,
+            target_node: 1,
+            owner: GraphIrChannelOwner::Realtime,
+            full_policy: GraphIrFullPolicy::Fault,
+            capacity: 1,
+            item_bytes: BOOLEAN_STREAM_ITEM_BYTES,
+            storage_offset: 0,
+            storage_bytes: BOOLEAN_STREAM_ITEM_BYTES,
+        }];
+        (
+            GraphIrHeader {
+                device_id: DeviceId([1; 16]),
+                graph_digest: digest(2),
+                implementation_digest: digest(3),
+                capability_digest: digest(4),
+                config_digest: digest(5),
+                service_schedule: GraphIrSchedule::EMPTY,
+                realtime_schedule,
+                total_state_bytes: 0,
+                service_state_bytes: 0,
+                realtime_state_bytes: 0,
+                channel_storage_bytes: BOOLEAN_STREAM_ITEM_BYTES,
+                bridge_storage_bytes: 0,
+            },
+            nodes,
+            channels,
+        )
+    }
+
     #[test]
     fn canonical_package_replays_with_all_fixed_totals() {
         let (header, nodes, channels) = fixture();
@@ -1966,12 +2069,59 @@ mod tests {
             sha256(&package.bytes()[..GRAPH_IR_DIGEST_OFFSET])
         );
         assert_eq!(
-            package.digest(),
-            Digest([
-                0x09, 0xba, 0x7f, 0x44, 0x3c, 0xb6, 0xac, 0xbd, 0x82, 0xc4, 0x36, 0x94, 0x36, 0x53,
-                0xfb, 0x55, 0xce, 0x2d, 0x20, 0x99, 0x2f, 0x76, 0x36, 0x32, 0xf8, 0x59, 0xe4, 0xf0,
-                0x5f, 0xac, 0x58, 0x76,
-            ])
+            package.digest().0,
+            [
+                0x69, 0x66, 0x0c, 0x59, 0xab, 0x7b, 0xbc, 0xee, 0x51, 0x76, 0x9b, 0x02, 0xd5, 0xed,
+                0x65, 0xef, 0x9b, 0x4c, 0x65, 0xf6, 0xf4, 0x81, 0xa3, 0x48, 0x6a, 0x78, 0x37, 0x27,
+                0xb2, 0xe3, 0x3d, 0x66,
+            ]
+        );
+    }
+
+    #[test]
+    fn stable_boolean_input_parameter_is_one_canonical_typed_selector() {
+        for resource in [
+            ResourceId::Gpio(33),
+            ResourceId::SafetyInput(2),
+            ResourceId::Device(0x1234),
+        ] {
+            let parameter = encode_graph_resource_parameter(resource);
+            assert_eq!(decode_graph_resource_parameter(parameter), Ok(resource));
+        }
+        assert_eq!(
+            decode_graph_resource_parameter(1_u64 << 32),
+            Err(GraphIrResourceParameterError::Reserved)
+        );
+        assert_eq!(
+            decode_graph_resource_parameter(0),
+            Err(GraphIrResourceParameterError::Resource(
+                ResourceWireError::Kind(0)
+            ))
+        );
+
+        let (header, nodes, channels) = safety_input_fixture();
+        let package = GraphIrPackage::encode(header, &nodes, &channels).unwrap();
+        assert_eq!(&package.bytes()[..8], b"ALGRIR02");
+        assert_eq!(package.node(0), Some(nodes[0]));
+
+        let mut reserved_parameter = nodes;
+        reserved_parameter[0].parameter |= 1_u64 << 32;
+        assert_eq!(
+            GraphIrPackage::encode(header, &reserved_parameter, &channels),
+            Err(GraphIrError::Node {
+                index: 0,
+                aspect: "opcode/domain/state/parameter",
+            })
+        );
+
+        let mut malformed_parameter = nodes;
+        malformed_parameter[0].parameter = 0;
+        assert_eq!(
+            GraphIrPackage::encode(header, &malformed_parameter, &channels),
+            Err(GraphIrError::Node {
+                index: 0,
+                aspect: "opcode/domain/state/parameter",
+            })
         );
     }
 

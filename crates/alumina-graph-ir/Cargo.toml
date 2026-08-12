@@ -9,6 +9,8 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+alumina-board.workspace = true
+alumina-capability.workspace = true
 alumina-protocol.workspace = true
 alumina-storage.workspace = true
 sha2.workspace = true

@@ -1,8 +1,10 @@
 //! Core-0 ownership of authenticated published graph installation and lifecycle.
 
+use alumina_board::ResourceId;
 use alumina_graph_ir::{
     CoreGraphCommand, CoreGraphExecutionAction, CoreGraphExecutionCommand, GRAPH_IR_PACKAGE_BYTES,
-    GraphPublication, GraphRunRequest, GraphSelection,
+    GRAPH_IR_VERSION, GraphPublication, GraphRunRequest, GraphSelection, MAX_GRAPH_IR_CHANNELS,
+    MAX_GRAPH_IR_NODES, MAX_GRAPH_IR_QUEUE_ITEMS,
 };
 use alumina_protocol::{
     DeviceCycle, DeviceId, Digest, FrameHeader, FrameKind, Operation, StatusCode,
@@ -64,18 +66,32 @@ pub type RealtimeGraphActor = FixedGraphRealtimeActor<
     GRAPH_BRIDGE_BYTES,
 >;
 
-/// Initial board-image graph arena reservations.
-///
-/// These exact values are enforced independently on both cores. A later
-/// capability-schema slice will publish them for browser lowering before any
-/// resource-bearing opcode is admitted.
-pub const GRAPH_RUNTIME_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits::fixed::<
+/// Exact board-published graph arena, opcode, and resource authority.
+pub const GRAPH_RUNTIME_LIMITS: GraphRuntimeLimits = GraphRuntimeLimits::fixed_with_capabilities::<
     GRAPH_SERVICE_STATE_BYTES,
     GRAPH_REALTIME_STATE_BYTES,
     GRAPH_SERVICE_CHANNEL_BYTES,
     GRAPH_REALTIME_CHANNEL_BYTES,
     GRAPH_BRIDGE_BYTES,
->();
+>(
+    selected::PACKAGE.graph.opcodes,
+    selected::PACKAGE.graph.resources,
+);
+
+const _: () = {
+    assert!(selected::PACKAGE.graph.ir_version == GRAPH_IR_VERSION);
+    assert!(selected::PACKAGE.graph.package_bytes as usize == GRAPH_IR_PACKAGE_BYTES);
+    assert!(selected::PACKAGE.graph.maximum_nodes as usize == MAX_GRAPH_IR_NODES);
+    assert!(selected::PACKAGE.graph.maximum_channels as usize == MAX_GRAPH_IR_CHANNELS);
+    assert!(selected::PACKAGE.graph.maximum_queue_items == MAX_GRAPH_IR_QUEUE_ITEMS);
+    assert!(selected::PACKAGE.graph.service_state_bytes as usize == GRAPH_SERVICE_STATE_BYTES);
+    assert!(selected::PACKAGE.graph.realtime_state_bytes as usize == GRAPH_REALTIME_STATE_BYTES);
+    assert!(selected::PACKAGE.graph.service_channel_bytes as usize == GRAPH_SERVICE_CHANNEL_BYTES);
+    assert!(
+        selected::PACKAGE.graph.realtime_channel_bytes as usize == GRAPH_REALTIME_CHANNEL_BYTES
+    );
+    assert!(selected::PACKAGE.graph.bridge_channel_bytes as usize == GRAPH_BRIDGE_BYTES);
+};
 
 /// Sole core-1 owner of selected bytes and the permanent Realtime executor.
 pub struct RealtimeGraphExecutor {
@@ -262,11 +278,15 @@ impl RealtimeGraphExecutor {
     }
 
     /// Execute at most one due release with declared dispatch-lateness enforcement.
-    pub fn release_due(
+    pub fn release_due<F>(
         &mut self,
         now: DeviceCycle,
         execution_allowed: bool,
-    ) -> Result<Option<GraphReleaseReport>, GraphLiveError> {
+        resource_input: F,
+    ) -> Result<Option<GraphReleaseReport>, GraphLiveError>
+    where
+        F: FnMut(ResourceId) -> Option<bool>,
+    {
         if self.actor.phase() != GraphActorPhase::Running
             || self.actor.bridge_phase() != GraphBridgePhase::Running
         {
@@ -285,7 +305,9 @@ impl RealtimeGraphExecutor {
         } else {
             window.scheduled_cycle
         };
-        let report = self.actor.release(release_cycle, execution_allowed)?;
+        let report = self
+            .actor
+            .release(release_cycle, execution_allowed, resource_input)?;
         self.last_release_tick = Some(report.release_tick);
         Ok(Some(report))
     }

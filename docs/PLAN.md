@@ -660,18 +660,22 @@ sample storage. A separate fixed HostExact implementation registry and bounded
 simulator now execute only external Stream sources, that audited transition,
 and Stream sinks using exact root time. Canonical `ALGT` traces bind graph and
 implementation identities and replay by independent simulation. The first
-portable deployed boundary is now a fixed 4 KiB `ALGRIR01` package with
+portable deployed boundary is now a fixed 4 KiB `ALGRIR02` package with
 allocation-free independent admission, whitelisted Boolean Service/Realtime
 opcodes, integer device-cycle schedules, declared WCET plus executor reserve,
 and contiguous state/channel/bridge arenas. A third interface registry binds
-the complete audited semantics and fixed implementations, then lowers one
-single-device graph into those independently replayed bytes. General node,
-state, or Event execution remains open, but the fixed package now has a portable
-firmware runtime: transactional exact-identity admission into const-generic
-arenas, safety-gated Service tick-zero priming, unique Service/Realtime endpoint
-ownership, canonical queue execution, exact-cycle release admission, and a
-shared first-cause fault latch. Authenticated upload/core transfer, live task
-composition, and active/candidate lifecycle are now present: the browser
+the complete audited semantics and fixed implementations. Its production
+limits now come only from the authenticated target capability document, whose
+identity, exact split arenas, opcode palette, and typed resource/class/access
+tuples enter the implementation identity. It lowers one single-device graph
+into those independently replayed bytes. General node, state, or Event
+execution remains open, but the fixed package now has a portable firmware
+runtime: transactional exact-identity and exact-palette admission into
+const-generic arenas, safety-gated Service tick-zero priming, unique
+Service/Realtime endpoint ownership, canonical queue execution, exact-cycle
+release admission, and a shared first-cause fault latch. Authenticated
+upload/core transfer, live task composition, and active/candidate lifecycle are
+now present: the browser
 publishes a typed immutable 4 KiB SD object, an authenticated coordinator has
 both cores independently validate and select its exact identities, and fixed
 staging/active storage plus dual-core authorization are linked in every current
@@ -680,8 +684,13 @@ rejects foreign identity. Permanent core-local actors now admit authenticated
 future run epochs, preserve source-first priming, release from their pinned
 Embassy tasks, latch the first cross-core execution fault, and reconcile exact
 stop. The browser distinguishes accepted start from both-core Running and
-retains fault evidence through stop. Durable selection/boot recovery, measured
-executor timing, resource opcodes, capability nodes, and graph UI remain open.
+retains fault evidence through stop. A power-cut-tested prepare/commit journal
+now recovers the selected package only after configuration-first dual-core
+admission. The first resource opcode is a capability-bound realtime read of a
+known, fresh, debounced safety-input semantic state; the TinyBee image admits
+only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
+palettes remain empty. Measured executor timing, physical input HIL, graph
+outputs, additional capability nodes, and graph UI remain open.
 See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and

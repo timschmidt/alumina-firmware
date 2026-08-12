@@ -1,15 +1,18 @@
-# Fixed deployed graph IR V1
+# Fixed deployed graph IR V2
 
 `alumina-graph-ir` is the portable, `no_std`, allocation-free admission boundary
 for graph work that may eventually execute on firmware. The browser compiler
 never sends an `ALGR` structural graph document to an MCU. It emits one exact
-single-device `ALGRIR01` package containing only reviewed opcodes, integer
+single-device `ALGRIR02` package containing only reviewed opcodes, integer
 device-cycle schedules, fixed state/queue arenas, and the identities needed to
 reject stale or substituted work.
 
-The resource-free fixed-opcode subset now reaches authenticated, reloadable
-split-core execution in the live Embassy tasks. It still claims no physical
-resource or target timing qualification.
+V2 retains the resource-free fixed-opcode subset and adds the first narrowly
+scoped physical operation: a realtime read of one capability-admitted, fresh,
+debounced safety-input semantic value. It grants no raw GPIO access and no
+output authority. The executor reaches authenticated, reloadable split-core
+execution in the live Embassy tasks, but still claims no target timing or
+physical HIL qualification.
 
 ## Fixed package
 
@@ -19,9 +22,9 @@ The final 32 bytes are SHA-256 over bytes `0..4064`.
 
 | Offset | Bytes | Field |
 | ---: | ---: | --- |
-| 0 | 8 | magic `ALGRIR01` |
-| 8 | 2 | exact version `1` |
-| 10 | 2 | flags, zero in V1 |
+| 0 | 8 | magic `ALGRIR02` |
+| 8 | 2 | exact version `2` |
+| 10 | 2 | flags, zero in V2 |
 | 12 | 4 | initialized byte length |
 | 16 | 2 | node record count |
 | 18 | 2 | channel record count |
@@ -64,24 +67,30 @@ Each 48-byte node record retains graph node ID, domain, opcode, schedule clock,
 contiguous domain-local state offset/size, period, WCET, and one canonical
 64-bit immediate. Records are in deterministic topological order.
 
-V1 intentionally admits only:
+V2 intentionally admits only:
 
 | Opcode | Domain | Input/output | State/immediate |
 | --- | --- | --- | --- |
 | `BooleanStreamConstant` | Service | no input, one Boolean Stream output | no state; immediate is exactly `0` or `1` |
 | `BooleanLatest` | Realtime | one Boolean Stream input/output | exactly 5 retained bytes; immediate zero |
 | `BooleanStreamSink` | Realtime | one Boolean Stream input, no output | no state; immediate zero; no modeled side effect |
+| `StableBooleanInput` | Realtime | no input, one Boolean Stream output | no state; immediate is one canonical typed resource selector |
 
 `BooleanLatest` embodies the separately audited
 `LatestAtOrBeforeSourceFirst` contract. It is not a general resampler opcode.
-No GPIO, PWM, ADC, motion, FOC, safety, storage, network, or other resource
-operation is in V1.
+`StableBooleanInput` accepts only a selector present in the exact target
+capability document with the opcode's class and `StableBooleanInput` access.
+Firmware resolves it through the fixed safety-input monitor after normal
+sampling and reconciliation. Unknown, not-yet-debounced, future-dated, or stale
+samples fail the release with `ResourceUnavailable`; they never become an
+implicit clear value. No raw GPIO, output, PWM, ADC, motion, FOC, storage,
+network, or other resource operation is in V2.
 
 ## Channel records
 
 Each 32-byte channel record retains graph wire ID, topological source/target
 indices, owning arena, full policy, capacity, item size, arena offset, and
-storage size. Records are ordered by unique target. V1 uses only a timestamped
+storage size. Records are ordered by unique target. V2 uses only a timestamped
 Boolean Stream item: a four-byte little-endian deployment-local Boolean tag
 `1`, one canonical `0`/`1` value byte, an eight-byte source-schedule tick, and
 an eight-byte monotonic sequence, or 21 bytes total. The deployment tag is not
@@ -119,7 +128,7 @@ one 21-byte Realtime queue, and five bytes of retained state. Its canonical
 SHA-256 identity is:
 
 ```text
-09ba7f443cb6acbd82c436943653fb55ce2d20992f763632f859e4f05fac5876
+69660c59ab7bbcee51769b02d5ed65ef9b4c65f6f481a3486a783727b2e33d66
 ```
 
 Tests reject every nonexact package length, ordinary digest tampering,
@@ -132,10 +141,14 @@ The interface compiler now replays the structural graph, runs audited
 type/channel/rate/cycle analysis, binds a reviewed implementation descriptor,
 proves one target device, derives integer periods from that device's exact
 cycle root, topologically orders nodes and target-owned channels, and proves
-host-side arena policy. Its implementation digest binds the complete audited
-semantic registry, fixed opcode descriptors, schedule clocks, WCETs, analysis
-limits, and deployment limits. The emitted package is immediately decoded by
-this crate. Firmware will still recheck every bounded invariant it can without
+host-side arena policy. Production lowering derives its package sizes, split
+arenas, opcode palette, and exact typed resource/class/access tuples from the
+authenticated capability document whose digest is bound into the package; it
+has no guessed production defaults. Its implementation digest binds that
+complete capability identity and palette together with the audited semantic
+registry, fixed opcode descriptors, schedule clocks, WCETs, analysis limits,
+and deployment limits. The emitted package is immediately decoded by this
+crate. Firmware still rechecks every bounded invariant it can without
 arbitrary-precision or graph-schema machinery.
 
 ## Portable split-core runtime
@@ -145,11 +158,13 @@ compile-time capacities for Service state, Realtime state, both local queue
 arenas, and the one-way bridge. Admission copies and independently decodes the
 exact 4 KiB package, requires its requested package digest, and matches device,
 capability, configuration, and implementation identities before changing any
-runtime state. It derives per-owner requirements again and rejects any package
-that exceeds the concrete const-generic arrays. The installation report exposes
-both selected payload bytes and `size_of::<Self>()`, so fixed queue cursors,
-adjacency metadata, mutex, fault mailbox, and package storage are not hidden by
-the 68-byte representative payload figure.
+runtime state. It derives per-owner requirements again, rejects any package
+that exceeds the concrete const-generic arrays, and independently admits every
+node against the firmware image's exact static opcode and resource palettes.
+The installation report exposes both selected payload bytes and
+`size_of::<Self>()`, so fixed queue cursors, adjacency metadata, mutex, fault
+mailbox, and package storage are not hidden by the 68-byte representative
+payload figure.
 
 Start preparation is separately safety-gated. It fixes one device-cycle epoch
 and executes Service release tick zero before issuing a Realtime owner, which
@@ -162,12 +177,13 @@ only canonical 21-byte items.
 Each endpoint accepts only its exact next `DeviceCycle`, performs no allocation
 or wait, and advances only after a complete release. The fixed executor runs
 Boolean constants, consumes every due source item for latest-at-or-before,
-retains the canonical five-byte Boolean, emits one target-tick item, and drains
-the sink without a side effect. Queue full/corruption, missing initialization,
-wrong-cycle release, arithmetic failure, invalid runtime shape, or absent safety
-authority atomically latches the first fault and stops both domains. This is a
-portable functional executor; the declared WCET/reserve is not target timing
-evidence.
+retains the canonical five-byte Boolean, emits one target-tick item, reads a
+stable Boolean input only through a caller-supplied typed-resource provider,
+and drains the sink without a side effect. Queue full/corruption, missing
+initialization, wrong-cycle release, arithmetic failure, invalid runtime shape,
+unavailable resource state, or absent safety authority atomically latches the
+first fault and stops both domains. This is a portable functional executor; the
+declared WCET/reserve is not target timing evidence.
 
 The first authenticated deployment lifecycle is now live. The browser publishes
 the exact package as a typed immutable SD object, sends an identity-only install
@@ -189,8 +205,12 @@ shared first fault until both actors acknowledge. Active selection now uses a
 power-cut-tested prepare/commit journal. Boot aborts an unmatched prepare,
 waits for the exact active configuration, reopens every committed package byte,
 and repeats independent admission before either permanent actor is authorized.
-Measured deadline/WCET evidence, resource opcodes, capability-published arena
-limits, physical telemetry, and HIL timing remain later work.
+The selected board package now supplies the exact arena/opcode/resource limits
+used by both core admissions. TinyBee exposes only fresh debounced reads of its
+four configured safety inputs (GPIO33, GPIO32, GPIO22, and GPIO35); T-Deck Pro
+and MKS ESP32 FOC currently expose no physical graph resource. Measured
+deadline/WCET evidence, output opcodes, physical input HIL, physical telemetry,
+and HIL timing remain later work.
 
 The reproduced compiler/runtime fixtures, target link results, artifact hashes,
 and closed claims are recorded in

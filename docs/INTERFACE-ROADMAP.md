@@ -367,12 +367,16 @@ simulates external Stream sources, that transition, and Stream sinks in exact
 root time; canonical traces replay by independently regenerating every byte. A
 third registry now binds complete audited semantics to fixed implementation,
 domain, clock, and WCET descriptors. It lowers the initial Boolean
-Service-to-Realtime subset into an independently replayed 4 KiB `ALGRIR01`
+Service-to-Realtime subset into an independently replayed 4 KiB `ALGRIR02`
 package with integer device-cycle schedules and fixed state/channel/bridge
-arenas. A portable firmware runtime now transactionally admits those exact
-bytes/identities into const-generic storage, primes Service tick zero, splits
-unique Service/Realtime owners, executes the three fixed opcodes at exact
-release cycles, and shares only the bounded bridge and first-cause fault latch.
+arenas. Production lowering now derives those arenas and the exact opcode and
+typed resource/class/access palettes from the authenticated target capability
+document. A portable firmware runtime transactionally admits those exact
+bytes/identities and every node capability into const-generic storage, primes
+Service tick zero, splits unique Service/Realtime owners, executes four fixed
+opcodes at exact release cycles, and shares only the bounded bridge and
+first-cause fault latch. The first resource opcode can read only known, fresh,
+debounced TinyBee safety-input semantics and fails closed when unavailable.
 The headless browser/WASM client now publishes that package through the
 resumable SD cache and drives authenticated install/status/activate operations.
 Firmware independently replays it on core 0 and core 1, retains distinct
@@ -380,8 +384,8 @@ candidate/active images, and withholds active bytes until both cores authorize
 the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
-execution, measured executor timing, resource opcodes, capability palette, and
-graph UI remain open. See the
+execution, measured executor timing, physical input HIL, graph outputs, broader
+resource opcodes, and graph UI remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -391,7 +395,8 @@ graph UI remain open. See the
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
-and [`durable selection`](evidence/M9-DURABLE-GRAPH-SELECTION.md) evidence.
+and [`durable selection`](evidence/M9-DURABLE-GRAPH-SELECTION.md), plus
+[`capability-bound input`](evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md) evidence.
 
 ### Execution semantics
 

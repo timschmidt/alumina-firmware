@@ -434,6 +434,32 @@ impl<const INPUTS: usize> SafetyInputMonitor<INPUTS> {
         }
     }
 
+    /// Read one configured resource's known, fresh, debounced semantic state.
+    ///
+    /// Unknown resources, pre-debounce state, future-dated samples, and the
+    /// first cycle beyond the configured sampling watchdog all return `None`.
+    /// Callers must treat `None` as loss of input authority, never as clear.
+    pub fn stable_active_by_resource(
+        &self,
+        resource: ResourceId,
+        now: DeviceCycle,
+    ) -> Option<bool> {
+        let mut slot = 0;
+        while slot < self.count {
+            let spec = self.specs[slot].expect("constructor fills every retained slot");
+            if spec.resource == resource {
+                let state = self.states[slot];
+                let sampled = state.last_sample?;
+                return (state.known
+                    && now.0 >= sampled
+                    && now.0 - sampled <= u64::from(spec.maximum_sample_gap_cycles))
+                .then_some(state.stable_active);
+            }
+            slot += 1;
+        }
+        None
+    }
+
     /// Observes one physical level at an exact local cycle. Repeated or
     /// backwards timestamps are rejected without changing retained state.
     pub fn observe(
@@ -1421,6 +1447,59 @@ mod tests {
             })
         );
         assert!(monitor.watchdog_fault(DeviceCycle(105)).is_some());
+    }
+
+    #[test]
+    fn resource_read_exposes_only_known_fresh_debounced_semantics() {
+        let resource = ResourceId::Gpio(33);
+        let spec = SafetyInputSpec {
+            minimum_active_cycles: 2,
+            maximum_sample_gap_cycles: 4,
+            ..input_spec(SafetyInputRole::SafetyInterlock, resource)
+        };
+        let mut monitor = SafetyInputMonitor::<1>::new(&[spec]).unwrap();
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(10)),
+            None
+        );
+        assert!(
+            !monitor
+                .observe(0, false, DeviceCycle(10))
+                .unwrap()
+                .unwrap()
+                .active
+        );
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(10)),
+            Some(false)
+        );
+        assert_eq!(monitor.observe(0, true, DeviceCycle(11)).unwrap(), None);
+        assert_eq!(monitor.observe(0, true, DeviceCycle(12)).unwrap(), None);
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(12)),
+            Some(false)
+        );
+        assert!(monitor.observe(0, true, DeviceCycle(13)).unwrap().is_some());
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(13)),
+            Some(true)
+        );
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(12)),
+            None
+        );
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(17)),
+            Some(true)
+        );
+        assert_eq!(
+            monitor.stable_active_by_resource(resource, DeviceCycle(18)),
+            None
+        );
+        assert_eq!(
+            monitor.stable_active_by_resource(ResourceId::Gpio(32), DeviceCycle(13)),
+            None
+        );
     }
 
     #[test]

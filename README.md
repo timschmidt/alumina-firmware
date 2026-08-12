@@ -37,21 +37,27 @@ The first deployed graphical-control path is also portable end to end. The
 interface lowers one audited Boolean Service-to-Realtime graph into a fixed
 4 KiB package; firmware independently decodes exact identities and arena
 requirements, primes source tick zero, splits compile-time storage between core
-owners, and executes only the three whitelisted opcodes through a bounded
-bridge with a first-cause fault latch. The package can now be uploaded as an
-immutable SD object, installed through authenticated Wi-Fi, independently
+owners, and executes only four whitelisted opcodes through bounded queues and a
+first-cause fault latch. V2's first physical opcode reads only a board-published
+fresh debounced safety-input semantic value; it grants no raw GPIO or output
+authority. The package can now be uploaded as an immutable SD object, installed
+through authenticated Wi-Fi, independently
 rehash-validated on core 0 and core 1, selected, and exposed only after an exact
 dual-core authorization handshake. Permanent core-local actors now accept an
 authenticated future run epoch, preserve source-first tick-zero priming,
 release from their pinned Embassy tasks, retain the first cross-core fault, and
 reconcile exact stop. Active selection is now protected by a power-cut-tested
 two-phase media journal and is independently revalidated on both cores after
-configuration-first boot recovery. The opcodes remain resource-free; no target
-timing or physical side effect is claimed. See
+configuration-first boot recovery. Production lowering derives exact split
+arenas and opcode/resource palettes from the authenticated target capability
+document, and both firmware cores independently enforce the selected board's
+same static palette. No target timing, physical input HIL, or physical side
+effect is claimed. See
 the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
 evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
 execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
-[durable-selection evidence](docs/evidence/M9-DURABLE-GRAPH-SELECTION.md).
+[durable-selection evidence](docs/evidence/M9-DURABLE-GRAPH-SELECTION.md) and
+[capability-bound input evidence](docs/evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic
