@@ -356,12 +356,16 @@ decode/re-encode equality. A context-bound audited-node registry now adds exact
 shape/domain admission, complete feedthrough, explicit read-before-write state,
 declared-state bounds, and iterative port-level cycle witnesses. It also proves
 maximum canonical bytes for every literal/runtime payload and
-rejects undersized state declarations. It intentionally has no evaluator,
-channel/rate semantics, fixed runtime/queue layout or WCET, capability palette,
-or firmware lowering yet. See the
+rejects undersized state declarations. Audited inputs now distinguish required
+and optional synchronous slots from bounded Event/Stream queues, retain an
+explicit full policy, reject synchronous cross-domain sharing, and report
+checked per-input/aggregate canonical memory ceilings. It intentionally has no
+evaluator, rate transitions, fixed firmware runtime layout or WCET, capability
+palette, or firmware lowering yet. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
-[`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) evidence.
+[`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
+[`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md) evidence.
 
 ### Execution semantics
 

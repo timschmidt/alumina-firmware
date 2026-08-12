@@ -649,12 +649,17 @@ node shapes to that exact type/clock context, declares complete feedthrough and
 read-before-write state, bounds declared state, and produces exact deterministic
 combinational-cycle witnesses. Unknown nodes still round-trip but cannot pass
 semantic analysis. Checked recursive analysis now proves maximum canonical
-typed-value bytes and rejects undersized state declarations. Runtime evaluation,
-queues/rates, fixed runtime/queue memory and WCET, compiler lowering, capability
-nodes, graph UI, and firmware graph IR remain open. See the
+typed-value bytes and rejects undersized state declarations. Every input now
+also declares required/optional and synchronous/bounded Event/Stream delivery,
+an explicit full-queue policy, and a checked allocation report including source
+tick/sequence envelopes; synchronous wires cannot cross concrete execution
+ownership. Runtime evaluation, rate transitions, fixed firmware runtime layout
+and WCET, compiler lowering, capability nodes, graph UI, and firmware graph IR
+remain open. See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
 [audited semantic](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), and
-[type-storage](evidence/M9-CANONICAL-TYPE-STORAGE.md) evidence.
+[type-storage](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
+[bounded-channel](evidence/M9-BOUNDED-GRAPH-CHANNELS.md) evidence.
 
 Exit gate:
 

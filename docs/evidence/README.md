@@ -162,3 +162,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-CANONICAL-TYPE-STORAGE.md`](M9-CANONICAL-TYPE-STORAGE.md) — checked
   maximum canonical bytes for exact/composite/runtime-payload types and
   rejection of state declarations smaller than their complete value domain.
+- [`M9-BOUNDED-GRAPH-CHANNELS.md`](M9-BOUNDED-GRAPH-CHANNELS.md) — required and
+  optional input delivery, explicit synchronous/event/stream queue policy,
+  cross-domain scalar rejection, and exact bounded channel-memory reports.
