@@ -1421,7 +1421,9 @@ mod tests {
         GraphIrOpcode, GraphIrPackage, GraphIrSchedule, GraphPublication,
     };
     use alumina_protocol::DeviceCycle;
-    use alumina_storage::media::{MEDIA_BLOCK_BYTES, MediaBlock, MediaId, MediaRegion};
+    use alumina_storage::media::{
+        DurableGraphSelection, GraphTransition, MEDIA_BLOCK_BYTES, MediaBlock, MediaId, MediaRegion,
+    };
     use alumina_storage::provisioning::CacheProvisionRequest;
     use alumina_storage::{
         CacheLimits, ChunkUploadHeader, ContentId, FinalizeUploadRequest, ManifestHasher,
@@ -1609,6 +1611,16 @@ mod tests {
             package_digest: package.digest(),
             implementation_digest: package.header().implementation_digest,
         }
+    }
+
+    fn durable(publication: GraphPublication) -> DurableGraphSelection {
+        DurableGraphSelection::new(
+            publication.transaction_id,
+            publication.publication,
+            publication.package_digest,
+            publication.implementation_digest,
+        )
+        .unwrap()
     }
 
     fn provisioned_graph(
@@ -1878,6 +1890,140 @@ mod tests {
             GraphCoordinatorReport::decode(&handshake_fault.encode().unwrap()),
             Ok(handshake_fault)
         );
+    }
+
+    #[test]
+    fn durable_activation_orphan_recovery_and_clear_preserve_authorization_order() {
+        let package = package();
+        let (mut cache, publication) = provisioned_graph(&package, 81, 173);
+        let selection = durable(publication);
+        let activation = GraphTransition::activate(selection);
+
+        let prepared =
+            block_on(cache.prepare_graph_transition(activation, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(prepared.active, None);
+        assert_eq!(prepared.pending, Some(activation));
+
+        let mut realtime = RealtimeGraphDeployment::new(
+            authority().device_id,
+            authority().capability_digest,
+            limits(),
+        );
+        assert_eq!(
+            transfer(&mut realtime, publication, package.bytes()).state,
+            RealtimeGraphState::CandidateValid
+        );
+        let selected = realtime.apply(
+            CoreGraphCommand::activate(publication).unwrap(),
+            authority(),
+            true,
+        );
+        assert_eq!(selected.state, RealtimeGraphState::Active);
+        assert!(!selected.active_authorized);
+        assert!(realtime.authorized_package_bytes().is_none());
+
+        let committed =
+            block_on(cache.commit_graph_transition(activation, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(committed.active, Some(selection));
+        assert_eq!(committed.pending, None);
+        assert!(
+            realtime
+                .apply(
+                    CoreGraphCommand::authorize(publication).unwrap(),
+                    authority(),
+                    true,
+                )
+                .active_authorized
+        );
+
+        // A replacement prepare is durable but inert. Reboot must retain the
+        // old complete selection, expose the orphan, and abort the orphan
+        // before reopening any graph bytes.
+        let replacement = GraphPublication {
+            transaction_id: publication.transaction_id + 1,
+            ..publication
+        };
+        let orphan = GraphTransition::activate(durable(replacement));
+        block_on(cache.prepare_graph_transition(orphan, MutationContext::DISARMED_IDLE)).unwrap();
+        let device = cache.into_device();
+        let mut cache = ProvisionedCache::new(device, TEST_CACHE_LIMITS);
+        block_on(cache.discover()).unwrap();
+        assert_eq!(
+            cache.graph_journal().unwrap(),
+            alumina_storage::media::GraphJournal {
+                active: Some(selection),
+                pending: Some(orphan),
+            }
+        );
+        let recovered =
+            block_on(cache.abort_graph_transition(orphan, MutationContext::DISARMED_IDLE)).unwrap();
+        assert_eq!(recovered.active, Some(selection));
+        assert_eq!(recovered.pending, None);
+
+        let mut service = block_on(ServiceGraphValidation::open(
+            &mut cache,
+            publication,
+            authority(),
+            limits(),
+        ))
+        .unwrap();
+        let mut rebooted_realtime = RealtimeGraphDeployment::new(
+            authority().device_id,
+            authority().capability_digest,
+            limits(),
+        );
+        while let Some(command) = block_on(service.next(&mut cache)).unwrap() {
+            assert_ne!(
+                rebooted_realtime.apply(command, authority(), true).state,
+                RealtimeGraphState::Rejected
+            );
+        }
+        assert_eq!(
+            service.status().identity,
+            rebooted_realtime.candidate_identity()
+        );
+        assert!(
+            !rebooted_realtime
+                .apply(
+                    CoreGraphCommand::activate(publication).unwrap(),
+                    authority(),
+                    true,
+                )
+                .active_authorized
+        );
+        assert_eq!(cache.graph_journal().unwrap().active, Some(selection));
+        assert!(
+            rebooted_realtime
+                .apply(
+                    CoreGraphCommand::authorize(publication).unwrap(),
+                    authority(),
+                    true,
+                )
+                .active_authorized
+        );
+
+        let clear = GraphTransition::clear(selection);
+        let clear_prepared =
+            block_on(cache.prepare_graph_transition(clear, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(clear_prepared.active, Some(selection));
+        assert_eq!(clear_prepared.pending, Some(clear));
+        assert_eq!(
+            rebooted_realtime
+                .apply(
+                    CoreGraphCommand::clear(publication).unwrap(),
+                    authority(),
+                    true,
+                )
+                .state,
+            RealtimeGraphState::Cleared
+        );
+        let cleared =
+            block_on(cache.commit_graph_transition(clear, MutationContext::DISARMED_IDLE)).unwrap();
+        assert_eq!(cleared.active, None);
+        assert_eq!(cleared.pending, None);
     }
 
     #[test]
