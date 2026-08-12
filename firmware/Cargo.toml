@@ -111,6 +111,11 @@ embedded-hal-async.workspace = true
 esp-alloc.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-hal.workspace = true
+esp-println-uart = { package = "esp-println", version = "0.15.0", default-features = false, features = [
+    "critical-section",
+    "esp32",
+    "uart",
+] }
 esp-radio.workspace = true
 esp-rtos.workspace = true
 heapless.workspace = true

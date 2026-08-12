@@ -104,8 +104,10 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     rtt_target::rtt_init_defmt!();
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=entry");
 
     if let Err(reason) = mks_tinybee::PACKAGE.validate() {
+        esp_println_uart::println!("ALUMINA_HIL_ABORT code=100 stage=board-package");
         error!(
             "HIL_ABORT board package invalid: {:?}",
             defmt::Debug2Format(&reason)
@@ -155,6 +157,7 @@ async fn main(spawner: Spawner) -> ! {
         package_digest,
         authority,
     );
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=graph-installed");
 
     let run_signal: &'static Signal<CriticalSectionRawMutex, GraphRunIdentity> =
         RUN_SIGNAL.init(Signal::new());
@@ -180,6 +183,7 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     wait_for_flag_or_fault(&REALTIME_READY).await;
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=realtime-ready");
     info!(
         "HIL_STATIC_SAFE board={} image=0x{:06x}; DISCONNECT ALL MOTOR AND PROCESS LOADS",
         env!("ALUMINA_BOARD_ID"),
@@ -187,7 +191,9 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     let service_bridge = service::init_service_bridge();
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=network-starting");
     let network = network::start(spawner, wifi, service_bridge, device_id).await;
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=network-started");
     Timer::after(NETWORK_SETTLE).await;
 
     let start_cycle = DeviceCycle((Instant::now() + GRAPH_START_LEAD).as_ticks());
@@ -200,6 +206,7 @@ async fn main(spawner: Spawner) -> ! {
     };
     if service_actor.prepare_start(run, true).is_err() {
         HIL_FAULT.store(101, Ordering::Release);
+        esp_println_uart::println!("ALUMINA_HIL_ABORT code=101 stage=service-prime");
         error!("HIL_ABORT service graph prime failed");
         park().await
     }
@@ -207,10 +214,15 @@ async fn main(spawner: Spawner) -> ! {
     wait_for_flag_or_fault(&REALTIME_ACTIVATED).await;
     if service_actor.observe_realtime_started(run).is_err() {
         HIL_FAULT.store(102, Ordering::Release);
+        esp_println_uart::println!("ALUMINA_HIL_ABORT code=102 stage=start-observation");
         error!("HIL_ABORT service graph start observation failed");
         park().await
     }
     RUN_CONFIRMED.store(true, Ordering::Release);
+    esp_println_uart::println!(
+        "ALUMINA_HIL_RUNNING ssid=Alumina-{} address=192.168.4.1",
+        env!("ALUMINA_BOARD_ID")
+    );
 
     info!(
         "HIL_GRAPH_RUNNING start={} period={} wcet={} reserve={} config={:?} package={:?}",
@@ -572,6 +584,7 @@ async fn wait_for_flag_or_fault(flag: &AtomicBool) {
     while !flag.load(Ordering::Acquire) {
         let fault = HIL_FAULT.load(Ordering::Acquire);
         if fault != 0 {
+            esp_println_uart::println!("ALUMINA_HIL_ABORT code={} stage=realtime-wait", fault);
             error!("HIL_ABORT realtime initialization fault={}", fault);
             park().await
         }
@@ -598,6 +611,7 @@ async fn realtime_fault(
     sink_marker.set_low();
     SINK_ACTIVE.store(false, Ordering::Release);
     HIL_FAULT.store(code, Ordering::Release);
+    esp_println_uart::println!("ALUMINA_HIL_RT_FAULT code={}", code);
     error!("HIL_RT_FAULT code={}", code);
     park().await
 }

@@ -277,6 +277,11 @@ unavailable/stale resource, malformed report, or hardware sampling error
 forces both markers low, reapplies the complete safe image, and permanently
 stops releases.
 
+Sparse `ALUMINA_HIL_BOOT`, `ALUMINA_HIL_RUNNING`, and
+`ALUMINA_HIL_*_FAULT` text is emitted on UART0 for commissioning. These writes
+occur only during staged startup or after a terminal failure; no UART write or
+formatting occurs in the graph release loop or analyzer capture path.
+
 The isolated fixture deliberately observes the configured interlock without
 feeding its active reaction into an armed safety machine: no arming or energy
 output API exists in the artifact. Production firmware continues to treat an
