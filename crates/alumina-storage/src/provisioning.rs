@@ -9,9 +9,9 @@
 //! observed device size, generation, and media ID.
 
 use crate::media::{
-    AsyncBlockDevice, CacheMedia, ConfigurationJournal, ConfigurationTransition,
-    MAX_MEDIA_CHUNK_BYTES, MEDIA_BLOCK_BYTES, MediaAvailability, MediaError, MediaId, MediaRegion,
-    MediaStatus, PublishedChunk, PublishedReader,
+    AsyncBlockDevice, CacheMedia, ConfigurationJournal, ConfigurationTransition, GraphJournal,
+    GraphTransition, MAX_MEDIA_CHUNK_BYTES, MEDIA_BLOCK_BYTES, MediaAvailability, MediaError,
+    MediaId, MediaRegion, MediaStatus, PublishedChunk, PublishedReader,
 };
 use crate::{
     CacheLimits, ChunkUploadHeader, Error as StorageError, FinalizeUploadRequest, MutationContext,
@@ -704,6 +704,69 @@ where
             .as_mut()
             .ok_or(ProvisionedCacheError::NotMounted)?
             .abort_configuration_transition(transition, context)
+            .await;
+        if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
+            self.state = ManagerState::Faulted(fault_from_media_error(error));
+        }
+        result.map_err(ProvisionedCacheError::Media)
+    }
+
+    /// Returns the replayed durable deployed-graph selector state.
+    pub fn graph_journal(&self) -> Result<GraphJournal, ProvisionedCacheError<D::Error>> {
+        self.media
+            .as_ref()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .graph_journal()
+            .map_err(ProvisionedCacheError::Media)
+    }
+
+    /// Persists intent for one exact deployed-graph activation or clear.
+    pub async fn prepare_graph_transition(
+        &mut self,
+        transition: GraphTransition,
+        context: MutationContext,
+    ) -> Result<GraphJournal, ProvisionedCacheError<D::Error>> {
+        let result = self
+            .media
+            .as_mut()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .prepare_graph_transition(transition, context)
+            .await;
+        if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
+            self.state = ManagerState::Faulted(fault_from_media_error(error));
+        }
+        result.map_err(ProvisionedCacheError::Media)
+    }
+
+    /// Makes one matching prepared deployed-graph transition replay-visible.
+    pub async fn commit_graph_transition(
+        &mut self,
+        transition: GraphTransition,
+        context: MutationContext,
+    ) -> Result<GraphJournal, ProvisionedCacheError<D::Error>> {
+        let result = self
+            .media
+            .as_mut()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .commit_graph_transition(transition, context)
+            .await;
+        if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
+            self.state = ManagerState::Faulted(fault_from_media_error(error));
+        }
+        result.map_err(ProvisionedCacheError::Media)
+    }
+
+    /// Discards one exact prepared deployed-graph transition durably.
+    pub async fn abort_graph_transition(
+        &mut self,
+        transition: GraphTransition,
+        context: MutationContext,
+    ) -> Result<GraphJournal, ProvisionedCacheError<D::Error>> {
+        let result = self
+            .media
+            .as_mut()
+            .ok_or(ProvisionedCacheError::NotMounted)?
+            .abort_graph_transition(transition, context)
             .await;
         if let Err(error @ (MediaError::Device(_) | MediaError::Corrupt(_))) = &result {
             self.state = ManagerState::Faulted(fault_from_media_error(error));

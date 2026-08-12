@@ -29,9 +29,11 @@ const ANCHOR_MAGIC: [u8; 8] = *b"ALMCACH1";
 const RECORD_MAGIC: [u8; 8] = *b"ALMREC01";
 const COMMIT_MAGIC: [u8; 8] = *b"ALMCOM01";
 const CONFIGURATION_SELECTION_MAGIC: [u8; 8] = *b"ALMCAS01";
+const GRAPH_SELECTION_MAGIC: [u8; 8] = *b"ALMGRS01";
 const ANCHOR_HASH_OFFSET: usize = MEDIA_BLOCK_BYTES - 32;
 const PUBLICATION_WIRE_LEN: usize = UploadPlan::WIRE_LEN + 8;
 const CONFIGURATION_SELECTION_WIRE_LEN: usize = 96;
+const GRAPH_SELECTION_WIRE_LEN: usize = 160;
 const MINIMUM_REGION_BLOCKS: u64 = MEDIA_ANCHOR_BLOCKS + 3;
 
 /// One exact block transferred to or from an SD-class device.
@@ -276,6 +278,140 @@ pub struct ConfigurationJournal {
     pub pending: Option<ConfigurationTransition>,
 }
 
+/// Exact immutable deployed-graph publication named by a durable activation.
+///
+/// Package and implementation digests are retained separately from the full
+/// stored-object digest. Boot recovery must reopen all bytes and independently
+/// validate every identity on both cores before execution can be authorized.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurableGraphSelection {
+    transaction_id: u64,
+    publication: PublishedObject,
+    package_digest: Digest,
+    implementation_digest: Digest,
+}
+
+impl DurableGraphSelection {
+    /// Construct one nonempty deployed-graph selection with complete identity.
+    pub fn new(
+        transaction_id: u64,
+        publication: PublishedObject,
+        package_digest: Digest,
+        implementation_digest: Digest,
+    ) -> Result<Self, StorageError> {
+        let selection = Self {
+            transaction_id,
+            publication,
+            package_digest,
+            implementation_digest,
+        };
+        selection.validate()?;
+        Ok(selection)
+    }
+
+    /// Operation identity that prepared and committed this selection.
+    pub const fn transaction_id(self) -> u64 {
+        self.transaction_id
+    }
+
+    /// Exact immutable object and manifest that must be reopened at boot.
+    pub const fn publication(self) -> PublishedObject {
+        self.publication
+    }
+
+    /// Package-internal digest over the canonical padded prefix.
+    pub const fn package_digest(self) -> Digest {
+        self.package_digest
+    }
+
+    /// Audited fixed implementation-registry identity.
+    pub const fn implementation_digest(self) -> Digest {
+        self.implementation_digest
+    }
+
+    fn validate(self) -> Result<(), StorageError> {
+        if self.transaction_id == 0
+            || self.publication.object.kind != crate::ObjectKind::DeployedGraph
+            || self.publication.object.byte_len == 0
+            || !self.publication.object.content.is_valid()
+            || !self.publication.manifest.is_valid()
+            || self.package_digest.is_zero()
+            || self.implementation_digest.is_zero()
+        {
+            return Err(StorageError::GraphTransition);
+        }
+        Ok(())
+    }
+}
+
+/// Safety-relevant durable deployed-graph transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum GraphTransitionAction {
+    /// Replace the active graph selection after both cores accepted it.
+    Activate = 1,
+    /// Remove the exact active graph selection after both actors cleared it.
+    Clear = 2,
+}
+
+impl GraphTransitionAction {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Activate),
+            2 => Some(Self::Clear),
+            _ => None,
+        }
+    }
+}
+
+/// One prepare/commit operation in the deployed-graph selection journal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphTransition {
+    action: GraphTransitionAction,
+    selection: DurableGraphSelection,
+}
+
+impl GraphTransition {
+    /// Prepare selection of an independently validated graph publication.
+    pub const fn activate(selection: DurableGraphSelection) -> Self {
+        Self {
+            action: GraphTransitionAction::Activate,
+            selection,
+        }
+    }
+
+    /// Prepare removal of the exact currently active graph publication.
+    pub const fn clear(selection: DurableGraphSelection) -> Self {
+        Self {
+            action: GraphTransitionAction::Clear,
+            selection,
+        }
+    }
+
+    /// Requested transition action.
+    pub const fn action(self) -> GraphTransitionAction {
+        self.action
+    }
+
+    /// Exact graph publication and operation identity bound by the transition.
+    pub const fn selection(self) -> DurableGraphSelection {
+        self.selection
+    }
+
+    fn validate(self) -> Result<(), StorageError> {
+        self.selection.validate()
+    }
+}
+
+/// Replayed deployed-graph selector state from the committed anchor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GraphJournal {
+    /// Last completely committed graph selection, if any.
+    pub active: Option<DurableGraphSelection>,
+    /// Durable but inert prepare without its matching commit.
+    pub pending: Option<GraphTransition>,
+}
+
 /// Linear, allocation-free cursor over one exact immutable publication.
 ///
 /// Fields are private so callers cannot skip records, substitute media, or
@@ -446,6 +582,9 @@ enum RecordKind {
     ConfigurationPrepare = 5,
     ConfigurationCommit = 6,
     ConfigurationAbort = 7,
+    GraphPrepare = 8,
+    GraphCommit = 9,
+    GraphAbort = 10,
 }
 
 impl RecordKind {
@@ -458,6 +597,9 @@ impl RecordKind {
             5 => Some(Self::ConfigurationPrepare),
             6 => Some(Self::ConfigurationCommit),
             7 => Some(Self::ConfigurationAbort),
+            8 => Some(Self::GraphPrepare),
+            9 => Some(Self::GraphCommit),
+            10 => Some(Self::GraphAbort),
             _ => None,
         }
     }
@@ -477,6 +619,7 @@ struct ReadyState {
     hashes: Option<ActiveHashes>,
     published_objects: u32,
     configuration: ConfigurationJournal,
+    graph: GraphJournal,
     degraded_anchor: bool,
 }
 
@@ -614,6 +757,10 @@ where
                 active: None,
                 pending: None,
             },
+            graph: GraphJournal {
+                active: None,
+                pending: None,
+            },
             degraded_anchor: false,
         });
         Ok(())
@@ -685,6 +832,7 @@ where
             hashes: replay.hashes,
             published_objects: replay.published_objects,
             configuration: replay.configuration,
+            graph: replay.graph,
             degraded_anchor,
         });
         Ok(self.status())
@@ -696,6 +844,14 @@ where
     /// candidate, and even it requires reopening and independent validation.
     pub fn configuration_journal(&self) -> Result<ConfigurationJournal, MediaError<D::Error>> {
         Ok(self.ready()?.configuration)
+    }
+
+    /// Returns the exact committed and prepared deployed-graph selector state.
+    ///
+    /// A pending transition is inert. A committed active selection must still
+    /// be reopened and independently admitted by both cores after every boot.
+    pub fn graph_journal(&self) -> Result<GraphJournal, MediaError<D::Error>> {
+        Ok(self.ready()?.graph)
     }
 
     /// Durably records intent to activate or clear one exact configuration.
@@ -710,7 +866,7 @@ where
         context.validate()?;
         transition.validate()?;
         let ready = self.ready()?;
-        if ready.uploads.checkpoint().is_some() {
+        if ready.uploads.checkpoint().is_some() || ready.graph.pending.is_some() {
             return Err(StorageError::ConfigurationTransition.into());
         }
         let current = ready.configuration;
@@ -799,6 +955,101 @@ where
         .await?;
         self.ready_mut()?.configuration.pending = None;
         Ok(self.ready()?.configuration)
+    }
+
+    /// Durably records intent to activate or clear one exact deployed graph.
+    ///
+    /// Graph/configuration prepares and uploads share one mutation lane. An
+    /// exact retry is idempotent and another graph prepare may supersede an
+    /// orphan without changing the committed active graph.
+    pub async fn prepare_graph_transition(
+        &mut self,
+        transition: GraphTransition,
+        context: MutationContext,
+    ) -> Result<GraphJournal, MediaError<D::Error>> {
+        context.validate()?;
+        transition.validate()?;
+        let ready = self.ready()?;
+        if ready.uploads.checkpoint().is_some() || ready.configuration.pending.is_some() {
+            return Err(StorageError::GraphTransition.into());
+        }
+        let current = ready.graph;
+        validate_graph_transition(current.active, transition)?;
+        if current.pending == Some(transition) {
+            return Ok(current);
+        }
+
+        if transition.action == GraphTransitionAction::Activate {
+            let _ = self
+                .open_published(transition.selection.publication)
+                .await?;
+        }
+        let payload = encode_graph_transition(transition);
+        self.append_record(
+            RecordKind::GraphPrepare,
+            UploadId(transition.selection.transaction_id),
+            &payload,
+        )
+        .await?;
+        self.ready_mut()?.graph.pending = Some(transition);
+        Ok(self.ready()?.graph)
+    }
+
+    /// Commits exactly the prepared deployed-graph transition.
+    pub async fn commit_graph_transition(
+        &mut self,
+        transition: GraphTransition,
+        context: MutationContext,
+    ) -> Result<GraphJournal, MediaError<D::Error>> {
+        context.validate()?;
+        transition.validate()?;
+        let ready = self.ready()?;
+        if ready.uploads.checkpoint().is_some() {
+            return Err(StorageError::GraphTransition.into());
+        }
+        let current = ready.graph;
+        if current.pending != Some(transition) {
+            return Err(StorageError::GraphTransition.into());
+        }
+        let payload = encode_graph_transition(transition);
+        self.append_record(
+            RecordKind::GraphCommit,
+            UploadId(transition.selection.transaction_id),
+            &payload,
+        )
+        .await?;
+        let ready = self.ready_mut()?;
+        apply_graph_commit(&mut ready.graph, transition);
+        Ok(ready.graph)
+    }
+
+    /// Durably discards exactly one prepared deployed-graph transition.
+    pub async fn abort_graph_transition(
+        &mut self,
+        transition: GraphTransition,
+        context: MutationContext,
+    ) -> Result<GraphJournal, MediaError<D::Error>> {
+        context.validate()?;
+        transition.validate()?;
+        let ready = self.ready()?;
+        if ready.uploads.checkpoint().is_some() {
+            return Err(StorageError::GraphTransition.into());
+        }
+        let current = ready.graph;
+        match current.pending {
+            None => return Ok(current),
+            Some(pending) if pending == transition => {}
+            Some(_) => return Err(StorageError::GraphTransition.into()),
+        }
+        let payload = encode_graph_transition(transition);
+        self.append_record(
+            RecordKind::GraphAbort,
+            UploadId(transition.selection.transaction_id),
+            &payload,
+        )
+        .await?;
+        self.ready_mut()?.graph.pending = None;
+        Ok(self.ready()?.graph)
     }
 
     /// Locates the newest publication with this exact typed object and manifest.
@@ -1153,6 +1404,9 @@ where
             if ready.configuration.pending.is_some() {
                 return Err(StorageError::ConfigurationTransition.into());
             }
+            if ready.graph.pending.is_some() {
+                return Err(StorageError::GraphTransition.into());
+            }
             (ready.uploads, ready.uploads.checkpoint())
         };
         let progress = uploads.begin(plan, self.limits, context)?;
@@ -1503,6 +1757,7 @@ struct ReplayState {
     hashes: Option<ActiveHashes>,
     published_objects: u32,
     configuration: ConfigurationJournal,
+    graph: GraphJournal,
 }
 
 impl ReplayState {
@@ -1512,6 +1767,10 @@ impl ReplayState {
             hashes: None,
             published_objects: 0,
             configuration: ConfigurationJournal {
+                active: None,
+                pending: None,
+            },
+            graph: GraphJournal {
                 active: None,
                 pending: None,
             },
@@ -1527,7 +1786,7 @@ impl ReplayState {
     ) -> Result<(), MediaCorruption> {
         match header.kind {
             RecordKind::Begin => {
-                if self.configuration.pending.is_some() {
+                if self.configuration.pending.is_some() || self.graph.pending.is_some() {
                     return Err(MediaCorruption::Replay);
                 }
                 let plan =
@@ -1636,7 +1895,7 @@ impl ReplayState {
                 self.hashes = None;
             }
             RecordKind::ConfigurationPrepare => {
-                if self.hashes.is_some() {
+                if self.hashes.is_some() || self.graph.pending.is_some() {
                     return Err(MediaCorruption::Replay);
                 }
                 let transition = decode_configuration_transition(payload)?;
@@ -1670,6 +1929,42 @@ impl ReplayState {
                     return Err(MediaCorruption::Replay);
                 }
                 self.configuration.pending = None;
+            }
+            RecordKind::GraphPrepare => {
+                if self.hashes.is_some() || self.configuration.pending.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
+                let transition = decode_graph_transition(payload)?;
+                if transition.selection.transaction_id != header.upload_id.0 {
+                    return Err(MediaCorruption::Replay);
+                }
+                validate_graph_transition(self.graph.active, transition)
+                    .map_err(|_| MediaCorruption::Replay)?;
+                self.graph.pending = Some(transition);
+            }
+            RecordKind::GraphCommit => {
+                if self.hashes.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
+                let transition = decode_graph_transition(payload)?;
+                if transition.selection.transaction_id != header.upload_id.0
+                    || self.graph.pending != Some(transition)
+                {
+                    return Err(MediaCorruption::Replay);
+                }
+                apply_graph_commit(&mut self.graph, transition);
+            }
+            RecordKind::GraphAbort => {
+                if self.hashes.is_some() {
+                    return Err(MediaCorruption::Replay);
+                }
+                let transition = decode_graph_transition(payload)?;
+                if transition.selection.transaction_id != header.upload_id.0
+                    || self.graph.pending != Some(transition)
+                {
+                    return Err(MediaCorruption::Replay);
+                }
+                self.graph.pending = None;
             }
         }
         Ok(())
@@ -1762,6 +2057,100 @@ fn decode_configuration_transition(
     .map_err(|_| MediaCorruption::Replay)?;
     let transition = ConfigurationTransition { action, selection };
     if encode_configuration_transition(transition) != encoded {
+        return Err(MediaCorruption::Replay);
+    }
+    Ok(transition)
+}
+
+fn validate_graph_transition(
+    active: Option<DurableGraphSelection>,
+    transition: GraphTransition,
+) -> Result<(), StorageError> {
+    transition.validate()?;
+    match transition.action {
+        GraphTransitionAction::Activate => Ok(()),
+        GraphTransitionAction::Clear
+            if active.is_some_and(|active| {
+                active.publication == transition.selection.publication
+                    && active.package_digest == transition.selection.package_digest
+                    && active.implementation_digest == transition.selection.implementation_digest
+            }) =>
+        {
+            Ok(())
+        }
+        GraphTransitionAction::Clear => Err(StorageError::GraphTransition),
+    }
+}
+
+fn apply_graph_commit(journal: &mut GraphJournal, transition: GraphTransition) {
+    journal.active = match transition.action {
+        GraphTransitionAction::Activate => Some(transition.selection),
+        GraphTransitionAction::Clear => None,
+    };
+    journal.pending = None;
+}
+
+fn encode_graph_transition(transition: GraphTransition) -> [u8; GRAPH_SELECTION_WIRE_LEN] {
+    let mut encoded = [0_u8; GRAPH_SELECTION_WIRE_LEN];
+    encoded[0..8].copy_from_slice(&GRAPH_SELECTION_MAGIC);
+    encoded[8..10].copy_from_slice(&CACHE_MEDIA_VERSION.to_le_bytes());
+    encoded[10] = transition.action as u8;
+    encoded[11] = transition.selection.publication.object.kind as u8;
+    encoded[12] = transition.selection.publication.object.content.algorithm as u8;
+    encoded[13] = transition.selection.publication.manifest.algorithm as u8;
+    // Bytes 14..16 are reserved zero.
+    encoded[16..24].copy_from_slice(&transition.selection.transaction_id.to_le_bytes());
+    encoded[24..32].copy_from_slice(
+        &transition
+            .selection
+            .publication
+            .object
+            .byte_len
+            .to_le_bytes(),
+    );
+    encoded[32..64].copy_from_slice(&transition.selection.publication.object.content.digest.0);
+    encoded[64..96].copy_from_slice(&transition.selection.publication.manifest.digest.0);
+    encoded[96..128].copy_from_slice(&transition.selection.package_digest.0);
+    encoded[128..160].copy_from_slice(&transition.selection.implementation_digest.0);
+    encoded
+}
+
+fn decode_graph_transition(encoded: &[u8]) -> Result<GraphTransition, MediaCorruption> {
+    if encoded.len() != GRAPH_SELECTION_WIRE_LEN
+        || encoded[0..8] != GRAPH_SELECTION_MAGIC
+        || read_u16(encoded, 8) != CACHE_MEDIA_VERSION
+        || encoded[11] != crate::ObjectKind::DeployedGraph as u8
+        || encoded[12] != crate::DigestAlgorithm::Sha256 as u8
+        || encoded[13] != crate::DigestAlgorithm::Sha256 as u8
+        || encoded[14..16].iter().any(|byte| *byte != 0)
+    {
+        return Err(MediaCorruption::Replay);
+    }
+    let action = GraphTransitionAction::from_wire(encoded[10]).ok_or(MediaCorruption::Replay)?;
+    let mut object_digest = [0_u8; 32];
+    object_digest.copy_from_slice(&encoded[32..64]);
+    let mut manifest_digest = [0_u8; 32];
+    manifest_digest.copy_from_slice(&encoded[64..96]);
+    let mut package_digest = [0_u8; 32];
+    package_digest.copy_from_slice(&encoded[96..128]);
+    let mut implementation_digest = [0_u8; 32];
+    implementation_digest.copy_from_slice(&encoded[128..160]);
+    let selection = DurableGraphSelection::new(
+        read_u64(encoded, 16),
+        PublishedObject {
+            object: crate::StoredObject {
+                kind: crate::ObjectKind::DeployedGraph,
+                content: crate::ContentId::from_sha256(Digest(object_digest)),
+                byte_len: read_u64(encoded, 24),
+            },
+            manifest: crate::ContentId::from_sha256(Digest(manifest_digest)),
+        },
+        Digest(package_digest),
+        Digest(implementation_digest),
+    )
+    .map_err(|_| MediaCorruption::Replay)?;
+    let transition = GraphTransition { action, selection };
+    if encode_graph_transition(transition) != encoded {
         return Err(MediaCorruption::Replay);
     }
     Ok(transition)
@@ -2282,6 +2671,20 @@ mod tests {
         DurableConfigurationSelection::new(transaction_id, publication).unwrap()
     }
 
+    fn graph_selection(
+        transaction_id: u64,
+        publication: PublishedObject,
+        identity_byte: u8,
+    ) -> DurableGraphSelection {
+        DurableGraphSelection::new(
+            transaction_id,
+            publication,
+            Digest([identity_byte; 32]),
+            Digest([identity_byte.wrapping_add(1); 32]),
+        )
+        .unwrap()
+    }
+
     fn collect_published(
         media: &mut CacheMedia<RamBlockDevice>,
         published: PublishedObject,
@@ -2674,6 +3077,271 @@ mod tests {
             block_on(media.begin_upload(upload, MutationContext::DISARMED_IDLE)),
             Err(MediaError::Storage(StorageError::ConfigurationTransition))
         ));
+    }
+
+    #[test]
+    fn graph_selection_is_identity_complete_replayable_and_mutually_serialized() {
+        let (mut media, _) = formatted();
+        let (_, published) = publish_kind(
+            &mut media,
+            b"canonical deployed graph package",
+            11,
+            ObjectKind::DeployedGraph,
+        );
+        let selection = graph_selection(0x5511, published, 0x31);
+        let activation = GraphTransition::activate(selection);
+
+        let prepared =
+            block_on(media.prepare_graph_transition(activation, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(prepared.active, None);
+        assert_eq!(prepared.pending, Some(activation));
+        let sequence = media.status().last_sequence;
+        assert_eq!(
+            block_on(media.prepare_graph_transition(activation, MutationContext::DISARMED_IDLE,))
+                .unwrap(),
+            prepared
+        );
+        assert_eq!(media.status().last_sequence, sequence);
+
+        let configuration_publication = PublishedObject {
+            object: StoredObject {
+                kind: ObjectKind::MachineConfiguration,
+                content: sha256(b"configuration while graph prepare is pending"),
+                byte_len: 44,
+            },
+            manifest: sha256(b"configuration manifest"),
+        };
+        let configuration = ConfigurationTransition::activate(configuration_selection(
+            0x5512,
+            configuration_publication,
+        ));
+        assert!(matches!(
+            block_on(
+                media.prepare_configuration_transition(
+                    configuration,
+                    MutationContext::DISARMED_IDLE,
+                )
+            ),
+            Err(MediaError::Storage(StorageError::ConfigurationTransition))
+        ));
+        let upload = plan(b"serialized behind graph selection", 8);
+        assert!(matches!(
+            block_on(media.begin_upload(upload, MutationContext::DISARMED_IDLE)),
+            Err(MediaError::Storage(StorageError::GraphTransition))
+        ));
+
+        let device = media.into_device();
+        let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(media.mount()).unwrap();
+        assert_eq!(media.graph_journal().unwrap(), prepared);
+        let committed =
+            block_on(media.commit_graph_transition(activation, MutationContext::DISARMED_IDLE))
+                .unwrap();
+        assert_eq!(committed.active, Some(selection));
+        assert_eq!(committed.pending, None);
+
+        let clear_selection = DurableGraphSelection::new(
+            0x5513,
+            selection.publication(),
+            selection.package_digest(),
+            selection.implementation_digest(),
+        )
+        .unwrap();
+        let clear = GraphTransition::clear(clear_selection);
+        block_on(media.prepare_graph_transition(clear, MutationContext::DISARMED_IDLE)).unwrap();
+        let cleared =
+            block_on(media.commit_graph_transition(clear, MutationContext::DISARMED_IDLE)).unwrap();
+        assert_eq!(cleared.active, None);
+        assert_eq!(cleared.pending, None);
+
+        let device = media.into_device();
+        let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(media.mount()).unwrap();
+        assert_eq!(media.graph_journal().unwrap(), cleared);
+    }
+
+    #[test]
+    fn invalid_graph_transitions_reject_before_append() {
+        let (mut media, _) = formatted();
+        let (_, wrong_kind) = publish(&mut media, b"machine job is not a graph", 8);
+        assert_eq!(
+            DurableGraphSelection::new(1, wrong_kind, Digest([1; 32]), Digest([2; 32])),
+            Err(StorageError::GraphTransition)
+        );
+        let (_, published) = publish_kind(
+            &mut media,
+            b"present deployed graph",
+            8,
+            ObjectKind::DeployedGraph,
+        );
+        assert_eq!(
+            DurableGraphSelection::new(2, published, Digest::ZERO, Digest([2; 32])),
+            Err(StorageError::GraphTransition)
+        );
+        let selection = graph_selection(3, published, 7);
+        let activation = GraphTransition::activate(selection);
+        let sequence = media.status().last_sequence;
+        assert!(matches!(
+            block_on(media.prepare_graph_transition(
+                activation,
+                MutationContext {
+                    armed_or_energized: true,
+                    realtime_job_active: false,
+                },
+            )),
+            Err(MediaError::Storage(StorageError::MutationForbidden))
+        ));
+        assert_eq!(media.status().last_sequence, sequence);
+        assert!(matches!(
+            block_on(media.commit_graph_transition(activation, MutationContext::DISARMED_IDLE,)),
+            Err(MediaError::Storage(StorageError::GraphTransition))
+        ));
+        let clear = GraphTransition::clear(graph_selection(4, published, 7));
+        assert!(matches!(
+            block_on(media.prepare_graph_transition(clear, MutationContext::DISARMED_IDLE)),
+            Err(MediaError::Storage(StorageError::GraphTransition))
+        ));
+    }
+
+    #[test]
+    fn every_graph_activation_cut_replays_complete_old_or_new_selection() {
+        let (mut baseline, _) = formatted();
+        let (_, old_publication) = publish_kind(
+            &mut baseline,
+            b"old deployed graph",
+            8,
+            ObjectKind::DeployedGraph,
+        );
+        let old = graph_selection(0x4001, old_publication, 0x41);
+        let old_transition = GraphTransition::activate(old);
+        block_on(baseline.prepare_graph_transition(old_transition, MutationContext::DISARMED_IDLE))
+            .unwrap();
+        block_on(baseline.commit_graph_transition(old_transition, MutationContext::DISARMED_IDLE))
+            .unwrap();
+        let (_, new_publication) = publish_kind(
+            &mut baseline,
+            b"new deployed graph",
+            8,
+            ObjectKind::DeployedGraph,
+        );
+        let new = graph_selection(0x4002, new_publication, 0x51);
+        let transition = GraphTransition::activate(new);
+        let before_prepare = baseline.into_device().snapshot();
+
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(before_prepare.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result = block_on(
+                media.prepare_graph_transition(transition, MutationContext::DISARMED_IDLE),
+            );
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.graph_journal().unwrap();
+            assert_eq!(journal.active, Some(old));
+            assert!(journal.pending.is_none() || journal.pending == Some(transition));
+            if result.is_ok() {
+                assert_eq!(journal.pending, Some(transition));
+            }
+        }
+
+        let (device, _) = RamBlockDevice::from_snapshot(before_prepare);
+        let mut prepared = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(prepared.mount()).unwrap();
+        block_on(prepared.prepare_graph_transition(transition, MutationContext::DISARMED_IDLE))
+            .unwrap();
+        let before_commit = prepared.into_device().snapshot();
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(before_commit.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result =
+                block_on(media.commit_graph_transition(transition, MutationContext::DISARMED_IDLE));
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.graph_journal().unwrap();
+            assert!(journal.active == Some(old) || journal.active == Some(new));
+            if journal.active == Some(old) {
+                assert_eq!(journal.pending, Some(transition));
+            } else {
+                assert_eq!(journal.pending, None);
+            }
+            if result.is_ok() {
+                assert_eq!(journal.active, Some(new));
+            }
+        }
+    }
+
+    #[test]
+    fn graph_clear_and_abort_are_power_cut_replay_safe() {
+        let (mut baseline, _) = formatted();
+        let (_, publication) = publish_kind(
+            &mut baseline,
+            b"selected graph before clear",
+            8,
+            ObjectKind::DeployedGraph,
+        );
+        let active = graph_selection(0x5001, publication, 0x61);
+        let activation = GraphTransition::activate(active);
+        block_on(baseline.prepare_graph_transition(activation, MutationContext::DISARMED_IDLE))
+            .unwrap();
+        block_on(baseline.commit_graph_transition(activation, MutationContext::DISARMED_IDLE))
+            .unwrap();
+
+        let clear_selection = DurableGraphSelection::new(
+            0x5002,
+            active.publication(),
+            active.package_digest(),
+            active.implementation_digest(),
+        )
+        .unwrap();
+        let clear = GraphTransition::clear(clear_selection);
+        block_on(baseline.prepare_graph_transition(clear, MutationContext::DISARMED_IDLE)).unwrap();
+        let clear_snapshot = baseline.into_device().snapshot();
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(clear_snapshot.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result =
+                block_on(media.commit_graph_transition(clear, MutationContext::DISARMED_IDLE));
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.graph_journal().unwrap();
+            assert!(journal.active.is_none() || journal.active == Some(active));
+            if journal.active.is_some() {
+                assert_eq!(journal.pending, Some(clear));
+            } else {
+                assert_eq!(journal.pending, None);
+            }
+            if result.is_ok() {
+                assert_eq!(journal.active, None);
+            }
+        }
+
+        let (device, _) = RamBlockDevice::from_snapshot(clear_snapshot);
+        let mut aborting = CacheMedia::new(device, REGION, TEST_LIMITS);
+        block_on(aborting.mount()).unwrap();
+        let abort_snapshot = aborting.into_device().snapshot();
+        for cut in 0..=7 {
+            let (device, control) = RamBlockDevice::from_snapshot(abort_snapshot.clone());
+            let mut media = CacheMedia::new(device, REGION, TEST_LIMITS);
+            block_on(media.mount()).unwrap();
+            control.arm_relative(cut);
+            let result =
+                block_on(media.abort_graph_transition(clear, MutationContext::DISARMED_IDLE));
+            control.disarm();
+            block_on(media.mount()).unwrap();
+            let journal = media.graph_journal().unwrap();
+            assert_eq!(journal.active, Some(active));
+            assert!(journal.pending.is_none() || journal.pending == Some(clear));
+            if result.is_ok() {
+                assert_eq!(journal.pending, None);
+            }
+        }
     }
 
     #[test]

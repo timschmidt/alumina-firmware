@@ -1079,6 +1079,9 @@ pub enum Error {
     /// A durable machine-configuration transition was malformed or disagreed
     /// with the currently committed selection.
     ConfigurationTransition,
+    /// A durable deployed-graph transition was malformed or disagreed with the
+    /// currently committed selection.
+    GraphTransition,
     /// Another immutable declaration already owns the one bounded upload slot.
     UploadConflict,
     /// No upload transaction exists.
