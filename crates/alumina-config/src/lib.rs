@@ -27,16 +27,17 @@ use sha2::{Digest as ShaDigest, Sha256};
 mod foc;
 
 pub use foc::{
-    FocControllerAxis, FocControllerParameters, FocCurrentChannel, FocCurrentChannelParameters,
-    FocPwmAdcTimingParameters, FocRotorParameters, FocRuntimeParameters,
+    FocAdcAttenuation, FocAdcFrontendParameters, FocControllerAxis, FocControllerParameters,
+    FocCurrentChannel, FocCurrentChannelParameters, FocPwmAdcTimingParameters,
+    FocPwmHardwareParameters, FocRotorParameters, FocRuntimeParameters,
     LoweredFocAxisConfiguration,
 };
 
 /// Exact machine-configuration schema version.
-pub const CONFIGURATION_VERSION: u16 = 3;
+pub const CONFIGURATION_VERSION: u16 = 4;
 /// Bytes in the fixed canonical document header.
 pub const CONFIGURATION_HEADER_BYTES: usize = 80;
-/// Bytes in every V3 configuration record.
+/// Bytes in every V4 configuration record.
 pub const CONFIGURATION_RECORD_BYTES: usize = 64;
 /// Schema-wide bound independent of a board's smaller admission budget.
 pub const MAX_CONFIGURATION_RECORDS: usize = 256;
@@ -47,7 +48,7 @@ pub const MAX_EXECUTABLE_STEPPER_AXES: usize = 8;
 /// Maximum FOC axes whose complete hardware contract is retained on core 1.
 pub const MAX_EXECUTABLE_FOC_AXES: usize = 4;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG03";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG04";
 const RECORD_KIND_BINDING: u16 = 1;
 const RECORD_KIND_SCALAR: u16 = 2;
 const RECORD_KIND_FOC_SHUTDOWN: u16 = 3;
@@ -56,6 +57,8 @@ const RECORD_KIND_FOC_CONTROLLER: u16 = 5;
 const RECORD_KIND_FOC_ROTOR: u16 = 6;
 const RECORD_KIND_FOC_CURRENT_CHANNEL: u16 = 7;
 const RECORD_KIND_FOC_PWM_ADC_TIMING: u16 = 8;
+const RECORD_KIND_FOC_ADC_FRONTEND: u16 = 9;
+const RECORD_KIND_FOC_PWM_HARDWARE: u16 = 10;
 const PUBLICATION_MAGIC: [u8; 8] = *b"ALMCFQ01";
 const SELECTION_MAGIC: [u8; 8] = *b"ALMCFS01";
 const COORDINATOR_STATUS_MAGIC: [u8; 8] = *b"ALMCST01";
@@ -97,7 +100,7 @@ impl ConfigurationPublication {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V3 SHA-256/configuration representation.
+    /// Decodes only the exact V4 SHA-256/configuration representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationRequestError> {
         if encoded.len() != CONFIGURATION_PUBLICATION_BYTES {
             return Err(ConfigurationRequestError::Length);
@@ -258,7 +261,7 @@ impl ConfigurationFlags {
     pub const FIELD_ORIENTED_CONTROL: u32 = 1 << 2;
     /// Configuration contains non-motion laboratory/control resources.
     pub const LAB_CONTROL: u32 = 1 << 3;
-    /// All V3 flags.
+    /// All V4 flags.
     pub const ALLOWED: u32 =
         Self::MOTION | Self::CACHED_AUTONOMOUS | Self::FIELD_ORIENTED_CONTROL | Self::LAB_CONTROL;
 
@@ -296,7 +299,7 @@ impl ConfigurationHeader {
             .ok_or(ConfigurationError::Length)
     }
 
-    /// Encodes the exact V3 header.
+    /// Encodes the exact V4 header.
     pub fn encode(self) -> Result<[u8; CONFIGURATION_HEADER_BYTES], ConfigurationError> {
         self.validate()?;
         let mut encoded = [0_u8; CONFIGURATION_HEADER_BYTES];
@@ -316,7 +319,7 @@ impl ConfigurationHeader {
         Ok(encoded)
     }
 
-    /// Decodes only the exact canonical V3 header.
+    /// Decodes only the exact canonical V4 header.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_HEADER_BYTES {
             return Err(ConfigurationError::Length);
@@ -864,6 +867,8 @@ pub enum ConfigurationRecord {
     FocRotor(FocRotorParameters),
     FocCurrentChannel(FocCurrentChannelParameters),
     FocPwmAdcTiming(FocPwmAdcTimingParameters),
+    FocAdcFrontend(FocAdcFrontendParameters),
+    FocPwmHardware(FocPwmHardwareParameters),
 }
 
 impl ConfigurationRecord {
@@ -1019,11 +1024,28 @@ impl ConfigurationRecord {
                 encoded[60] = timing.evidence as u8;
                 // Bytes 61..64 are reserved zero.
             }
+            Self::FocAdcFrontend(frontend) => {
+                encoded[8] = frontend.attenuation as u8;
+                encoded[9] = frontend.evidence as u8;
+                // Bytes 10..64 are reserved zero.
+            }
+            Self::FocPwmHardware(hardware) => {
+                encoded[8..12].copy_from_slice(&hardware.peripheral_source_clock_hz.to_le_bytes());
+                encoded[12..16].copy_from_slice(&hardware.counter_clock_hz.to_le_bytes());
+                encoded[16..18].copy_from_slice(&hardware.timer_peak_ticks.to_le_bytes());
+                encoded[18..20].copy_from_slice(&hardware.minimum_active_ticks.to_le_bytes());
+                encoded[20..24]
+                    .copy_from_slice(&hardware.maximum_quantization_error_ulps.to_le_bytes());
+                encoded[24] = hardware.peripheral_prescaler;
+                encoded[25] = hardware.timer_prescaler;
+                encoded[26] = hardware.evidence as u8;
+                // Bytes 27..64 are reserved zero.
+            }
         }
         Ok(encoded)
     }
 
-    /// Decodes only an exact fixed-width V3 record.
+    /// Decodes only an exact fixed-width V4 record.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_RECORD_BYTES
             || usize::from(read_u16(encoded, 2)) != CONFIGURATION_RECORD_BYTES
@@ -1222,6 +1244,40 @@ impl ConfigurationRecord {
                         .ok_or(ConfigurationError::Evidence)?,
                 })
             }
+            RECORD_KIND_FOC_ADC_FRONTEND => {
+                if encoded[10..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocAdcFrontend(FocAdcFrontendParameters {
+                    instance,
+                    channel: FocCurrentChannel::from_wire(selector)
+                        .ok_or(ConfigurationError::Selector)?,
+                    attenuation: FocAdcAttenuation::from_wire(encoded[8])
+                        .ok_or(ConfigurationError::Selector)?,
+                    evidence: FactEvidence::from_wire(encoded[9])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
+            RECORD_KIND_FOC_PWM_HARDWARE => {
+                if selector != 0 {
+                    return Err(ConfigurationError::Selector);
+                }
+                if encoded[27..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocPwmHardware(FocPwmHardwareParameters {
+                    instance,
+                    peripheral_source_clock_hz: read_u32(encoded, 8),
+                    counter_clock_hz: read_u32(encoded, 12),
+                    timer_peak_ticks: read_u16(encoded, 16),
+                    minimum_active_ticks: read_u16(encoded, 18),
+                    maximum_quantization_error_ulps: read_u32(encoded, 20),
+                    peripheral_prescaler: encoded[24],
+                    timer_prescaler: encoded[25],
+                    evidence: FactEvidence::from_wire(encoded[26])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
             _ => return Err(ConfigurationError::RecordKind),
         };
         record.validate_shape()?;
@@ -1249,7 +1305,9 @@ impl ConfigurationRecord {
             | Self::FocController(_)
             | Self::FocRotor(_)
             | Self::FocCurrentChannel(_)
-            | Self::FocPwmAdcTiming(_) => true,
+            | Self::FocPwmAdcTiming(_)
+            | Self::FocAdcFrontend(_)
+            | Self::FocPwmHardware(_) => true,
         }
     }
 
@@ -1283,6 +1341,12 @@ impl ConfigurationRecord {
                 timing.instance,
                 phase_pair_wire(timing.phase_pair),
             ),
+            Self::FocAdcFrontend(frontend) => (
+                RECORD_KIND_FOC_ADC_FRONTEND,
+                frontend.instance,
+                frontend.channel as u16,
+            ),
+            Self::FocPwmHardware(hardware) => (RECORD_KIND_FOC_PWM_HARDWARE, hardware.instance, 0),
         }
     }
 
@@ -1406,6 +1470,8 @@ impl ConfigurationRecord {
             Self::FocRotor(rotor) => rotor.validate_shape()?,
             Self::FocCurrentChannel(channel) => channel.validate_shape()?,
             Self::FocPwmAdcTiming(timing) => timing.validate_shape()?,
+            Self::FocAdcFrontend(frontend) => frontend.validate_shape()?,
+            Self::FocPwmHardware(hardware) => hardware.validate_shape()?,
         }
         Ok(())
     }
@@ -1464,6 +1530,9 @@ struct FocProfileState {
     current_channel0: Option<FocCurrentChannelParameters>,
     current_channel1: Option<FocCurrentChannelParameters>,
     pwm_adc_timing: Option<FocPwmAdcTimingParameters>,
+    adc_channel0: Option<FocAdcFrontendParameters>,
+    adc_channel1: Option<FocAdcFrontendParameters>,
+    pwm_hardware: Option<FocPwmHardwareParameters>,
     encoder_counts_per_turn: Option<Rational>,
     pole_pairs: Option<Rational>,
     pwm_carrier_hz: Option<Rational>,
@@ -1490,6 +1559,9 @@ impl FocProfileState {
         current_channel0: None,
         current_channel1: None,
         pwm_adc_timing: None,
+        adc_channel0: None,
+        adc_channel1: None,
+        pwm_hardware: None,
         encoder_counts_per_turn: None,
         pole_pairs: None,
         pwm_carrier_hz: None,
@@ -1506,6 +1578,9 @@ impl FocProfileState {
             || self.current_channel0.is_some()
             || self.current_channel1.is_some()
             || self.pwm_adc_timing.is_some()
+            || self.adc_channel0.is_some()
+            || self.adc_channel1.is_some()
+            || self.pwm_hardware.is_some()
     }
 }
 
@@ -1521,7 +1596,7 @@ pub enum AxisDriverControl {
 /// For `step`, the active/inactive fields are pulse-high and pulse-low time.
 /// For `direction` and `driver_control`, they are setup-before-step and
 /// hold-after-step time. This role-specific interpretation is part of
-/// configuration V3.
+/// configuration V4.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StepperAxisProfile {
     pub instance: u16,
@@ -1551,6 +1626,9 @@ pub struct FocAxisProfile {
     pub current_channel0: FocCurrentChannelParameters,
     pub current_channel1: FocCurrentChannelParameters,
     pub pwm_adc_timing: FocPwmAdcTimingParameters,
+    pub adc_channel0: FocAdcFrontendParameters,
+    pub adc_channel1: FocAdcFrontendParameters,
+    pub pwm_hardware: FocPwmHardwareParameters,
 }
 
 /// Allocation-free executable facts retained from the exact configuration.
@@ -1700,6 +1778,12 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             ConfigurationRecord::FocPwmAdcTiming(timing) => {
                 self.retain_foc_pwm_adc_timing(timing)?;
             }
+            ConfigurationRecord::FocAdcFrontend(frontend) => {
+                self.retain_foc_adc_frontend(frontend)?;
+            }
+            ConfigurationRecord::FocPwmHardware(hardware) => {
+                self.retain_foc_pwm_hardware(hardware)?;
+            }
         }
         self.last_key = Some(key);
         self.seen_records += 1;
@@ -1846,6 +1930,15 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                 let pwm_adc_timing = retained
                     .pwm_adc_timing
                     .ok_or(ConfigurationError::IncompleteAxis)?;
+                let adc_channel0 = retained
+                    .adc_channel0
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let adc_channel1 = retained
+                    .adc_channel1
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let pwm_hardware = retained
+                    .pwm_hardware
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
                 let current_mask = role_bit(BindingRole::FocCurrentA)
                     | role_bit(BindingRole::FocCurrentB)
                     | role_bit(BindingRole::FocCurrentC);
@@ -1945,6 +2038,9 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     current_channel0,
                     current_channel1,
                     pwm_adc_timing,
+                    adc_channel0,
+                    adc_channel1,
+                    pwm_hardware,
                 };
                 foc::validate_profile(foc_profile)?;
                 profile.foc_axes[usize::from(foc_axes)] = Some(foc_profile);
@@ -2192,6 +2288,38 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             .ok_or(ConfigurationError::AxisCount)?;
         if state.pwm_adc_timing.replace(timing).is_some() {
             return Err(ConfigurationError::FocCurrent);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_adc_frontend(
+        &mut self,
+        frontend: FocAdcFrontendParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(frontend.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        let selected = match frontend.channel {
+            FocCurrentChannel::Channel0 => &mut state.adc_channel0,
+            FocCurrentChannel::Channel1 => &mut state.adc_channel1,
+        };
+        if selected.replace(frontend).is_some() {
+            return Err(ConfigurationError::FocHardware);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_pwm_hardware(
+        &mut self,
+        hardware: FocPwmHardwareParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(hardware.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.pwm_hardware.replace(hardware).is_some() {
+            return Err(ConfigurationError::FocHardware);
         }
         Ok(())
     }
@@ -2910,7 +3038,8 @@ impl ConfigurationFaultCode {
             | ConfigurationError::Evidence
             | ConfigurationError::FocRuntime
             | ConfigurationError::FocRotor
-            | ConfigurationError::FocCurrent => Self::ExactFact,
+            | ConfigurationError::FocCurrent
+            | ConfigurationError::FocHardware => Self::ExactFact,
             ConfigurationError::IncompleteAxis
             | ConfigurationError::AxisKind
             | ConfigurationError::AxisCount
@@ -3269,7 +3398,7 @@ pub struct ConfigurationCoordinatorStatus {
 }
 
 impl ConfigurationCoordinatorStatus {
-    /// Encodes the exact 264-byte V3 status body.
+    /// Encodes the exact 264-byte V4 status body.
     pub fn encode(
         self,
     ) -> Result<[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES], ConfigurationCoordinatorStatusError>
@@ -3309,7 +3438,7 @@ impl ConfigurationCoordinatorStatus {
         Ok(encoded)
     }
 
-    /// Decodes and re-encodes to require the unique V3 representation.
+    /// Decodes and re-encodes to require the unique V4 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationCoordinatorStatusError> {
         if encoded.len() != CONFIGURATION_COORDINATOR_STATUS_BYTES {
             return Err(ConfigurationCoordinatorStatusError::Length);
@@ -4240,6 +4369,7 @@ pub enum ConfigurationError {
     FocRuntime,
     FocRotor,
     FocCurrent,
+    FocHardware,
     MotionPolicy,
     Internal,
 }
@@ -4794,6 +4924,29 @@ mod tests {
                 pwm_dead_time_cycles: 8,
                 evidence: FactEvidence::Qualified,
             }),
+            ConfigurationRecord::FocAdcFrontend(FocAdcFrontendParameters {
+                instance: 0,
+                channel: FocCurrentChannel::Channel0,
+                attenuation: FocAdcAttenuation::Db11,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocAdcFrontend(FocAdcFrontendParameters {
+                instance: 0,
+                channel: FocCurrentChannel::Channel1,
+                attenuation: FocAdcAttenuation::Db11,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocPwmHardware(FocPwmHardwareParameters {
+                instance: 0,
+                peripheral_source_clock_hz: 160_000_000,
+                counter_clock_hz: 80_000_000,
+                timer_peak_ticks: 2_000,
+                minimum_active_ticks: 8,
+                maximum_quantization_error_ulps: 1_000_000,
+                peripheral_prescaler: 1,
+                timer_prescaler: 0,
+                evidence: FactEvidence::Qualified,
+            }),
         ]);
         records.sort_by_key(|record| record.key());
         records
@@ -5051,7 +5204,7 @@ mod tests {
     }
 
     #[test]
-    fn foc_v3_records_have_unique_canonical_fixed_width_encodings() {
+    fn foc_v4_records_have_unique_canonical_fixed_width_encodings() {
         let records = mks_foc_records(foc_shutdown(
             FocShutdownStrategy::PhaseHighImpedance,
             None,
@@ -5072,6 +5225,8 @@ mod tests {
                 RECORD_KIND_FOC_CONTROLLER | RECORD_KIND_FOC_ROTOR => 63,
                 RECORD_KIND_FOC_CURRENT_CHANNEL => 18,
                 RECORD_KIND_FOC_PWM_ADC_TIMING => 63,
+                RECORD_KIND_FOC_ADC_FRONTEND => 63,
+                RECORD_KIND_FOC_PWM_HARDWARE => 63,
                 _ => unreachable!(),
             };
             let mut noncanonical = encoded;
@@ -5082,7 +5237,47 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 7);
+        assert_eq!(checked, 10);
+
+        let frontend = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ))
+        .into_iter()
+        .find(|record| matches!(record, ConfigurationRecord::FocAdcFrontend(_)))
+        .unwrap();
+        let mut unknown_attenuation = frontend.encode().unwrap();
+        unknown_attenuation[8] = 0;
+        assert_eq!(
+            ConfigurationRecord::decode(&unknown_attenuation),
+            Err(ConfigurationError::Selector)
+        );
+        let ConfigurationRecord::FocAdcFrontend(mut unqualified_frontend) = frontend else {
+            unreachable!();
+        };
+        unqualified_frontend.evidence = FactEvidence::Measured;
+        assert_eq!(
+            ConfigurationRecord::FocAdcFrontend(unqualified_frontend).encode(),
+            Err(ConfigurationError::FocHardware)
+        );
+
+        let hardware = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ))
+        .into_iter()
+        .find(|record| matches!(record, ConfigurationRecord::FocPwmHardware(_)))
+        .unwrap();
+        let ConfigurationRecord::FocPwmHardware(mut invalid_hardware) = hardware else {
+            unreachable!();
+        };
+        invalid_hardware.minimum_active_ticks = invalid_hardware.timer_peak_ticks / 2;
+        assert_eq!(
+            ConfigurationRecord::FocPwmHardware(invalid_hardware).encode(),
+            Err(ConfigurationError::FocHardware)
+        );
 
         let timing = mks_foc_records(foc_shutdown(
             FocShutdownStrategy::PhaseHighImpedance,
@@ -5121,8 +5316,8 @@ mod tests {
             flags: ConfigurationFlags::default(),
         };
         let mut old_header = header.encode().unwrap();
-        old_header[0..8].copy_from_slice(b"ALMCFG02");
-        old_header[8..10].copy_from_slice(&2_u16.to_le_bytes());
+        old_header[0..8].copy_from_slice(b"ALMCFG03");
+        old_header[8..10].copy_from_slice(&3_u16.to_le_bytes());
         assert_eq!(
             ConfigurationHeader::decode(&old_header),
             Err(ConfigurationError::Magic)
@@ -5290,6 +5485,14 @@ mod tests {
         assert_eq!(lowered.current.snapshot().configuration_digest, digest);
         assert_eq!(lowered.current.snapshot().phase_pair, TwoShuntPhasePair::Ab);
         assert_eq!(lowered.pwm_dead_time_cycles, 8);
+        assert_eq!(lowered.adc_channel0.attenuation, FocAdcAttenuation::Db11);
+        assert_eq!(lowered.adc_channel1.attenuation, FocAdcAttenuation::Db11);
+        assert_eq!(lowered.pwm_hardware.peripheral_source_clock_hz, 160_000_000);
+        assert_eq!(lowered.pwm_hardware.peripheral_prescaler, 1);
+        assert_eq!(lowered.pwm_hardware.timer_prescaler, 0);
+        assert_eq!(lowered.pwm_compare.configuration_digest(), digest);
+        assert_eq!(lowered.pwm_compare.counter_clock_hz(), 80_000_000);
+        assert_eq!(lowered.pwm_compare.timer_peak_ticks(), 2_000);
         assert_eq!(
             configuration
                 .profile()
@@ -5330,6 +5533,64 @@ mod tests {
         .unwrap();
         validator.push(&bytes).unwrap();
         assert_eq!(validator.finish(), Err(ConfigurationError::FocRuntime));
+
+        let mut incompatible_timer = records.clone();
+        let ConfigurationRecord::FocPwmHardware(hardware) = incompatible_timer
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocPwmHardware(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        hardware.timer_peak_ticks = 1_999;
+        let (bytes, digest) = document(&package, &incompatible_timer, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::FocHardware));
+
+        let mut insufficient_pulse = records.clone();
+        let ConfigurationRecord::FocPwmHardware(hardware) = insufficient_pulse
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocPwmHardware(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        hardware.minimum_active_ticks = 7;
+        let (bytes, digest) = document(&package, &insufficient_pulse, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::FocHardware));
+
+        let mut missing_frontend = records.clone();
+        missing_frontend.retain(|record| {
+            !matches!(
+                record,
+                ConfigurationRecord::FocAdcFrontend(FocAdcFrontendParameters {
+                    channel: FocCurrentChannel::Channel1,
+                    ..
+                })
+            )
+        });
+        let (bytes, digest) = document(&package, &missing_frontend, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        validator.push(&bytes).unwrap();
+        assert_eq!(validator.finish(), Err(ConfigurationError::IncompleteAxis));
 
         let mut incomplete = records;
         incomplete.retain(|record| !matches!(record, ConfigurationRecord::FocRotor(_)));
@@ -5642,7 +5903,9 @@ mod tests {
                 | ConfigurationRecord::FocController(_)
                 | ConfigurationRecord::FocRotor(_)
                 | ConfigurationRecord::FocCurrentChannel(_)
-                | ConfigurationRecord::FocPwmAdcTiming(_) => {}
+                | ConfigurationRecord::FocPwmAdcTiming(_)
+                | ConfigurationRecord::FocAdcFrontend(_)
+                | ConfigurationRecord::FocPwmHardware(_) => {}
             }
         }
         records.sort_by_key(|record| record.key());

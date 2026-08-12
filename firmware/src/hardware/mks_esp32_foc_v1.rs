@@ -8,11 +8,13 @@
 //! rejects every motion/FOC output operation.
 
 use alumina_as5600::{As5600, MagnetStatus, Observation, RawAngle};
-use alumina_board::BoardPackage;
-use alumina_config::RealtimeConfigurationProfile;
+use alumina_board::{BoardPackage, ResourceId};
+use alumina_config::{
+    ConfigurationError, FocAdcAttenuation, RealtimeConfiguration, RealtimeConfigurationProfile,
+};
 use alumina_foc::{
     PwmCompareContract, PwmCompareError, SequentialAdcAcquisition, SequentialAdcAcquisitionError,
-    SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest,
+    SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest, TwoShuntPhasePair,
 };
 use alumina_motion::{
     OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
@@ -186,9 +188,205 @@ pub struct ClosedPowerStage<Pwm> {
 /// Exact portable contract plus the two HAL prescalers used by one MCPWM unit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClosedMcpwmConfiguration {
-    pub contract: PwmCompareContract,
-    pub peripheral_prescaler: u8,
-    pub timer_prescaler: u8,
+    contract: PwmCompareContract,
+    peripheral_source_clock_hz: u32,
+    peripheral_prescaler: u8,
+    timer_prescaler: u8,
+}
+
+#[allow(
+    dead_code,
+    reason = "stored configuration accessors await qualified target activation"
+)]
+impl ClosedMcpwmConfiguration {
+    /// Exact digest-bound portable timer/compare contract.
+    pub const fn contract(self) -> PwmCompareContract {
+        self.contract
+    }
+
+    /// Exact pre-divider MCPWM clock required by the stored configuration.
+    pub const fn peripheral_source_clock_hz(self) -> u32 {
+        self.peripheral_source_clock_hz
+    }
+
+    /// Raw zero-based MCPWM peripheral prescaler retained by configuration.
+    pub const fn peripheral_prescaler(self) -> u8 {
+        self.peripheral_prescaler
+    }
+
+    /// Raw zero-based MCPWM timer prescaler retained by configuration.
+    pub const fn timer_prescaler(self) -> u8 {
+        self.timer_prescaler
+    }
+}
+
+/// Rejection before a canonical FOC profile can select fixed MKS hardware.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "selection errors remain unreachable while the compiled stage is unqualified"
+)]
+pub enum StoredFocHardwareSelectionError {
+    /// The complete configuration or digest-bound FOC lowering rejected.
+    Configuration(ConfigurationError),
+    /// The configuration was validated for a different compiled board package.
+    Capability,
+    /// The selected stage, phase outputs, ADC routes, or phase pair is not one fixed motor.
+    Topology,
+    /// A current calibration does not describe the fixed 12-bit ADC1 owner.
+    AdcRange,
+}
+
+impl From<ConfigurationError> for StoredFocHardwareSelectionError {
+    fn from(error: ConfigurationError) -> Self {
+        Self::Configuration(error)
+    }
+}
+
+/// One target-checked ADC/MCPWM selection derived from canonical stored bytes.
+///
+/// Construction verifies the compiled capability digest and fixed schematic
+/// routing. It still exposes only the unqualified ADC commissioning selection
+/// and the stopped, disconnected MCPWM state; it grants no output transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "stored target selection remains unreachable while the compiled stage is unqualified"
+)]
+pub struct StoredFocAxisHardwareSelection {
+    axis: CurrentAxis,
+    adc: Adc1MotorAttenuation,
+    mcpwm: ClosedMcpwmConfiguration,
+}
+
+#[allow(
+    dead_code,
+    reason = "stored target selection remains unreachable while the compiled stage is unqualified"
+)]
+impl StoredFocAxisHardwareSelection {
+    /// Derives one fixed motor selection from an independently validated profile.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+        slot: usize,
+    ) -> Result<Self, StoredFocHardwareSelectionError> {
+        if configuration.identity().capability_digest
+            != board_mks_esp32_foc_v1::PACKAGE.board.capability_digest
+        {
+            return Err(StoredFocHardwareSelectionError::Capability);
+        }
+        let profile = configuration
+            .profile()
+            .foc_axis(slot)
+            .ok_or(ConfigurationError::IncompleteAxis)?;
+        let lowered = configuration.lower_foc_axis(slot)?;
+        if lowered.instance != profile.instance
+            || lowered.current.snapshot().phase_pair != TwoShuntPhasePair::Ab
+        {
+            return Err(StoredFocHardwareSelectionError::Topology);
+        }
+
+        let (axis, phase_resources, current_resources) = match profile.shutdown.power_stage {
+            ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_0) => (
+                CurrentAxis::Axis0,
+                [
+                    ResourceId::TimedOutput {
+                        engine: 0,
+                        channel: 0,
+                    },
+                    ResourceId::TimedOutput {
+                        engine: 0,
+                        channel: 1,
+                    },
+                    ResourceId::TimedOutput {
+                        engine: 0,
+                        channel: 2,
+                    },
+                ],
+                [
+                    ResourceId::Adc {
+                        unit: 1,
+                        channel: 3,
+                    },
+                    ResourceId::Adc {
+                        unit: 1,
+                        channel: 0,
+                    },
+                ],
+            ),
+            ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_1) => (
+                CurrentAxis::Axis1,
+                [
+                    ResourceId::TimedOutput {
+                        engine: 1,
+                        channel: 0,
+                    },
+                    ResourceId::TimedOutput {
+                        engine: 1,
+                        channel: 1,
+                    },
+                    ResourceId::TimedOutput {
+                        engine: 1,
+                        channel: 2,
+                    },
+                ],
+                [
+                    ResourceId::Adc {
+                        unit: 1,
+                        channel: 7,
+                    },
+                    ResourceId::Adc {
+                        unit: 1,
+                        channel: 6,
+                    },
+                ],
+            ),
+            _ => return Err(StoredFocHardwareSelectionError::Topology),
+        };
+        if [
+            profile.phase_u.resource,
+            profile.phase_v.resource,
+            profile.phase_w.resource,
+        ] != phase_resources
+            || [
+                profile.current_channel0_binding.resource,
+                profile.current_channel1_binding.resource,
+            ] != current_resources
+        {
+            return Err(StoredFocHardwareSelectionError::Topology);
+        }
+        let current = lowered.current.snapshot();
+        if current.channel0.adc_maximum_count != ADC1_MAXIMUM_COUNT
+            || current.channel1.adc_maximum_count != ADC1_MAXIMUM_COUNT
+        {
+            return Err(StoredFocHardwareSelectionError::AdcRange);
+        }
+
+        Ok(Self {
+            axis,
+            adc: Adc1MotorAttenuation {
+                current_a: lowered.adc_channel0.attenuation.into(),
+                current_b: lowered.adc_channel1.attenuation.into(),
+            },
+            mcpwm: ClosedMcpwmConfiguration {
+                contract: lowered.pwm_compare,
+                peripheral_source_clock_hz: lowered.pwm_hardware.peripheral_source_clock_hz,
+                peripheral_prescaler: lowered.pwm_hardware.peripheral_prescaler,
+                timer_prescaler: lowered.pwm_hardware.timer_prescaler,
+            },
+        })
+    }
+
+    pub const fn axis(self) -> CurrentAxis {
+        self.axis
+    }
+
+    pub const fn adc(self) -> Adc1MotorAttenuation {
+        self.adc
+    }
+
+    pub const fn mcpwm(self) -> ClosedMcpwmConfiguration {
+        self.mcpwm
+    }
 }
 
 /// MCPWM ownership after timer 0 is configured, stopped, and reset to zero.
@@ -268,6 +466,17 @@ impl Adc1Attenuation {
             Self::Db2p5 => Attenuation::_2p5dB,
             Self::Db6 => Attenuation::_6dB,
             Self::Db11 => Attenuation::_11dB,
+        }
+    }
+}
+
+impl From<FocAdcAttenuation> for Adc1Attenuation {
+    fn from(attenuation: FocAdcAttenuation) -> Self {
+        match attenuation {
+            FocAdcAttenuation::Db0 => Self::Db0,
+            FocAdcAttenuation::Db2p5 => Self::Db2p5,
+            FocAdcAttenuation::Db6 => Self::Db6,
+            FocAdcAttenuation::Db11 => Self::Db11,
         }
     }
 }
@@ -757,6 +966,11 @@ fn validate_closed_mcpwm_configuration(
     let peripheral_clock =
         PeripheralClockConfig::with_prescaler(configuration.peripheral_prescaler);
     let peripheral_hz = peripheral_clock.frequency().as_hz();
+    if u64::from(peripheral_hz).checked_mul(u64::from(configuration.peripheral_prescaler) + 1)
+        != Some(u64::from(configuration.peripheral_source_clock_hz))
+    {
+        return Err(ClosedMcpwmInitializationError::Clock);
+    }
     let timer_divisor = u32::from(configuration.timer_prescaler) + 1;
     if !peripheral_hz.is_multiple_of(timer_divisor)
         || peripheral_hz / timer_divisor != configuration.contract.counter_clock_hz()

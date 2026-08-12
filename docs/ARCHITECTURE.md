@@ -338,7 +338,7 @@ control route. This document, not `xtask` JSON formatting or Rust memory layout,
 is the browser's immutable board authority.
 
 `alumina-config` consumes that exact capability identity and streams canonical
-`ALMCFG03` bytes from an inert, content-addressed SD publication. Fixed resource
+`ALMCFG04` bytes from an inert, content-addressed SD publication. Fixed resource
 bindings and reduced exact nominal/uncertainty facts cover stepper, FOC,
 process, safety, serial/bus, timer/capture, and general I/O configuration. Core 0
 and core 1 hash and run the same semantic validator; only a later durable
@@ -842,10 +842,11 @@ current GPIO singletons, and exposes no FOC commit path.
 MCPWM and ADC tokens are sealed in closed type states with no extractor and no
 `PowerStage`/`CurrentSense` implementation. GPIO2 is tied into the USB
 auto-programming/strap circuit and remains service-owned. Core 0 owns Wi-Fi and
-reports an unavailable cache transport. Configuration V3 retains the explicit
-qualified shutdown contract and adds canonical rotor, controller, current-map,
-and PWM/ADC timing records. The MKS topology selects phase high impedance, but
-its `Described` stage cannot validate that contract until physical evidence
+reports an unavailable cache transport. Configuration V4 retains the explicit
+qualified shutdown, rotor, controller, current-map, and PWM/ADC timing records
+and adds canonical ADC-frontend and PWM-hardware selections. The MKS topology
+selects phase high impedance, but its `Described` stage cannot validate that
+contract until physical evidence
 promotes the immutable board package to `Qualified`. A fake enable binding,
 implicit GPIO alias, or configuration-side qualification claim is prohibited.
 
@@ -924,20 +925,23 @@ immediately stopped and reset to zero because the HAL exposes no
 configure-while-stopped call. No operator is attached to any pin and the owner
 exposes no controller, timer, compare write, or `PowerStage` implementation.
 
-`ALMCFG03` joins these portable contracts at the only executable boundary. One
+`ALMCFG04` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage
 shutdown topology. Fixed records retain loop rates and dividers, both PI loops,
-absolute-count rotor calibration and ULP policy, both current maps, and the
-complete PWM/ADC timing envelope. Reduced scalar authorities must exactly equal
+absolute-count rotor calibration and ULP policy, both current maps, both
+programmed ADC attenuations, the complete PWM/ADC timing envelope, and the exact
+MCPWM source/counter clocks, timer peak, minimum pulse, compare-error policy,
+and raw prescalers. Reduced scalar authorities must exactly equal
 the duplicated integer pole-pair, encoder-modulus, carrier, control-rate, and
 dead-time facts. Only after independent full-stream SHA-256 validation can the
 private real-time configuration container inject that digest and revalidate a
-`FocParameterSnapshot`, `RotorCalibration`, and proof-wrapped
-`TwoShuntCurrentCalibration`. This is lowering, not peripheral activation: the
-MKS stage remains non-armable, the diagnostic ADC1 transition is not connected
-to this lowering, and its stopped MCPWM owners are not connected to the
-portable latch model or configuration activation.
+`FocParameterSnapshot`, `RotorCalibration`, proof-wrapped
+`TwoShuntCurrentCalibration`, and `PwmCompareContract`. MKS target lowering also
+checks the compiled capability digest, fixed stage/phase/ADC topology, AB pair,
+and 12-bit ADC range before it can construct the otherwise-private stopped
+MCPWM selection. This is lowering, not peripheral activation: the MKS stage
+remains non-armable, and no operator is attached to a phase pin.
 
 ## Exact CAD-to-motor boundary
 

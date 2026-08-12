@@ -2,8 +2,8 @@
 
 use alumina_foc::{
     CountUncertainty, CurrentChannelCalibration, ElectricalPhase, FocParameterSnapshot,
-    FocTimingProfile, PiConfig, PwmAdcSynchronization, Q30, RotationPrecision, RotorCalibration,
-    RotorCountDirection, TwoShuntCurrentCalibration, TwoShuntPhasePair,
+    FocTimingProfile, PiConfig, PwmAdcSynchronization, PwmCompareContract, Q30, RotationPrecision,
+    RotorCalibration, RotorCountDirection, TwoShuntCurrentCalibration, TwoShuntPhasePair,
     ValidatedTwoShuntCurrentCalibration,
 };
 use alumina_protocol::{DeviceCycle, Digest};
@@ -46,6 +46,32 @@ impl FocCurrentChannel {
         match value {
             1 => Some(Self::Channel0),
             2 => Some(Self::Channel1),
+            _ => None,
+        }
+    }
+}
+
+/// Explicit analog attenuation programmed for one FOC current channel.
+///
+/// The values are the discrete classic-ESP32 ADC hardware settings. They do
+/// not imply an exact voltage range: the separately qualified current-channel
+/// calibration remains the sole code-to-current authority.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(u8)]
+pub enum FocAdcAttenuation {
+    Db0 = 1,
+    Db2p5 = 2,
+    Db6 = 3,
+    Db11 = 4,
+}
+
+impl FocAdcAttenuation {
+    pub(crate) const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Db0),
+            2 => Some(Self::Db2p5),
+            3 => Some(Self::Db6),
+            4 => Some(Self::Db11),
             _ => None,
         }
     }
@@ -152,6 +178,26 @@ impl FocCurrentChannelParameters {
     }
 }
 
+/// Qualified hardware selection for one stored current-channel calibration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocAdcFrontendParameters {
+    pub instance: u16,
+    pub channel: FocCurrentChannel,
+    pub attenuation: FocAdcAttenuation,
+    pub evidence: FactEvidence,
+}
+
+impl FocAdcFrontendParameters {
+    pub(crate) fn validate_shape(self) -> Result<(), ConfigurationError> {
+        if usize::from(self.instance) >= MAX_EXECUTABLE_FOC_AXES
+            || self.evidence != FactEvidence::Qualified
+        {
+            return Err(ConfigurationError::FocHardware);
+        }
+        Ok(())
+    }
+}
+
 /// Exact integer PWM/ADC timing and two-shunt uncertainty policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FocPwmAdcTimingParameters {
@@ -200,6 +246,49 @@ impl FocPwmAdcTimingParameters {
     }
 }
 
+/// Qualified integer timer and HAL-divider selection for one PWM owner.
+///
+/// The two prescalers retain the raw zero-based values consumed by the ESP32
+/// MCPWM HAL. `counter_clock_hz` is the exact clock after both dividers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocPwmHardwareParameters {
+    pub instance: u16,
+    pub peripheral_source_clock_hz: u32,
+    pub counter_clock_hz: u32,
+    pub timer_peak_ticks: u16,
+    pub minimum_active_ticks: u16,
+    pub maximum_quantization_error_ulps: u32,
+    pub peripheral_prescaler: u8,
+    pub timer_prescaler: u8,
+    pub evidence: FactEvidence,
+}
+
+impl FocPwmHardwareParameters {
+    pub(crate) fn validate_shape(self) -> Result<(), ConfigurationError> {
+        if usize::from(self.instance) >= MAX_EXECUTABLE_FOC_AXES
+            || self.peripheral_source_clock_hz == 0
+            || self.counter_clock_hz == 0
+            || self.timer_peak_ticks < 3
+            || self.minimum_active_ticks == 0
+            || u32::from(self.minimum_active_ticks) * 2 >= u32::from(self.timer_peak_ticks)
+            || self.maximum_quantization_error_ulps == 0
+            || self.evidence != FactEvidence::Qualified
+        {
+            return Err(ConfigurationError::FocHardware);
+        }
+        let complete_divisor = u64::from(self.peripheral_prescaler) + 1;
+        let complete_divisor = complete_divisor
+            .checked_mul(u64::from(self.timer_prescaler) + 1)
+            .ok_or(ConfigurationError::FocHardware)?;
+        if u64::from(self.counter_clock_hz).checked_mul(complete_divisor)
+            != Some(u64::from(self.peripheral_source_clock_hz))
+        {
+            return Err(ConfigurationError::FocHardware);
+        }
+        Ok(())
+    }
+}
+
 /// Complete controller-facing result derived from one validated configuration digest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LoweredFocAxisConfiguration {
@@ -209,6 +298,10 @@ pub struct LoweredFocAxisConfiguration {
     pub rotation_precision: RotationPrecision,
     pub current: ValidatedTwoShuntCurrentCalibration,
     pub pwm_dead_time_cycles: u32,
+    pub adc_channel0: FocAdcFrontendParameters,
+    pub adc_channel1: FocAdcFrontendParameters,
+    pub pwm_hardware: FocPwmHardwareParameters,
+    pub pwm_compare: PwmCompareContract,
 }
 
 impl RealtimeConfiguration {
@@ -249,6 +342,9 @@ fn lower_profile(
         profile.current_channel0.instance,
         profile.current_channel1.instance,
         profile.pwm_adc_timing.instance,
+        profile.adc_channel0.instance,
+        profile.adc_channel1.instance,
+        profile.pwm_hardware.instance,
     ]
     .iter()
     .any(|record_instance| *record_instance != instance)
@@ -319,6 +415,34 @@ fn lower_profile(
     .validated()
     .map_err(|_| ConfigurationError::FocCurrent)?;
 
+    if profile.adc_channel0.channel != FocCurrentChannel::Channel0
+        || profile.adc_channel1.channel != FocCurrentChannel::Channel1
+    {
+        return Err(ConfigurationError::FocHardware);
+    }
+    let pwm_compare = PwmCompareContract::new(
+        configuration_digest,
+        profile.pwm_adc_timing.device_cycle_hz,
+        profile.pwm_adc_timing.pwm_period_cycles,
+        profile.pwm_hardware.counter_clock_hz,
+        profile.pwm_hardware.timer_peak_ticks,
+        profile.pwm_hardware.minimum_active_ticks,
+        profile.pwm_hardware.maximum_quantization_error_ulps,
+    )
+    .map_err(|_| ConfigurationError::FocHardware)?;
+    pwm_compare
+        .validate_for(&parameters, synchronization)
+        .map_err(|_| ConfigurationError::FocHardware)?;
+    if u64::from(profile.pwm_hardware.minimum_active_ticks)
+        .checked_mul(u64::from(profile.pwm_adc_timing.device_cycle_hz))
+        .ok_or(ConfigurationError::FocHardware)?
+        < u64::from(profile.pwm_adc_timing.pwm_dead_time_cycles)
+            .checked_mul(u64::from(profile.pwm_hardware.counter_clock_hz))
+            .ok_or(ConfigurationError::FocHardware)?
+    {
+        return Err(ConfigurationError::FocHardware);
+    }
+
     Ok(LoweredFocAxisConfiguration {
         instance,
         parameters,
@@ -326,6 +450,10 @@ fn lower_profile(
         rotation_precision: profile.rotor.rotation_precision,
         current,
         pwm_dead_time_cycles: profile.pwm_adc_timing.pwm_dead_time_cycles,
+        adc_channel0: profile.adc_channel0,
+        adc_channel1: profile.adc_channel1,
+        pwm_hardware: profile.pwm_hardware,
+        pwm_compare,
     })
 }
 

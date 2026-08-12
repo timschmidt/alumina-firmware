@@ -578,11 +578,17 @@ configures, stops, and zeroes timer 0 in both MCPWM units. No operator or GPIO
 is attached, no compare is written, and all phase pins remain inputs. See the
 [MCPWM compare evidence](evidence/M8-EXACT-MCPWM-COMPARE.md).
 
-The next target slice joins ADC attenuation, MCPWM clocks/resolution/minimum
-pulse, and quantization policy to canonical configuration and the qualified
-safety/fault gate. Physical electrical alignment, calibrated analog error,
-truthful device-cycle edge stamps, measured sensor latency, and any nonzero
-duty remain separate reviewed work.
+Configuration V4 now joins both programmed ADC attenuations and the complete
+MCPWM source/counter clocks, raw dividers, timer peak, minimum-pulse domain, and
+quantization policy to canonical stored bytes. Full-stream lowering constructs
+the digest-bound current proof and `PwmCompareContract` together. The MKS target
+then requires its compiled capability identity and exact stage/phase/ADC routing
+before it can construct a private stopped-MCPWM selection. The current
+`Described` stage still closes this route before target selection. See the
+[FOC hardware configuration V4 evidence](evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md).
+Physical electrical alignment, calibrated analog error, truthful device-cycle
+edge stamps, measured sensor latency, and any nonzero duty remain separate
+reviewed work.
 
 Exit gate:
 

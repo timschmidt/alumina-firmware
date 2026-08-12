@@ -263,16 +263,17 @@ candidate. Every FOC/motion operation still rejects. This is compile evidence
 only, not a reset-state, shutdown, timing, or energization claim. See the
 [MKS safe-target evidence](docs/evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
-Canonical machine configuration is now deliberately V3. It retains the V2
-qualified shutdown topology and adds fixed records for normalized loop timing,
-direct/quadrature PI parameters, exact rotor calibration and rotation precision,
-two outward current-channel maps, and qualified PWM/ADC synchronization. Both
-cores validate the same fixed bytes. Only a complete SHA-256-verified profile
-can lower into digest-bound FOC controller, rotor, and current objects; no V1/V2
+Canonical machine configuration is now deliberately V4. It retains the V3 FOC
+controller, rotor, current, and synchronization records and adds both explicit
+ADC attenuations plus the exact MCPWM source/counter clocks, raw dividers, timer
+peak, minimum-pulse domain, and compare-error policy. Both cores validate the
+same fixed bytes. Only a complete SHA-256-verified profile can lower into
+digest-bound FOC controller, rotor, current, and PWM compare objects; no older
 compatibility decoder remains. Board-package qualification remains the
 authority, so configuration cannot promote the MKS stages beyond `Described`;
 the real target still rejects every FOC axis and exposes no energization path.
-See the [configuration V3 evidence](docs/evidence/M8-FOC-CONFIGURATION-V3.md).
+See the [configuration V4 evidence](docs/evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md)
+and its [V3 predecessor](docs/evidence/M8-FOC-CONFIGURATION-V3.md).
 
 Portable rotor angles now use exact wrapping binary turns. Nearest-quadrant
 reduction feeds outward Q2.30 sine/cosine series whose pi and coefficient
@@ -339,10 +340,12 @@ keeping the two unqualified power stages separate. A canonical FOC profile must
 bind one endpoint, exactly two phase-selected ADC inputs, all three PWM phases,
 and the qualified stage topology. Exact scalar authorities must agree with the
 retained integer pole-pair, encoder-modulus, loop-rate, PWM-period, and dead-time
-facts. The portable V3 tests replay all fixed record forms and every two-chunk
-byte boundary before lowering. These remain synthetic qualification fixtures;
-the physical MKS target is non-armable, ADC1 commissioning is unqualified and
-unscheduled, and both MCPWM units remain disconnected closed owners.
+facts. Portable V4 tests replay every fixed record form and every two-chunk byte
+boundary before lowering. The MKS adapter additionally checks the compiled
+capability digest and exact motor routing before constructing a private stopped
+MCPWM selection. These remain synthetic qualification fixtures; the physical
+MKS target is non-armable, ADC1 commissioning is unqualified and unscheduled,
+and both MCPWM units remain disconnected closed owners.
 
 ## Developer checks
 

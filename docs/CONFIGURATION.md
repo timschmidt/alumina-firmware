@@ -1,6 +1,6 @@
-# Canonical machine configuration V3
+# Canonical machine configuration V4
 
-`ALMCFG03` is the content-addressed machine/resource authority emitted by the
+`ALMCFG04` is the content-addressed machine/resource authority emitted by the
 browser/WASM compiler and independently validated on both ESP cores. It is not
 JSON, FluidNC configuration, G-code, a Rust memory image, or executable code.
 The complete bytes are uploaded as storage object kind `MachineConfiguration`
@@ -16,16 +16,16 @@ between revisions or capability/qualification changes.
 Integers are little-endian. Reserved bytes are zero. Unknown flags, record
 kinds, roles, facts, owners, polarities, or evidence values reject. Records are
 fixed-width and strictly ordered by `(kind, instance, selector)`; duplicate keys
-are consequently impossible. V3 admits 1–256 records and no trailing data. V1
-and V2 are not accepted; firmware and UI are updated together without a
+are consequently impossible. V4 admits 1–256 records and no trailing data. V1,
+V2, and V3 are not accepted; firmware and UI are updated together without a
 compatibility decoder.
 
 The fixed 80-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCFG03` |
-| 8 | 2 | exact schema version `3` |
+| 0 | 8 | ASCII `ALMCFG04` |
+| 8 | 2 | exact schema version `4` |
 | 10 | 2 | header bytes, exactly `80` |
 | 12 | 4 | total bytes, exactly `80 + record_count × 64` |
 | 16 | 32 | required canonical board-capability SHA-256 |
@@ -45,7 +45,7 @@ Every record is exactly 64 bytes. Its common prefix is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 2 | kind: binding `1`, scalar `2`, FOC shutdown `3`, runtime `4`, controller `5`, rotor `6`, current channel `7`, PWM/ADC timing `8` |
+| 0 | 2 | kind: binding `1`, scalar `2`, FOC shutdown `3`, runtime `4`, controller `5`, rotor `6`, current channel `7`, PWM/ADC timing `8`, ADC frontend `9`, PWM hardware `10` |
 | 2 | 2 | record bytes, exactly `64` |
 | 4 | 2 | logical instance; axis index for axis/motor facts |
 | 6 | 2 | kind-specific role or scalar-fact selector |
@@ -274,12 +274,48 @@ by device-cycle Hz. The device-cycle rate must equal PWM Hz times period cycles.
 Two channel records, this timing record, and the selected two ADC bindings lower
 as one validated current-calibration object; none is independently executable.
 
-V3 does not yet encode ADC attenuation, the MCPWM post-prescaler counter clock,
-integer timer peak, minimum active/inactive pulse ticks, or maximum accepted
-Q2.30 compare error. The compile-only owners require these facts separately and
-cannot be reached from configuration activation. They will be added by the next
-green-field schema revision rather than inferred from the current record or a
-board default.
+### FOC ADC-frontend records
+
+Kind `9` stores channel zero (selector `1`) or channel one (selector `2`) of the
+selected two-shunt pair:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 1 | programmed attenuation: 0 dB `1`, 2.5 dB `2`, 6 dB `3`, 11 dB `4` |
+| 9 | 1 | evidence, exactly qualified `3` |
+| 10 | 54 | reserved zero |
+
+These are discrete classic-ESP32 ADC settings, not exact voltage-range claims.
+The corresponding kind-`7` measured interval remains the sole mapping from ADC
+code to normalized current. Both channel selections are mandatory and retained
+with their matching calibrations; neither may come from a target default.
+
+### FOC PWM-hardware record
+
+Kind `10` has selector zero and stores the complete integer MCPWM clock and
+compare-lattice selection:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 4 | exact peripheral source clock Hz before division |
+| 12 | 4 | exact center-aligned counter clock Hz after both dividers |
+| 16 | 2 | integer up/down timer peak ticks |
+| 18 | 2 | minimum active and inactive ticks from either rail |
+| 20 | 4 | maximum admitted complete Q2.30 compare error in ULPs |
+| 24 | 1 | raw zero-based peripheral prescaler |
+| 25 | 1 | raw zero-based timer prescaler |
+| 26 | 1 | evidence, exactly qualified `3` |
+| 27 | 37 | reserved zero |
+
+The source clock must equal `counter_clock × (peripheral_prescaler + 1) ×
+(timer_prescaler + 1)` exactly. The counter clock must independently equal
+`PWM Hz × 2 × timer_peak`; both representations must agree with the kind-`8`
+device-cycle period. Timer peak is at least three, minimum pulse ticks are
+nonzero and leave a nonempty interior compare domain, and the compare-error
+budget is nonzero. Cross-domain integer products prove that the minimum pulse
+duration is not shorter than the configured dead time. All arithmetic is
+checked before a digest-bound
+`PwmCompareContract` can exist.
 
 ## Cross-record admission
 
@@ -302,7 +338,8 @@ resource, exactly the two ADC resources selected by its phase-pair record, one q
 contract, and pole-pair, encoder-count, current/voltage-limit,
 carrier/dead-time/control-rate, shunt, and current-gain facts. It also requires
 exactly one runtime record, direct and quadrature controller records, one rotor
-record, two current-channel records, and one PWM/ADC timing record. Runtime pole
+record, two current-channel records, one PWM/ADC timing record, two ADC-frontend
+records, and one PWM-hardware record. Runtime pole
 pairs, encoder modulus, PWM/current-loop rates, and dead-time ratio must equal
 their scalar authorities exactly. Phase and current binding rates must cover the
 PWM and current loops, while encoder rate times the integer velocity-loop
@@ -320,12 +357,19 @@ semantic validation, and SHA-256 verification, core 1 may lower a retained FOC
 slot. The combined `RealtimeConfiguration` cannot be assembled outside
 `alumina-config`; this prevents callers from pairing a profile with a different
 identity. Lowering injects that validated digest into `FocParameterSnapshot`,
-`RotorCalibration`, and `TwoShuntCurrentCalibration`, revalidates all three, and
-returns only the proof-wrapped current calibration. It does not initialize ADC,
-MCPWM, or a power stage.
+`RotorCalibration`, `TwoShuntCurrentCalibration`, and `PwmCompareContract`,
+revalidates all four, and retains both exact ADC attenuation selections and both
+raw MCPWM prescalers. It does not initialize ADC, attach an MCPWM operator to a
+pin, or create a power stage.
 
-MKS ESP32 FOC V1.0 structurally selects phase-high-impedance shutdown, but its
-current `Described` power-stage evidence deliberately rejects configuration.
+MKS ESP32 FOC V1.0 target lowering additionally requires the configuration's
+capability digest to equal the compiled package, matches U/V/W and both ADC
+bindings to one exact schematic motor, requires the AB two-shunt pair and the
+fixed 12-bit ADC1 range, and carries the stored source clock/prescalers into the
+stopped MCPWM owner. Arbitrary callers can no longer construct that owner's
+configuration. The board structurally selects phase-high-impedance shutdown,
+but its current `Described` power-stage evidence deliberately rejects the
+configuration before this target selection is reachable.
 Only the later board package produced from measured both-off/reset/fault timing
 may mark the stage `Qualified`; no fake pin, implicit alias, or compatibility
 shim can bypass that gate.
@@ -424,7 +468,7 @@ selector and likewise remains closed until revalidation finishes.
 
 ## Current implementation boundary
 
-The canonical V3 format, SD publication reader, dual independent validators, core
+The canonical V4 format, SD publication reader, dual independent validators, core
 framing, authenticated firmware routing, boot recovery, safe-state transitions,
 executable safety/stepper/FOC profiles, digest-bound FOC lowering, job-identity
 handoff, and raw-media two-phase selection journal are implemented. The portable
