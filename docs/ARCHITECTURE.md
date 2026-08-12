@@ -1029,9 +1029,19 @@ by that decoder. A portable runtime now admits the requested package and exact
 device/capability/configuration/implementation identities into const-generic
 state and queue arrays, primes Service tick zero, uniquely splits core-local
 owners, and executes the three fixed opcodes through a bounded critical-section
-bridge with a first-cause fault latch. It has no authenticated firmware route,
-live core-command transfer, board composition, resource opcode, measured WCET,
-or physical timing claim at this checkpoint.
+bridge with a first-cause fault latch.
+
+The package lifecycle is now composed into the actual split-core firmware. The
+browser publishes the 4 KiB package as an immutable typed SD object and drives
+authenticated install/status/activate requests. Core 0 independently reads and
+admits all bytes before sending bounded Begin/Data/Finish commands; core 1
+independently rehashes and admits a separate staging image, then selection and
+service agreement gate visibility of a distinct active image. Combined
+telemetry reports both actors, and active/in-flight graph state excludes
+configuration and job mutation. The lifecycle does not yet construct, prime,
+split, or schedule `FixedGraphRuntime` in the live tasks. Selection is
+boot-ephemeral, and there is no resource opcode, capability-published graph
+arena, measured WCET, or physical timing claim at this checkpoint.
 
 ## Security and update model
 

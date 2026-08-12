@@ -169,13 +169,26 @@ authority atomically latches the first fault and stops both domains. This is a
 portable functional executor; the declared WCET/reserve is not target timing
 evidence.
 
-Authenticated upload/storage lifecycle, independent transfer through the live
-core boundary, firmware task composition, active/candidate replacement,
-uninstall/rollback, measured deadline/WCET monitoring, resource opcodes,
-telemetry, and HIL timing evidence remain later work. Fixed firmware safety
-continues to have authority over every graph release and every future physical
-operation.
+The first authenticated deployment lifecycle is now live. The browser publishes
+the exact package as a typed immutable SD object, sends an identity-only install
+request through the existing HMAC route, and reconciles status until both cores
+independently admit the same content/package/implementation identities. Core 0
+owns the verified publication reader and a complete validation buffer. Core 1
+owns distinct staging and active 4 KiB arrays. Begin/Data/Finish/Activate/
+Authorize/Clear/Abort commands fit the existing fixed inter-core payload, and a
+combined canonical report exposes both actors without treating progress as
+authority. Configuration, jobs, storage mutation, and graph lifecycle exclude
+one another while fixed safety remains authoritative.
+
+That lifecycle selects bytes but does not yet instantiate or split
+`FixedGraphRuntime` inside the live Embassy tasks. Active selection is
+boot-ephemeral; durable selector recovery, start/stop epochs, executor task
+composition, measured deadline/WCET monitoring, resource opcodes,
+capability-published arena limits, physical telemetry, and HIL timing remain
+later work.
 
 The reproduced compiler/runtime fixtures, target link results, artifact hashes,
 and closed claims are recorded in
 [`evidence/M9-FIXED-GRAPH-RUNTIME.md`](evidence/M9-FIXED-GRAPH-RUNTIME.md).
+The authenticated SD/core lifecycle and its narrower open claims are recorded
+in [`evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md).

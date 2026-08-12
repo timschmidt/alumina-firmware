@@ -373,8 +373,12 @@ arenas. A portable firmware runtime now transactionally admits those exact
 bytes/identities into const-generic storage, primes Service tick zero, splits
 unique Service/Realtime owners, executes the three fixed opcodes at exact
 release cycles, and shares only the bounded bridge and first-cause fault latch.
-General node/state/Event execution, authenticated upload/core transfer, live
-task composition, replacement lifecycle, measured executor timing, resource
+The headless browser/WASM client now publishes that package through the
+resumable SD cache and drives authenticated install/status/activate operations.
+Firmware independently replays it on core 0 and core 1, retains distinct
+candidate/active images, and withholds active bytes until both cores authorize
+the exact identities. General node/state/Event execution, durable graph
+selection, live fixed-executor composition, measured executor timing, resource
 opcodes, capability palette, and graph UI remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
@@ -383,7 +387,9 @@ opcodes, capability palette, and graph UI remain open. See the
 [`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) and
 [`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
-[`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md) evidence.
+[`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
+[`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
+evidence.
 
 ### Execution semantics
 

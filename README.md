@@ -38,9 +38,15 @@ interface lowers one audited Boolean Service-to-Realtime graph into a fixed
 4 KiB package; firmware independently decodes exact identities and arena
 requirements, primes source tick zero, splits compile-time storage between core
 owners, and executes only the three whitelisted opcodes through a bounded
-bridge with a first-cause fault latch. No authenticated install route, live
-firmware task, resource opcode, target timing, or physical side effect is
-claimed yet. See the [fixed graph-IR boundary](docs/GRAPH-IR.md).
+bridge with a first-cause fault latch. The package can now be uploaded as an
+immutable SD object, installed through authenticated Wi-Fi, independently
+rehash-validated on core 0 and core 1, selected, and exposed only after an exact
+dual-core authorization handshake. The lifecycle is composed into the live
+Embassy tasks on every current board image. Active selection is still
+boot-ephemeral, and those tasks do not yet instantiate the fixed executor or a
+resource opcode; no target timing or physical side effect is claimed. See the
+[fixed graph-IR boundary](docs/GRAPH-IR.md) and [deployment
+evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic

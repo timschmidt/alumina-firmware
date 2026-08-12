@@ -671,7 +671,13 @@ firmware runtime: transactional exact-identity admission into const-generic
 arenas, safety-gated Service tick-zero priming, unique Service/Realtime endpoint
 ownership, canonical queue execution, exact-cycle release admission, and a
 shared first-cause fault latch. Authenticated upload/core transfer, live task
-composition, active/candidate replacement, measured executor timing, resource
+composition, and active/candidate lifecycle are now present: the browser
+publishes a typed immutable 4 KiB SD object, an authenticated coordinator has
+both cores independently validate and select its exact identities, and fixed
+staging/active storage plus dual-core authorization are linked in every current
+board image. The headless browser/WASM client reconciles lost responses and
+rejects foreign identity. Durable selection/boot recovery, composition of the
+selected bytes into live fixed executors, measured executor timing, resource
 opcodes, capability nodes, and graph UI remain open.
 See the
 [canonical document](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md),
@@ -681,7 +687,9 @@ See the
 [exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) and
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
-[portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md) evidence.
+[portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
+[authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
+evidence.
 
 Exit gate:
 

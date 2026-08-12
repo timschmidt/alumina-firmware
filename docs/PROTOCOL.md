@@ -30,6 +30,8 @@ configuration. Configuration lifecycle requests bind the current active digest
 for `Get`/`Validate` and the exact selected candidate or active digest for
 `Commit`/`Rollback`; the operation body independently repeats the selected
 identity. Capability and unconfigured discovery frames require zero.
+Graph lifecycle frames require the exact currently authorized configuration;
+their bodies separately repeat transaction and package identities.
 
 ## Operation prefix
 
@@ -73,8 +75,9 @@ the `/api/v1/control` path, so a proof cannot be replayed against another route.
 | fault `0x0bxx` | fault event, reset request, physical/policy confirmation |
 | waveform `0x0cxx` | configure, arm, chunk, stop |
 | update `0x0dxx` | inspect, begin, put chunk, finalize, commit, rollback |
+| graph `0x0exx` | get, install published package, activate, clear/abort |
 
-The Rust enum assigns all 50 values explicitly and rejects every unassigned
+The Rust enum assigns all 55 values explicitly and rejects every unassigned
 number. Operation-specific bodies are added only with fixed budgets and golden
 browser/native/firmware fixtures.
 
@@ -561,6 +564,55 @@ for new region start/count; 64 for the fresh 16-byte ID; and 80 for SHA-256 over
 the preceding 80 bytes. Flag bit zero confirms destructive format and bit one
 confirms recovery of recognizable but untrusted locator bytes; no other flag is
 assigned.
+
+## Fixed graph-package lifecycle
+
+Graph objects use storage kind `DeployedGraph` (`7`) and are exactly 4,096
+bytes. Publication alone is inert. `GraphInstall` (`0x0e02`) names an already
+published object in one exact 168-byte `ALGRPQ01` body:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | magic `ALGRPQ01` |
+| 8 | 2 | exact graph-IR version `1` |
+| 10 | 6 | reserved zero |
+| 16 | 8 | nonzero boot-local transaction ID |
+| 24 | 80 | canonical typed `PublishedObject` |
+| 104 | 32 | embedded graph-package digest |
+| 136 | 32 | audited implementation-registry digest |
+
+The published object's content identity is SHA-256 over all 4,096 stored bytes.
+The embedded package digest is SHA-256 over the canonical padded prefix before
+its final digest field. Both are required and must remain distinct roles.
+
+`GraphActivate` (`0x0e03`) and `GraphClear` (`0x0e04`) use one 88-byte
+`ALGRPS01` body: magic/version/reserved through byte 16, transaction at 16,
+complete storage-content digest at 24, and embedded package digest at 56.
+`GraphGet` (`0x0e01`) has an empty request body. There is no raw graph-document,
+G-code, source geometry, or arbitrary-code operation.
+
+Core 0 transfers an independently validated package to core 1 with a canonical
+`ALGC` command. The fixed prefix is 128 bytes and Data appends at most 208
+initialized bytes, so it fits the 336-byte command payload exactly. The prefix
+contains version/action, transaction, storage digest, package digest,
+implementation digest, contiguous offset, and data length. Actions are Begin,
+Data, Finish, Activate, Clear, Abort, and Authorize; non-Data actions have no
+payload and every unused byte is zero.
+
+Core 1's fixed 128-byte `ALGR` report retains receiver state, transaction, both
+digests, consumed bytes, optional node/channel/bridge counts, fault, active
+content identity, and a separate authorization bit. Core 0 returns it inside a
+256-byte `ALGS` coordinator report with service phase/fault, independent
+validated byte and SD-chunk counts, and the service-owned active identity.
+Canonical Empty, Validating, CandidateValid, Activating, Authorizing, Active,
+Clearing, Aborting, and Rejected shapes are independently checked. Active
+requires the two actors to name the same exact content and core 1 to report
+authorization.
+
+The public `GET /api/v1/identity` JSON includes `device_id` as 32 lowercase hex
+digits. On ESP targets this is the public namespace bytes `ALUM-ESP1:` followed
+by the six factory base-MAC bytes. It is stable targeting information, not a
+secret, credential, or arming fact.
 
 ## Encoding and security boundary
 

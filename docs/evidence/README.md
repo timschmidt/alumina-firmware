@@ -177,3 +177,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-FIXED-GRAPH-RUNTIME.md`](M9-FIXED-GRAPH-RUNTIME.md) — transactional
   const-generic admission, source-first start priming, split-core fixed-opcode
   execution, first-cause faults, and direct browser-compiler/runtime replay.
+- [`M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md`](M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
+  — immutable SD publication, authenticated browser lifecycle, independent
+  dual-core admission/authorization, live Embassy ownership, target links, and
+  explicit boot-ephemeral/non-executing boundaries.
