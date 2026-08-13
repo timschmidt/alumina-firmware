@@ -298,6 +298,13 @@ exact bounded component-local refinement which lowers feeds until every
 touching positive span owns a replayed monotonic jerk transition. The caller
 keeps entry and exit at zero and permits a positive internal ceiling only for a
 lossless exact source-line pair which Hyperpath independently classifies G1.
+For an all-line route, exact retained unit-direction components now feed
+Hyperpath's arbitrary dense-axis affine projection. The planner selects
+route-wide scalar velocity, acceleration, and jerk limits from exact per-axis
+Configuration V5 facts and independently replays every span/axis inequality
+and selected bottleneck through Hypersolve. Any curved carrier keeps the prior
+conservative direction-independent limits because affine derivatives do not
+certify curvature or nonlinear kinematics.
 True corners, reversals, curvature-bearing joins, and every cubic chord remain
 full stops. The resulting schedule passes through bounded machine-resolution
 interpolation, real `alumina-machine-ir`, production stepper preflight,
@@ -325,6 +332,8 @@ physical delivery, and reproducible release pinning remain open. See the
 [exact two-pass lookahead evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
 [exact monotonic-jerk evidence](evidence/M10-EXACT-MONOTONIC-JERK.md),
 [exact jerk-feasible G1 evidence](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
+[exact affine-axis projection
+evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
 and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
@@ -358,13 +367,18 @@ two-phase monotonic jerk transition; bounded exhaustion is a typed failure.
 Alumina now enables that path only for lossless exact line-to-line G1 joins.
 Its zero/zero spans keep the four-phase rest-to-rest schedule, while curved
 joins, approximated cubic chords, corners, and reversals remain stops. This
-closes the first conservative jerk-feasible positive-boundary mechanism, not
-N-axis projection, curvature/vector-jerk certification, retained blends,
-time-optimal profiles, hold/resume, or HIL. See
+closes the first conservative jerk-feasible positive-boundary mechanism.
+Hyperpath now also projects exact affine velocity, acceleration, and jerk
+limits across arbitrary dense axes; Alumina activates that report for exact
+Cartesian line routes and retains the conservative fallback for any curve.
+Curvature-aware projection, nonlinear kinematics, vector-jerk certification,
+retained blends, timer-lattice attainability, time-optimal profiles,
+hold/resume, and HIL remain open. See
 [`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md)
 and
 [`M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md), plus
-[`M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md).
+[`M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md) and
+[`M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

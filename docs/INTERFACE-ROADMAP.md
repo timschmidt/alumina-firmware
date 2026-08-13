@@ -238,11 +238,16 @@ lowers each stop-separated positive component by uniform halving until all of
 its spans have replayed monotonic jerk transitions. The current policy supplies
 positive internal ceilings only to lossless source-line pairs with an exact G1
 join; curvature-bearing joins, corners, reversals, and every cubic chord retain
-zero ceilings. Phase selection reads those actual nodes: zero/zero retains the
-four-phase rest-to-rest profile and positive spans consume Hyperpath's retained
-two-phase transition. Caller-bounded interpolation is then lowered to the
-sibling `alumina-machine-ir` type. Production stepper preflight, immutable cache
-partitioning, independent event simulation, and canonical `ALMEVD02` source,
+zero ceilings. For an all-line route, exact retained unit-direction components
+feed Hyperpath's arbitrary dense-axis affine velocity/acceleration/jerk
+projection, with every span/axis row and bottleneck independently replayed.
+Curved routes deliberately retain conservative direction-independent limits
+and no affine projection. Phase selection reads the actual nodes: zero/zero
+retains the four-phase rest-to-rest profile and positive spans consume
+Hyperpath's retained two-phase transition. Caller-bounded interpolation is then
+lowered to the sibling `alumina-machine-ir` type. Production stepper
+preflight, immutable cache partitioning, independent event simulation, and
+canonical `ALMEVD02` source,
 metric, and approximation evidence replay must all succeed transactionally.
 
 An optional UI-only CNC adapter now parses a deliberately selected connected XY
@@ -263,6 +268,8 @@ See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 [exact two-pass evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
 [exact monotonic-jerk evidence](evidence/M10-EXACT-MONOTONIC-JERK.md),
 [exact jerk-feasible G1 evidence](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
+[exact affine-axis projection
+evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 

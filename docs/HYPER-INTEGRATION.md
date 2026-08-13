@@ -15,7 +15,7 @@ loop.
 | `hypertri` | 0.4.1, Apache-2.0 | Exact triangulation where CAM or visualization requires it |
 | `hypermesh` | 0.1.0, Apache-2.0 | Exact mesh topology and checked graphics conversion |
 | `hypercurve` | 0.3.1, Apache-2.0 | Exact line/arc/Bezier/NURBS paths and regions, derivatives, projection, and chord-error-controlled finite reduction |
-| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, exact two-pass junction lookahead, component-local jerk-feasibility refinement, and independently replayed jerk scheduling |
+| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, exact two-pass junction lookahead, component-local jerk-feasibility refinement, exact affine dense-axis motion projection, and independently replayed scheduling |
 | `hypersolve` | 0.3.1, Apache-2.0 | Symbolic constraints, exact direct solving, numerical proposal separation, exact residual replay, and interval/Krawczyk certification |
 | `csgrs` | 0.23.0, Apache-2.0 | Current solid, `TriangleMesh`, and `CurveRegion2` modeling/CAM source types |
 | `hypergraphics` | 0.1.0, Apache-2.0 | Sole checked exact-scene/camera-to-GPU boundary; never a CAM input |
@@ -46,7 +46,10 @@ schedules; and a combined lookahead feed schedule. Relevant entry points include
   `PlannedMonotonicJerkTransition`; and
 - `plan_jerk_feasible_lookahead_schedule`,
   `PlannedJerkFeasibleLookaheadSchedule`, and
-  `JerkFeasibleNodeComponent`.
+  `JerkFeasibleNodeComponent`; and
+- `plan_axis_projected_motion_limits`,
+  `certify_axis_projected_motion_limits`, and
+  `PlannedAxisProjectedMotionLimits`.
 
 The exact proposer combines caller ceilings, global feed, exact tangent class,
 retained blend radii, and exact element lengths. It propagates squared-speed
@@ -73,11 +76,25 @@ lookahead replay, and the certified transition for each positive span. A
 caller-owned bound fails with a typed exhaustion result. The construction is
 conservative and deterministic, not a general time-optimal S-curve.
 
+For an affine span, Hyperpath accepts exact nonnegative axis derivatives
+`c_i = |dq_i/ds|` and exact per-axis limits. It selects the route-wide scalar
+velocity, acceleration, and jerk minima implied by `c_i v <= V_i`,
+`c_i a <= A_i`, and `c_i j <= J_i`, independently replays every row through
+Hypersolve, and proves equality at each deterministically selected bottleneck.
+The rows are dense and accept arbitrary axis counts; zero derivatives do not
+restrict that scalar component and an all-zero span rejects. These equations
+are valid only while `dq_i/ds` is constant. Curves and nonlinear kinematics
+need higher derivative terms and a different certificate.
+
 The interface CAM layer extends and composes these reports rather than
-introducing unrelated `f64` motion math. Broader work still required includes
-direction-aware and multi-axis constraint projection, process limits,
-kinematics, stop/hold replanning, additional step/PWM/timer lattices, and
-conservative composition of later geometric and temporal certificates.
+introducing unrelated `f64` motion math. Its all-line Cartesian route derives
+exact unit-direction components from retained Hyperpath lines and applies the
+affine projection to Configuration V5 axis facts. If any carrier is curved, it
+retains a conservative direction-independent limit and no affine report.
+Broader work still required includes curvature-aware and nonlinear-kinematic
+projection, process limits, stop/hold replanning, exact attainable bounds on
+step/PWM/timer lattices, and conservative composition of later geometric and
+temporal certificates.
 
 The implemented first cubic boundary retains a native exact Hypercurve source
 and constructs a separate Hyperpath metric path only after a bounded pointwise
@@ -100,7 +117,9 @@ and
 plus
 [`evidence/M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md)
 and
-[`evidence/M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md).
+[`evidence/M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
+followed by
+[`evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md).
 
 ## Hypersolve's role
 

@@ -151,6 +151,16 @@ every generated cubic chord remain stops. This deliberately narrow gate does
 not certify curvature continuity, vector jerk, N-axis projection, optimality,
 or any physical output.
 
+The first exact affine dense-axis checkpoint is recorded in
+[`evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md).
+Its required regression set includes distinct exact velocity/acceleration/jerk
+bottlenecks, zero-derivative axes, empty/mismatched/negative/stationary input,
+an unsafe proposal, generated row replay, a Cartesian 3-4-5 lossless-line G1
+route with exact `5/4` projection and terminal steps, and an explicit curved
+route fallback. Every selected limit must replay every span/axis inequality and
+equal its retained bottleneck. The checkpoint deliberately keeps timer-lattice
+attainability and all physical-output claims closed.
+
 ### 4. Per-board compile matrix
 
 Every described board has a CI job that:

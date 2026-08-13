@@ -666,9 +666,17 @@ separately constructed and generically replayed two-phase monotonic transition.
 Alumina grants a positive internal ceiling only to lossless exact source-line
 pairs with an independently classified G1 join. Zero/zero spans retain the
 four-phase rest-to-rest branch; curvature-bearing joins, true corners,
-reversals, and approximated cubic chords remain stops. N-axis projection,
-retained blend geometry, curvature/vector-jerk-aware limits, general and
-time-optimal profiles, and hold/resume replanning remain open.
+reversals, and approximated cubic chords remain stops.
+
+For affine spans, Hyperpath now projects exact nonnegative `|dq_i/ds|` rows
+against velocity, acceleration, and jerk limits for any dense axis count. It
+selects each exact route-wide scalar minimum and independently replays every
+span/axis inequality and bottleneck through Hypersolve. The current Cartesian
+browser compiler derives unit-direction rows for an all-line route. A route
+containing a curve retains conservative direction-independent limits and no
+affine report. Curvature-aware projection, nonlinear kinematics, retained blend
+geometry, vector-jerk-aware limits, general and time-optimal profiles, exact
+timer-lattice attainability, and hold/resume replanning remain open.
 
 The portable `alumina-motion` executor now implements the first step-only part
 of layers 5–7 without owning hardware. It validates a dense stepper profile
@@ -979,7 +987,8 @@ flowchart LR
 - CSGRS solids and native Hypermesh/Hypercurve geometry stay exact.
 - All work/tool/machine transforms used for CAM are exact `Real` operations.
 - Hyperpath owns exact toolpath elements, retained provenance, path length/feed
-  reports, junction lookahead, and jerk-ramp scheduling where available.
+  reports, affine dense-axis constraint projection, junction lookahead, and
+  jerk-ramp scheduling where available.
 - Hypersolve proposes and certifies constraint solutions; approximate candidates
   never bypass exact residual or interval-certified replay.
 - A machine profile expresses resolution and calibration as rational values where

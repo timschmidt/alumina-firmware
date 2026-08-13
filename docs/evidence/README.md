@@ -269,3 +269,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   lossless line-to-line G1 continuations, conservative curvature/cubic stop
   policy, production executor lowering, and renewed native/WASM/loopback
   evidence with every physical claim kept closed.
+- [`M10-EXACT-AFFINE-AXIS-PROJECTION.md`](M10-EXACT-AFFINE-AXIS-PROJECTION.md)
+  — arbitrary dense-axis exact affine velocity/acceleration/jerk projection,
+  independent Hypersolve row and bottleneck replay, active Cartesian-line CAM
+  integration, conservative curved-route fallback, and the retained-open
+  timer/output-quantum boundary.
