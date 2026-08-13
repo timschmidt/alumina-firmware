@@ -58,9 +58,11 @@ layers, explicit state feedback, typed ports, exact parameters, and exact-cursor
 plots. Canonical `ALGW` keeps presentation-only integer placement separate from
 the embedded `ALGR`; its 11-entry fixed-schema palette supports monotonic node
 creation, atomic node/incident-wire deletion, node moves, typed wire edits, and
-bounded exact scalar parameter replacement. All edits are transactional, and
-graph changes detach the old graph-bound trace. It grants no deployment or
-output authority. See
+bounded exact scalar parameter replacement. Bounded canonical snapshots now
+provide undo/redo, origin-local browser storage preserves only the current
+document, and native/browser `.algw` exchange requires full replay and audited
+draft admission. All edits are transactional, and graph changes detach the old
+graph-bound trace. It grants no deployment or output authority. See
 the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
 evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
 execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
@@ -69,7 +71,9 @@ execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 and the [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
-palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md).
+palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md), plus
+the [graph history/persistence
+evidence](docs/evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md).
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic

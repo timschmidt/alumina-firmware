@@ -396,9 +396,12 @@ through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
 resource opcodes, broader graph/front-panel workflows, and live plots remain
 open. Canonical placement/wiring and an 11-kind audited palette now support
-node create/delete and exact scalar parameter replacement; history/persistence,
-composite or identity-bearing parameter editors, and component/front-panel
-documents remain open. See the
+node create/delete and exact scalar parameter replacement. Bounded complete
+`ALGW` snapshots now provide replay-backed undo/redo, origin-local browser
+persistence preserves only the current document, and native/browser `.algw`
+exchange crosses the same canonical and audited draft-admission boundary.
+Composite or identity-bearing parameter editors, collaboration/conflict
+handling, and component/front-panel documents remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -408,6 +411,7 @@ documents remain open. See the
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
+[`graph history/persistence`](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

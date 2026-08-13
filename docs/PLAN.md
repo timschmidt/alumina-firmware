@@ -708,9 +708,11 @@ only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, additional capability nodes, composite and
 identity-bearing parameter editors, label/domain editing,
-component/front-panel documents, workspace history/persistence, and broader
+component/front-panel documents, collaboration/conflict handling, and broader
 live plots remain open. Canonical HostExact node creation/deletion and exact
-scalar parameter editing now exist through an 11-kind audited palette. A
+scalar parameter editing now exist through an 11-kind audited palette. Bounded
+canonical snapshots add replay-backed undo/redo; browser storage and
+native/browser `.algw` exchange preserve only fully replayed, audited drafts. A
 disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed
 radio-startup suspension and proved that an ordinary core-1 executor could miss
 the 200 us dispatch reserve. The fixture now discards and re-debounces input
@@ -730,6 +732,7 @@ See the
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
+[graph history/persistence](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and
