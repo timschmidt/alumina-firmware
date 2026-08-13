@@ -193,6 +193,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   canonical `ALGC` authoring packages, typed public connector mappings, exact
   front-panel bindings, transactional workspace replacement, and a visible
   PID/interlock component panel.
+- [`M9-GRAPH-HIERARCHY-FLATTENING.md`](M9-GRAPH-HIERARCHY-FLATTENING.md) —
+  canonical digest-bound `ALGH` libraries/instances, derived collapsed port
+  shapes, deterministic connector rewiring with fresh monotonic identities,
+  and ordinary audited `ALGW` output.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.
