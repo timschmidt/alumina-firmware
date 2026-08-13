@@ -716,8 +716,15 @@ GPIO22/32/33/35 and keeps every descriptive-but-unadmitted ADC, UART, timer,
 shifted output, storage resource, other GPIO, and raw pin operation closed.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
 endpoints and filter host plots without mutating the graph or granting live
-telemetry. Canonical HostExact node creation/deletion and exact
-scalar parameter editing now exist through an 11-kind audited palette. Bounded
+telemetry. A complete bounded allocation-free `ALMCAP02` decoder now feeds a
+board-name-independent owned explorer model. The visible TinyBee reference
+separates all 62 descriptive resources, aliases, owners, safe/hazard facts and
+supporting-ledger counts from the four graph-readable inputs; searchable
+graph-closed and hazardous views do not create operations. Because the package
+publishes no licensed visual, the UI draws no board shape or hotspot and keeps
+the physical-reconciliation HIL gate visibly open. Canonical HostExact node
+creation/deletion and exact scalar parameter editing now exist through an
+11-kind audited palette. Bounded
 canonical snapshots add replay-backed undo/redo; browser storage and
 native/browser `.algw` exchange preserve only fully replayed, audited drafts. A
 disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed
@@ -744,7 +751,7 @@ and
 [graph components/front panels](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [graph hierarchy flattening](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
-and
+and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and

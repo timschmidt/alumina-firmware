@@ -421,7 +421,14 @@ draft makes those nodes visible while showing that ADC, UART, timer, shifted
 output, storage, raw GPIO, and all other unadmitted access remain closed.
 Canonical `ALGP` sidecars now bind bounded probes to exact workspace outputs;
 the reference plot is probe-selected, but no live telemetry or trigger
-authority is implied. See the
+authority is implied. The complete capability document now also has a bounded
+allocation-free descriptive decoder and a board-name-independent owned explorer
+model. The visible TinyBee view exposes all 62 typed resources, 51 aliases,
+owners, safe states, hazards and supporting-section counts while keeping its
+four graph-readable inputs visibly narrower. Searchable graph-closed/hazardous
+views grant no operation. No photo or hotspot is drawn because the exact package
+publishes no licensed visual; its physical-reconciliation HIL gate remains
+open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -436,7 +443,7 @@ and
 [`graph components/front panels`](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [`graph hierarchy flattening`](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
-and
+and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

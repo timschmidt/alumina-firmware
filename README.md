@@ -182,11 +182,17 @@ compile its independently recomputed SHA-256, firmware verifies it before Wi-Fi,
 identity advertises it, and authenticated `CapabilitiesGet` returns bounded
 digest-stable ranges. Preparation still returns `Unsupported` on both current
 images because neither board package is armable; configuration commit and
-hardware qualification remain separate closed gates. See the
+hardware qualification remain separate closed gates. A complete bounded
+consumer decoder now exposes borrowed resource, alias, visual and hotspot views
+without allocation; the interface uses it for a searchable TinyBee ledger that
+keeps all descriptive facts separate from the four explicitly graph-readable
+inputs and draws no physical overlay while the package has no licensed photo.
+See the
 [portable lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md) and
 [firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md), plus the
 [capability format](docs/CAPABILITIES.md) and
-[canonical-capability evidence](docs/evidence/M3-CANONICAL-CAPABILITIES.md).
+[canonical-capability evidence](docs/evidence/M3-CANONICAL-CAPABILITIES.md), plus
+the [board-explorer evidence](docs/evidence/M9-BOARD-CAPABILITY-EXPLORER.md).
 
 The same shared job crate now defines the canonical global multi-MCU manifest:
 a fixed header plus strictly sorted, fixed participant records binding exact
