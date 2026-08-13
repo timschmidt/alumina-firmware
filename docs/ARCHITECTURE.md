@@ -655,6 +655,15 @@ The motion stack is layered:
    bounded local hold/stop fallback for asynchronous safety events.
 7. Hardware backend: GPIO timer, RMT/DMA, or I²S static/stream.
 
+Layer 2 now has an exact acceleration-reachability core: Hyperpath combines
+caller/global/tangent/retained-radius node ceilings, propagates squared-speed
+limits forward and backward over exact retained lengths, and independently
+replays every selected node and span through Hypersolve. Alumina currently
+supplies zero ceilings at all nodes, so this replaces the proposal mechanism
+without enabling blended motion. N-axis projection, retained blend geometry,
+curvature/jerk-aware limits, nonzero-boundary third-order profiles, and
+hold/resume replanning remain open.
+
 The portable `alumina-motion` executor now implements the first step-only part
 of layers 5–7 without owning hardware. It validates a dense stepper profile
 derived from the exact active configuration, rejects overflow/rate/pulse/

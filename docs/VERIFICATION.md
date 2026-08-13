@@ -26,8 +26,9 @@ Run on the host for every change:
   ownership, invalid clocks/frequencies, and memory budget checks;
 - safety state transition tables, impossible transitions, latching/reset, timeout,
   and fail-safe output actions;
-- planner boundary conditions, lookahead, junctions, jerk/acceleration/velocity
-  envelopes, feed hold/resume, homing/probing, and kinematics;
+- planner boundary conditions, exact forward/reverse reachability, caller and
+  geometric node ceilings, junctions, jerk/acceleration/velocity envelopes,
+  feed hold/resume, homing/probing, and kinematics;
 - Hyperpath feed/lookahead/jerk report composition and Hypersolve proposal versus
   exact/interval-certified acceptance, including precision exhaustion;
 - integer/fixed-point overflow, deterministic rounding, residual/error diffusion,
@@ -121,6 +122,16 @@ exhaustion, exact source/motion provenance, a full stop at every generated
 chord, and byte-identical source/metric/approximation evidence replay. This is
 software evidence only; it does not satisfy any physical timing, motion, or
 safety qualification layer below.
+
+The first clean-room two-pass node proposer is recorded in
+[`evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md).
+Its regression set includes exact forward then reverse lowering, G1 movement,
+caller-forced G1 stops, reversal stops, positive-radius true corners, malformed
+policy rejection, generated caller/global/bidirectional replay, and unchanged
+all-zero Alumina fixture behavior. A positive radius must correspond to
+retained blend geometry; it is never permission to reinterpret a sharp source
+corner. Nonzero-boundary jerk synthesis and physical qualification remain
+separate gates.
 
 ### 4. Per-board compile matrix
 

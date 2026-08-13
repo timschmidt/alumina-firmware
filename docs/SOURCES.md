@@ -24,8 +24,9 @@ planning evidence trail, not a floating dependency specification.
   and finite projection with explicit chord-error control.
 - [`hyperpath/Cargo.toml`](../../hyperpath/Cargo.toml) and
   [`hyperpath/src`](../../hyperpath/src) — exact-aware path/toolpath carriers,
-  retained provenance, PH curves, path-wide length/feed reports, corner
-  lookahead, and jerk-ramp schedules.
+  retained provenance, PH curves, path-wide length/feed reports, exact
+  squared-speed forward/reverse lookahead, independent constraint replay, and
+  jerk-ramp schedules.
 - [`hypersolve/Cargo.toml`](../../hypersolve/Cargo.toml) and
   [`hypersolve/src`](../../hypersolve/src) — symbolic constraints, exact direct
   solving, numerical proposal boundaries, exact replay, and interval/Krawczyk

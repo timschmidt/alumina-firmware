@@ -254,3 +254,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   exact diagonal feed carriers, stop-at-every-chord scheduling, domain-separated
   `ALMEVD02` replay, and native/WASM browser evidence with physical claims kept
   closed.
+- [`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](M10-EXACT-TWO-PASS-LOOKAHEAD.md) —
+  clean-room exact squared-speed forward/reverse node planning, explicit caller
+  and retained-radius limits, independent Hypersolve replay, conservative
+  all-zero Alumina integration, and renewed native/WASM/loopback evidence with
+  every physical claim kept closed.

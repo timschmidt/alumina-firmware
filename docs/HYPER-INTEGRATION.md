@@ -15,7 +15,7 @@ loop.
 | `hypertri` | 0.4.1, Apache-2.0 | Exact triangulation where CAM or visualization requires it |
 | `hypermesh` | 0.1.0, Apache-2.0 | Exact mesh topology and checked graphics conversion |
 | `hypercurve` | 0.3.1, Apache-2.0 | Exact line/arc/Bezier/NURBS paths and regions, derivatives, projection, and chord-error-controlled finite reduction |
-| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, junction lookahead, and jerk scheduling |
+| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, exact two-pass junction lookahead, and jerk scheduling |
 | `hypersolve` | 0.3.1, Apache-2.0 | Symbolic constraints, exact direct solving, numerical proposal separation, exact residual replay, and interval/Krawczyk certification |
 | `csgrs` | 0.23.0, Apache-2.0 | Current solid, `TriangleMesh`, and `CurveRegion2` modeling/CAM source types |
 | `hypergraphics` | 0.1.0, Apache-2.0 | Sole checked exact-scene/camera-to-GPU boundary; never a CAM input |
@@ -40,7 +40,15 @@ schedules; and a combined lookahead feed schedule. Relevant entry points include
 - `certify_corner_lookahead_limits`;
 - `certify_jerk_ramp_feed_schedule` and
   `certify_multi_phase_jerk_ramp_feed_schedule`; and
-- `certify_lookahead_feed_schedule`.
+- `LookaheadFeedPlanningLimits`, `plan_lookahead_feed_schedule`,
+  `PlannedLookaheadFeedSchedule`, and `certify_lookahead_feed_schedule`.
+
+The exact proposer combines caller ceilings, global feed, exact tangent class,
+retained blend radii, and exact element lengths. It propagates squared-speed
+acceleration reachability forward and deceleration reachability backward, then
+uses separate Hypersolve problems to replay caller, global, corner, reversal,
+and bidirectional span constraints. Its forward trace and final schedule remain
+retained evidence. An unresolved exact order or replay row rejects the result.
 
 The interface CAM layer extends and composes these reports rather than
 introducing unrelated `f64` motion math. Broader work still required includes
@@ -56,8 +64,11 @@ half-splits. Hyperpath retains exact Euclidean lengths for the resulting
 diagonal line carriers. Every generated join is a zero-feed stop until a native
 or curvature-certified nonzero-feed curve policy exists. Canonical `ALMEVD02`
 then binds independent source, metric-path, and source-to-motion transcripts.
-See
-[`evidence/M10-CERTIFIED-CUBIC-MOTION.md`](evidence/M10-CERTIFIED-CUBIC-MOTION.md).
+Those zeros are now explicit caller ceilings consumed by the exact two-pass
+planner rather than a hand-filled final speed vector. See
+[`evidence/M10-CERTIFIED-CUBIC-MOTION.md`](evidence/M10-CERTIFIED-CUBIC-MOTION.md)
+and
+[`evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md).
 
 ## Hypersolve's role
 

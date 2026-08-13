@@ -292,8 +292,10 @@ canonical firmware Configuration V5. Hypercurve lines and explicit arcs pass
 losslessly into Hyperpath. Polynomial cubics remain native exact sources and
 are reduced only by a caller-bounded pointwise certificate over exact
 degree-elevated chord differences and Hypercurve de Casteljau spans. The
-resulting exact line/arc path passes through Hyperpath/Hypersolve exact-stop
-lookahead and jerk replay, with a full stop at every cubic chord, then bounded
+resulting exact line/arc path passes through Hyperpath's exact squared-speed
+forward/reverse proposer and independent Hypersolve replay. The current caller
+policy caps entry, exit, and every join at zero, preserving a full stop at every
+cubic chord before rest-to-rest jerk replay, then bounded
 machine-resolution interpolation, real `alumina-machine-ir`, production
 stepper preflight, immutable per-MCU cache packaging, independent event
 simulation, and domain-separated `ALMEVD02` source/metric/approximation replay.
@@ -315,8 +317,9 @@ physical delivery, and reproducible release pinning remain open. See the
 [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md),
 [exact scheduling evidence](evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md),
-[certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md), and
-[M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
+[certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md),
+[exact two-pass lookahead evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
+and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
 
@@ -338,6 +341,17 @@ Work:
   aggregate update rate, shared heater/fan image, and TMC UART/SPI support.
 - Execute the selected exact-contour → simulator → TinyBee SD → pen/air-cut
   workflow and produce trace/certificate correlation in the UI.
+
+Clean-room planning checkpoint: Hyperpath now proposes exact forward/reverse
+acceleration-reachable speed nodes from caller/global/tangent/radius ceilings
+and exact retained lengths, then independently replays caller, corner,
+reversal, and bidirectional span constraints through Hypersolve. Alumina routes
+its current schedule through that planner with every caller ceiling still zero,
+so no motion bytes or physical authority change. This closes the basic
+two-pass acceleration-reachability mechanism, not N-axis projection,
+curvature/jerk-aware limits, retained blends, nonzero-boundary jerk profiles,
+hold/resume, or HIL. See
+[`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

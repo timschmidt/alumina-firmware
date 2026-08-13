@@ -174,9 +174,10 @@ Exit:
   decimal tokens exactly, resolve modal state explicitly, and lift supported
   lines/arcs into Hypercurve/Hyperpath. Ambiguous or unsupported commands fail;
   imported G-code is never canonical or sent to firmware.
-- Use Hyperpath path-wide length, acceleration, corner-lookahead, and jerk-ramp
-  reports as the starting motion model. Extend the exact stack or a narrow CAM
-  crate for machine-axis projection, process constraints, kinematics, and holds.
+- Use Hyperpath path-wide length, exact forward/reverse acceleration
+  reachability, corner limits, and jerk-ramp reports as the starting motion
+  model. Extend the exact stack or a narrow CAM crate for machine-axis
+  projection, process constraints, kinematics, and holds.
 - Use Hypersolve's exact direct routes and proposal→exact/interval certification
   discipline for suitable constraint problems. Expose precision exhaustion and
   undecided results rather than silently accepting approximate solutions.
@@ -230,10 +231,12 @@ V5 and board capabilities. Retained Hypercurve lines and explicit arcs enter
 Hyperpath losslessly. A retained polynomial cubic now enters a distinct,
 bounded source-to-motion compiler: exact degree-elevated-chord predicates and
 Hypercurve de Casteljau splits produce an exact line path under the allocated
-positional bound. Hyperpath/Hypersolve apply exact-stop lookahead and four-phase
-jerk replay to every metric element, including a zero-feed node at every cubic
-chord. Caller-bounded interpolation is then lowered to the sibling
-`alumina-machine-ir` type. Production stepper preflight, immutable cache
+positional bound. Hyperpath now combines explicit caller, global, tangent, and
+retained-radius ceilings in exact squared-speed forward/reverse passes, then
+independently replays the result with Hypersolve. The current policy supplies a
+zero ceiling at every node, including every cubic chord, before four-phase
+rest-to-rest jerk replay. Caller-bounded interpolation is then lowered to the
+sibling `alumina-machine-ir` type. Production stepper preflight, immutable cache
 partitioning, independent event simulation, and canonical `ALMEVD02` source,
 metric, and approximation evidence replay must all succeed transactionally.
 
@@ -252,6 +255,7 @@ authenticated physical delivery, and repeatable release pinning remain open.
 See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 [exact scheduling evidence](evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md),
 [certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md),
+[exact two-pass evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
