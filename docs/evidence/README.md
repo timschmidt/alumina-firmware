@@ -69,6 +69,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   Hypercurve path/region presentation, lossless supported-family Hyperpath
   promotion, exact curve-to-machine-lattice compilation, canonical machine IR,
   conservative error evidence, and renewed native/WASM artifact checks.
+- [`M5-UI-CNC-GEOMETRY-IMPORT.md`](M5-UI-CNC-GEOMETRY-IMPORT.md) — bounded
+  exact selected-semantics CNC line/arc import, non-canonical source provenance,
+  full transactional machine/cache/evidence admission, and native/WASM browser
+  evidence with physical and WLAN claims kept closed.
 - [`M6-EXACT-STEPPER-CORE.md`](M6-EXACT-STEPPER-CORE.md) — exact centered
   integer step interpolation, configuration-derived electrical timing,
   complete shifted-image mapping, canonical status, and cached-block simulation.

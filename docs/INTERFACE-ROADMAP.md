@@ -223,19 +223,31 @@ Exit:
   reduced path→command lattice, and timing error.
 - Firmware never appears as an alternative CAM compiler in the UI.
 
-Implementation checkpoint: a window-free compiler independently certifies the
-representative source path into exact motion chords, then proves nearest
-machine-step and cumulative timer rounding before emitting the sibling
-`alumina-machine-ir` segment type. It retains a conservative
-source-curve-to-canonical-command-chord bound and keeps physical following error
-outside that claim. It now independently replays canonical firmware blocks,
-publishes immutable local cache objects, and binds owned participant packages
-into the shared sorted multi-MCU manifest with exact rational duration checks.
-Capability-driven policy, full kinematics and lookahead, production-derived
-identities, browser determinism tests, and authenticated Wi-Fi/cache/schedule
-integration remain open. See the [M5/I1-I3
-evidence](evidence/M5-EXACT-CAM-COMPILER.md) and [M5/M7 packaging
-evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
+Implementation checkpoint: the window-free compiler and visible Machine/CAM
+workspace now derive an exact two-axis profile, usable travel, complete
+resolution/error budget, and timer/output lattice from canonical Configuration
+V5 and board capabilities. Retained Hypercurve lines and explicit arcs enter
+Hyperpath/Hypersolve exact-stop lookahead and four-phase jerk replay, then a
+caller-bounded certified interpolation is lowered to the sibling
+`alumina-machine-ir` type. Production stepper preflight, immutable cache
+partitioning, independent event simulation, and canonical evidence replay must
+all succeed transactionally.
+
+An optional UI-only CNC adapter now parses a deliberately selected connected XY
+line/explicit-IJ-arc subset directly into exact rationals and native Hypercurve
+objects. Explicit units, plane, endpoint mode, and arc-centre mode are required;
+every process, ambiguous, or unsupported word fails closed. Raw-source identity
+and per-curve modal provenance remain separate from exact-geometry/job identity,
+and the direct Hypercurve fixture remains the default. Equivalent text and a
+comment-only variant reproduce identical geometry, partition, and evidence,
+while process words and an out-of-travel path leave the prior workspace
+unchanged. General Bezier/NURBS scheduling, nonzero-radius blends, broader
+kinematics, tool/work transforms, process constraints, automatic resource
+partitioning, authenticated physical delivery, and repeatable release pinning
+remain open. See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
+[exact scheduling evidence](evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md),
+[selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
+[M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ## I4 — Annotated board explorer, logic analyzer, and oscilloscope
 
