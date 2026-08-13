@@ -394,14 +394,21 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, broader graph/front-panel workflows, and live plots remain
-open. Canonical placement/wiring and an 11-kind audited palette now support
+resource opcodes, component instantiation/hierarchy lowering, general
+front-panel editing/execution, and live plots remain open. Canonical
+placement/wiring and an 11-kind audited palette now support
 node create/delete and exact scalar parameter replacement. Bounded complete
 `ALGW` snapshots now provide replay-backed undo/redo, origin-local browser
 persistence preserves only the current document, and native/browser `.algw`
 exchange crosses the same canonical and audited draft-admission boundary.
-Composite or identity-bearing parameter editors, collaboration/conflict
-handling, and component/front-panel documents remain open. See the
+A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
+maps public connector terminals to exact internal endpoints, and binds integer
+front-panel controls/indicators to public terminals or retained exact
+parameters. The first visible PID/interlock component has six exact controls
+and four replay-only indicators; invalidating a binding detaches the panel
+without weakening the workspace draft. Composite or identity-bearing parameter
+editors, collaboration/conflict handling, component libraries/instances, and
+general panel authoring remain open. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -412,6 +419,7 @@ handling, and component/front-panel documents remain open. See the
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
 [`graph history/persistence`](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md), and
+[`graph components/front panels`](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

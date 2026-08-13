@@ -186,6 +186,13 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-GRAPH-PALETTE-PARAMETERS.md`](M9-GRAPH-PALETTE-PARAMETERS.md) — audited
   11-kind HostExact palette, monotonic node lifecycle, atomic incident-wire
   deletion, bounded exact scalar parameter editing, and empty-draft recovery.
+- [`M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md`](M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md)
+  — bounded canonical snapshot history, replay-backed undo/redo, origin-local
+  current-workspace persistence, and exact native/browser `.algw` exchange.
+- [`M9-GRAPH-COMPONENT-FRONT-PANEL.md`](M9-GRAPH-COMPONENT-FRONT-PANEL.md) —
+  canonical `ALGC` authoring packages, typed public connector mappings, exact
+  front-panel bindings, transactional workspace replacement, and a visible
+  PID/interlock component panel.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.
