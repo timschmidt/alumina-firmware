@@ -34,10 +34,10 @@ pub use foc::{
 };
 
 /// Exact machine-configuration schema version.
-pub const CONFIGURATION_VERSION: u16 = 4;
+pub const CONFIGURATION_VERSION: u16 = 5;
 /// Bytes in the fixed canonical document header.
 pub const CONFIGURATION_HEADER_BYTES: usize = 80;
-/// Bytes in every V4 configuration record.
+/// Bytes in every V5 configuration record.
 pub const CONFIGURATION_RECORD_BYTES: usize = 64;
 /// Schema-wide bound independent of a board's smaller admission budget.
 pub const MAX_CONFIGURATION_RECORDS: usize = 256;
@@ -48,7 +48,7 @@ pub const MAX_EXECUTABLE_STEPPER_AXES: usize = 8;
 /// Maximum FOC axes whose complete hardware contract is retained on core 1.
 pub const MAX_EXECUTABLE_FOC_AXES: usize = 4;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG04";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG05";
 const RECORD_KIND_BINDING: u16 = 1;
 const RECORD_KIND_SCALAR: u16 = 2;
 const RECORD_KIND_FOC_SHUTDOWN: u16 = 3;
@@ -100,7 +100,7 @@ impl ConfigurationPublication {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V4 SHA-256/configuration representation.
+    /// Decodes only the exact V5 SHA-256/configuration representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationRequestError> {
         if encoded.len() != CONFIGURATION_PUBLICATION_BYTES {
             return Err(ConfigurationRequestError::Length);
@@ -261,7 +261,7 @@ impl ConfigurationFlags {
     pub const FIELD_ORIENTED_CONTROL: u32 = 1 << 2;
     /// Configuration contains non-motion laboratory/control resources.
     pub const LAB_CONTROL: u32 = 1 << 3;
-    /// All V4 flags.
+    /// All V5 flags.
     pub const ALLOWED: u32 =
         Self::MOTION | Self::CACHED_AUTONOMOUS | Self::FIELD_ORIENTED_CONTROL | Self::LAB_CONTROL;
 
@@ -299,7 +299,7 @@ impl ConfigurationHeader {
             .ok_or(ConfigurationError::Length)
     }
 
-    /// Encodes the exact V4 header.
+    /// Encodes the exact V5 header.
     pub fn encode(self) -> Result<[u8; CONFIGURATION_HEADER_BYTES], ConfigurationError> {
         self.validate()?;
         let mut encoded = [0_u8; CONFIGURATION_HEADER_BYTES];
@@ -319,7 +319,7 @@ impl ConfigurationHeader {
         Ok(encoded)
     }
 
-    /// Decodes only the exact canonical V4 header.
+    /// Decodes only the exact canonical V5 header.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_HEADER_BYTES {
             return Err(ConfigurationError::Length);
@@ -654,6 +654,12 @@ pub enum ScalarFact {
     AxisMicrosteps = 2,
     AxisMotorTurnsPerOutputTurn = 3,
     AxisTravelMetresPerOutputTurn = 4,
+    /// Dimensionless multiplier applied to nominal commanded step density.
+    ///
+    /// The browser derives commanded steps per metre as `full_steps *
+    /// microsteps * motor_turns_per_output_turn * calibration_scale /
+    /// travel_metres_per_output_turn`. Its independent uncertainty remains an
+    /// absolute bound on this multiplier.
     AxisCalibrationScale = 5,
     AxisPositionMinimumMetres = 6,
     AxisPositionMaximumMetres = 7,
@@ -672,7 +678,10 @@ pub enum ScalarFact {
     CurrentSenseVoltsPerAmpere = 20,
     SafetyMaximumReactionSeconds = 21,
     ProcessMaximumDurationSeconds = 22,
+    /// Exact frequency of the `DeviceCycle` domain used by cached motion IR.
     TimerTickHertz = 23,
+    /// Smallest stepper-output interval, expressed in `DeviceCycle` ticks.
+    StepperOutputQuantumCycles = 24,
 }
 
 impl ScalarFact {
@@ -701,6 +710,7 @@ impl ScalarFact {
             21 => Self::SafetyMaximumReactionSeconds,
             22 => Self::ProcessMaximumDurationSeconds,
             23 => Self::TimerTickHertz,
+            24 => Self::StepperOutputQuantumCycles,
             _ => return None,
         })
     }
@@ -722,6 +732,7 @@ impl ScalarFact {
                 | Self::PwmCarrierHertz
                 | Self::ControlRateHertz
                 | Self::TimerTickHertz
+                | Self::StepperOutputQuantumCycles
         )
     }
 
@@ -876,7 +887,7 @@ impl ConfigurationRecord {
     pub fn encode(self) -> Result<[u8; CONFIGURATION_RECORD_BYTES], ConfigurationError> {
         self.validate_shape()?;
         let mut encoded = [0_u8; CONFIGURATION_RECORD_BYTES];
-        let (kind, instance, selector) = self.key();
+        let (kind, instance, selector) = self.canonical_order_key();
         encoded[0..2].copy_from_slice(&kind.to_le_bytes());
         encoded[2..4].copy_from_slice(
             &u16::try_from(CONFIGURATION_RECORD_BYTES)
@@ -1045,7 +1056,7 @@ impl ConfigurationRecord {
         Ok(encoded)
     }
 
-    /// Decodes only an exact fixed-width V4 record.
+    /// Decodes only an exact fixed-width V5 record.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_RECORD_BYTES
             || usize::from(read_u16(encoded, 2)) != CONFIGURATION_RECORD_BYTES
@@ -1298,6 +1309,7 @@ impl ConfigurationRecord {
                         ScalarFact::SafetyMaximumReactionSeconds
                             | ScalarFact::ProcessMaximumDurationSeconds
                             | ScalarFact::TimerTickHertz
+                            | ScalarFact::StepperOutputQuantumCycles
                     )
             }
             Self::FocShutdown(_)
@@ -1311,7 +1323,9 @@ impl ConfigurationRecord {
         }
     }
 
-    const fn key(self) -> (u16, u16, u16) {
+    /// Wire-level `(kind, instance, selector)` key used for strict canonical
+    /// document ordering.
+    pub const fn canonical_order_key(self) -> (u16, u16, u16) {
         match self {
             Self::Binding(binding) => (RECORD_KIND_BINDING, binding.instance, binding.role as u16),
             Self::Scalar(scalar) => (RECORD_KIND_SCALAR, scalar.instance, scalar.fact as u16),
@@ -1428,6 +1442,10 @@ impl ConfigurationRecord {
                     || scalar.fact.requires_positive() && scalar.value.numerator <= 0
                     || scalar.fact.requires_integer()
                         && (scalar.value.denominator != 1 || scalar.uncertainty.numerator != 0)
+                    || matches!(
+                        scalar.fact,
+                        ScalarFact::TimerTickHertz | ScalarFact::StepperOutputQuantumCycles
+                    ) && scalar.instance != 0
                     || scalar.fact.axis_fact() && usize::from(scalar.instance) >= MAX_AXIS_INSTANCES
                 {
                     return Err(ConfigurationError::Scalar);
@@ -1596,7 +1614,7 @@ pub enum AxisDriverControl {
 /// For `step`, the active/inactive fields are pulse-high and pulse-low time.
 /// For `direction` and `driver_control`, they are setup-before-step and
 /// hold-after-step time. This role-specific interpretation is part of
-/// configuration V4.
+/// configuration V5.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StepperAxisProfile {
     pub instance: u16,
@@ -1640,6 +1658,8 @@ pub struct RealtimeConfigurationProfile {
     foc_axis_count: u8,
     safety_inputs: [Option<SafetyInputSpec>; MAX_SAFETY_INPUTS],
     safety_input_count: u8,
+    timer_tick_hertz: Option<u64>,
+    stepper_output_quantum_cycles: Option<u32>,
 }
 
 impl RealtimeConfigurationProfile {
@@ -1649,6 +1669,8 @@ impl RealtimeConfigurationProfile {
         foc_axis_count: 0,
         safety_inputs: [None; MAX_SAFETY_INPUTS],
         safety_input_count: 0,
+        timer_tick_hertz: None,
+        stepper_output_quantum_cycles: None,
     };
 
     /// Profile for one logical stepper-axis instance.
@@ -1703,6 +1725,16 @@ impl RealtimeConfigurationProfile {
             .copied()
             .flatten()
     }
+
+    /// Exact configured frequency of the cached-motion `DeviceCycle` domain.
+    pub const fn timer_tick_hertz(&self) -> Option<u64> {
+        self.timer_tick_hertz
+    }
+
+    /// Exact configured stepper backend output lattice in device cycles.
+    pub const fn stepper_output_quantum_cycles(&self) -> Option<u32> {
+        self.stepper_output_quantum_cycles
+    }
 }
 
 /// Allocation-free semantic validator for a complete ordered record stream.
@@ -1720,6 +1752,8 @@ pub struct ConfigurationValidator<'a, const MAX_BINDINGS: usize> {
     safety_inputs: [Option<SafetyInputSpec>; MAX_SAFETY_INPUTS],
     safety_input_count: usize,
     safety_binding: bool,
+    timer_tick_hertz: Option<u64>,
+    stepper_output_quantum_cycles: Option<u32>,
 }
 
 impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
@@ -1748,6 +1782,8 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             safety_inputs: [None; MAX_SAFETY_INPUTS],
             safety_input_count: 0,
             safety_binding: false,
+            timer_tick_hertz: None,
+            stepper_output_quantum_cycles: None,
         })
     }
 
@@ -1757,13 +1793,13 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             return Err(ConfigurationError::RecordCount);
         }
         record.validate_shape()?;
-        let key = record.key();
+        let key = record.canonical_order_key();
         if self.last_key.is_some_and(|last| last >= key) {
             return Err(ConfigurationError::RecordOrder);
         }
         match record {
             ConfigurationRecord::Binding(binding) => self.validate_binding(binding)?,
-            ConfigurationRecord::Scalar(scalar) => self.validate_scalar(scalar),
+            ConfigurationRecord::Scalar(scalar) => self.validate_scalar(scalar)?,
             ConfigurationRecord::FocShutdown(shutdown) => {
                 self.validate_foc_shutdown(shutdown)?;
             }
@@ -2055,7 +2091,10 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             }
         }
         if self.header.flags.contains(ConfigurationFlags::MOTION)
-            && (stepper_axes == 0 && foc_axes == 0 || !self.safety_binding)
+            && (stepper_axes == 0 && foc_axes == 0
+                || !self.safety_binding
+                || self.timer_tick_hertz.is_none()
+                || stepper_axes != 0 && self.stepper_output_quantum_cycles.is_none())
         {
             return Err(ConfigurationError::MotionPolicy);
         }
@@ -2071,6 +2110,8 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         profile.foc_axis_count = foc_axes;
         profile.safety_input_count = u8::try_from(self.safety_input_count)
             .map_err(|_| ConfigurationError::SafetyInputCapacity)?;
+        profile.timer_tick_hertz = self.timer_tick_hertz;
+        profile.stepper_output_quantum_cycles = self.stepper_output_quantum_cycles;
         let summary = ConfigurationSummary {
             record_count: self.seen_records,
             realtime_record_count: self.realtime_records,
@@ -2520,7 +2561,22 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         Ok(())
     }
 
-    fn validate_scalar(&mut self, scalar: ExactScalar) {
+    fn validate_scalar(&mut self, scalar: ExactScalar) -> Result<(), ConfigurationError> {
+        match scalar.fact {
+            ScalarFact::TimerTickHertz => {
+                self.timer_tick_hertz = Some(
+                    u64::try_from(scalar.value.numerator)
+                        .map_err(|_| ConfigurationError::Scalar)?,
+                );
+            }
+            ScalarFact::StepperOutputQuantumCycles => {
+                self.stepper_output_quantum_cycles = Some(
+                    u32::try_from(scalar.value.numerator)
+                        .map_err(|_| ConfigurationError::Scalar)?,
+                );
+            }
+            _ => {}
+        }
         if scalar.fact.axis_fact() {
             let instance = usize::from(scalar.instance);
             let axis = &mut self.axes[instance];
@@ -2545,6 +2601,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -2594,6 +2651,137 @@ pub struct ConfigurationIdentity {
     pub capability_digest: Digest,
     pub summary: ConfigurationSummary,
 }
+
+/// Borrowed, independently validated view of one complete canonical document.
+///
+/// The view retains no executable output ownership. It is intended for
+/// service-side inspection and for the authoritative browser compiler, which
+/// must derive physical limits from exactly the same bytes accepted by both
+/// firmware cores.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfigurationDocumentView<'a> {
+    encoded: &'a [u8],
+    header: ConfigurationHeader,
+    identity: ConfigurationIdentity,
+}
+
+impl<'a> ConfigurationDocumentView<'a> {
+    /// Validates syntax, canonical ordering, board capability, cross-record
+    /// policy, complete SHA-256 identity, and the caller's binding budget.
+    pub fn decode<const MAX_BINDINGS: usize>(
+        package: &BoardPackage<'_>,
+        encoded: &'a [u8],
+        expected_digest: Digest,
+    ) -> Result<Self, ConfigurationError> {
+        let header_bytes = encoded
+            .get(..CONFIGURATION_HEADER_BYTES)
+            .ok_or(ConfigurationError::Length)?;
+        let header = ConfigurationHeader::decode(header_bytes)?;
+        let expected_bytes =
+            u32::try_from(encoded.len()).map_err(|_| ConfigurationError::Length)?;
+        let mut validator = ConfigurationStreamValidator::<MAX_BINDINGS>::new(
+            package,
+            expected_digest,
+            expected_bytes,
+        )?;
+        validator.push(encoded)?;
+        let identity = validator.finish()?;
+        Ok(Self {
+            encoded,
+            header,
+            identity,
+        })
+    }
+
+    /// Complete immutable canonical byte representation.
+    pub const fn encoded(self) -> &'a [u8] {
+        self.encoded
+    }
+
+    /// Canonical document header.
+    pub const fn header(self) -> ConfigurationHeader {
+        self.header
+    }
+
+    /// SHA-256 identity and semantic summary proven at construction.
+    pub const fn identity(self) -> ConfigurationIdentity {
+        self.identity
+    }
+
+    /// Allocation-free iteration over the already validated record region.
+    pub fn records(self) -> ConfigurationRecordIter<'a> {
+        ConfigurationRecordIter {
+            remaining: &self.encoded[CONFIGURATION_HEADER_BYTES..],
+        }
+    }
+
+    /// Finds one exact logical resource binding. Canonical validation proves
+    /// that a matching key is unique.
+    pub fn binding(
+        self,
+        instance: u16,
+        role: BindingRole,
+    ) -> Result<Option<ResourceBinding>, ConfigurationError> {
+        for record in self.records() {
+            if let ConfigurationRecord::Binding(binding) = record?
+                && binding.instance == instance
+                && binding.role == role
+            {
+                return Ok(Some(binding));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Finds one exact scalar fact. Canonical validation proves that a
+    /// matching key is unique.
+    pub fn scalar(
+        self,
+        instance: u16,
+        fact: ScalarFact,
+    ) -> Result<Option<ExactScalar>, ConfigurationError> {
+        for record in self.records() {
+            if let ConfigurationRecord::Scalar(scalar) = record?
+                && scalar.instance == instance
+                && scalar.fact == fact
+            {
+                return Ok(Some(scalar));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Exact-size iterator over a validated canonical document's records.
+#[derive(Clone, Debug)]
+pub struct ConfigurationRecordIter<'a> {
+    remaining: &'a [u8],
+}
+
+impl Iterator for ConfigurationRecordIter<'_> {
+    type Item = Result<ConfigurationRecord, ConfigurationError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining.is_empty() {
+            return None;
+        }
+        if self.remaining.len() < CONFIGURATION_RECORD_BYTES {
+            self.remaining = &[];
+            return Some(Err(ConfigurationError::Length));
+        }
+        let (record, remaining) = self.remaining.split_at(CONFIGURATION_RECORD_BYTES);
+        self.remaining = remaining;
+        Some(ConfigurationRecord::decode(record))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let records = self.remaining.len().div_ceil(CONFIGURATION_RECORD_BYTES);
+        (records, Some(records))
+    }
+}
+
+impl ExactSizeIterator for ConfigurationRecordIter<'_> {}
+impl core::iter::FusedIterator for ConfigurationRecordIter<'_> {}
 
 /// Core-1-only executable facts paired with the compact identity of the exact
 /// document from which they were independently derived.
@@ -3398,7 +3586,7 @@ pub struct ConfigurationCoordinatorStatus {
 }
 
 impl ConfigurationCoordinatorStatus {
-    /// Encodes the exact 264-byte V4 status body.
+    /// Encodes the exact 264-byte V5 status body.
     pub fn encode(
         self,
     ) -> Result<[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES], ConfigurationCoordinatorStatusError>
@@ -3438,7 +3626,7 @@ impl ConfigurationCoordinatorStatus {
         Ok(encoded)
     }
 
-    /// Decodes and re-encodes to require the unique V4 representation.
+    /// Decodes and re-encodes to require the unique V5 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationCoordinatorStatusError> {
         if encoded.len() != CONFIGURATION_COORDINATOR_STATUS_BYTES {
             return Err(ConfigurationCoordinatorStatusError::Length);
@@ -4858,6 +5046,7 @@ mod tests {
             scalar(0, ScalarFact::ControlRateHertz, rational(20_000, 1)),
             scalar(0, ScalarFact::CurrentSenseOhms, rational(1, 100)),
             scalar(0, ScalarFact::CurrentSenseVoltsPerAmpere, rational(1, 1)),
+            scalar(0, ScalarFact::TimerTickHertz, rational(1_000_000, 1)),
             ConfigurationRecord::FocRuntime(FocRuntimeParameters {
                 instance: 0,
                 pole_pairs: 7,
@@ -4948,7 +5137,7 @@ mod tests {
                 evidence: FactEvidence::Qualified,
             }),
         ]);
-        records.sort_by_key(|record| record.key());
+        records.sort_by_key(|record| record.canonical_order_key());
         records
     }
 
@@ -5025,8 +5214,15 @@ mod tests {
                 ScalarFact::AxisJerkLimitMetresPerSecondCubed,
                 rational(5, 1),
             ),
+            scalar(
+                0,
+                ScalarFact::AxisFollowingErrorMetres,
+                rational(1, 100_000),
+            ),
+            scalar(0, ScalarFact::TimerTickHertz, rational(1_000_000, 1)),
+            scalar(0, ScalarFact::StepperOutputQuantumCycles, rational(1, 1)),
         ]);
-        records.sort_by_key(|record| record.key());
+        records.sort_by_key(|record| record.canonical_order_key());
         records
     }
 
@@ -5153,6 +5349,127 @@ mod tests {
     }
 
     #[test]
+    fn validated_document_view_exposes_exact_canonical_facts_without_allocation() {
+        let records = tinybee_motion_records();
+        let flags = ConfigurationFlags(ConfigurationFlags::MOTION);
+        let (bytes, digest) = document(&board_mks_tinybee::PACKAGE, &records, flags);
+        let view =
+            ConfigurationDocumentView::decode::<32>(&board_mks_tinybee::PACKAGE, &bytes, digest)
+                .unwrap();
+
+        assert_eq!(view.encoded(), bytes);
+        assert_eq!(view.header().record_count, records.len() as u16);
+        assert_eq!(view.header().flags, flags);
+        assert_eq!(view.identity().digest, digest);
+        assert_eq!(
+            view.identity().capability_digest,
+            board_mks_tinybee::CAPABILITY_DIGEST
+        );
+        assert_eq!(view.records().len(), records.len());
+        assert_eq!(
+            view.records().collect::<Result<Vec<_>, _>>().unwrap(),
+            records
+        );
+
+        let microsteps = view.scalar(0, ScalarFact::AxisMicrosteps).unwrap().unwrap();
+        assert_eq!(microsteps.value, rational(16, 1));
+        assert_eq!(microsteps.uncertainty, rational(0, 1));
+        assert_eq!(
+            view.binding(0, BindingRole::AxisStep)
+                .unwrap()
+                .unwrap()
+                .resource,
+            ResourceId::I2sOut { engine: 0, bit: 1 }
+        );
+        assert_eq!(view.binding(1, BindingRole::AxisStep), Ok(None));
+
+        let (_, realtime) = ConfigurationStreamValidator::<32>::new(
+            &board_mks_tinybee::PACKAGE,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .and_then(|mut validator| {
+            validator.push(&bytes)?;
+            validator.finish_with_profile()
+        })
+        .unwrap();
+        assert_eq!(realtime.timer_tick_hertz(), Some(1_000_000));
+        assert_eq!(realtime.stepper_output_quantum_cycles(), Some(1));
+
+        assert_eq!(
+            ConfigurationDocumentView::decode::<32>(
+                &board_mks_tinybee::PACKAGE,
+                &bytes,
+                Digest([0x55; 32]),
+            ),
+            Err(ConfigurationError::ConfigurationIdentity)
+        );
+        assert_eq!(
+            ConfigurationDocumentView::decode::<3>(&board_mks_tinybee::PACKAGE, &bytes, digest,),
+            Err(ConfigurationError::BindingCapacity)
+        );
+
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert_eq!(
+            ConfigurationDocumentView::decode::<32>(&board_mks_tinybee::PACKAGE, &trailing, digest,),
+            Err(ConfigurationError::ConfigurationIdentity)
+        );
+
+        let mut missing_timer = records.clone();
+        missing_timer.retain(|record| {
+            !matches!(
+                record,
+                ConfigurationRecord::Scalar(scalar)
+                    if scalar.fact == ScalarFact::TimerTickHertz
+            )
+        });
+        let (missing_bytes, missing_digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &missing_timer,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        assert_eq!(
+            ConfigurationDocumentView::decode::<32>(
+                &board_mks_tinybee::PACKAGE,
+                &missing_bytes,
+                missing_digest,
+            ),
+            Err(ConfigurationError::MotionPolicy)
+        );
+
+        let mut missing_quantum = records.clone();
+        missing_quantum.retain(|record| {
+            !matches!(
+                record,
+                ConfigurationRecord::Scalar(scalar)
+                    if scalar.fact == ScalarFact::StepperOutputQuantumCycles
+            )
+        });
+        let (missing_bytes, missing_digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &missing_quantum,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        assert_eq!(
+            ConfigurationDocumentView::decode::<32>(
+                &board_mks_tinybee::PACKAGE,
+                &missing_bytes,
+                missing_digest,
+            ),
+            Err(ConfigurationError::MotionPolicy)
+        );
+        assert_eq!(
+            scalar(1, ScalarFact::TimerTickHertz, rational(1_000_000, 1)).encode(),
+            Err(ConfigurationError::Scalar)
+        );
+        assert_eq!(
+            scalar(1, ScalarFact::StepperOutputQuantumCycles, rational(1, 1),).encode(),
+            Err(ConfigurationError::Scalar)
+        );
+    }
+
+    #[test]
     fn foc_shutdown_record_is_canonical_and_has_no_v1_enable_selector() {
         let record = foc_shutdown(
             FocShutdownStrategy::PhaseHighImpedance,
@@ -5204,7 +5521,7 @@ mod tests {
     }
 
     #[test]
-    fn foc_v4_records_have_unique_canonical_fixed_width_encodings() {
+    fn foc_v5_records_have_unique_canonical_fixed_width_encodings() {
         let records = mks_foc_records(foc_shutdown(
             FocShutdownStrategy::PhaseHighImpedance,
             None,
@@ -5212,7 +5529,7 @@ mod tests {
         ));
         let mut checked = 0;
         for record in records {
-            let (kind, _, _) = record.key();
+            let (kind, _, _) = record.canonical_order_key();
             if kind < RECORD_KIND_FOC_RUNTIME {
                 continue;
             }
@@ -5316,8 +5633,8 @@ mod tests {
             flags: ConfigurationFlags::default(),
         };
         let mut old_header = header.encode().unwrap();
-        old_header[0..8].copy_from_slice(b"ALMCFG03");
-        old_header[8..10].copy_from_slice(&3_u16.to_le_bytes());
+        old_header[0..8].copy_from_slice(b"ALMCFG04");
+        old_header[8..10].copy_from_slice(&4_u16.to_le_bytes());
         assert_eq!(
             ConfigurationHeader::decode(&old_header),
             Err(ConfigurationError::Magic)
@@ -5915,7 +6232,7 @@ mod tests {
                 | ConfigurationRecord::FocPwmHardware(_) => {}
             }
         }
-        records.sort_by_key(|record| record.key());
+        records.sort_by_key(|record| record.canonical_order_key());
         let (bytes, digest) = document(
             &board_mks_tinybee::PACKAGE,
             &records,
@@ -6490,7 +6807,10 @@ mod tests {
             service_status.validated_bytes,
             u32::try_from(bytes.len()).unwrap()
         );
-        assert_eq!(service_status.storage_chunks_read, 6);
+        assert_eq!(
+            service_status.storage_chunks_read,
+            u32::try_from(bytes.len().div_ceil(173)).unwrap()
+        );
         assert!(commands > service_status.storage_chunks_read);
         let service_identity = service_status.identity.unwrap();
         let realtime_identity = realtime.candidate_identity().unwrap();

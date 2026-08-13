@@ -5,6 +5,7 @@ pub mod distributed;
 pub mod foc;
 pub mod foc_hardware;
 pub mod http_fixture;
+pub mod motion;
 pub mod shift_register;
 
 use core::cell::{Cell, RefCell};

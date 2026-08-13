@@ -240,3 +240,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   digest-bound run evidence; disconnected-board commissioning observations now
   cover radio-startup suspension and priority-executor recovery while all
   analyzer/HTTP-loaded qualification claims remain closed.
+- [`M10-EXACT-SCHEDULE-PREFLIGHT.md`](M10-EXACT-SCHEDULE-PREFLIGHT.md) —
+  Configuration V5 machine/time/output facts, exact physical error budgeting,
+  Hyperpath/Hypersolve exact-stop jerk scheduling, certified firmware-V1
+  interpolation, production stepper preflight, cached event replay, and
+  deterministic source/partition evidence with physical claims kept closed.

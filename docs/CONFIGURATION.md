@@ -1,6 +1,6 @@
-# Canonical machine configuration V4
+# Canonical machine configuration V5
 
-`ALMCFG04` is the content-addressed machine/resource authority emitted by the
+`ALMCFG05` is the content-addressed machine/resource authority emitted by the
 browser/WASM compiler and independently validated on both ESP cores. It is not
 JSON, FluidNC configuration, G-code, a Rust memory image, or executable code.
 The complete bytes are uploaded as storage object kind `MachineConfiguration`
@@ -16,16 +16,16 @@ between revisions or capability/qualification changes.
 Integers are little-endian. Reserved bytes are zero. Unknown flags, record
 kinds, roles, facts, owners, polarities, or evidence values reject. Records are
 fixed-width and strictly ordered by `(kind, instance, selector)`; duplicate keys
-are consequently impossible. V4 admits 1–256 records and no trailing data. V1,
-V2, and V3 are not accepted; firmware and UI are updated together without a
+are consequently impossible. V5 admits 1–256 records and no trailing data. V1,
+V2, V3, and V4 are not accepted; firmware and UI are updated together without a
 compatibility decoder.
 
 The fixed 80-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCFG04` |
-| 8 | 2 | exact schema version `4` |
+| 0 | 8 | ASCII `ALMCFG05` |
+| 8 | 2 | exact schema version `5` |
 | 10 | 2 | header bytes, exactly `80` |
 | 12 | 4 | total bytes, exactly `80 + record_count × 64` |
 | 16 | 32 | required canonical board-capability SHA-256 |
@@ -132,12 +132,39 @@ selector rather than stored as free-form strings:
 | 1–5 | axis full steps/turn, microsteps, motor turns/output turn, metres/output turn, calibration scale |
 | 6–11 | minimum/maximum position metres, velocity m/s, acceleration m/s², jerk m/s³, following error metres |
 | 12–18 | encoder counts/turn, pole pairs, current A, voltage V, PWM Hz, dead time seconds, control Hz |
-| 19–23 | current-sense ohms, current-sense V/A, safety reaction seconds, process duration seconds, timer tick Hz |
+| 19–24 | current-sense ohms, current-sense V/A, safety reaction seconds, process duration seconds, timer tick Hz, stepper output quantum cycles |
 
 All facts except signed position bounds are positive. The browser can therefore
 retain Hyper exact values through CAM and emit a reduced rational only at this
 explicit hardware boundary; measured uncertainty remains a separate exact
 bound rather than being folded into an approximate nominal.
+
+`AxisCalibrationScale` is a dimensionless multiplicative correction to command
+density. For a step/direction axis, commanded steps per metre are exactly
+`full_steps_per_turn × microsteps × motor_turns_per_output_turn ×
+calibration_scale / travel_metres_per_output_turn`. Its absolute uncertainty is
+propagated independently through that expression. It does not rescale the
+configured position, velocity, acceleration, jerk, or following-error facts.
+
+`ConfigurationDocumentView` exposes these records allocation-free only after
+the complete bytes have passed the same canonical, board-capability, semantic,
+binding-budget, and SHA-256 validation used by the streaming firmware path.
+
+Every motion document contains exactly one `TimerTickHertz` fact at logical
+instance zero. It is the integer `DeviceCycle` frequency shared by the compiled
+stream, clock fitting, firmware scheduler, and simulator; it is not inferred
+from a nominal CPU clock. A document with stepper axes also contains exactly
+one positive integer `StepperOutputQuantumCycles` fact at instance zero. That
+fact is the smallest output interval addressable by the selected backend. Core
+1 retains both values and compares them with the compiled Embassy timer and
+board backend before it constructs an executor. Canonical record uniqueness
+and the instance-zero rule prevent competing time bases or output lattices.
+
+For each stepper axis, the effective frequency ceiling is the lesser of the
+binding's `maximum_frequency_hz` and `TimerTickHertz / (minimum_active_cycles +
+minimum_inactive_cycles)`. A compiler must additionally replay every emitted
+segment on `StepperOutputQuantumCycles`; the aggregate ceiling alone cannot
+prove pulse, setup, hold, or direction-transition timing.
 
 ### FOC shutdown contract
 
@@ -468,7 +495,7 @@ selector and likewise remains closed until revalidation finishes.
 
 ## Current implementation boundary
 
-The canonical V4 format, SD publication reader, dual independent validators, core
+The canonical V5 format, SD publication reader, dual independent validators, core
 framing, authenticated firmware routing, boot recovery, safe-state transitions,
 executable safety/stepper/FOC profiles, digest-bound FOC lowering, job-identity
 handoff, and raw-media two-phase selection journal are implemented. The portable

@@ -184,6 +184,11 @@ impl<const AXES: usize> StepperExecutionProfile<AXES> {
         maximum_lateness_cycles: u32,
     ) -> Result<Self, MotionError> {
         validate_axis_count::<AXES>()?;
+        if realtime_profile.timer_tick_hertz() != Some(device_cycle_hz)
+            || realtime_profile.stepper_output_quantum_cycles() != Some(output_quantum_cycles)
+        {
+            return Err(MotionError::Timing);
+        }
         if identity.summary.stepper_axes as usize != AXES || identity.summary.foc_axes != 0 {
             return Err(MotionError::ConfigurationAxisCount {
                 configured: identity.summary.stepper_axes,
@@ -491,6 +496,22 @@ pub struct SegmentCompletion<const AXES: usize> {
     /// Conservative exact timing-quantization bound. A value of one denotes
     /// one half of a device tick; zero denotes a segment with no step edges.
     pub maximum_half_tick_error: u32,
+}
+
+/// Allocation-free result of replaying a complete canonical segment sequence
+/// through the same electrical validator used by the live executor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StepperPreflightSummary<const AXES: usize> {
+    /// Exclusive terminal stream tick.
+    pub end_tick: StreamTick,
+    /// Absolute terminal step-lattice position.
+    pub position: [i64; AXES],
+    /// Number of rising step edges on every axis.
+    pub emitted_steps: [u64; AXES],
+    /// Number of admitted canonical segments.
+    pub segment_count: u32,
+    /// Earliest aligned cycle at which normal driver disable is legal.
+    pub earliest_finish_cycle: DeviceCycle,
 }
 
 /// Nonblocking result from checking the next exact event deadline.
@@ -1425,6 +1446,37 @@ impl<const AXES: usize> StepperExecutor<AXES> {
             },
         }))
     }
+}
+
+/// Replay a complete segment slice through the production executor's exact
+/// rate, pulse, direction, enable, output-grid, continuity, and overflow
+/// checks without emitting an output event or owning hardware.
+///
+/// This is intentionally proportional to `segments.len() * AXES`, not to the
+/// number of commanded step edges. It is suitable for browser/WASM compiler
+/// evidence and firmware admission tests while leaving live edge generation
+/// exclusively inside [`StepperExecutor`].
+pub fn preflight_stepper_segments<const AXES: usize>(
+    timing: StepperTiming<AXES>,
+    initial_position: [i64; AXES],
+    segments: &[ExecutionSegment<AXES>],
+) -> Result<StepperPreflightSummary<AXES>, MotionError> {
+    let mut executor = StepperExecutor::new(timing)?;
+    executor.start_job(DeviceCycle(0), initial_position)?;
+    for segment in segments {
+        executor.load_segment(*segment)?;
+        executor.preflight_complete_segment()?;
+    }
+    let status = executor.status();
+    let earliest_finish_cycle = executor.earliest_finish_cycle()?;
+    executor.finish_job(earliest_finish_cycle)?;
+    Ok(StepperPreflightSummary {
+        end_tick: status.next_tick,
+        position: status.position,
+        emitted_steps: status.emitted_steps,
+        segment_count: status.completed_segments,
+        earliest_finish_cycle,
+    })
 }
 
 /// Owns one independently admitted cached block until every segment has
@@ -3142,6 +3194,26 @@ mod tests {
             delta_steps,
             flags: 0,
         }
+    }
+
+    #[test]
+    fn allocation_free_preflight_replays_the_production_electrical_contract() {
+        let segments = [
+            segment(0, 100, [3, 0]),
+            segment(100, 200, [0, 0]),
+            segment(200, 300, [-2, 4]),
+        ];
+        let summary = preflight_stepper_segments(timing(0), [10, -4], &segments).unwrap();
+        assert_eq!(summary.end_tick, StreamTick(300));
+        assert_eq!(summary.position, [11, 0]);
+        assert_eq!(summary.emitted_steps, [5, 4]);
+        assert_eq!(summary.segment_count, 3);
+        assert_eq!(summary.earliest_finish_cycle, DeviceCycle(300));
+
+        assert_eq!(
+            preflight_stepper_segments(timing(0), [0], &[segment(0, 4, [3])]),
+            Err(MotionError::Rate { axis: 0 })
+        );
     }
 
     fn shifted_binding(role: BindingRole, bit: u8, polarity: SignalPolarity) -> ResourceBinding {

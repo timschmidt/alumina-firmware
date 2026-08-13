@@ -26,12 +26,20 @@ a disjoint compiler certifies motion chords, exact lengths, machine-step
 rounding, and timer rounding into the real `alumina-machine-ir` schema. It then
 replays canonical blocks, packages real content-addressed storage objects, and
 binds owned participant artifacts into the shared `alumina-job` manifest.
+The machine-bound line/arc path now derives exact dynamics and a complete
+position-error budget from canonical Configuration V5, certifies exact-stop
+lookahead and symmetric jerk schedules through Hyperpath/Hypersolve, and lowers
+them to the current constant-velocity IR under a proved interpolation bound.
+Before cache release it replays the allocation-free production stepper
+electrical contract; the final partition then passes an event-level
+`RealtimeJob`/`CachedStepperExecutor` simulation and canonical evidence replay.
 Native and WASM tests, strict lint, sibling-source and license policy, and the
 compressed production bundle pass. This remains a development checkpoint, not
 a qualified compiler release. See the [interface baseline
 evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
 evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
-evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
+evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and [exact scheduling
+evidence](docs/evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md).
 
 The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource
@@ -338,16 +346,17 @@ candidate. Every FOC/motion operation still rejects. This is compile evidence
 only, not a reset-state, shutdown, timing, or energization claim. See the
 [MKS safe-target evidence](docs/evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
-Canonical machine configuration is now deliberately V4. It retains the V3 FOC
-controller, rotor, current, and synchronization records and adds both explicit
-ADC attenuations plus the exact MCPWM source/counter clocks, raw dividers, timer
-peak, minimum-pulse domain, and compare-error policy. Both cores validate the
-same fixed bytes. Only a complete SHA-256-verified profile can lower into
+Canonical machine configuration is now deliberately V5. It retains the V4 FOC
+hardware records and adds an exact motion `DeviceCycle` frequency plus the
+stepper backend's smallest output quantum. Core 1 retains both and requires
+them to equal the compiled Embassy clock and selected board backend before an
+executor can exist. Both cores validate the same fixed bytes. Only a complete
+SHA-256-verified profile can lower into
 digest-bound FOC controller, rotor, current, and PWM compare objects; no older
 compatibility decoder remains. Board-package qualification remains the
 authority, so configuration cannot promote the MKS stages beyond `Described`;
 the real target still rejects every FOC axis and exposes no energization path.
-See the [configuration V4 evidence](docs/evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md)
+See the historical [configuration V4 evidence](docs/evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md)
 and its [V3 predecessor](docs/evidence/M8-FOC-CONFIGURATION-V3.md).
 
 Portable rotor angles now use exact wrapping binary turns. Nearest-quadrant
@@ -415,7 +424,7 @@ keeping the two unqualified power stages separate. A canonical FOC profile must
 bind one endpoint, exactly two phase-selected ADC inputs, all three PWM phases,
 and the qualified stage topology. Exact scalar authorities must agree with the
 retained integer pole-pair, encoder-modulus, loop-rate, PWM-period, and dead-time
-facts. Portable V4 tests replay every fixed record form and every two-chunk byte
+facts. Portable V5 tests replay every fixed record form and every two-chunk byte
 boundary before lowering. The MKS adapter additionally checks the compiled
 capability digest and exact motor routing before constructing a private stopped
 MCPWM selection. These remain synthetic qualification fixtures; the physical
