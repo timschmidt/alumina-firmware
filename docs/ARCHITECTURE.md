@@ -675,8 +675,15 @@ span/axis inequality and bottleneck through Hypersolve. The current Cartesian
 browser compiler derives unit-direction rows for an all-line route. A route
 containing a curve retains conservative direction-independent limits and no
 affine report. Curvature-aware projection, nonlinear kinematics, retained blend
-geometry, vector-jerk-aware limits, general and time-optimal profiles, exact
-timer-lattice attainability, and hold/resume replanning remain open.
+geometry, vector-jerk-aware limits, general and time-optimal profiles, shared
+multi-MCU retiming, and hold/resume replanning remain open.
+
+Layer 3 now ceilings each exact ideal interval to the configured output quantum
+after applying one exact rational factor. A caller-bounded binary search
+rebuilds and completely replays candidates through the layer-5 production
+validator, selects the smallest admitted factor, and proves the immediate
+predecessor still fails for duration pressure. The continuous electrical-limit
+fixture selects exactly `4158/4096`; no arbitrary float margin enters the path.
 
 The portable `alumina-motion` executor now implements the first step-only part
 of layers 5–7 without owning hardware. It validates a dense stepper profile
@@ -1007,6 +1014,15 @@ For each job, define:
 - deterministic rounding and residual/error-diffusion rules;
 - integer widths and overflow proof/bounds; and
 - constraints for velocity, acceleration, jerk, following error, and tool events.
+
+The current stepper lowering ceilings each retained exact ideal interval to the
+configured output quantum after applying one exact rational factor. A bounded
+binary search admits only firmware-classified duration pressure and selects the
+smallest factor whose complete canonical stream passes production preflight;
+the immediate predecessor must retain a timing failure. Intentional dilation is
+reported separately from the strictly sub-quantum grid padding and spatial
+error budget. One shared factor across multiple MCU partitions and direct
+native jerk IR remain later contracts.
 
 Machine IR is canonical and hashed. V1 favors a small auditable instruction set:
 set state, jerk/finite-difference segment, linearly coordinated integer move,

@@ -1,8 +1,9 @@
 # Research sources
 
-Research captured on 2026-08-10 and extended on 2026-08-11. Upstream dependencies and hardware repositories
-must be rechecked and pinned by commit before implementation; this document is a
-planning evidence trail, not a floating dependency specification.
+Research captured on 2026-08-10 and extended through 2026-08-13. Upstream
+dependencies and hardware repositories must be rechecked and pinned by commit
+before implementation; this document is a planning evidence trail, not a
+floating dependency specification.
 
 ## Local repositories
 
@@ -51,10 +52,15 @@ planning evidence trail, not a floating dependency specification.
 ### Alumina and T-Deck applications
 
 - [`alumina-interface/Cargo.toml`](../../alumina-interface/Cargo.toml),
-  [`src/lib.rs`](../../alumina-interface/src/lib.rs), and
-  [`src/design_graph.rs`](../../alumina-interface/src/design_graph.rs) — current
-  old CSGRS API, partial Hypergraphics backend, hand-built render data, CAD graph,
-  firmware controls, and plots.
+  [`motion_schedule.rs`](../../alumina-interface/crates/alumina-interface-core/src/motion_schedule.rs),
+  and [`machine_cam_ui.rs`](../../alumina-interface/src/machine_cam_ui.rs) —
+  greenfield exact browser compiler, Hypergraphics presentation, canonical
+  machine/cache evidence, exact output-quantum lowering, and visible retained
+  timer-factor policy.
+- [`alumina-motion`](../crates/alumina-motion/src/lib.rs) — allocation-free
+  production stepper validator and the fail-closed duration-pressure
+  classification used only to decide whether an exact candidate may be rebuilt
+  and completely replayed.
 - [`alumina-firmware/Cargo.toml`](../../alumina-firmware/Cargo.toml),
   [`src/main.rs`](../../alumina-firmware/src/main.rs),
   [`src/wifi.rs`](../../alumina-firmware/src/wifi.rs),

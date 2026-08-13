@@ -307,11 +307,14 @@ conservative direction-independent limits because affine derivatives do not
 certify curvature or nonlinear kinematics.
 True corners, reversals, curvature-bearing joins, and every cubic chord remain
 full stops. The resulting schedule passes through bounded machine-resolution
-interpolation, real `alumina-machine-ir`, production stepper preflight,
-immutable per-MCU cache packaging, independent event simulation, and
-domain-separated `ALMEVD02` source/metric/approximation replay. Owned
-partitions also bind into the shared sorted global manifest with exact rational
-duration agreement.
+interpolation, then ceilings every exact interval to the configured output
+quantum. A caller-bounded rational-factor search retains factor-one and
+immediate-predecessor failures and selects only a complete stream accepted by
+the unchanged production stepper preflight. The result passes through real
+`alumina-machine-ir`, immutable per-MCU cache packaging, independent event
+simulation, and domain-separated `ALMEVD02` source/metric/approximation replay.
+Owned partitions also bind into the shared sorted global manifest with exact
+rational duration agreement.
 
 The selected UI-only CNC importer is implemented without making legacy text
 load-bearing: exact decimal/modal parsing constructs one connected native
@@ -334,6 +337,8 @@ physical delivery, and reproducible release pinning remain open. See the
 [exact jerk-feasible G1 evidence](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
 [exact affine-axis projection
 evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
+[exact timer-lattice
+evidence](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
 and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
@@ -371,14 +376,19 @@ closes the first conservative jerk-feasible positive-boundary mechanism.
 Hyperpath now also projects exact affine velocity, acceleration, and jerk
 limits across arbitrary dense axes; Alumina activates that report for exact
 Cartesian line routes and retains the conservative fallback for any curve.
-Curvature-aware projection, nonlinear kinematics, vector-jerk certification,
-retained blends, timer-lattice attainability, time-optimal profiles,
-hold/resume, and HIL remain open. See
+Alumina now ceilings every retained exact interval to the output quantum and
+selects the smallest factor on a caller-bounded rational grid whose full stream
+passes production stepper preflight; the exact ceiling regression selects
+`4158/4096` and proves `4157/4096` still fails. Curvature-aware projection,
+nonlinear kinematics, vector-jerk certification, retained blends, shared
+multi-MCU retiming, time-optimal profiles, hold/resume, and HIL remain open. See
 [`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md)
 and
 [`M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md), plus
 [`M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md) and
-[`M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md).
+[`M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
+followed by
+[`M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

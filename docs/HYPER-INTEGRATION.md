@@ -91,10 +91,23 @@ introducing unrelated `f64` motion math. Its all-line Cartesian route derives
 exact unit-direction components from retained Hyperpath lines and applies the
 affine projection to Configuration V5 axis facts. If any carrier is curved, it
 retains a conservative direction-independent limit and no affine report.
-Broader work still required includes curvature-aware and nonlinear-kinematic
-projection, process limits, stop/hold replanning, exact attainable bounds on
-step/PWM/timer lattices, and conservative composition of later geometric and
-temporal certificates.
+The local step-timer boundary now ceilings every retained ideal interval to the
+exact backend output quantum and searches a caller-bounded rational dilation
+lattice. Only firmware-classified duration pressure can enter the search, and
+the selected stream plus its immediate predecessor traverse the unchanged
+production preflight. Broader work still required includes curvature-aware and
+nonlinear-kinematic projection, process limits, stop/hold replanning, PWM/FOC
+lattice planning, one shared multi-MCU retiming policy, and conservative
+composition of later geometric and temporal certificates.
+
+For ideal interval `I_i`, factor `n/d`, device-cycle frequency `F`, and output
+quantum `q`, the emitted duration is exactly
+`q ceil(n I_i F / (d q))`. It is never shorter than the retained ideal
+interval, and its grid-only padding after factor application is strictly below
+`q/F`. The intentional exact dilation is retained as schedule policy rather
+than mislabeled as spatial error. The exact electrical-ceiling regression
+selects `4158/4096`, while factor one and `4157/4096` retain distinct production
+failures.
 
 The implemented first cubic boundary retains a native exact Hypercurve source
 and constructs a separate Hyperpath metric path only after a bounded pointwise
@@ -119,7 +132,9 @@ plus
 and
 [`evidence/M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
 followed by
-[`evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md).
+[`evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md)
+and
+[`evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md).
 
 ## Hypersolve's role
 

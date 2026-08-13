@@ -245,10 +245,16 @@ Curved routes deliberately retain conservative direction-independent limits
 and no affine projection. Phase selection reads the actual nodes: zero/zero
 retains the four-phase rest-to-rest profile and positive spans consume
 Hyperpath's retained two-phase transition. Caller-bounded interpolation is then
-lowered to the sibling `alumina-machine-ir` type. Production stepper
-preflight, immutable cache partitioning, independent event simulation, and
-canonical `ALMEVD02` source,
-metric, and approximation evidence replay must all succeed transactionally.
+lowered to the sibling `alumina-machine-ir` type. Each exact ideal interval is
+ceiled to the configured output quantum, and a caller-bounded rational-factor
+search retains factor-one and immediate-predecessor failures before accepting
+the smallest stream which passes unchanged production stepper preflight.
+Immutable cache partitioning, independent event simulation, and canonical
+`ALMEVD02` source, metric, and approximation evidence replay must all succeed
+transactionally.
+V2 binds the resulting canonical stream but not the detailed
+affine/lookahead/jerk/timer-search transcripts; a greenfield V3 is the next
+evidence boundary.
 
 An optional UI-only CNC adapter now parses a deliberately selected connected XY
 line/explicit-IJ-arc subset directly into exact rationals and native Hypercurve
@@ -270,6 +276,8 @@ See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 [exact jerk-feasible G1 evidence](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
 [exact affine-axis projection
 evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
+[exact timer-lattice
+evidence](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 

@@ -43,7 +43,12 @@ independently replays every span/axis row and selected bottleneck through
 Hypersolve. The current Cartesian compiler derives exact unit-direction rows
 and retains the report; a route containing any curve deliberately keeps the
 older conservative direction-independent limits. The schedule lowers to the
-current constant-velocity IR under a proved interpolation bound.
+current constant-velocity IR under a proved interpolation bound. Each exact
+ideal interval is ceiled to the configured output quantum, and a bounded exact
+rational search selects the smallest global factor whose complete stream passes
+the unchanged production preflight. Factor one and the immediate predecessor
+remain retained failures when headroom is required; structural failures never
+enter retiming.
 Before cache release it replays the allocation-free production stepper
 electrical contract; the final partition then passes an event-level
 `RealtimeJob`/`CachedStepperExecutor` simulation and canonical evidence replay.
@@ -57,7 +62,8 @@ evidence](docs/evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md), through the [exact
 monotonic-jerk evidence](docs/evidence/M10-EXACT-MONOTONIC-JERK.md) and [exact
 jerk-feasible G1 evidence](docs/evidence/M10-EXACT-JERK-FEASIBLE-G1.md), followed
 by the [exact affine-axis projection
-evidence](docs/evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md).
+evidence](docs/evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md) and [exact
+timer-lattice evidence](docs/evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md).
 
 The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource

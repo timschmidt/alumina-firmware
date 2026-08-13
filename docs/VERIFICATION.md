@@ -158,8 +158,19 @@ bottlenecks, zero-derivative axes, empty/mismatched/negative/stationary input,
 an unsafe proposal, generated row replay, a Cartesian 3-4-5 lossless-line G1
 route with exact `5/4` projection and terminal steps, and an explicit curved
 route fallback. Every selected limit must replay every span/axis inequality and
-equal its retained bottleneck. The checkpoint deliberately keeps timer-lattice
+equal its retained bottleneck. That checkpoint deliberately kept timer-lattice
 attainability and all physical-output claims closed.
+
+The first exact local timer/output-lattice checkpoint is recorded in
+[`evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md).
+Its required regression set includes one-sided ceiling of every exact interval,
+non-unit output quanta, zero/sub-quantum padding bounds, factor-one rejection at
+the continuous electrical ceiling, a caller ceiling exhausted at one, exact
+selection of `4158/4096`, retained rejection of the immediate predecessor
+`4157/4096`, unchanged production preflight, exact terminal steps/ticks, and
+structural failures which cannot enter retiming. The selected-factor proof is
+local to one canonical stream; shared multi-MCU retiming, direct jerk IR,
+hardware timing, and physical-output qualification remain separate gates.
 
 ### 4. Per-board compile matrix
 

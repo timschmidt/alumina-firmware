@@ -274,3 +274,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   independent Hypersolve row and bottleneck replay, active Cartesian-line CAM
   integration, conservative curved-route fallback, and the retained-open
   timer/output-quantum boundary.
+- [`M10-EXACT-TIMER-LATTICE-HEADROOM.md`](M10-EXACT-TIMER-LATTICE-HEADROOM.md)
+  — exact one-sided output-quantum interval ceiling, caller-bounded rational
+  dilation search, unchanged production-preflight replay, smallest-factor
+  predecessor proof, and renewed native/WASM/loopback evidence with every
+  physical claim kept closed.
