@@ -660,8 +660,13 @@ caller/global/tangent/retained-radius node ceilings, propagates squared-speed
 limits forward and backward over exact retained lengths, and independently
 replays every selected node and span through Hypersolve. Alumina currently
 supplies zero ceilings at all nodes, so this replaces the proposal mechanism
-without enabling blended motion. N-axis projection, retained blend geometry,
-curvature/jerk-aware limits, nonzero-boundary third-order profiles, and
+without enabling blended motion. Hyperpath now also supplies a conservative
+exact two-phase monotonic transition for a retained element with at least one
+positive boundary feed, with separate construction and generic kinematic
+replay. Alumina consumes actual node feeds but retains the four-phase
+rest-to-rest branch under its reachable all-zero policy. N-axis projection,
+retained blend geometry, curvature/jerk-aware node limits, general
+nonzero-boundary profiles, timer-lattice lowering for positive nodes, and
 hold/resume replanning remain open.
 
 The portable `alumina-motion` executor now implements the first step-only part

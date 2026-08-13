@@ -130,8 +130,16 @@ caller-forced G1 stops, reversal stops, positive-radius true corners, malformed
 policy rejection, generated caller/global/bidirectional replay, and unchanged
 all-zero Alumina fixture behavior. A positive radius must correspond to
 retained blend geometry; it is never permission to reinterpret a sharp source
-corner. Nonzero-boundary jerk synthesis and physical qualification remain
-separate gates.
+corner. General nonzero-boundary jerk synthesis and physical qualification
+remain separate gates.
+
+The first conservative nonzero-boundary jerk primitive is recorded in
+[`evidence/M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md).
+Its regression set includes exact acceleration, deceleration, and equal-feed
+transitions; construction-versus-generic replay; both-zero, negative,
+degenerate, and infeasible-short-span rejection; generated boundary cases; and
+unchanged reachable all-zero Alumina scheduling. It does not open the retained
+blend, jerk-aware lookahead, timer-lowering, or physical qualification gates.
 
 ### 4. Per-board compile matrix
 

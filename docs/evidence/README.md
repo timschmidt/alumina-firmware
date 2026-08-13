@@ -259,3 +259,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   and retained-radius limits, independent Hypersolve replay, conservative
   all-zero Alumina integration, and renewed native/WASM/loopback evidence with
   every physical claim kept closed.
+- [`M10-EXACT-MONOTONIC-JERK.md`](M10-EXACT-MONOTONIC-JERK.md) — exact
+  two-phase acceleration/deceleration/constant-feed transitions with nonzero
+  boundary feeds, separate construction and generic kinematic replay, dormant
+  all-zero-policy integration, and renewed native/WASM/loopback evidence with
+  every physical claim kept closed.

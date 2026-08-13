@@ -26,10 +26,14 @@ a disjoint compiler certifies motion chords, exact lengths, machine-step
 rounding, and timer rounding into the real `alumina-machine-ir` schema. It then
 replays canonical blocks, packages real content-addressed storage objects, and
 binds owned participant artifacts into the shared `alumina-job` manifest.
-The machine-bound line/arc path now derives exact dynamics and a complete
-position-error budget from canonical Configuration V5, certifies exact-stop
-lookahead and symmetric jerk schedules through Hyperpath/Hypersolve, and lowers
-them to the current constant-velocity IR under a proved interpolation bound.
+The machine-bound line/arc/certified-cubic path now derives exact dynamics and a
+complete position-error budget from canonical Configuration V5, runs exact
+forward/reverse node planning, and certifies jerk schedules through
+Hyperpath/Hypersolve. Phase selection consumes the planned boundary feeds: the
+reachable all-zero policy retains symmetric rest-to-rest motion, while a
+separately replayed exact monotonic nonzero-boundary primitive remains behind a
+disabled positive-node policy. The schedule lowers to the current
+constant-velocity IR under a proved interpolation bound.
 Before cache release it replays the allocation-free production stepper
 electrical contract; the final partition then passes an event-level
 `RealtimeJob`/`CachedStepperExecutor` simulation and canonical evidence replay.
@@ -39,7 +43,8 @@ a qualified compiler release. See the [interface baseline
 evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
 evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
 evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and [exact scheduling
-evidence](docs/evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md).
+evidence](docs/evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md), through the [exact
+monotonic-jerk evidence](docs/evidence/M10-EXACT-MONOTONIC-JERK.md).
 
 The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource

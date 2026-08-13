@@ -319,6 +319,7 @@ physical delivery, and reproducible release pinning remain open. See the
 [exact scheduling evidence](evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md),
 [certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md),
 [exact two-pass lookahead evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
+[exact monotonic-jerk evidence](evidence/M10-EXACT-MONOTONIC-JERK.md),
 and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
@@ -347,11 +348,18 @@ acceleration-reachable speed nodes from caller/global/tangent/radius ceilings
 and exact retained lengths, then independently replays caller, corner,
 reversal, and bidirectional span constraints through Hypersolve. Alumina routes
 its current schedule through that planner with every caller ceiling still zero,
-so no motion bytes or physical authority change. This closes the basic
-two-pass acceleration-reachability mechanism, not N-axis projection,
-curvature/jerk-aware limits, retained blends, nonzero-boundary jerk profiles,
-hold/resume, or HIL. See
-[`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md).
+so no motion bytes or physical authority change. Hyperpath also has an exact
+two-phase monotonic transition for an element with at least one positive
+boundary feed, with separate construction and generic kinematic replay;
+Alumina's phase selector consumes actual lookahead nodes but its reachable
+zero/zero branch remains the existing four-phase rest-to-rest schedule. This
+closes the basic two-pass acceleration-reachability mechanism and a conservative
+nonzero-boundary primitive, not N-axis projection, jerk-aware node feasibility,
+curvature limits, retained blends, enabled positive-node motion, hold/resume,
+or HIL. See
+[`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md)
+and
+[`M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
