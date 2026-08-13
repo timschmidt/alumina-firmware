@@ -791,6 +791,30 @@ pub enum MotionError {
     OutputInvariant,
 }
 
+impl MotionError {
+    /// Whether increasing one or more segment durations can address this
+    /// failure without changing coordinates, stream topology, or electrical
+    /// policy.
+    ///
+    /// This is a classification of timing pressure, not permission to accept
+    /// the stream. A planner must construct a new exact schedule and replay it
+    /// through the complete production validator. Structural, identity,
+    /// arithmetic, grid, state, and deadline failures are never reclassified
+    /// as time-dilation candidates.
+    pub const fn is_time_dilation_candidate(self) -> bool {
+        matches!(
+            self,
+            Self::Rate { .. }
+                | Self::PulseBoundary { .. }
+                | Self::PulseLow { .. }
+                | Self::DirectionSetup { .. }
+                | Self::DirectionHold { .. }
+                | Self::EnableSetup { .. }
+                | Self::EnableHold { .. }
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ActiveSegment<const AXES: usize> {
     segment: ExecutionSegment<AXES>,
@@ -3214,6 +3238,38 @@ mod tests {
             preflight_stepper_segments(timing(0), [0], &[segment(0, 4, [3])]),
             Err(MotionError::Rate { axis: 0 })
         );
+    }
+
+    #[test]
+    fn only_electrical_duration_pressure_is_a_time_dilation_candidate() {
+        for error in [
+            MotionError::Rate { axis: 0 },
+            MotionError::PulseBoundary { axis: 0 },
+            MotionError::PulseLow { axis: 0 },
+            MotionError::DirectionSetup { axis: 0 },
+            MotionError::DirectionHold { axis: 0 },
+            MotionError::EnableSetup { axis: 0 },
+            MotionError::EnableHold { axis: 0 },
+        ] {
+            assert!(error.is_time_dilation_candidate());
+        }
+        for error in [
+            MotionError::Timing,
+            MotionError::OutputGrid {
+                cycle: 1,
+                quantum_cycles: 2,
+            },
+            MotionError::Arithmetic,
+            MotionError::SegmentOrder,
+            MotionError::Deadline {
+                scheduled: DeviceCycle(1),
+                observed: DeviceCycle(2),
+                maximum_lateness_cycles: 0,
+            },
+            MotionError::OutputInvariant,
+        ] {
+            assert!(!error.is_time_dilation_candidate());
+        }
     }
 
     fn shifted_binding(role: BindingRole, bit: u8, polarity: SignalPolarity) -> ResourceBinding {
