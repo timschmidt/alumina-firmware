@@ -54,6 +54,8 @@ use alumina_config::{
     CoreConfigurationAction, CoreConfigurationCommand, RealtimeConfigurationReport,
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
+use alumina_diagnostics::transport::DiagnosticTransportLimits;
+use alumina_diagnostics::{DiagnosticContext, DiagnosticLimits};
 use alumina_graph_ir::{CoreGraphCommand, CoreGraphExecutionCommand};
 use alumina_job::{
     JobScheduleAction, JobScheduleReport, JobScheduleState, JobStartObservation,
@@ -75,7 +77,7 @@ use alumina_safety::{
 };
 use defmt::{error, info};
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, TICK_HZ, Timer};
 use esp_hal::clock::CpuClock;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ram;
@@ -84,6 +86,7 @@ use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
 
+use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
 use capability::CapabilityService;
 use clock::ClockService;
 use configuration::ConfigurationService;
@@ -98,6 +101,13 @@ type TargetSafetyInputMonitor = SafetyInputMonitor<{ selected::SAFETY_INPUT_CAPA
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+// Neither initial hardware target has a qualified acquisition provider yet.
+// Keep the authenticated dispatcher and context reconciliation compiled, but
+// do not reserve unusable request/event/record storage in scarce internal
+// SRAM. A board composition must add explicit nonzero budgets at the same time
+// that it installs and qualifies a provider.
+type TargetDiagnosticService = DiagnosticServiceState<0, 0, 0, 0>;
+static DIAGNOSTIC_SERVICE: StaticCell<TargetDiagnosticService> = StaticCell::new();
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
 /// Small general internal heap retained alongside the separate 64 KiB reclaimed region.
@@ -280,6 +290,18 @@ async fn service_task(
     let mut jobs = JobService::new(boot_id);
     let mut configurations = ConfigurationService::new();
     let mut graphs = GraphService::new(network.device_id(), graph_bridge);
+    let diagnostics = DIAGNOSTIC_SERVICE.init(TargetDiagnosticService::new(
+        DiagnosticContext {
+            device_id: network.device_id(),
+            boot_id,
+            capability: network.capability_identity(),
+            config_digest: Digest::ZERO,
+            clock_frequency_hz: TICK_HZ,
+        },
+        DiagnosticProviderPolicy::NONE,
+        DiagnosticTransportLimits::native_control(),
+        DiagnosticLimits::interactive(),
+    ));
     let mut last_fault_generation = 0_u16;
     loop {
         while let Ok(frame) = endpoint.try_receive_telemetry() {
@@ -404,6 +426,13 @@ async fn service_task(
         storage.set_configuration_active(
             configurations.has_durable_active() || graphs.blocks_configuration_mutation(),
         );
+        diagnostics.rebind_context(DiagnosticContext {
+            device_id: network.device_id(),
+            boot_id,
+            capability: network.capability_identity(),
+            config_digest: configurations.authorized_digest(),
+            clock_frequency_hz: TICK_HZ,
+        });
 
         while let Some(request) = service_bridge.try_receive() {
             storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
@@ -418,6 +447,13 @@ async fn service_task(
             );
             jobs.set_active_config(configurations.authorized_digest());
             graphs.set_active_config(configurations.authorized_digest());
+            diagnostics.rebind_context(DiagnosticContext {
+                device_id: network.device_id(),
+                boot_id,
+                capability: network.capability_identity(),
+                config_digest: configurations.authorized_digest(),
+                clock_frequency_hz: TICK_HZ,
+            });
             let now = DeviceCycle(Instant::now().as_ticks());
             let response = if ClockService::handles(request.request()) {
                 clocks.dispatch(
@@ -455,6 +491,8 @@ async fn service_task(
                     storage.effective_safety(now).state,
                 )
                 .await
+            } else if TargetDiagnosticService::handles(request.request()) {
+                diagnostics.dispatch(request.request(), now)
             } else {
                 storage
                     .dispatch(&mut storage_backend, request.request(), now)

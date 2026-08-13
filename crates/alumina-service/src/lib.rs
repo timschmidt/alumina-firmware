@@ -24,6 +24,9 @@ use alumina_storage::{
 };
 use heapless::String as FixedString;
 
+/// Bounded telemetry and waveform session ownership for the service core.
+pub mod diagnostics;
+
 /// Initial bounded protocol/cache policy; free SD capacity remains a runtime limit.
 pub const CACHE_LIMITS: CacheLimits = CacheLimits {
     maximum_object_bytes: 64 * 1_024 * 1_024,

@@ -708,12 +708,16 @@ only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
 composite and identity-bearing parameter editors, label/domain editing,
-collaboration/conflict handling, and live telemetry transport remain open. The
-first offline diagnostic checkpoint now adds canonical bounded overview and
-digital-edge capture records, a deterministic four-input TinyBee fixture, and a
-capability-reconciled interface plot with exact cycle cursor, trigger, source,
-quality, and loss facts. It is simulation evidence only; firmware acquisition,
-authenticated transport, and physical analyzer comparison remain open.
+collaboration/conflict handling, and live telemetry event delivery remain open.
+The diagnostic path now adds canonical bounded overview and digital-edge
+capture records, exact authenticated session/event/chunk/range bodies, a
+fixed-memory core-0 owner, retry-safe typed browser state, and a deterministic
+four-input TinyBee fixture. In-memory and localhost HTTP/HMAC tests cover exact
+identity, loss, mutation retry, and complete range recovery. The capability-
+reconciled interface plot retains its exact cycle cursor, trigger, source,
+quality, and loss facts. This is simulation evidence only; hardware provider
+policies remain unsupported, and physical acquisition/WebSocket/SLogic
+qualification remain open.
 The editor now intersects the complete caller-authenticated graph-executor
 capability with the reviewed deployment registry and materializes only exact
 matching resource handles. Its visible offline TinyBee target draft offers
@@ -757,6 +761,7 @@ and
 [graph hierarchy flattening](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
+[authenticated diagnostic transport](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and
 [fixed graph-IR](evidence/M9-FIXED-GRAPH-IR.md) and
 [portable graph-runtime](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [authenticated deployment](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md) and

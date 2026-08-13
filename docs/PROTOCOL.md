@@ -68,18 +68,22 @@ the `/api/v1/control` path, so a proof cannot be replayed against another route.
 | configuration `0x04xx` | get, validate, commit, rollback |
 | job `0x05xx` | inspect, prepare, commit, confirm, abort, hold, resume, cancel, status |
 | command `0x06xx` | scheduled batch, diagnostic lease/release |
-| telemetry `0x07xx` | subscribe, unsubscribe, event |
+| telemetry `0x07xx` | subscribe, unsubscribe, event, status |
 | network `0x08xx` | status, scan, join, leave, recover protected AP |
 | storage `0x09xx` | status, list, begin, put chunk, finalize, read, delete, scrub, explicit provision |
 | health `0x0axx` | bounded health snapshot |
 | fault `0x0bxx` | fault event, reset request, physical/policy confirmation |
-| waveform `0x0cxx` | configure, arm, chunk, stop |
+| waveform `0x0cxx` | configure, arm, chunk, stop, status, retained-record range read |
 | update `0x0dxx` | inspect, begin, put chunk, finalize, commit, rollback |
 | graph `0x0exx` | get, install published package, activate, clear/abort, start, stop |
 
-The Rust enum assigns all 55 values explicitly and rejects every unassigned
+The Rust enum assigns all 60 values explicitly and rejects every unassigned
 number. Operation-specific bodies are added only with fixed budgets and golden
 browser/native/firmware fixtures.
+
+Telemetry and digital-capture operation bodies, request digests, lifecycle
+status, loss accounting, and bounded range recovery are normative in
+[`DIAGNOSTIC-TRANSPORT.md`](DIAGNOSTIC-TRANSPORT.md).
 
 ## Clock heartbeat
 

@@ -98,6 +98,22 @@ pub fn tinybee_diagnostic_fixture() -> Result<TinyBeeDiagnosticFixture, Diagnost
         config_digest: Digest([0x43; 32]),
         clock_frequency_hz: TINYBEE_SIMULATOR_CLOCK_HZ,
     };
+    tinybee_diagnostic_fixture_for_context(context)
+}
+
+/// Builds the deterministic records for an explicit service-owned context.
+///
+/// This is used by authenticated HTTP simulations whose boot identity differs
+/// from the standalone fixture. The current 8 MiB TinyBee capability identity
+/// remains mandatory; callers cannot relabel these resources as another board.
+pub fn tinybee_diagnostic_fixture_for_context(
+    context: DiagnosticContext,
+) -> Result<TinyBeeDiagnosticFixture, DiagnosticFixtureError> {
+    let capability = calculate_identity(&board_mks_tinybee::PACKAGE)
+        .map_err(|_| DiagnosticFixtureError::Capability)?;
+    if context.capability != capability {
+        return Err(DiagnosticFixtureError::Capability);
+    }
 
     let samples = tinybee_samples();
     let overview_document = ResourceOverviewDocument {
@@ -241,7 +257,73 @@ const fn transition(
 
 #[cfg(test)]
 mod tests {
+    use alumina_diagnostics::transport::{
+        DiagnosticTransportLimits, SubscriptionId, TelemetryEventView, TelemetryPhase,
+        TelemetrySessionRequest, TelemetrySubscribeFlags, TelemetrySubscribeRequest,
+        WaveformConfigureFlags, WaveformConfigureRequest, WaveformPhase, WaveformReadRequest,
+        WaveformSessionRequest, decode_telemetry_event, decode_telemetry_subscribe,
+        decode_waveform_chunk, decode_waveform_configure, encode_telemetry_subscribe,
+        encode_waveform_configure,
+    };
+    use alumina_service::diagnostics::{
+        DiagnosticProviderPolicy, DiagnosticServiceError, DiagnosticServiceState,
+    };
+
     use super::*;
+
+    const SELECTED_RESOURCES: [ResourceId; 4] = [
+        ResourceId::Gpio(22),
+        ResourceId::Gpio(32),
+        ResourceId::Gpio(33),
+        ResourceId::Gpio(35),
+    ];
+
+    type TestService = DiagnosticServiceState<176, 432, 208, 2_048>;
+    type DisabledService = DiagnosticServiceState<0, 0, 0, 0>;
+
+    fn encode_subscription(context: DiagnosticContext, id: u64) -> [u8; 176] {
+        let mut encoded = [0_u8; 176];
+        let used = encode_telemetry_subscribe(
+            &TelemetrySubscribeRequest {
+                subscription_id: SubscriptionId::new(id).unwrap(),
+                context,
+                flags: TelemetrySubscribeFlags(TelemetrySubscribeFlags::LATEST_ONLY),
+                minimum_period_cycles: 10_000,
+                maximum_event_bytes: 432,
+                resources: &SELECTED_RESOURCES,
+            },
+            &mut encoded,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        assert_eq!(used, encoded.len());
+        encoded
+    }
+
+    fn encode_configuration(context: DiagnosticContext) -> [u8; 208] {
+        let mut encoded = [0_u8; 208];
+        let used = encode_waveform_configure(
+            &WaveformConfigureRequest {
+                capture_id: CaptureId::new(*b"TINYBEE-SIM-0001").unwrap(),
+                context,
+                flags: WaveformConfigureFlags(WaveformConfigureFlags::EDGE_TIMESTAMPS),
+                requested_pretrigger_cycles: 500,
+                requested_posttrigger_cycles: 1_500,
+                earliest_trigger_cycle: DeviceCycle(2_000_400),
+                latest_trigger_cycle: DeviceCycle(2_000_600),
+                transition_capacity: 64,
+                maximum_chunk_bytes: 168,
+                trigger_channel_index: 2,
+                trigger_condition: DigitalTriggerCondition::Rising,
+                channels: &SELECTED_RESOURCES,
+            },
+            &mut encoded,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        assert_eq!(used, encoded.len());
+        encoded
+    }
 
     #[test]
     fn tinybee_fixture_is_canonical_capability_bound_and_explicitly_simulated() {
@@ -281,5 +363,221 @@ mod tests {
         let left = tinybee_diagnostic_fixture().unwrap();
         let right = tinybee_diagnostic_fixture().unwrap();
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn latest_only_service_session_reports_replacement_and_exact_acknowledgement() {
+        let fixture = tinybee_diagnostic_fixture().unwrap();
+        let context = fixture.overview().context();
+        let request_bytes = encode_subscription(context, 7);
+        let subscription =
+            decode_telemetry_subscribe(&request_bytes, DiagnosticTransportLimits::native_control())
+                .unwrap();
+        let reference = TelemetrySessionRequest {
+            subscription_id: subscription.subscription_id(),
+            subscription_digest: subscription.digest(),
+        };
+        let mut service = TestService::new(
+            context,
+            DiagnosticProviderPolicy::SIMULATED,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
+
+        let admitted = service.subscribe(&request_bytes).unwrap();
+        assert_eq!(admitted.phase, TelemetryPhase::Active);
+        assert_eq!(admitted.next_event_sequence, 1);
+        assert_eq!(service.subscribe(&request_bytes).unwrap(), admitted);
+
+        service.publish_overview(fixture.overview_bytes()).unwrap();
+        let first = service.pending_telemetry_event().unwrap();
+        let first =
+            decode_telemetry_event(first, subscription, DiagnosticLimits::interactive()).unwrap();
+        assert_eq!(first.event_sequence(), 1);
+        assert_eq!(first.dropped_events(), 0);
+
+        let mut too_early = fixture.overview_bytes().to_vec();
+        too_early[128..136].copy_from_slice(&1_259_999_u64.to_le_bytes());
+        too_early[136..144].copy_from_slice(&2_u64.to_le_bytes());
+        assert_eq!(
+            service.publish_overview(&too_early),
+            Err(DiagnosticServiceError::Deadline)
+        );
+        let mut replacement = fixture.overview_bytes().to_vec();
+        replacement[128..136].copy_from_slice(&1_260_000_u64.to_le_bytes());
+        replacement[136..144].copy_from_slice(&2_u64.to_le_bytes());
+        service.publish_overview(&replacement).unwrap();
+        let second: TelemetryEventView<'_> = decode_telemetry_event(
+            service.pending_telemetry_event().unwrap(),
+            subscription,
+            DiagnosticLimits::interactive(),
+        )
+        .unwrap();
+        assert_eq!(second.event_sequence(), 2);
+        assert_eq!(second.dropped_events(), 1);
+        assert_eq!(
+            service.acknowledge_telemetry_event(reference, 1),
+            Err(DiagnosticServiceError::Conflict)
+        );
+        let acknowledged = service.acknowledge_telemetry_event(reference, 2).unwrap();
+        assert_eq!(acknowledged.published_events, 1);
+        assert_eq!(acknowledged.dropped_events, 1);
+        assert!(!acknowledged.pending);
+
+        let stopped = service.unsubscribe(reference).unwrap();
+        assert_eq!(stopped.phase, TelemetryPhase::Unsubscribed);
+        assert_eq!(service.unsubscribe(reference).unwrap(), stopped);
+        let other = encode_subscription(context, 8);
+        assert_eq!(
+            service.subscribe(&other).unwrap().phase,
+            TelemetryPhase::Active
+        );
+
+        let mut changed_context = context;
+        changed_context.config_digest = Digest([0x99; 32]);
+        assert!(service.rebind_context(changed_context));
+        assert_eq!(
+            service.telemetry_status(TelemetrySessionRequest {
+                subscription_id: SubscriptionId::new(8).unwrap(),
+                subscription_digest: decode_telemetry_subscribe(
+                    &other,
+                    DiagnosticTransportLimits::native_control(),
+                )
+                .unwrap()
+                .digest(),
+            }),
+            Err(DiagnosticServiceError::NotFound)
+        );
+        assert_eq!(
+            service.subscribe(&other),
+            Err(DiagnosticServiceError::Conflict)
+        );
+    }
+
+    #[test]
+    fn waveform_service_retains_exact_record_and_exposes_loss_recoverable_ranges() {
+        let fixture = tinybee_diagnostic_fixture().unwrap();
+        let context = fixture.digital_capture().context();
+        let configuration_bytes = encode_configuration(context);
+        let configuration = decode_waveform_configure(
+            &configuration_bytes,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        let reference = WaveformSessionRequest {
+            capture_id: configuration.capture_id(),
+            configure_digest: configuration.digest(),
+        };
+        let mut service = TestService::new(
+            context,
+            DiagnosticProviderPolicy::SIMULATED,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
+
+        let configured = service.configure_waveform(&configuration_bytes).unwrap();
+        assert_eq!(configured.phase, WaveformPhase::Configured);
+        assert_eq!(
+            service.configure_waveform(&configuration_bytes).unwrap(),
+            configured
+        );
+        let armed = service
+            .arm_waveform(reference, DeviceCycle(2_000_100))
+            .unwrap();
+        assert_eq!(armed.phase, WaveformPhase::Armed);
+        assert_eq!(armed.generation, 1);
+        assert_eq!(
+            service
+                .arm_waveform(reference, DeviceCycle(2_000_200))
+                .unwrap(),
+            armed
+        );
+
+        let complete = service
+            .retain_waveform_capture(fixture.digital_capture_bytes())
+            .unwrap();
+        assert_eq!(complete.phase, WaveformPhase::Complete);
+        assert_eq!(complete.record_bytes, 512);
+        assert!(complete.triggered);
+
+        let mut chunk_bytes = [0_u8; 312];
+        let first_len = service
+            .pending_waveform_chunk(&mut chunk_bytes)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_len, 312);
+        let first = decode_waveform_chunk(
+            &chunk_bytes[..first_len],
+            reference,
+            complete.record_digest,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        assert_eq!(first.offset(), 0);
+        assert_eq!(first.end_offset(), 168);
+        let lost = service.drop_waveform_chunk(reference, 168).unwrap();
+        assert_eq!(lost.dropped_chunks, 1);
+        assert_eq!(lost.published_bytes, 168);
+
+        let second_len = service
+            .pending_waveform_chunk(&mut chunk_bytes)
+            .unwrap()
+            .unwrap();
+        let second = decode_waveform_chunk(
+            &chunk_bytes[..second_len],
+            reference,
+            complete.record_digest,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        assert_eq!(second.offset(), 168);
+        let progressed = service
+            .acknowledge_waveform_chunk(reference, second.end_offset())
+            .unwrap();
+        assert_eq!(progressed.published_bytes, 336);
+        assert_eq!(progressed.dropped_chunks, 1);
+
+        let read = WaveformReadRequest {
+            capture_id: reference.capture_id,
+            configure_digest: reference.configure_digest,
+            record_digest: complete.record_digest,
+            offset: 500,
+            maximum_bytes: 12,
+        };
+        let recovered_len = service.read_waveform(read, &mut chunk_bytes).unwrap();
+        let recovered = decode_waveform_chunk(
+            &chunk_bytes[..recovered_len],
+            reference,
+            complete.record_digest,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        assert_eq!(recovered.bytes(), &fixture.digital_capture_bytes()[500..]);
+        assert!(recovered.is_final());
+
+        let stopped = service.stop_waveform(reference).unwrap();
+        assert_eq!(stopped.phase, WaveformPhase::Stopped);
+        assert_eq!(stopped.record_bytes, 0);
+        assert_eq!(service.stop_waveform(reference).unwrap(), stopped);
+    }
+
+    #[test]
+    fn unconnected_hardware_policy_never_accepts_an_unserviceable_session() {
+        let fixture = tinybee_diagnostic_fixture().unwrap();
+        let context = fixture.overview().context();
+        let mut service = DisabledService::new(
+            context,
+            DiagnosticProviderPolicy::NONE,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
+        assert_eq!(
+            service.subscribe(&encode_subscription(context, 7)),
+            Err(DiagnosticServiceError::Unsupported)
+        );
+        assert_eq!(
+            service.configure_waveform(&encode_configuration(context)),
+            Err(DiagnosticServiceError::Unsupported)
+        );
     }
 }

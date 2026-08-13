@@ -209,6 +209,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   canonical bounded overview and triggered digital-edge records, deterministic
   TinyBee fixture, capability-reconciled resource cross-linking, exact-cycle UI
   trace, and explicit simulator/no-authority gates.
+- [`M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md`](M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md)
+  — exact context/digest-bound telemetry and capture lifecycles, fixed core-0
+  state, typed client reconciliation, and localhost HTTP/HMAC range recovery
+  without physical Wi-Fi or board contact.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.

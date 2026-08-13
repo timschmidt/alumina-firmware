@@ -80,6 +80,7 @@ alumina-as5600.workspace = true
 alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-config.workspace = true
+alumina-diagnostics.workspace = true
 alumina-foc.workspace = true
 alumina-graph-ir.workspace = true
 alumina-job.workspace = true

@@ -66,6 +66,7 @@ dependencies = [
  "alumina-capability",
  "alumina-clock",
  "alumina-protocol",
+ "sha2",
 ]
 
 [[package]]
@@ -77,6 +78,7 @@ dependencies = [
  "alumina-capability",
  "alumina-clock",
  "alumina-config",
+ "alumina-diagnostics",
  "alumina-foc",
  "alumina-graph-ir",
  "alumina-job",
@@ -217,6 +219,7 @@ dependencies = [
 name = "alumina-service"
 version = "0.1.0"
 dependencies = [
+ "alumina-diagnostics",
  "alumina-net",
  "alumina-protocol",
  "alumina-safety",

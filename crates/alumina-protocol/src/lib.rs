@@ -371,6 +371,8 @@ pub enum Operation {
     TelemetryUnsubscribe = 0x0702,
     /// Device-originated bounded telemetry event or sample batch.
     TelemetryEvent = 0x0703,
+    /// Fetch the exact state of one boot-bound telemetry subscription.
+    TelemetryStatus = 0x0704,
     /// Fetch current AP/STA and credential-transaction state.
     NetworkStatus = 0x0801,
     /// Scan visible infrastructure WLANs.
@@ -417,6 +419,10 @@ pub enum Operation {
     WaveformChunk = 0x0c03,
     /// Stop acquisition and release its buffers/resources.
     WaveformStop = 0x0c04,
+    /// Fetch one capture session's exact lifecycle and retained-record identity.
+    WaveformStatus = 0x0c05,
+    /// Read one bounded range from a complete retained capture record.
+    WaveformRead = 0x0c06,
     /// Fetch coupled firmware/interface update slots and versions.
     UpdateInspect = 0x0d01,
     /// Begin a signed coupled update upload.
@@ -471,9 +477,10 @@ impl Operation {
             Self::CommandBatch | Self::CommandDiagnosticLease | Self::CommandDiagnosticRelease => {
                 FrameKind::Command
             }
-            Self::TelemetrySubscribe | Self::TelemetryUnsubscribe | Self::TelemetryEvent => {
-                FrameKind::Telemetry
-            }
+            Self::TelemetrySubscribe
+            | Self::TelemetryUnsubscribe
+            | Self::TelemetryEvent
+            | Self::TelemetryStatus => FrameKind::Telemetry,
             Self::NetworkStatus
             | Self::NetworkScan
             | Self::NetworkJoin
@@ -496,7 +503,9 @@ impl Operation {
             Self::WaveformConfigure
             | Self::WaveformArm
             | Self::WaveformChunk
-            | Self::WaveformStop => FrameKind::Waveform,
+            | Self::WaveformStop
+            | Self::WaveformStatus
+            | Self::WaveformRead => FrameKind::Waveform,
             Self::UpdateInspect
             | Self::UpdateBegin
             | Self::UpdatePutChunk
@@ -537,6 +546,7 @@ impl Operation {
             0x0701 => Some(Self::TelemetrySubscribe),
             0x0702 => Some(Self::TelemetryUnsubscribe),
             0x0703 => Some(Self::TelemetryEvent),
+            0x0704 => Some(Self::TelemetryStatus),
             0x0801 => Some(Self::NetworkStatus),
             0x0802 => Some(Self::NetworkScan),
             0x0803 => Some(Self::NetworkJoin),
@@ -560,6 +570,8 @@ impl Operation {
             0x0c02 => Some(Self::WaveformArm),
             0x0c03 => Some(Self::WaveformChunk),
             0x0c04 => Some(Self::WaveformStop),
+            0x0c05 => Some(Self::WaveformStatus),
+            0x0c06 => Some(Self::WaveformRead),
             0x0d01 => Some(Self::UpdateInspect),
             0x0d02 => Some(Self::UpdateBegin),
             0x0d03 => Some(Self::UpdatePutChunk),

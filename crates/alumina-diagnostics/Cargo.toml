@@ -13,6 +13,7 @@ alumina-board.workspace = true
 alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-protocol.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

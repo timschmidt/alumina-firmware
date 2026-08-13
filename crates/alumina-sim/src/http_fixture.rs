@@ -2,9 +2,12 @@
 
 use std::fmt;
 
+use alumina_capability::calculate_identity;
 use alumina_clock::{
     BootId, ClockFlags, ClockHeartbeatRequest, ClockHeartbeatResponse, ClockSource,
 };
+use alumina_diagnostics::transport::DiagnosticTransportLimits;
+use alumina_diagnostics::{DiagnosticContext, DiagnosticLimits};
 use alumina_net::{
     AUTH_COUNTER_HEADER, AUTH_DISCOVERY_BODY_BYTES, AUTH_DISCOVERY_CONTENT_LENGTH,
     AUTH_RESPONSE_HEADER, AuthError, AuthHeaderAccumulator, AuthRateLimit, AuthenticatedMedia,
@@ -12,8 +15,9 @@ use alumina_net::{
     CORS_ORIGIN_HEADER, CorsOrigin, CorsPreflightAccumulator, HttpAdmissionError, HttpMethod,
     Route, classify_route, sign_response, write_lower_hex,
 };
-use alumina_protocol::{DeviceCycle, Digest, FrameKind, Operation, StatusCode};
-use alumina_service::{NativeRequest, ResponseMedia, ServiceResponse};
+use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind, Operation, StatusCode};
+use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
+use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
 
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
 const NATIVE_FRAME_MEDIA_TYPE: &str = "application/vnd.alumina.frame";
@@ -21,6 +25,9 @@ const JSON_MEDIA_TYPE: &str = "application/json";
 const EXPOSED_RESPONSE_HEADERS: &str = "X-Alumina-Counter, X-Alumina-Response-Authorization";
 const ALLOWED_REQUEST_HEADERS: &str = "Content-Type, X-Alumina-Counter, X-Alumina-Authorization";
 const PREFLIGHT_VARY: &str = "Origin, Access-Control-Request-Method, Access-Control-Request-Headers, Access-Control-Request-Private-Network";
+
+/// Fixed diagnostic budgets exercised by the authenticated host fixture.
+pub type FixtureDiagnosticService = DiagnosticServiceState<176, 432, 208, 2_048>;
 
 /// One owned HTTP request after bounded socket parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -142,6 +149,7 @@ pub struct ClockHttpFixture {
     authentication: AuthenticationState,
     policy: ClockFixturePolicy,
     accepted_probes: u64,
+    diagnostics: FixtureDiagnosticService,
 }
 
 impl ClockHttpFixture {
@@ -161,6 +169,7 @@ impl ClockHttpFixture {
         policy.validate()?;
         let nonce = BootNonce::new(boot_bytes).map_err(ClockFixtureError::Authentication)?;
         let boot_id = BootId::new(boot_bytes).map_err(|_| ClockFixtureError::Boot)?;
+        let diagnostic_context = diagnostic_context(boot_id, policy.frequency_hz)?;
         let authentication = AuthenticationState::new(nonce, AuthRateLimit::INITIAL)
             .map_err(ClockFixtureError::Authentication)?;
         Ok(Self {
@@ -170,12 +179,33 @@ impl ClockHttpFixture {
             authentication,
             policy,
             accepted_probes: 0,
+            diagnostics: FixtureDiagnosticService::new(
+                diagnostic_context,
+                DiagnosticProviderPolicy::SIMULATED,
+                DiagnosticTransportLimits::native_control(),
+                DiagnosticLimits::interactive(),
+            ),
         })
     }
 
     /// Number of authenticated canonical heartbeat requests accepted this boot.
     pub const fn accepted_probes(&self) -> u64 {
         self.accepted_probes
+    }
+
+    /// Borrow the same fixed diagnostic owner reached by authenticated control.
+    pub const fn diagnostics(&self) -> &FixtureDiagnosticService {
+        &self.diagnostics
+    }
+
+    /// Mutably borrow the diagnostic owner to inject deterministic simulator evidence.
+    pub const fn diagnostics_mut(&mut self) -> &mut FixtureDiagnosticService {
+        &mut self.diagnostics
+    }
+
+    /// Complete context accepted by the authenticated diagnostic owner.
+    pub const fn diagnostic_context(&self) -> DiagnosticContext {
+        self.diagnostics.context()
     }
 
     /// Reboots into an explicit new nonzero identity and clears replay state.
@@ -194,6 +224,12 @@ impl ClockHttpFixture {
         self.authentication = AuthenticationState::new(nonce, AuthRateLimit::INITIAL)
             .map_err(ClockFixtureError::Authentication)?;
         self.accepted_probes = 0;
+        self.diagnostics = FixtureDiagnosticService::new(
+            diagnostic_context(boot_id, self.policy.frequency_hz)?,
+            DiagnosticProviderPolicy::SIMULATED,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
         Ok(())
     }
 
@@ -336,6 +372,15 @@ impl ClockHttpFixture {
         let Ok(native) = NativeRequest::decode(bytes) else {
             return ServiceResponse::invalid_native();
         };
+        if matches!(
+            native.frame.kind,
+            FrameKind::Telemetry | FrameKind::Waveform
+        ) {
+            let Ok(request) = ServiceRequest::native(bytes) else {
+                return ServiceResponse::invalid_native();
+            };
+            return self.diagnostics.dispatch(&request, transmit_cycle);
+        }
         if native.frame.kind != FrameKind::ClockSample
             || native.message.operation != Operation::ClockHeartbeat
             || native.frame.config_digest != Digest::ZERO
@@ -433,6 +478,20 @@ impl Drop for ClockHttpFixture {
     }
 }
 
+fn diagnostic_context(
+    boot_id: BootId,
+    clock_frequency_hz: u64,
+) -> Result<DiagnosticContext, ClockFixtureError> {
+    Ok(DiagnosticContext {
+        device_id: DeviceId(*b"ALUM-SIM:TINYBEE"),
+        boot_id,
+        capability: calculate_identity(&board_mks_tinybee::PACKAGE)
+            .map_err(|_| ClockFixtureError::Capability)?,
+        config_digest: Digest::ZERO,
+        clock_frequency_hz,
+    })
+}
+
 fn public_origin(request: &FixtureHttpRequest) -> Option<CorsOrigin> {
     let value = request.unique_header(CORS_ORIGIN_HEADER.as_bytes())?;
     let value = core::str::from_utf8(value).ok()?;
@@ -478,6 +537,8 @@ pub enum ClockFixtureError {
     Boot,
     /// Clock capability policy was inconsistent.
     Policy,
+    /// Current TinyBee capability package could not produce an identity.
+    Capability,
     /// Portable authentication state rejected its boot/rate facts.
     Authentication(AuthError),
 }
@@ -488,6 +549,7 @@ impl fmt::Display for ClockFixtureError {
             Self::Secret => formatter.write_str("fixture secret must be nonempty"),
             Self::Boot => formatter.write_str("fixture boot identity is invalid"),
             Self::Policy => formatter.write_str("fixture clock policy is invalid"),
+            Self::Capability => formatter.write_str("fixture capability identity is invalid"),
             Self::Authentication(error) => {
                 write!(formatter, "fixture authentication policy failed: {error:?}")
             }

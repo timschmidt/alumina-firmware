@@ -279,15 +279,19 @@ Experiment records bundle board/config/job/graph digests, clock models, capture
 settings, commands, telemetry, annotations, and exports. Webcam snapshots may be
 attached as user evidence but are not silently treated as calibrated metrology.
 
-Implementation checkpoint: `ALMOVW01` and `ALMDIG01` now provide the first
-bounded allocation-free overview and triggered digital-edge record boundary.
-The interface independently reconciles complete device/boot/capability/config/
-clock identity, rejects unknown board resources, and cross-links resource
-selection to a four-lane deterministic TinyBee plot. This is explicitly
-simulator evidence with no network, physical acquisition, lease, or output
-authority. Authenticated streaming, device acquisition admission, analog
-waveforms, physical analyzer comparison, and overload retention evidence remain
-open.
+Implementation checkpoint: `ALMOVW01` and `ALMDIG01` provide the first bounded
+allocation-free overview and triggered digital-edge record boundary. Canonical
+authenticated subscription/configuration/status/event/chunk/range bodies now
+bind complete device/boot/capability/config/clock context and exact SHA-256
+identities. The fixed core-0 owner and typed client prove idempotent mutation,
+latest-only loss accounting, retained-record recovery, ambiguous-response retry,
+and complete validation through in-memory and localhost HTTP/HMAC simulations.
+The interface independently rejects unknown board resources and cross-links
+resource selection to a four-lane deterministic TinyBee plot. This remains
+explicit simulator evidence with no physical acquisition, lease, command, or
+output authority. Hardware providers return `Unsupported`; live WebSocket
+delivery, analog waveforms, physical analyzer comparison, and overload HIL
+remain open.
 
 Exit:
 
@@ -454,6 +458,7 @@ and
 [`graph hierarchy flattening`](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
+[`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

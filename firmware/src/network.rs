@@ -114,6 +114,7 @@ pub struct NetworkControl {
     credential_source: CredentialSource,
     boot_nonce: BootNonce,
     device_id: DeviceId,
+    capability_identity: CapabilityIdentity,
 }
 
 impl NetworkControl {
@@ -135,6 +136,11 @@ impl NetworkControl {
     /// Stable non-secret physical MCU identity used by targeted work.
     pub const fn device_id(&self) -> DeviceId {
         self.device_id
+    }
+
+    /// Verified compile-time board capability identity used by authenticated services.
+    pub const fn capability_identity(&self) -> CapabilityIdentity {
+        self.capability_identity
     }
 }
 
@@ -240,6 +246,7 @@ pub async fn start(
         credential_source: CREDENTIAL_SOURCE,
         boot_nonce: auth_nonce,
         device_id,
+        capability_identity,
     }
 }
 

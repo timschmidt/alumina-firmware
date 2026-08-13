@@ -63,11 +63,18 @@ selected-resource card, and digital plot all resolve through the same
 `ResourceId`. Screen coordinates are lossy projections of retained integer
 cycles and never flow back into a command or canonical record.
 
-## Next integration boundary
+## Authenticated transport checkpoint
 
-Later authenticated `TelemetryEvent` and `WaveformChunk` bodies will transport
-these canonical records under subscription/acquisition admission policies.
-Firmware must publish only values its resource owner can support, keep overview
-rate/queue budgets separate from capture buffers, and preserve loss/fault
-evidence under backpressure. Physical TinyBee acquisition, Wi-Fi transport, and
-SLogic comparison remain HIL gates rather than simulator claims.
+Canonical `TelemetrySubscribe`/`Status`/`Event` and
+`WaveformConfigure`/`Arm`/`Status`/`Read`/`Chunk` bodies now bind these records to
+the complete service-owned context and exact request/record digests. A bounded
+core-0 owner implements latest-only replacement accounting, idempotent retry,
+fixed capture retention, explicit live-chunk acknowledgement/drop, and
+side-effect-free range recovery. The typed interface client reconciles ambiguous
+mutations and validates the complete capture before exposure; a localhost
+HTTP/HMAC/native-frame test exercises the same dispatcher.
+
+See [`DIAGNOSTIC-TRANSPORT.md`](DIAGNOSTIC-TRANSPORT.md). Hardware compositions
+currently report both evidence providers as unsupported. Physical TinyBee
+sampling/capture, WebSocket event delivery, Wi-Fi/AP transport, and SLogic
+comparison remain HIL gates rather than simulator claims.

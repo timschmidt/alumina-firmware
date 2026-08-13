@@ -33,7 +33,7 @@ evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
 evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
 evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
-The first I4 diagnostic boundary is also portable and explicitly offline.
+The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource
 overviews and triggered digital edge captures with complete device/boot/
 capability/config/clock identity, provenance, quality, sample cycles, trigger,
@@ -44,6 +44,16 @@ and cross-links its ledger, selected resource, and exact-cycle cursor. It grants
 no connection, measurement, diagnostic lease, command, or output authority.
 See the [diagnostic contract](docs/DIAGNOSTICS.md) and [offline diagnostic
 evidence](docs/evidence/M9-OFFLINE-DIAGNOSTIC-EXPLORER.md).
+
+Authenticated V1 telemetry/capture transport now binds those records to exact
+device/boot/capability/configuration context and SHA-256 request/record identity.
+A fixed-memory core-0 owner implements idempotent lifecycle, latest-only loss
+accounting, retained capture, 168-byte native ranges, and retry reconciliation;
+the typed interface client passes both in-memory and real localhost HTTP/HMAC
+flows. TinyBee and T-Deck Pro compile the dispatcher but honestly return
+`Unsupported` until a physical provider is connected. See the [transport
+contract](docs/DIAGNOSTIC-TRANSPORT.md) and [offline authenticated transport
+evidence](docs/evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md).
 
 The first deployed graphical-control path is also portable end to end. The
 interface lowers one audited Boolean Service-to-Realtime graph into a fixed

@@ -9,6 +9,9 @@ use alumina_capability::{CapabilityIdentity, decode_resource_id, encode_resource
 use alumina_clock::{BOOT_ID_BYTES, BootId};
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
 
+/// Canonical authenticated telemetry and waveform transport bodies.
+pub mod transport;
+
 /// Exact resource-overview document magic.
 pub const RESOURCE_OVERVIEW_MAGIC: [u8; 8] = *b"ALMOVW01";
 /// Exact digital-capture document magic.
@@ -1197,13 +1200,11 @@ fn validate_resource_value(value: ResourceValue) -> Result<(), DiagnosticError> 
         numerator,
         denominator,
     } = value
-    {
-        if denominator == 0
+        && (denominator == 0
             || numerator == 0 && denominator != 1
-            || gcd(numerator.unsigned_abs(), denominator) != 1
-        {
-            return Err(DiagnosticError::Value);
-        }
+            || gcd(numerator.unsigned_abs(), denominator) != 1)
+    {
+        return Err(DiagnosticError::Value);
     }
     Ok(())
 }
