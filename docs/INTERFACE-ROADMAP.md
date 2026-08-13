@@ -395,8 +395,8 @@ epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
 resource opcodes, nested component dependencies, general hierarchy/panel
-editing, front-panel runtime inputs, and live plots remain open. Canonical
-placement/wiring and an 11-kind audited palette now support
+editing, front-panel runtime inputs, and live telemetry/trigger plots remain
+open. Canonical placement/wiring and an 11-kind audited palette now support
 node create/delete and exact scalar parameter replacement. Bounded complete
 `ALGW` snapshots now provide replay-backed undo/redo, origin-local browser
 persistence preserves only the current document, and native/browser `.algw`
@@ -413,7 +413,15 @@ workspace with fresh monotonic node/wire identities. The visible proof expands
 one instance to 19 audited nodes and 22 wires; V1 rejects every nested instance
 until recursive depth/cycle authority is explicit. Composite or
 identity-bearing parameter editors, collaboration/conflict handling, editable
-component libraries/instances, and general panel authoring remain open. See the
+component libraries/instances, and general panel authoring remain open. A
+capability-derived catalog now intersects the complete caller-authenticated
+graph-executor document with reviewed deployment bindings and constructs only
+the four TinyBee stable Boolean input handles. A separate offline Realtime
+draft makes those nodes visible while showing that ADC, UART, timer, shifted
+output, storage, raw GPIO, and all other unadmitted access remain closed.
+Canonical `ALGP` sidecars now bind bounded probes to exact workspace outputs;
+the reference plot is probe-selected, but no live telemetry or trigger
+authority is implied. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
@@ -423,9 +431,12 @@ component libraries/instances, and general panel authoring remain open. See the
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
-[`graph history/persistence`](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md), and
+[`graph history/persistence`](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md),
+and
 [`graph components/front panels`](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [`graph hierarchy flattening`](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
+[`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
+and
 [`fixed graph-IR`](evidence/M9-FIXED-GRAPH-IR.md) and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)

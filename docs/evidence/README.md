@@ -197,6 +197,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   canonical digest-bound `ALGH` libraries/instances, derived collapsed port
   shapes, deterministic connector rewiring with fresh monotonic identities,
   and ordinary audited `ALGW` output.
+- [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
+  — caller-authenticated capability/registry intersection into concrete
+  TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
+  offline target drafting, and visible closed-access evidence.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.
