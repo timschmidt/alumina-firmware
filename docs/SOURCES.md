@@ -26,7 +26,8 @@ planning evidence trail, not a floating dependency specification.
   [`hyperpath/src`](../../hyperpath/src) — exact-aware path/toolpath carriers,
   retained provenance, PH curves, path-wide length/feed reports, exact
   squared-speed forward/reverse lookahead, independent constraint replay, and
-  jerk-ramp schedules including the exact monotonic nonzero-boundary proposer.
+  jerk-ramp schedules including the exact monotonic nonzero-boundary proposer
+  and bounded component-local refinement to jerk-feasible node feeds.
 - [`hypersolve/Cargo.toml`](../../hypersolve/Cargo.toml) and
   [`hypersolve/src`](../../hypersolve/src) — symbolic constraints, exact direct
   solving, numerical proposal boundaries, exact replay, and interval/Krawczyk
@@ -265,8 +266,9 @@ and FOC implementations are clean-room, based on functional descriptions,
 published mathematics, datasheets, and independently authored tests. SimpleFOC
 source copying is not planned despite its MIT license; g2 source copying is
 prohibited by the selected implementation path. The two-pass lookahead and
-monotonic boundary-feed increments were implemented and tested without
-inspecting either implementation's source.
+monotonic boundary-feed increments, exact component-local jerk refinement, and
+lossless line-G1 enablement were implemented and tested without inspecting
+either implementation's source.
 
 ## Lightweight MCU control reference
 

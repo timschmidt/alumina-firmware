@@ -293,14 +293,18 @@ losslessly into Hyperpath. Polynomial cubics remain native exact sources and
 are reduced only by a caller-bounded pointwise certificate over exact
 degree-elevated chord differences and Hypercurve de Casteljau spans. The
 resulting exact line/arc path passes through Hyperpath's exact squared-speed
-forward/reverse proposer and independent Hypersolve replay. The current caller
-policy caps entry, exit, and every join at zero, preserving a full stop at every
-cubic chord before rest-to-rest jerk replay, then bounded
-machine-resolution interpolation, real `alumina-machine-ir`, production
-stepper preflight, immutable per-MCU cache packaging, independent event
-simulation, and domain-separated `ALMEVD02` source/metric/approximation replay.
-Owned partitions also bind into the shared sorted global manifest with exact
-rational duration agreement.
+forward/reverse proposer and independent Hypersolve replay, then through an
+exact bounded component-local refinement which lowers feeds until every
+touching positive span owns a replayed monotonic jerk transition. The caller
+keeps entry and exit at zero and permits a positive internal ceiling only for a
+lossless exact source-line pair which Hyperpath independently classifies G1.
+True corners, reversals, curvature-bearing joins, and every cubic chord remain
+full stops. The resulting schedule passes through bounded machine-resolution
+interpolation, real `alumina-machine-ir`, production stepper preflight,
+immutable per-MCU cache packaging, independent event simulation, and
+domain-separated `ALMEVD02` source/metric/approximation replay. Owned
+partitions also bind into the shared sorted global manifest with exact rational
+duration agreement.
 
 The selected UI-only CNC importer is implemented without making legacy text
 load-bearing: exact decimal/modal parsing constructs one connected native
@@ -320,6 +324,7 @@ physical delivery, and reproducible release pinning remain open. See the
 [certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md),
 [exact two-pass lookahead evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
 [exact monotonic-jerk evidence](evidence/M10-EXACT-MONOTONIC-JERK.md),
+[exact jerk-feasible G1 evidence](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
 and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
@@ -346,20 +351,20 @@ Work:
 Clean-room planning checkpoint: Hyperpath now proposes exact forward/reverse
 acceleration-reachable speed nodes from caller/global/tangent/radius ceilings
 and exact retained lengths, then independently replays caller, corner,
-reversal, and bidirectional span constraints through Hypersolve. Alumina routes
-its current schedule through that planner with every caller ceiling still zero,
-so no motion bytes or physical authority change. Hyperpath also has an exact
-two-phase monotonic transition for an element with at least one positive
-boundary feed, with separate construction and generic kinematic replay;
-Alumina's phase selector consumes actual lookahead nodes but its reachable
-zero/zero branch remains the existing four-phase rest-to-rest schedule. This
-closes the basic two-pass acceleration-reachability mechanism and a conservative
-nonzero-boundary primitive, not N-axis projection, jerk-aware node feasibility,
-curvature limits, retained blends, enabled positive-node motion, hold/resume,
-or HIL. See
+reversal, and bidirectional span constraints through Hypersolve. A second exact
+pass partitions positive nodes at structural zeros and uniformly halves one
+component until every touching span has a separately constructed and replayed
+two-phase monotonic jerk transition; bounded exhaustion is a typed failure.
+Alumina now enables that path only for lossless exact line-to-line G1 joins.
+Its zero/zero spans keep the four-phase rest-to-rest schedule, while curved
+joins, approximated cubic chords, corners, and reversals remain stops. This
+closes the first conservative jerk-feasible positive-boundary mechanism, not
+N-axis projection, curvature/vector-jerk certification, retained blends,
+time-optimal profiles, hold/resume, or HIL. See
 [`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md)
 and
-[`M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md).
+[`M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md), plus
+[`M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

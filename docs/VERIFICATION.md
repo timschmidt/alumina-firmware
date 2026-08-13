@@ -141,6 +141,16 @@ degenerate, and infeasible-short-span rejection; generated boundary cases; and
 unchanged reachable all-zero Alumina scheduling. It does not open the retained
 blend, jerk-aware lookahead, timer-lowering, or physical qualification gates.
 
+The first active exact positive-boundary checkpoint is recorded in
+[`evidence/M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md).
+Its regression set includes exact component-local halving, unequal refinement
+on components separated by structural stops, caller-owned budget exhaustion,
+fresh acceleration/caller/transition replay, and production executor lowering
+of a lossless source-line G1 continuation. Reversals, line-to-arc G1 joins, and
+every generated cubic chord remain stops. This deliberately narrow gate does
+not certify curvature continuity, vector jerk, N-axis projection, optimality,
+or any physical output.
+
 ### 4. Per-board compile matrix
 
 Every described board has a CI job that:

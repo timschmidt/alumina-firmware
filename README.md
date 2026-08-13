@@ -29,11 +29,16 @@ binds owned participant artifacts into the shared `alumina-job` manifest.
 The machine-bound line/arc/certified-cubic path now derives exact dynamics and a
 complete position-error budget from canonical Configuration V5, runs exact
 forward/reverse node planning, and certifies jerk schedules through
-Hyperpath/Hypersolve. Phase selection consumes the planned boundary feeds: the
-reachable all-zero policy retains symmetric rest-to-rest motion, while a
-separately replayed exact monotonic nonzero-boundary primitive remains behind a
-disabled positive-node policy. The schedule lowers to the current
-constant-velocity IR under a proved interpolation bound.
+Hyperpath/Hypersolve. Hyperpath refines each stop-separated positive component
+by exact uniform halving until every touching span has a replayed monotonic
+jerk transition or a caller-owned bound rejects it. Alumina permits a positive
+join only between lossless exact source lines which Hyperpath independently
+classifies G1. Curvature-bearing joins, true corners, reversals, and every
+approximated cubic chord boundary remain exact stops. Phase selection consumes
+those planned boundary feeds: zero/zero spans retain symmetric rest-to-rest
+motion and eligible positive spans reuse Hyperpath's certified two-phase
+transition. The schedule lowers to the current constant-velocity IR under a
+proved interpolation bound.
 Before cache release it replays the allocation-free production stepper
 electrical contract; the final partition then passes an event-level
 `RealtimeJob`/`CachedStepperExecutor` simulation and canonical evidence replay.
@@ -44,7 +49,8 @@ evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
 evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
 evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md) and [exact scheduling
 evidence](docs/evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md), through the [exact
-monotonic-jerk evidence](docs/evidence/M10-EXACT-MONOTONIC-JERK.md).
+monotonic-jerk evidence](docs/evidence/M10-EXACT-MONOTONIC-JERK.md) and [exact
+jerk-feasible G1 evidence](docs/evidence/M10-EXACT-JERK-FEASIBLE-G1.md).
 
 The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource

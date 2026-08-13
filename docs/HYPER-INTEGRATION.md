@@ -15,7 +15,7 @@ loop.
 | `hypertri` | 0.4.1, Apache-2.0 | Exact triangulation where CAM or visualization requires it |
 | `hypermesh` | 0.1.0, Apache-2.0 | Exact mesh topology and checked graphics conversion |
 | `hypercurve` | 0.3.1, Apache-2.0 | Exact line/arc/Bezier/NURBS paths and regions, derivatives, projection, and chord-error-controlled finite reduction |
-| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, exact two-pass junction lookahead, and independently replayed jerk scheduling |
+| `hyperpath` | 0.3.0, Apache-2.0 | Exact-aware toolpath carriers, source/provenance retention, PH curves, length/feed reports, exact two-pass junction lookahead, component-local jerk-feasibility refinement, and independently replayed jerk scheduling |
 | `hypersolve` | 0.3.1, Apache-2.0 | Symbolic constraints, exact direct solving, numerical proposal separation, exact residual replay, and interval/Krawczyk certification |
 | `csgrs` | 0.23.0, Apache-2.0 | Current solid, `TriangleMesh`, and `CurveRegion2` modeling/CAM source types |
 | `hypergraphics` | 0.1.0, Apache-2.0 | Sole checked exact-scene/camera-to-GPU boundary; never a CAM input |
@@ -43,7 +43,10 @@ schedules; and a combined lookahead feed schedule. Relevant entry points include
 - `LookaheadFeedPlanningLimits`, `plan_lookahead_feed_schedule`,
   `PlannedLookaheadFeedSchedule`, and `certify_lookahead_feed_schedule`; and
 - `plan_monotonic_jerk_transition` and
-  `PlannedMonotonicJerkTransition`.
+  `PlannedMonotonicJerkTransition`; and
+- `plan_jerk_feasible_lookahead_schedule`,
+  `PlannedJerkFeasibleLookaheadSchedule`, and
+  `JerkFeasibleNodeComponent`.
 
 The exact proposer combines caller ceilings, global feed, exact tangent class,
 retained blend radii, and exact element lengths. It propagates squared-speed
@@ -59,8 +62,16 @@ requested boundaries, monotonic shared feed, phase time and exact length
 construction before applying the generic Hyperpath/Hypersolve phase,
 continuity, kinematic, and limit replay. Both-zero motion remains a separate
 internal-peak problem; Alumina retains its existing four-phase rest-to-rest
-construction for that case. The monotonic primitive is not a general
-time-optimal S-curve or a substitute for jerk-aware node feasibility.
+construction for that case.
+
+The jerk-feasible lookahead planner partitions the acceleration-only result
+into maximal structurally positive components separated by exact zero nodes.
+It tests the monotonic primitive on every touching span and, only for dynamic
+proposal failure, divides every node in that component by exactly two before
+retrying. It retains component ranges and halving counts, fresh caller and
+lookahead replay, and the certified transition for each positive span. A
+caller-owned bound fails with a typed exhaustion result. The construction is
+conservative and deterministic, not a general time-optimal S-curve.
 
 The interface CAM layer extends and composes these reports rather than
 introducing unrelated `f64` motion math. Broader work still required includes
@@ -76,17 +87,20 @@ half-splits. Hyperpath retains exact Euclidean lengths for the resulting
 diagonal line carriers. Every generated join is a zero-feed stop until a native
 or curvature-certified nonzero-feed curve policy exists. Canonical `ALMEVD02`
 then binds independent source, metric-path, and source-to-motion transcripts.
-Those zeros are now explicit caller ceilings consumed by the exact two-pass
-planner rather than a hand-filled final speed vector. Phase construction also
-reads those selected nodes: the all-zero policy keeps the reachable
-rest-to-rest behavior, while a tested positive-node branch delegates to the
-monotonic proposer and remains unreachable from current UI/configuration/job
-policy. See
+Generated cubic joins remain explicit zero caller ceilings consumed by the
+exact planner rather than a hand-filled final speed vector. Alumina permits a
+positive ceiling only where two lossless exact source lines meet and Hyperpath
+independently classifies the join G1. The jerk-feasible schedule is then active:
+zero/zero spans keep rest-to-rest behavior and positive spans consume the
+retained monotonic transition. Curvature-bearing G1 joins remain stopped because
+tangent continuity alone does not bound normal acceleration or vector jerk. See
 [`evidence/M10-CERTIFIED-CUBIC-MOTION.md`](evidence/M10-CERTIFIED-CUBIC-MOTION.md)
 and
 [`evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
 plus
-[`evidence/M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md).
+[`evidence/M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md)
+and
+[`evidence/M10-EXACT-JERK-FEASIBLE-G1.md`](evidence/M10-EXACT-JERK-FEASIBLE-G1.md).
 
 ## Hypersolve's role
 

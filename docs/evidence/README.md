@@ -264,3 +264,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   boundary feeds, separate construction and generic kinematic replay, dormant
   all-zero-policy integration, and renewed native/WASM/loopback evidence with
   every physical claim kept closed.
+- [`M10-EXACT-JERK-FEASIBLE-G1.md`](M10-EXACT-JERK-FEASIBLE-G1.md) — exact
+  stop-separated component refinement to jerk-feasible node feeds, active
+  lossless line-to-line G1 continuations, conservative curvature/cubic stop
+  policy, production executor lowering, and renewed native/WASM/loopback
+  evidence with every physical claim kept closed.

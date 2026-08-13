@@ -659,15 +659,16 @@ Layer 2 now has an exact acceleration-reachability core: Hyperpath combines
 caller/global/tangent/retained-radius node ceilings, propagates squared-speed
 limits forward and backward over exact retained lengths, and independently
 replays every selected node and span through Hypersolve. Alumina currently
-supplies zero ceilings at all nodes, so this replaces the proposal mechanism
-without enabling blended motion. Hyperpath now also supplies a conservative
-exact two-phase monotonic transition for a retained element with at least one
-positive boundary feed, with separate construction and generic kinematic
-replay. Alumina consumes actual node feeds but retains the four-phase
-rest-to-rest branch under its reachable all-zero policy. N-axis projection,
-retained blend geometry, curvature/jerk-aware node limits, general
-nonzero-boundary profiles, timer-lattice lowering for positive nodes, and
-hold/resume replanning remain open.
+supplies zero entry/exit and geometric-radius ceilings. Hyperpath additionally
+partitions structurally positive nodes into stop-separated components and
+lowers each component by exact uniform halving until every touching span owns a
+separately constructed and generically replayed two-phase monotonic transition.
+Alumina grants a positive internal ceiling only to lossless exact source-line
+pairs with an independently classified G1 join. Zero/zero spans retain the
+four-phase rest-to-rest branch; curvature-bearing joins, true corners,
+reversals, and approximated cubic chords remain stops. N-axis projection,
+retained blend geometry, curvature/vector-jerk-aware limits, general and
+time-optimal profiles, and hold/resume replanning remain open.
 
 The portable `alumina-motion` executor now implements the first step-only part
 of layers 5–7 without owning hardware. It validates a dense stepper profile

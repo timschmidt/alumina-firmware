@@ -233,13 +233,15 @@ bounded source-to-motion compiler: exact degree-elevated-chord predicates and
 Hypercurve de Casteljau splits produce an exact line path under the allocated
 positional bound. Hyperpath now combines explicit caller, global, tangent, and
 retained-radius ceilings in exact squared-speed forward/reverse passes, then
-independently replays the result with Hypersolve. The current policy supplies a
-zero ceiling at every node, including every cubic chord. Phase selection reads
-those actual nodes: zero/zero retains the four-phase rest-to-rest profile, while
-a separately replayed exact monotonic two-phase primitive is available behind
-the unreachable positive-node branch. Caller-bounded interpolation is then
-lowered to the sibling `alumina-machine-ir` type. Production stepper preflight,
-immutable cache
+independently replays the result with Hypersolve. A bounded exact pass then
+lowers each stop-separated positive component by uniform halving until all of
+its spans have replayed monotonic jerk transitions. The current policy supplies
+positive internal ceilings only to lossless source-line pairs with an exact G1
+join; curvature-bearing joins, corners, reversals, and every cubic chord retain
+zero ceilings. Phase selection reads those actual nodes: zero/zero retains the
+four-phase rest-to-rest profile and positive spans consume Hyperpath's retained
+two-phase transition. Caller-bounded interpolation is then lowered to the
+sibling `alumina-machine-ir` type. Production stepper preflight, immutable cache
 partitioning, independent event simulation, and canonical `ALMEVD02` source,
 metric, and approximation evidence replay must all succeed transactionally.
 
@@ -260,6 +262,7 @@ See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 [certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md),
 [exact two-pass evidence](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md),
 [exact monotonic-jerk evidence](evidence/M10-EXACT-MONOTONIC-JERK.md),
+[exact jerk-feasible G1 evidence](evidence/M10-EXACT-JERK-FEASIBLE-G1.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
