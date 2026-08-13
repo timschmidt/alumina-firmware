@@ -227,11 +227,15 @@ Implementation checkpoint: the window-free compiler and visible Machine/CAM
 workspace now derive an exact two-axis profile, usable travel, complete
 resolution/error budget, and timer/output lattice from canonical Configuration
 V5 and board capabilities. Retained Hypercurve lines and explicit arcs enter
-Hyperpath/Hypersolve exact-stop lookahead and four-phase jerk replay, then a
-caller-bounded certified interpolation is lowered to the sibling
+Hyperpath losslessly. A retained polynomial cubic now enters a distinct,
+bounded source-to-motion compiler: exact degree-elevated-chord predicates and
+Hypercurve de Casteljau splits produce an exact line path under the allocated
+positional bound. Hyperpath/Hypersolve apply exact-stop lookahead and four-phase
+jerk replay to every metric element, including a zero-feed node at every cubic
+chord. Caller-bounded interpolation is then lowered to the sibling
 `alumina-machine-ir` type. Production stepper preflight, immutable cache
-partitioning, independent event simulation, and canonical evidence replay must
-all succeed transactionally.
+partitioning, independent event simulation, and canonical `ALMEVD02` source,
+metric, and approximation evidence replay must all succeed transactionally.
 
 An optional UI-only CNC adapter now parses a deliberately selected connected XY
 line/explicit-IJ-arc subset directly into exact rationals and native Hypercurve
@@ -241,11 +245,13 @@ and per-curve modal provenance remain separate from exact-geometry/job identity,
 and the direct Hypercurve fixture remains the default. Equivalent text and a
 comment-only variant reproduce identical geometry, partition, and evidence,
 while process words and an out-of-travel path leave the prior workspace
-unchanged. General Bezier/NURBS scheduling, nonzero-radius blends, broader
-kinematics, tool/work transforms, process constraints, automatic resource
-partitioning, authenticated physical delivery, and repeatable release pinning
-remain open. See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
+unchanged. Quadratic/rational Bezier, spline/NURBS scheduling, native or
+nonzero-feed cubic carriers, nonzero-radius blends, broader kinematics,
+tool/work transforms, process constraints, automatic resource partitioning,
+authenticated physical delivery, and repeatable release pinning remain open.
+See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 [exact scheduling evidence](evidence/M10-EXACT-SCHEDULE-PREFLIGHT.md),
+[certified cubic-motion evidence](evidence/M10-CERTIFIED-CUBIC-MOTION.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 

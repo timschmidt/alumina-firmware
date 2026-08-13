@@ -2,6 +2,10 @@
 
 Date: 2026-08-13
 
+Historical scope: this records the initial line/arc and `ALMEVD01` checkpoint.
+It is extended, not retroactively rewritten, by
+[`M10-CERTIFIED-CUBIC-MOTION.md`](M10-CERTIFIED-CUBIC-MOTION.md).
+
 ## Result
 
 The authoritative browser/WASM path now carries exact retained line/arc

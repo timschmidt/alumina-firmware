@@ -113,6 +113,15 @@ The certificate is testable evidence, not a substitute for firmware validation.
 Randomized property tests compare the integer executor trace to a high-precision
 host reference. Byte-identical input/config/policy must produce byte-identical IR.
 
+The first retained polynomial-cubic checkpoint is recorded in
+[`evidence/M10-CERTIFIED-CUBIC-MOTION.md`](evidence/M10-CERTIFIED-CUBIC-MOTION.md).
+Its required regression set includes collinear backtracking/overshoot,
+zero-allocation rejection, bounded subdivision-depth/element-budget
+exhaustion, exact source/motion provenance, a full stop at every generated
+chord, and byte-identical source/metric/approximation evidence replay. This is
+software evidence only; it does not satisfy any physical timing, motion, or
+safety qualification layer below.
+
 ### 4. Per-board compile matrix
 
 Every described board has a CI job that:

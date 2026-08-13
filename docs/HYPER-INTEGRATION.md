@@ -1,13 +1,13 @@
 # Hyper stack integration
 
-Audit snapshot: 2026-08-10. The browser/WASM side owns these exact and
+Audit snapshot: 2026-08-13. The browser/WASM side owns these exact and
 certification-heavy crates. Firmware consumes only bounded integer/fixed-point
 artifacts and does not pull arbitrary-precision or `std` geometry into a control
 loop.
 
 ## Core dependency set
 
-| Crate | Local version/license | Planned authority |
+| Crate | Local version/license | Authority |
 | --- | --- | --- |
 | `hyperreal` | 0.13.1, Apache-2.0 | Exact `Rational`/`Real`, checked refinement, and the scalar policy for CAD/CAM/config facts |
 | `hyperlattice` | 0.6.1, Apache-2.0 | Exact work, tool, machine, kinematic, and calibration transforms |
@@ -20,9 +20,11 @@ loop.
 | `csgrs` | 0.23.0, Apache-2.0 | Current solid, `TriangleMesh`, and `CurveRegion2` modeling/CAM source types |
 | `hypergraphics` | 0.1.0, Apache-2.0 | Sole checked exact-scene/camera-to-GPU boundary; never a CAM input |
 
-Pin a mutually compatible commit set in `alumina-interface`. Update the set
-coherently and record it in every job manifest; do not duplicate old and new
-geometry type systems.
+Development follows the observed sibling worktrees and records their commit and
+tracked-diff fingerprints. Pin a mutually compatible set coherently for a
+reproducible release and record it in every job manifest; do not freeze an
+actively edited Hypercurve tree merely to create an artificial development pin,
+and do not duplicate old and new geometry type systems.
 
 ## Hyperpath's role
 
@@ -40,11 +42,22 @@ schedules; and a combined lookahead feed schedule. Relevant entry points include
   `certify_multi_phase_jerk_ramp_feed_schedule`; and
 - `certify_lookahead_feed_schedule`.
 
-The interface CAM layer should extend and compose these reports rather than
-introduce unrelated `f64` motion math. Work still required includes machine-axis
-constraint projection, process limits, kinematics, stop/hold replanning,
-step/PWM/timer lattices, canonical serialization, and conservative composition
-of the geometric and temporal certificates.
+The interface CAM layer extends and composes these reports rather than
+introducing unrelated `f64` motion math. Broader work still required includes
+direction-aware and multi-axis constraint projection, process limits,
+kinematics, stop/hold replanning, additional step/PWM/timer lattices, and
+conservative composition of later geometric and temporal certificates.
+
+The implemented first cubic boundary retains a native exact Hypercurve source
+and constructs a separate Hyperpath metric path only after a bounded pointwise
+certificate. It degree-elevates each candidate endpoint chord, bounds the exact
+cubic difference controls, and otherwise uses exact Hypercurve de Casteljau
+half-splits. Hyperpath retains exact Euclidean lengths for the resulting
+diagonal line carriers. Every generated join is a zero-feed stop until a native
+or curvature-certified nonzero-feed curve policy exists. Canonical `ALMEVD02`
+then binds independent source, metric-path, and source-to-motion transcripts.
+See
+[`evidence/M10-CERTIFIED-CUBIC-MOTION.md`](evidence/M10-CERTIFIED-CUBIC-MOTION.md).
 
 ## Hypersolve's role
 

@@ -249,3 +249,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   Hyperpath/Hypersolve exact-stop jerk scheduling, certified firmware-V1
   interpolation, production stepper preflight, cached event replay, and
   deterministic source/partition evidence with physical claims kept closed.
+- [`M10-CERTIFIED-CUBIC-MOTION.md`](M10-CERTIFIED-CUBIC-MOTION.md) — native
+  exact cubic source retention, bounded pointwise source-to-motion reduction,
+  exact diagonal feed carriers, stop-at-every-chord scheduling, domain-separated
+  `ALMEVD02` replay, and native/WASM browser evidence with physical claims kept
+  closed.
