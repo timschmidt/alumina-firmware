@@ -2,10 +2,11 @@
 #![doc = "Canonical byte-addressable board capability documents for Alumina."]
 
 use alumina_board::{
-    BoardError, BoardPackage, BusKind, Chip, ClockDomain, ClockSource, DeviceRoute,
-    ElectricalConstraintKind, FlashRegionKind, GraphExecutorDescriptor, GraphOpcodeDescriptor,
-    GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor, HilKind, InterruptTrigger,
-    OwnerDomain, Qualification, ResourceId, SafeValue, SupportLevel,
+    AliasDescriptor, BoardError, BoardPackage, BusKind, Chip, ClockDomain, ClockSource,
+    DeviceRoute, ElectricalConstraintKind, FlashRegionKind, GraphExecutorDescriptor,
+    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor,
+    HilKind, InterruptTrigger, NormalizedPoint, OwnerDomain, Qualification, ResourceDescriptor,
+    ResourceId, SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -41,6 +42,428 @@ pub struct CapabilityIdentity {
     /// SHA-256 over every document byte.
     pub digest: Digest,
 }
+
+/// Caller-selected work and memory limits for independent board-document
+/// inspection.
+///
+/// These limits bound hostile range-assembled documents before any UI model is
+/// constructed. A zero count limit intentionally rejects a nonempty matching
+/// section while still permitting an empty one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoardCapabilityLimits {
+    /// Largest complete document accepted.
+    pub maximum_document_bytes: u32,
+    /// Largest individual UTF-8 string accepted.
+    pub maximum_string_bytes: u32,
+    /// Largest resource, alias, bus, device, flash, clock, constraint,
+    /// interrupt, safe-image, or HIL-requirement table accepted.
+    pub maximum_records_per_section: u32,
+    /// Largest visual table accepted.
+    pub maximum_visuals: u32,
+    /// Largest hotspot table accepted for one visual.
+    pub maximum_hotspots_per_visual: u32,
+    /// Largest polygon accepted for one hotspot.
+    pub maximum_points_per_hotspot: u32,
+}
+
+impl BoardCapabilityLimits {
+    /// Bounded browser/native inspection policy.
+    pub const fn interactive() -> Self {
+        Self {
+            maximum_document_bytes: 4 * 1_024 * 1_024,
+            maximum_string_bytes: 64 * 1_024,
+            maximum_records_per_section: 4_096,
+            maximum_visuals: 32,
+            maximum_hotspots_per_visual: 4_096,
+            maximum_points_per_hotspot: 4_096,
+        }
+    }
+}
+
+impl Default for BoardCapabilityLimits {
+    fn default() -> Self {
+        Self::interactive()
+    }
+}
+
+/// Independently validated, allocation-free view of one complete canonical V2
+/// board capability document.
+///
+/// The view exposes the board summary and the descriptive tables needed by a
+/// board explorer while preserving the graph executor as a separate authority.
+/// All intervening V2 sections are structurally and canonically validated even
+/// when they are represented here only by counts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoardCapabilityView<'a> {
+    identity: CapabilityIdentity,
+    board_id: &'a str,
+    revision: &'a str,
+    chip: Chip,
+    application_cores: u8,
+    qualification: Qualification,
+    armable: bool,
+    flash_bytes: u64,
+    internal_sram_bytes: u64,
+    psram_bytes: u64,
+    realtime_psram_allowed: bool,
+    service_core: u8,
+    realtime_core: u8,
+    graph: GraphExecutionCapability<'a>,
+    resource_records: &'a [u8],
+    alias_records: &'a [u8],
+    alias_count: usize,
+    bus_count: usize,
+    device_count: usize,
+    flash_region_count: usize,
+    clock_count: usize,
+    electrical_constraint_count: usize,
+    interrupt_count: usize,
+    safe_output_image_count: usize,
+    visual_records: &'a [u8],
+    visual_count: usize,
+    hil_requirement_count: usize,
+}
+
+impl<'a> BoardCapabilityView<'a> {
+    /// SHA-256 identity of every byte in the complete document.
+    pub const fn identity(self) -> CapabilityIdentity {
+        self.identity
+    }
+
+    /// Stable board/revision identifier.
+    pub const fn board_id(self) -> &'a str {
+        self.board_id
+    }
+
+    /// Human-readable revision evidence string.
+    pub const fn revision(self) -> &'a str {
+        self.revision
+    }
+
+    /// Application MCU family.
+    pub const fn chip(self) -> Chip {
+        self.chip
+    }
+
+    /// Number of application cores published by the exact image.
+    pub const fn application_cores(self) -> u8 {
+        self.application_cores
+    }
+
+    /// Evidence level of the exact board package.
+    pub const fn qualification(self) -> Qualification {
+        self.qualification
+    }
+
+    /// Whether this exact package claims that arming may be admitted.
+    pub const fn armable(self) -> bool {
+        self.armable
+    }
+
+    /// Fitted flash capacity in bytes.
+    pub const fn flash_bytes(self) -> u64 {
+        self.flash_bytes
+    }
+
+    /// Internal SRAM capacity in bytes before runtime reservations.
+    pub const fn internal_sram_bytes(self) -> u64 {
+        self.internal_sram_bytes
+    }
+
+    /// Fitted external PSRAM capacity in bytes.
+    pub const fn psram_bytes(self) -> u64 {
+        self.psram_bytes
+    }
+
+    /// Whether deterministic active state may occupy PSRAM. V2 board-package
+    /// validation currently requires this to be false.
+    pub const fn realtime_psram_allowed(self) -> bool {
+        self.realtime_psram_allowed
+    }
+
+    /// Fixed service-core index.
+    pub const fn service_core(self) -> u8 {
+        self.service_core
+    }
+
+    /// Fixed real-time-core index.
+    pub const fn realtime_core(self) -> u8 {
+        self.realtime_core
+    }
+
+    /// Independently decoded graph executor and its narrower access palette.
+    pub const fn graph(self) -> GraphExecutionCapability<'a> {
+        self.graph
+    }
+
+    /// Number of descriptive resource records.
+    pub const fn resource_count(self) -> usize {
+        self.resource_records.len() / 8
+    }
+
+    /// Iterate descriptive resources in canonical board-package order.
+    pub fn resources(self) -> impl ExactSizeIterator<Item = ResourceDescriptor> + 'a {
+        self.resource_records
+            .chunks_exact(8)
+            .map(decode_resource_descriptor_unchecked)
+    }
+
+    /// Number of aliases.
+    pub const fn alias_count(self) -> usize {
+        self.alias_count
+    }
+
+    /// Iterate aliases without allocating.
+    pub const fn aliases(self) -> CapabilityAliasIter<'a> {
+        CapabilityAliasIter {
+            records: self.alias_records,
+            cursor: 0,
+            remaining: self.alias_count,
+        }
+    }
+
+    /// Number of routed bus records validated in the complete document.
+    pub const fn bus_count(self) -> usize {
+        self.bus_count
+    }
+
+    /// Number of fitted or routed device records validated in the document.
+    pub const fn device_count(self) -> usize {
+        self.device_count
+    }
+
+    /// Number of flash-region records validated in the document.
+    pub const fn flash_region_count(self) -> usize {
+        self.flash_region_count
+    }
+
+    /// Number of clock records validated in the document.
+    pub const fn clock_count(self) -> usize {
+        self.clock_count
+    }
+
+    /// Number of electrical-constraint records validated in the document.
+    pub const fn electrical_constraint_count(self) -> usize {
+        self.electrical_constraint_count
+    }
+
+    /// Number of interrupt records validated in the document.
+    pub const fn interrupt_count(self) -> usize {
+        self.interrupt_count
+    }
+
+    /// Number of complete shifted-output safe images validated in the document.
+    pub const fn safe_output_image_count(self) -> usize {
+        self.safe_output_image_count
+    }
+
+    /// Number of licensed board visuals.
+    pub const fn visual_count(self) -> usize {
+        self.visual_count
+    }
+
+    /// Iterate visual records and their normalized hotspot views.
+    pub const fn visuals(self) -> CapabilityVisualIter<'a> {
+        CapabilityVisualIter {
+            records: self.visual_records,
+            cursor: 0,
+            remaining: self.visual_count,
+        }
+    }
+
+    /// Number of HIL evidence requirements validated in the document.
+    pub const fn hil_requirement_count(self) -> usize {
+        self.hil_requirement_count
+    }
+}
+
+/// Allocation-free iterator over canonical alias records.
+#[derive(Clone, Debug)]
+pub struct CapabilityAliasIter<'a> {
+    records: &'a [u8],
+    cursor: usize,
+    remaining: usize,
+}
+
+impl<'a> Iterator for CapabilityAliasIter<'a> {
+    type Item = AliasDescriptor<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let name = decode_validated_string(self.records, &mut self.cursor);
+        let resource = decode_validated_resource(self.records, &mut self.cursor);
+        self.remaining -= 1;
+        Some(AliasDescriptor { name, resource })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for CapabilityAliasIter<'_> {}
+
+/// One independently decoded licensed visual and its hotspot byte range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityVisual<'a> {
+    id: &'a str,
+    asset_path: &'a str,
+    media_type: &'a str,
+    pixel_width: u32,
+    pixel_height: u32,
+    asset_digest: Digest,
+    license: &'a str,
+    attribution: &'a str,
+    hotspot_records: &'a [u8],
+    hotspot_count: usize,
+}
+
+impl<'a> CapabilityVisual<'a> {
+    /// Stable visual ID.
+    pub const fn id(self) -> &'a str {
+        self.id
+    }
+
+    /// Repository-relative raster path bound by `asset_digest`.
+    pub const fn asset_path(self) -> &'a str {
+        self.asset_path
+    }
+
+    /// Exact raster MIME type.
+    pub const fn media_type(self) -> &'a str {
+        self.media_type
+    }
+
+    /// Reviewed raster width in pixels.
+    pub const fn pixel_width(self) -> u32 {
+        self.pixel_width
+    }
+
+    /// Reviewed raster height in pixels.
+    pub const fn pixel_height(self) -> u32 {
+        self.pixel_height
+    }
+
+    /// SHA-256 of the raster bytes.
+    pub const fn asset_digest(self) -> Digest {
+        self.asset_digest
+    }
+
+    /// SPDX expression for the raster asset.
+    pub const fn license(self) -> &'a str {
+        self.license
+    }
+
+    /// Required source/photographer attribution.
+    pub const fn attribution(self) -> &'a str {
+        self.attribution
+    }
+
+    /// Number of reviewed resource polygons.
+    pub const fn hotspot_count(self) -> usize {
+        self.hotspot_count
+    }
+
+    /// Iterate reviewed hotspot polygons without allocating.
+    pub const fn hotspots(self) -> CapabilityHotspotIter<'a> {
+        CapabilityHotspotIter {
+            records: self.hotspot_records,
+            cursor: 0,
+            remaining: self.hotspot_count,
+        }
+    }
+}
+
+/// Allocation-free iterator over canonical visual records.
+#[derive(Clone, Debug)]
+pub struct CapabilityVisualIter<'a> {
+    records: &'a [u8],
+    cursor: usize,
+    remaining: usize,
+}
+
+impl<'a> Iterator for CapabilityVisualIter<'a> {
+    type Item = CapabilityVisual<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let visual = decode_validated_visual(self.records, &mut self.cursor);
+        self.remaining -= 1;
+        Some(visual)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for CapabilityVisualIter<'_> {}
+
+/// One typed resource polygon in normalized visual coordinates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityHotspot<'a> {
+    id: &'a str,
+    resource: ResourceId,
+    point_records: &'a [u8],
+}
+
+impl<'a> CapabilityHotspot<'a> {
+    /// Stable hotspot ID within one visual.
+    pub const fn id(self) -> &'a str {
+        self.id
+    }
+
+    /// Typed resource represented by the polygon.
+    pub const fn resource(self) -> ResourceId {
+        self.resource
+    }
+
+    /// Number of normalized polygon points.
+    pub const fn point_count(self) -> usize {
+        self.point_records.len() / 4
+    }
+
+    /// Iterate normalized polygon points.
+    pub fn points(self) -> impl ExactSizeIterator<Item = NormalizedPoint> + 'a {
+        self.point_records
+            .chunks_exact(4)
+            .map(|point| NormalizedPoint {
+                x: read_u16(point, 0),
+                y: read_u16(point, 2),
+            })
+    }
+}
+
+/// Allocation-free iterator over canonical hotspot records.
+#[derive(Clone, Debug)]
+pub struct CapabilityHotspotIter<'a> {
+    records: &'a [u8],
+    cursor: usize,
+    remaining: usize,
+}
+
+impl<'a> Iterator for CapabilityHotspotIter<'a> {
+    type Item = CapabilityHotspot<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let hotspot = decode_validated_hotspot(self.records, &mut self.cursor);
+        self.remaining -= 1;
+        Some(hotspot)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl ExactSizeIterator for CapabilityHotspotIter<'_> {}
 
 /// Independently decoded fixed graph-executor section of one complete V2
 /// capability document.
@@ -175,6 +598,14 @@ pub enum CapabilityDocumentError {
     Version,
     /// Reserved bytes or a Boolean were noncanonical.
     Reserved,
+    /// A caller-selected document, string, table, hotspot, or polygon bound was
+    /// exceeded.
+    Limit,
+    /// Fixed board, memory, or core facts were internally invalid.
+    Board,
+    /// A non-graph section contained an invalid enum, zero-required value,
+    /// malformed route, or other noncanonical local record.
+    Section,
     /// Graph capacities, counts, class, access, or support were invalid.
     Graph,
     /// One graph resource identifier was malformed.
@@ -293,6 +724,369 @@ pub fn read_verified_range(
         complete: offset
             .checked_add(u32::from(byte_len))
             .is_some_and(|end| end == identity.byte_len),
+    })
+}
+
+/// Independently validates and exposes one complete canonical V2 board
+/// capability document within caller-selected bounds.
+///
+/// This function hashes the complete byte string and validates every V2
+/// section, including sections not directly exposed by the returned view. The
+/// resulting digest is content identity only: the caller must compare it with
+/// an identity obtained from its authenticated device/session before treating
+/// any fact as belonging to that device.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the canonical V2 section order remains one linear, auditable decoder"
+)]
+pub fn decode_board_capability(
+    document: &[u8],
+    limits: BoardCapabilityLimits,
+) -> Result<BoardCapabilityView<'_>, CapabilityDocumentError> {
+    let document_len = u32::try_from(document.len()).map_err(|_| CapabilityDocumentError::Limit)?;
+    if document_len > limits.maximum_document_bytes {
+        return Err(CapabilityDocumentError::Limit);
+    }
+    validate_document_header(document)?;
+    let graph = decode_graph_execution(document)?;
+    let mut cursor = DocumentCursor::new(document, CAPABILITY_DOCUMENT_HEADER_BYTES, limits);
+    let board_id = cursor.string()?;
+    let revision = cursor.string()?;
+    let fixed = cursor.take(33)?;
+    if fixed[31..33].iter().any(|byte| *byte != 0) {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    let chip = chip_from_wire(fixed[0]).ok_or(CapabilityDocumentError::Board)?;
+    let application_cores = fixed[1];
+    let qualification = qualification_from_wire(fixed[2]).ok_or(CapabilityDocumentError::Board)?;
+    let armable = bool_from_wire(fixed[3]).ok_or(CapabilityDocumentError::Reserved)?;
+    let flash_bytes = read_u64(fixed, 4);
+    let internal_sram_bytes = read_u64(fixed, 12);
+    let psram_bytes = read_u64(fixed, 20);
+    let realtime_psram_allowed =
+        bool_from_wire(fixed[28]).ok_or(CapabilityDocumentError::Reserved)?;
+    let service_core = fixed[29];
+    let realtime_core = fixed[30];
+    if application_cores < 2
+        || flash_bytes == 0
+        || internal_sram_bytes == 0
+        || realtime_psram_allowed
+        || service_core == realtime_core
+        || service_core >= application_cores
+        || realtime_core >= application_cores
+    {
+        return Err(CapabilityDocumentError::Board);
+    }
+
+    let graph_bytes = GRAPH_EXECUTOR_HEADER_BYTES
+        .checked_add(
+            graph
+                .opcode_count()
+                .checked_mul(GRAPH_OPCODE_CAPABILITY_BYTES)
+                .ok_or(CapabilityDocumentError::Length)?,
+        )
+        .and_then(|bytes| {
+            graph
+                .resource_count()
+                .checked_mul(GRAPH_RESOURCE_CAPABILITY_BYTES)
+                .and_then(|resources| bytes.checked_add(resources))
+        })
+        .ok_or(CapabilityDocumentError::Length)?;
+    let _ = cursor.take(graph_bytes)?;
+
+    let resource_count = cursor.count(limits.maximum_records_per_section)?;
+    let resource_start = cursor.position();
+    for _ in 0..resource_count {
+        let record = cursor.take(8)?;
+        let descriptor = decode_resource_descriptor(record)?;
+        if descriptor.hazardous_output
+            && (descriptor.owner != OwnerDomain::Realtime
+                || descriptor.safe_value == SafeValue::NotApplicable)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+    let resource_records = cursor.slice_from(resource_start)?;
+    validate_unique_resources(resource_records)?;
+    for resource in graph.resources() {
+        let descriptor = find_resource_descriptor(resource_records, resource.resource)
+            .ok_or(CapabilityDocumentError::Section)?;
+        if descriptor.owner != OwnerDomain::Realtime {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+
+    let alias_count = cursor.count(limits.maximum_records_per_section)?;
+    let alias_start = cursor.position();
+    for _ in 0..alias_count {
+        let _ = cursor.string()?;
+        let resource = cursor.resource()?;
+        require_resource(resource_records, resource)?;
+    }
+    let alias_records = cursor.slice_from(alias_start)?;
+    validate_unique_aliases(alias_records, alias_count)?;
+
+    let bus_count = cursor.count(limits.maximum_records_per_section)?;
+    for _ in 0..bus_count {
+        let bus = cursor.resource()?;
+        require_resource(resource_records, bus)?;
+        let metadata = cursor.take(4)?;
+        let kind = bus_kind_from_wire(metadata[0]).ok_or(CapabilityDocumentError::Section)?;
+        let bus_owner = owner_from_wire(metadata[1]).ok_or(CapabilityDocumentError::Section)?;
+        if metadata[2..4].iter().any(|byte| *byte != 0)
+            || find_resource_descriptor(resource_records, bus)
+                .is_none_or(|descriptor| descriptor.owner != bus_owner)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        if !bus_kind_matches_resource(kind, bus) || cursor.u32()? == 0 {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let pin_count = cursor.count(limits.maximum_records_per_section)?;
+        if pin_count == 0 {
+            return Err(CapabilityDocumentError::Section);
+        }
+        for _ in 0..pin_count {
+            let pin = cursor.resource()?;
+            require_resource(resource_records, pin)?;
+            if !matches!(pin, ResourceId::Gpio(_))
+                || find_resource_descriptor(resource_records, pin)
+                    .is_none_or(|descriptor| descriptor.owner != bus_owner)
+            {
+                return Err(CapabilityDocumentError::Section);
+            }
+        }
+    }
+
+    let device_count = cursor.count(limits.maximum_records_per_section)?;
+    for _ in 0..device_count {
+        let device = cursor.resource()?;
+        require_resource(resource_records, device)?;
+        if !matches!(device, ResourceId::Device(_) | ResourceId::Storage(_)) {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let metadata = cursor.take(4)?;
+        let device_owner = owner_from_wire(metadata[0]).ok_or(CapabilityDocumentError::Section)?;
+        if support_from_wire(metadata[1]).is_none()
+            || metadata[2..4].iter().any(|byte| *byte != 0)
+            || find_resource_descriptor(resource_records, device)
+                .is_none_or(|descriptor| descriptor.owner != device_owner)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let bus = decode_optional_resource(cursor.take(8)?)?;
+        if let Some(bus) = bus {
+            require_resource(resource_records, bus)?;
+            if find_resource_descriptor(resource_records, bus)
+                .is_none_or(|descriptor| descriptor.owner != device_owner)
+            {
+                return Err(CapabilityDocumentError::Section);
+            }
+        }
+        let (route_kind, route_resource) = decode_device_route(cursor.take(8)?)?;
+        if !device_route_matches_bus(route_kind, bus) {
+            return Err(CapabilityDocumentError::Section);
+        }
+        if let Some(resource) = route_resource {
+            require_resource(resource_records, resource)?;
+            if find_resource_descriptor(resource_records, resource)
+                .is_none_or(|descriptor| descriptor.owner != device_owner)
+            {
+                return Err(CapabilityDocumentError::Section);
+            }
+        }
+        let auxiliary_count = cursor.count(limits.maximum_records_per_section)?;
+        for _ in 0..auxiliary_count {
+            let resource = cursor.resource()?;
+            require_resource(resource_records, resource)?;
+        }
+    }
+
+    let flash_region_count = cursor.count(limits.maximum_records_per_section)?;
+    for _ in 0..flash_region_count {
+        let _ = cursor.string()?;
+        let offset = cursor.u32()?;
+        let length = cursor.u32()?;
+        let metadata = cursor.take(4)?;
+        let writable_while_armed =
+            bool_from_wire(metadata[1]).ok_or(CapabilityDocumentError::Section)?;
+        if length == 0
+            || offset
+                .checked_add(length)
+                .is_none_or(|end| u64::from(end) > flash_bytes)
+            || flash_kind_from_wire(metadata[0]).is_none()
+            || support_from_wire(metadata[2]).is_none()
+            || metadata[3] != 0
+            || armable && writable_while_armed
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+
+    let clock_count = cursor.count(limits.maximum_records_per_section)?;
+    for _ in 0..clock_count {
+        let _ = cursor.string()?;
+        let metadata = cursor.take(4)?;
+        let has_error = bool_from_wire(metadata[3]).ok_or(CapabilityDocumentError::Section)?;
+        if clock_source_from_wire(metadata[0]).is_none()
+            || clock_domain_from_wire(metadata[1]).is_none()
+            || support_from_wire(metadata[2]).is_none()
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let nominal_hz = cursor.u64()?;
+        let error_ppm = cursor.u32()?;
+        if nominal_hz == 0 || !has_error && error_ppm != 0 {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+
+    let electrical_constraint_count = cursor.count(limits.maximum_records_per_section)?;
+    for _ in 0..electrical_constraint_count {
+        let _ = cursor.string()?;
+        let metadata = cursor.take(4)?;
+        if electrical_kind_from_wire(metadata[0]).is_none()
+            || support_from_wire(metadata[1]).is_none()
+            || metadata[2..4].iter().any(|byte| *byte != 0)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let governed_count = cursor.count(limits.maximum_records_per_section)?;
+        if governed_count == 0 {
+            return Err(CapabilityDocumentError::Section);
+        }
+        for _ in 0..governed_count {
+            let resource = cursor.resource()?;
+            require_resource(resource_records, resource)?;
+        }
+        let _ = cursor.string()?;
+    }
+
+    let interrupt_count = cursor.count(limits.maximum_records_per_section)?;
+    let interrupt_start = cursor.position();
+    for interrupt_index in 0..interrupt_count {
+        let source = cursor.resource()?;
+        require_resource(resource_records, source)?;
+        let metadata = cursor.take(4)?;
+        let has_latency = bool_from_wire(metadata[3]).ok_or(CapabilityDocumentError::Section)?;
+        let interrupt_owner =
+            owner_from_wire(metadata[0]).ok_or(CapabilityDocumentError::Section)?;
+        if interrupt_trigger_from_wire(metadata[1]).is_none()
+            || support_from_wire(metadata[2]).is_none()
+            || find_resource_descriptor(resource_records, source)
+                .is_none_or(|descriptor| descriptor.owner != interrupt_owner)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let latency = cursor.u64()?;
+        if has_latency != (latency != 0) {
+            return Err(CapabilityDocumentError::Section);
+        }
+        if document[interrupt_start..interrupt_start + interrupt_index * 16]
+            .chunks_exact(16)
+            .any(|record| decode_validated_resource_at(record, 0) == source)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+
+    let safe_output_image_count = cursor.count(limits.maximum_records_per_section)?;
+    let safe_image_start = cursor.position();
+    for image_index in 0..safe_output_image_count {
+        let metadata = cursor.take(4)?;
+        let bench_verified = bool_from_wire(metadata[1]).ok_or(CapabilityDocumentError::Section)?;
+        if metadata[2..4].iter().any(|byte| *byte != 0)
+            || find_resource_descriptor(resource_records, ResourceId::I2s(metadata[0]))
+                .is_none_or(|descriptor| descriptor.owner != OwnerDomain::Realtime)
+            || armable && !bench_verified
+            || document[safe_image_start..safe_image_start + image_index * 12]
+                .chunks_exact(12)
+                .any(|record| record[0] == metadata[0])
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let defined_mask = cursor.u32()?;
+        let safe_bits = cursor.u32()?;
+        if safe_bits & !defined_mask != 0 {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+    let safe_image_records = cursor.slice_from(safe_image_start)?;
+    for descriptor in resource_records
+        .chunks_exact(8)
+        .map(decode_resource_descriptor_unchecked)
+    {
+        let ResourceId::I2sOut { engine, bit } = descriptor.id else {
+            continue;
+        };
+        if !descriptor.hazardous_output || descriptor.safe_value != SafeValue::EngineImage {
+            continue;
+        }
+        if bit >= 32
+            || !safe_image_records
+                .chunks_exact(12)
+                .any(|record| record[0] == engine && read_u32(record, 4) & (1_u32 << bit) != 0)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+
+    let visual_count = cursor.count(limits.maximum_visuals)?;
+    let visual_start = cursor.position();
+    for _ in 0..visual_count {
+        validate_visual_record(&mut cursor, resource_records)?;
+    }
+    let visual_records = cursor.slice_from(visual_start)?;
+    validate_unique_visuals(visual_records, visual_count)?;
+
+    let hil_requirement_count = cursor.count(limits.maximum_records_per_section)?;
+    for _ in 0..hil_requirement_count {
+        let _ = cursor.string()?;
+        let metadata = cursor.take(4)?;
+        if hil_kind_from_wire(metadata[0]).is_none()
+            || qualification_from_wire(metadata[1]).is_none()
+            || metadata[2..4].iter().any(|byte| *byte != 0)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+        let resource_count = cursor.count(limits.maximum_records_per_section)?;
+        for _ in 0..resource_count {
+            let resource = cursor.resource()?;
+            require_resource(resource_records, resource)?;
+        }
+    }
+    if cursor.position() != document.len() {
+        return Err(CapabilityDocumentError::Section);
+    }
+
+    Ok(BoardCapabilityView {
+        identity: graph.identity(),
+        board_id,
+        revision,
+        chip,
+        application_cores,
+        qualification,
+        armable,
+        flash_bytes,
+        internal_sram_bytes,
+        psram_bytes,
+        realtime_psram_allowed,
+        service_core,
+        realtime_core,
+        graph,
+        resource_records,
+        alias_records,
+        alias_count,
+        bus_count,
+        device_count,
+        flash_region_count,
+        clock_count,
+        electrical_constraint_count,
+        interrupt_count,
+        safe_output_image_count,
+        visual_records,
+        visual_count,
+        hil_requirement_count,
     })
 }
 
@@ -1099,6 +1893,361 @@ pub enum ResourceWireError {
     Noncanonical,
 }
 
+#[derive(Clone, Copy)]
+struct DocumentCursor<'a> {
+    document: &'a [u8],
+    offset: usize,
+    limits: BoardCapabilityLimits,
+}
+
+impl<'a> DocumentCursor<'a> {
+    const fn new(document: &'a [u8], offset: usize, limits: BoardCapabilityLimits) -> Self {
+        Self {
+            document,
+            offset,
+            limits,
+        }
+    }
+
+    const fn position(self) -> usize {
+        self.offset
+    }
+
+    fn take(&mut self, byte_len: usize) -> Result<&'a [u8], CapabilityDocumentError> {
+        let end = self
+            .offset
+            .checked_add(byte_len)
+            .ok_or(CapabilityDocumentError::Length)?;
+        let value = self
+            .document
+            .get(self.offset..end)
+            .ok_or(CapabilityDocumentError::Length)?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u32(&mut self) -> Result<u32, CapabilityDocumentError> {
+        Ok(read_u32(self.take(4)?, 0))
+    }
+
+    fn u64(&mut self) -> Result<u64, CapabilityDocumentError> {
+        Ok(read_u64(self.take(8)?, 0))
+    }
+
+    fn count(&mut self, maximum: u32) -> Result<usize, CapabilityDocumentError> {
+        let count = self.u32()?;
+        if count > maximum {
+            return Err(CapabilityDocumentError::Limit);
+        }
+        usize::try_from(count).map_err(|_| CapabilityDocumentError::Limit)
+    }
+
+    fn string(&mut self) -> Result<&'a str, CapabilityDocumentError> {
+        let byte_len = self.count(self.limits.maximum_string_bytes)?;
+        let value = self.take(byte_len)?;
+        if value.is_empty() {
+            return Err(CapabilityDocumentError::Section);
+        }
+        core::str::from_utf8(value).map_err(|_| CapabilityDocumentError::Section)
+    }
+
+    fn resource(&mut self) -> Result<ResourceId, CapabilityDocumentError> {
+        decode_resource_id(self.take(4)?).map_err(CapabilityDocumentError::Resource)
+    }
+
+    fn slice_from(self, start: usize) -> Result<&'a [u8], CapabilityDocumentError> {
+        self.document
+            .get(start..self.offset)
+            .ok_or(CapabilityDocumentError::Length)
+    }
+}
+
+fn validate_document_header(document: &[u8]) -> Result<(), CapabilityDocumentError> {
+    if document.len() < CAPABILITY_DOCUMENT_HEADER_BYTES {
+        return Err(CapabilityDocumentError::Length);
+    }
+    if document[..8] != DOCUMENT_MAGIC {
+        return Err(CapabilityDocumentError::Magic);
+    }
+    if read_u16(document, 8) != CAPABILITY_DOCUMENT_VERSION {
+        return Err(CapabilityDocumentError::Version);
+    }
+    if document[10..12].iter().any(|byte| *byte != 0)
+        || usize::try_from(read_u32(document, 12)).ok() != Some(document.len())
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    Ok(())
+}
+
+fn decode_resource_descriptor(
+    record: &[u8],
+) -> Result<ResourceDescriptor, CapabilityDocumentError> {
+    if record.len() != 8 || record[7] != 0 {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    Ok(ResourceDescriptor {
+        id: decode_resource_id(&record[..4]).map_err(CapabilityDocumentError::Resource)?,
+        owner: owner_from_wire(record[4]).ok_or(CapabilityDocumentError::Section)?,
+        safe_value: safe_value_from_wire(record[5]).ok_or(CapabilityDocumentError::Section)?,
+        hazardous_output: bool_from_wire(record[6]).ok_or(CapabilityDocumentError::Section)?,
+    })
+}
+
+fn decode_resource_descriptor_unchecked(record: &[u8]) -> ResourceDescriptor {
+    decode_resource_descriptor(record)
+        .expect("board capability resource was independently validated")
+}
+
+fn resource_records_contain(records: &[u8], resource: ResourceId) -> bool {
+    find_resource_descriptor(records, resource).is_some()
+}
+
+fn find_resource_descriptor(records: &[u8], resource: ResourceId) -> Option<ResourceDescriptor> {
+    records
+        .chunks_exact(8)
+        .map(decode_resource_descriptor_unchecked)
+        .find(|candidate| candidate.id == resource)
+}
+
+fn require_resource(records: &[u8], resource: ResourceId) -> Result<(), CapabilityDocumentError> {
+    if !resource_records_contain(records, resource) {
+        return Err(CapabilityDocumentError::Section);
+    }
+    Ok(())
+}
+
+fn validate_unique_resources(records: &[u8]) -> Result<(), CapabilityDocumentError> {
+    for (index, record) in records.chunks_exact(8).enumerate() {
+        let resource = decode_resource_descriptor_unchecked(record).id;
+        if records[..index * 8]
+            .chunks_exact(8)
+            .map(decode_resource_descriptor_unchecked)
+            .any(|previous| previous.id == resource)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_aliases(records: &[u8], count: usize) -> Result<(), CapabilityDocumentError> {
+    let aliases = CapabilityAliasIter {
+        records,
+        cursor: 0,
+        remaining: count,
+    };
+    for (index, alias) in aliases.enumerate() {
+        if (CapabilityAliasIter {
+            records,
+            cursor: 0,
+            remaining: count,
+        })
+        .take(index)
+        .any(|previous| previous.name == alias.name)
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+    Ok(())
+}
+
+fn decode_optional_resource(encoded: &[u8]) -> Result<Option<ResourceId>, CapabilityDocumentError> {
+    if encoded.len() != 8 {
+        return Err(CapabilityDocumentError::Length);
+    }
+    match encoded[0] {
+        0 if encoded.iter().all(|byte| *byte == 0) => Ok(None),
+        1 if encoded[1..4].iter().all(|byte| *byte == 0) => decode_resource_id(&encoded[4..8])
+            .map(Some)
+            .map_err(CapabilityDocumentError::Resource),
+        _ => Err(CapabilityDocumentError::Section),
+    }
+}
+
+fn decode_device_route(
+    encoded: &[u8],
+) -> Result<(u8, Option<ResourceId>), CapabilityDocumentError> {
+    if encoded.len() != 8 || encoded[1..4].iter().any(|byte| *byte != 0) {
+        return Err(CapabilityDocumentError::Section);
+    }
+    match encoded[0] {
+        1 | 4 if encoded[4..8].iter().all(|byte| *byte == 0) => Ok((encoded[0], None)),
+        2 if encoded[4] <= 0x7f && encoded[5..8].iter().all(|byte| *byte == 0) => {
+            Ok((encoded[0], None))
+        }
+        3 => decode_resource_id(&encoded[4..8])
+            .map(|resource| (encoded[0], Some(resource)))
+            .map_err(CapabilityDocumentError::Resource),
+        _ => Err(CapabilityDocumentError::Section),
+    }
+}
+
+const fn device_route_matches_bus(route_kind: u8, bus: Option<ResourceId>) -> bool {
+    matches!(
+        (route_kind, bus),
+        (1, None)
+            | (2, Some(ResourceId::I2c(_)))
+            | (3, Some(ResourceId::Spi(_)))
+            | (4, Some(ResourceId::Uart(_)))
+    )
+}
+
+fn decode_validated_resource_at(records: &[u8], offset: usize) -> ResourceId {
+    decode_resource_id(&records[offset..offset + 4])
+        .expect("validated capability resource is canonical")
+}
+
+fn validate_visual_record(
+    cursor: &mut DocumentCursor<'_>,
+    resource_records: &[u8],
+) -> Result<(), CapabilityDocumentError> {
+    let _ = cursor.string()?;
+    let _ = cursor.string()?;
+    let _ = cursor.string()?;
+    if cursor.u32()? == 0 || cursor.u32()? == 0 {
+        return Err(CapabilityDocumentError::Section);
+    }
+    if cursor.take(32)?.iter().all(|byte| *byte == 0) {
+        return Err(CapabilityDocumentError::Section);
+    }
+    let _ = cursor.string()?;
+    let _ = cursor.string()?;
+    let hotspot_count = cursor.count(cursor.limits.maximum_hotspots_per_visual)?;
+    if hotspot_count == 0 {
+        return Err(CapabilityDocumentError::Section);
+    }
+    let hotspot_start = cursor.position();
+    for _ in 0..hotspot_count {
+        let _ = cursor.string()?;
+        let resource = cursor.resource()?;
+        require_resource(resource_records, resource)?;
+        let point_count = cursor.count(cursor.limits.maximum_points_per_hotspot)?;
+        if point_count < 3 {
+            return Err(CapabilityDocumentError::Section);
+        }
+        for _ in 0..point_count {
+            let point = cursor.take(4)?;
+            if read_u16(point, 0) > 10_000 || read_u16(point, 2) > 10_000 {
+                return Err(CapabilityDocumentError::Section);
+            }
+        }
+    }
+    validate_unique_hotspots(cursor.slice_from(hotspot_start)?, hotspot_count)
+}
+
+fn validate_unique_hotspots(records: &[u8], count: usize) -> Result<(), CapabilityDocumentError> {
+    let hotspots = CapabilityHotspotIter {
+        records,
+        cursor: 0,
+        remaining: count,
+    };
+    for (index, hotspot) in hotspots.enumerate() {
+        if (CapabilityHotspotIter {
+            records,
+            cursor: 0,
+            remaining: count,
+        })
+        .take(index)
+        .any(|previous| previous.id() == hotspot.id())
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_visuals(records: &[u8], count: usize) -> Result<(), CapabilityDocumentError> {
+    let visuals = CapabilityVisualIter {
+        records,
+        cursor: 0,
+        remaining: count,
+    };
+    for (index, visual) in visuals.enumerate() {
+        if (CapabilityVisualIter {
+            records,
+            cursor: 0,
+            remaining: count,
+        })
+        .take(index)
+        .any(|previous| previous.id() == visual.id())
+        {
+            return Err(CapabilityDocumentError::Section);
+        }
+    }
+    Ok(())
+}
+
+fn decode_validated_string<'a>(records: &'a [u8], cursor: &mut usize) -> &'a str {
+    let length = usize::try_from(read_u32(records, *cursor))
+        .expect("validated capability string length fits usize");
+    *cursor += 4;
+    let end = *cursor + length;
+    let value =
+        core::str::from_utf8(&records[*cursor..end]).expect("validated capability string is UTF-8");
+    *cursor = end;
+    value
+}
+
+fn decode_validated_resource(records: &[u8], cursor: &mut usize) -> ResourceId {
+    let end = *cursor + 4;
+    let resource = decode_resource_id(&records[*cursor..end])
+        .expect("validated capability resource is canonical");
+    *cursor = end;
+    resource
+}
+
+fn decode_validated_visual<'a>(records: &'a [u8], cursor: &mut usize) -> CapabilityVisual<'a> {
+    let id = decode_validated_string(records, cursor);
+    let asset_path = decode_validated_string(records, cursor);
+    let media_type = decode_validated_string(records, cursor);
+    let pixel_width = read_u32(records, *cursor);
+    *cursor += 4;
+    let pixel_height = read_u32(records, *cursor);
+    *cursor += 4;
+    let mut asset_digest = [0_u8; 32];
+    asset_digest.copy_from_slice(&records[*cursor..*cursor + 32]);
+    *cursor += 32;
+    let license = decode_validated_string(records, cursor);
+    let attribution = decode_validated_string(records, cursor);
+    let hotspot_count =
+        usize::try_from(read_u32(records, *cursor)).expect("validated hotspot count fits usize");
+    *cursor += 4;
+    let hotspot_start = *cursor;
+    for _ in 0..hotspot_count {
+        let _ = decode_validated_hotspot(records, cursor);
+    }
+    CapabilityVisual {
+        id,
+        asset_path,
+        media_type,
+        pixel_width,
+        pixel_height,
+        asset_digest: Digest(asset_digest),
+        license,
+        attribution,
+        hotspot_records: &records[hotspot_start..*cursor],
+        hotspot_count,
+    }
+}
+
+fn decode_validated_hotspot<'a>(records: &'a [u8], cursor: &mut usize) -> CapabilityHotspot<'a> {
+    let id = decode_validated_string(records, cursor);
+    let resource = decode_validated_resource(records, cursor);
+    let point_count =
+        usize::try_from(read_u32(records, *cursor)).expect("validated polygon count fits usize");
+    *cursor += 4;
+    let point_bytes = point_count * 4;
+    let end = *cursor + point_bytes;
+    let point_records = &records[*cursor..end];
+    *cursor = end;
+    CapabilityHotspot {
+        id,
+        resource,
+        point_records,
+    }
+}
+
 fn skip_capability_string(
     document: &[u8],
     offset: usize,
@@ -1223,6 +2372,14 @@ const fn chip(value: Chip) -> u8 {
     }
 }
 
+const fn chip_from_wire(value: u8) -> Option<Chip> {
+    match value {
+        1 => Some(Chip::Esp32),
+        2 => Some(Chip::Esp32S3),
+        _ => None,
+    }
+}
+
 const fn qualification(value: Qualification) -> u8 {
     match value {
         Qualification::Described => 1,
@@ -1230,6 +2387,25 @@ const fn qualification(value: Qualification) -> u8 {
         Qualification::Bench => 3,
         Qualification::MotionQualified => 4,
         Qualification::ProductionQualified => 5,
+    }
+}
+
+const fn qualification_from_wire(value: u8) -> Option<Qualification> {
+    match value {
+        1 => Some(Qualification::Described),
+        2 => Some(Qualification::Compiles),
+        3 => Some(Qualification::Bench),
+        4 => Some(Qualification::MotionQualified),
+        5 => Some(Qualification::ProductionQualified),
+        _ => None,
+    }
+}
+
+const fn bool_from_wire(value: u8) -> Option<bool> {
+    match value {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
     }
 }
 
@@ -1258,12 +2434,41 @@ const fn safe_value(value: SafeValue) -> u8 {
     }
 }
 
+const fn safe_value_from_wire(value: u8) -> Option<SafeValue> {
+    match value {
+        1 => Some(SafeValue::NotApplicable),
+        2 => Some(SafeValue::HighImpedance),
+        3 => Some(SafeValue::Low),
+        4 => Some(SafeValue::High),
+        5 => Some(SafeValue::EngineImage),
+        _ => None,
+    }
+}
+
 const fn bus_kind(value: BusKind) -> u8 {
     match value {
         BusKind::I2c => 1,
         BusKind::Spi => 2,
         BusKind::Uart => 3,
     }
+}
+
+const fn bus_kind_from_wire(value: u8) -> Option<BusKind> {
+    match value {
+        1 => Some(BusKind::I2c),
+        2 => Some(BusKind::Spi),
+        3 => Some(BusKind::Uart),
+        _ => None,
+    }
+}
+
+const fn bus_kind_matches_resource(kind: BusKind, resource: ResourceId) -> bool {
+    matches!(
+        (kind, resource),
+        (BusKind::I2c, ResourceId::I2c(_))
+            | (BusKind::Spi, ResourceId::Spi(_))
+            | (BusKind::Uart, ResourceId::Uart(_))
+    )
 }
 
 const fn support(value: SupportLevel) -> u8 {
@@ -1311,6 +2516,19 @@ const fn flash_kind(value: FlashRegionKind) -> u8 {
     }
 }
 
+const fn flash_kind_from_wire(value: u8) -> Option<FlashRegionKind> {
+    match value {
+        1 => Some(FlashRegionKind::Bootloader),
+        2 => Some(FlashRegionKind::PartitionTable),
+        3 => Some(FlashRegionKind::Application),
+        4 => Some(FlashRegionKind::Configuration),
+        5 => Some(FlashRegionKind::WebBundle),
+        6 => Some(FlashRegionKind::UpdateSlot),
+        7 => Some(FlashRegionKind::CrashLog),
+        _ => None,
+    }
+}
+
 const fn clock_source(value: ClockSource) -> u8 {
     match value {
         ClockSource::Crystal => 1,
@@ -1321,11 +2539,31 @@ const fn clock_source(value: ClockSource) -> u8 {
     }
 }
 
+const fn clock_source_from_wire(value: u8) -> Option<ClockSource> {
+    match value {
+        1 => Some(ClockSource::Crystal),
+        2 => Some(ClockSource::Pll),
+        3 => Some(ClockSource::PeripheralBus),
+        4 => Some(ClockSource::Rtc),
+        5 => Some(ClockSource::External),
+        _ => None,
+    }
+}
+
 const fn clock_domain(value: ClockDomain) -> u8 {
     match value {
         ClockDomain::Chip => 1,
         ClockDomain::Service => 2,
         ClockDomain::Realtime => 3,
+    }
+}
+
+const fn clock_domain_from_wire(value: u8) -> Option<ClockDomain> {
+    match value {
+        1 => Some(ClockDomain::Chip),
+        2 => Some(ClockDomain::Service),
+        3 => Some(ClockDomain::Realtime),
+        _ => None,
     }
 }
 
@@ -1343,6 +2581,21 @@ const fn electrical_kind(value: ElectricalConstraintKind) -> u8 {
     }
 }
 
+const fn electrical_kind_from_wire(value: u8) -> Option<ElectricalConstraintKind> {
+    match value {
+        1 => Some(ElectricalConstraintKind::InputOnly),
+        2 => Some(ElectricalConstraintKind::OutputOnly),
+        3 => Some(ElectricalConstraintKind::BootStrap),
+        4 => Some(ElectricalConstraintKind::SharedRoute),
+        5 => Some(ElectricalConstraintKind::ActiveHigh),
+        6 => Some(ElectricalConstraintKind::ActiveLow),
+        7 => Some(ElectricalConstraintKind::NotPwm),
+        8 => Some(ElectricalConstraintKind::Logic3v3),
+        9 => Some(ElectricalConstraintKind::ResetStateUnverified),
+        _ => None,
+    }
+}
+
 const fn interrupt_trigger(value: InterruptTrigger) -> u8 {
     match value {
         InterruptTrigger::Rising => 1,
@@ -1351,6 +2604,18 @@ const fn interrupt_trigger(value: InterruptTrigger) -> u8 {
         InterruptTrigger::LowLevel => 4,
         InterruptTrigger::HighLevel => 5,
         InterruptTrigger::Configurable => 6,
+    }
+}
+
+const fn interrupt_trigger_from_wire(value: u8) -> Option<InterruptTrigger> {
+    match value {
+        1 => Some(InterruptTrigger::Rising),
+        2 => Some(InterruptTrigger::Falling),
+        3 => Some(InterruptTrigger::AnyEdge),
+        4 => Some(InterruptTrigger::LowLevel),
+        5 => Some(InterruptTrigger::HighLevel),
+        6 => Some(InterruptTrigger::Configurable),
+        _ => None,
     }
 }
 
@@ -1366,6 +2631,19 @@ const fn hil_kind(value: HilKind) -> u8 {
     }
 }
 
+const fn hil_kind_from_wire(value: u8) -> Option<HilKind> {
+    match value {
+        1 => Some(HilKind::BoardIdentity),
+        2 => Some(HilKind::SafeState),
+        3 => Some(HilKind::PeripheralSmoke),
+        4 => Some(HilKind::CoreIsolation),
+        5 => Some(HilKind::Timing),
+        6 => Some(HilKind::FaultInjection),
+        7 => Some(HilKind::VisualReconciliation),
+        _ => None,
+    }
+}
+
 const fn read_u16(encoded: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([encoded[offset], encoded[offset + 1]])
 }
@@ -1376,6 +2654,19 @@ const fn read_u32(encoded: &[u8], offset: usize) -> u32 {
         encoded[offset + 1],
         encoded[offset + 2],
         encoded[offset + 3],
+    ])
+}
+
+const fn read_u64(encoded: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        encoded[offset],
+        encoded[offset + 1],
+        encoded[offset + 2],
+        encoded[offset + 3],
+        encoded[offset + 4],
+        encoded[offset + 5],
+        encoded[offset + 6],
+        encoded[offset + 7],
     ])
 }
 
@@ -1461,7 +2752,12 @@ mod tests {
 
     #[test]
     fn real_board_documents_are_repeatable_and_byte_addressable() {
-        for package in [&board_mks_tinybee::PACKAGE, &board_t_deck_pro::PACKAGE] {
+        for package in [
+            &board_mks_tinybee::PACKAGE,
+            &board_mks_tinybee::PACKAGE_4_MIB,
+            &board_t_deck_pro::PACKAGE,
+            &board_mks_esp32_foc_v1::PACKAGE,
+        ] {
             let identity = calculate_identity(package).unwrap();
             assert!(!identity.digest.is_zero());
             let document = complete_document(package);
@@ -1510,7 +2806,154 @@ mod tests {
                     .resources()
                     .eq(package.graph.resources.iter().copied())
             );
+            let board =
+                decode_board_capability(&document, BoardCapabilityLimits::interactive()).unwrap();
+            assert_eq!(board.identity(), identity);
+            assert_eq!(board.board_id(), package.board.id);
+            assert_eq!(board.revision(), package.board.revision);
+            assert_eq!(board.chip(), package.board.chip);
+            assert_eq!(board.application_cores(), package.board.application_cores);
+            assert_eq!(board.qualification(), package.board.qualification);
+            assert_eq!(board.armable(), package.armable);
+            assert_eq!(board.flash_bytes(), package.memory.flash_bytes as u64);
+            assert_eq!(
+                board.internal_sram_bytes(),
+                package.memory.internal_sram_bytes as u64
+            );
+            assert_eq!(board.psram_bytes(), package.memory.psram_bytes as u64);
+            assert_eq!(
+                board.realtime_psram_allowed(),
+                package.memory.realtime_psram_allowed
+            );
+            assert_eq!(board.service_core(), package.cores.service_core);
+            assert_eq!(board.realtime_core(), package.cores.realtime_core);
+            assert!(
+                board
+                    .resources()
+                    .eq(package.board.resources.iter().copied())
+            );
+            assert!(board.aliases().eq(package.aliases.iter().copied()));
+            assert_eq!(board.bus_count(), package.buses.len());
+            assert_eq!(board.device_count(), package.devices.len());
+            assert_eq!(board.flash_region_count(), package.flash_regions.len());
+            assert_eq!(board.clock_count(), package.clocks.len());
+            assert_eq!(
+                board.electrical_constraint_count(),
+                package.electrical_constraints.len()
+            );
+            assert_eq!(board.interrupt_count(), package.interrupts.len());
+            assert_eq!(
+                board.safe_output_image_count(),
+                package.safe_output_images.len()
+            );
+            assert_eq!(board.visual_count(), package.visuals.len());
+            assert_eq!(
+                board.hil_requirement_count(),
+                package.hil_requirements.len()
+            );
         }
+    }
+
+    #[test]
+    fn licensed_visuals_and_normalized_hotspots_replay_without_allocation() {
+        let polygon = [
+            NormalizedPoint { x: 100, y: 200 },
+            NormalizedPoint { x: 300, y: 200 },
+            NormalizedPoint { x: 200, y: 450 },
+        ];
+        let hotspots = [alumina_board::HotspotDescriptor {
+            id: "limit-x-negative-pad",
+            resource: ResourceId::Gpio(33),
+            polygon: &polygon,
+        }];
+        let visuals = [alumina_board::BoardVisualDescriptor {
+            id: "top",
+            asset_path: "boards/mks-tinybee/assets/tinybee-v1-top.png",
+            media_type: "image/png",
+            pixel_width: 1_600,
+            pixel_height: 1_200,
+            asset_digest: Digest([0x7a; 32]),
+            license: "CC0-1.0",
+            attribution: "operator-owned orthographic fixture photograph",
+            hotspots: &hotspots,
+        }];
+        let mut package = board_mks_tinybee::PACKAGE;
+        package.visuals = &visuals;
+        let document = complete_document(&package);
+        let board =
+            decode_board_capability(&document, BoardCapabilityLimits::interactive()).unwrap();
+        let visual = board.visuals().next().unwrap();
+        assert_eq!(visual.id(), "top");
+        assert_eq!(
+            visual.asset_path(),
+            "boards/mks-tinybee/assets/tinybee-v1-top.png"
+        );
+        assert_eq!(visual.media_type(), "image/png");
+        assert_eq!(
+            (visual.pixel_width(), visual.pixel_height()),
+            (1_600, 1_200)
+        );
+        assert_eq!(visual.asset_digest(), Digest([0x7a; 32]));
+        assert_eq!(visual.license(), "CC0-1.0");
+        assert_eq!(visual.hotspot_count(), 1);
+        let hotspot = visual.hotspots().next().unwrap();
+        assert_eq!(hotspot.id(), "limit-x-negative-pad");
+        assert_eq!(hotspot.resource(), ResourceId::Gpio(33));
+        assert_eq!(hotspot.point_count(), 3);
+        assert!(hotspot.points().eq(polygon));
+
+        let mut tight = BoardCapabilityLimits::interactive();
+        tight.maximum_points_per_hotspot = 2;
+        assert_eq!(
+            decode_board_capability(&document, tight),
+            Err(CapabilityDocumentError::Limit)
+        );
+    }
+
+    #[test]
+    fn board_explorer_decoder_fails_closed_on_bounds_and_trailing_or_bad_records() {
+        let package = &board_mks_tinybee::PACKAGE;
+        let document = complete_document(package);
+        let mut tight = BoardCapabilityLimits::interactive();
+        tight.maximum_document_bytes = u32::try_from(document.len() - 1).unwrap();
+        assert_eq!(
+            decode_board_capability(&document, tight),
+            Err(CapabilityDocumentError::Limit)
+        );
+        tight = BoardCapabilityLimits::interactive();
+        tight.maximum_string_bytes = 1;
+        assert_eq!(
+            decode_board_capability(&document, tight),
+            Err(CapabilityDocumentError::Limit)
+        );
+        tight = BoardCapabilityLimits::interactive();
+        tight.maximum_records_per_section = 1;
+        assert_eq!(
+            decode_board_capability(&document, tight),
+            Err(CapabilityDocumentError::Limit)
+        );
+
+        let graph_offset = graph_section_offset(package);
+        let first_resource = graph_offset
+            + GRAPH_EXECUTOR_HEADER_BYTES
+            + package.graph.opcodes.len() * GRAPH_OPCODE_CAPABILITY_BYTES
+            + package.graph.resources.len() * GRAPH_RESOURCE_CAPABILITY_BYTES
+            + 4;
+        let mut bad_boolean = document.clone();
+        bad_boolean[first_resource + 6] = 2;
+        assert_eq!(
+            decode_board_capability(&bad_boolean, BoardCapabilityLimits::interactive()),
+            Err(CapabilityDocumentError::Section)
+        );
+
+        let mut trailing = document;
+        trailing.push(0);
+        let new_len = u32::try_from(trailing.len()).unwrap();
+        trailing[12..16].copy_from_slice(&new_len.to_le_bytes());
+        assert_eq!(
+            decode_board_capability(&trailing, BoardCapabilityLimits::interactive()),
+            Err(CapabilityDocumentError::Section)
+        );
     }
 
     #[test]

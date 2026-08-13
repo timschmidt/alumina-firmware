@@ -28,6 +28,7 @@ version = "0.1.0"
 dependencies = [
  "alumina-board",
  "alumina-protocol",
+ "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "board-t-deck-pro",
  "sha2",

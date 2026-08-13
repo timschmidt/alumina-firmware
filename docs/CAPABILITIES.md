@@ -159,6 +159,29 @@ Enum values are explicitly assigned in schema order:
 | interrupt trigger | rising, falling, any-edge, low-level, high-level, configurable |
 | HIL kind | board identity, safe state, peripheral smoke, core isolation, timing, fault injection, visual reconciliation |
 
+## Independent board-explorer decoding
+
+`decode_board_capability` is the allocation-free consumer boundary for a
+complete untrusted V2 document. It applies caller-owned limits before exposing
+borrowed summary, resource, alias, visual, hotspot, and polygon iterators. The
+interactive policy permits at most 4 MiB of document bytes, 64 KiB per string,
+4,096 ordinary records per section, 32 visuals, 4,096 hotspots per visual, and
+4,096 points per hotspot.
+
+The decoder walks the exact complete section order and rejects malformed UTF-8,
+zero-required facts, noncanonical Booleans/enums/options/routes/reserved bytes,
+unknown or duplicate typed resources, missing resource references, invalid
+core ownership, unsafe shifted-output image coverage, duplicate
+aliases/interrupts/images/visuals/hotspots, out-of-plane points, strict prefixes,
+trailing bytes, and all caller-limit violations. It retains the existing
+independent graph-executor view as a separate, narrower access authority.
+
+The returned SHA-256 is content identity, never transport or device
+authentication. A live UI must compare it with the capability identity obtained
+from its authenticated session. Merely decoding a GPIO, peripheral, alias, or
+visual record grants no resource operation, diagnostic lease, telemetry,
+configuration, arming, or deployment authority.
+
 ## Authenticated range transport
 
 The public identity JSON reports the compiled digest and total document bytes.
