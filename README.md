@@ -33,6 +33,18 @@ evidence](docs/evidence/M5-INTERFACE-EXACT-BASELINE.md) and [exact-CAM compiler
 evidence](docs/evidence/M5-EXACT-CAM-COMPILER.md), plus the [global-job packaging
 evidence](docs/evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
+The first I4 diagnostic boundary is also portable and explicitly offline.
+`alumina-diagnostics` defines allocation-free bounded canonical resource
+overviews and triggered digital edge captures with complete device/boot/
+capability/config/clock identity, provenance, quality, sample cycles, trigger,
+pre/post windows, buffer capacity, decimation, and loss flags. A deterministic
+TinyBee simulator emits four input values and a four-lane edge trace; the
+browser independently reconciles both records to the complete board capability
+and cross-links its ledger, selected resource, and exact-cycle cursor. It grants
+no connection, measurement, diagnostic lease, command, or output authority.
+See the [diagnostic contract](docs/DIAGNOSTICS.md) and [offline diagnostic
+evidence](docs/evidence/M9-OFFLINE-DIAGNOSTIC-EXPLORER.md).
+
 The first deployed graphical-control path is also portable end to end. The
 interface lowers one audited Boolean Service-to-Realtime graph into a fixed
 4 KiB package; firmware independently decodes exact identities and arena

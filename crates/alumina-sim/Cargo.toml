@@ -9,8 +9,11 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+alumina-board.workspace = true
+alumina-capability.workspace = true
 alumina-clock.workspace = true
 alumina-config.workspace = true
+alumina-diagnostics.workspace = true
 alumina-foc.workspace = true
 alumina-job.workspace = true
 alumina-machine-ir.workspace = true
@@ -21,9 +24,9 @@ alumina-runtime.workspace = true
 alumina-service.workspace = true
 alumina-storage.workspace = true
 alumina-shift-register.workspace = true
+board-mks-tinybee.workspace = true
 
 [dev-dependencies]
-alumina-board.workspace = true
 critical-section = { workspace = true, features = ["std"] }
 embassy-futures.workspace = true
 embassy-sync.workspace = true

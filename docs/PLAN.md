@@ -708,7 +708,12 @@ only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
 composite and identity-bearing parameter editors, label/domain editing,
-collaboration/conflict handling, and live telemetry/trigger plots remain open.
+collaboration/conflict handling, and live telemetry transport remain open. The
+first offline diagnostic checkpoint now adds canonical bounded overview and
+digital-edge capture records, a deterministic four-input TinyBee fixture, and a
+capability-reconciled interface plot with exact cycle cursor, trigger, source,
+quality, and loss facts. It is simulation evidence only; firmware acquisition,
+authenticated transport, and physical analyzer comparison remain open.
 The editor now intersects the complete caller-authenticated graph-executor
 capability with the reviewed deployment registry and materializes only exact
 matching resource handles. Its visible offline TinyBee target draft offers

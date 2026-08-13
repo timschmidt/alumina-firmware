@@ -1,0 +1,18 @@
+[package]
+name = "alumina-diagnostics"
+description = "Canonical bounded resource-overview and acquisition records for Alumina"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alumina-board.workspace = true
+alumina-capability.workspace = true
+alumina-clock.workspace = true
+alumina-protocol.workspace = true
+
+[lints]
+workspace = true

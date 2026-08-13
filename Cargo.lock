@@ -59,6 +59,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "alumina-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-capability",
+ "alumina-clock",
+ "alumina-protocol",
+]
+
+[[package]]
 name = "alumina-firmware"
 version = "0.1.0"
 dependencies = [
@@ -227,8 +237,10 @@ name = "alumina-sim"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
+ "alumina-capability",
  "alumina-clock",
  "alumina-config",
+ "alumina-diagnostics",
  "alumina-foc",
  "alumina-job",
  "alumina-machine-ir",
@@ -239,6 +251,7 @@ dependencies = [
  "alumina-service",
  "alumina-shift-register",
  "alumina-storage",
+ "board-mks-tinybee",
  "critical-section",
  "embassy-futures",
  "embassy-sync 0.7.2",

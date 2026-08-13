@@ -1,5 +1,6 @@
 #![doc = "Deterministic host models for Alumina storage and service/RT boundaries."]
 
+pub mod diagnostics;
 pub mod distributed;
 pub mod foc;
 pub mod foc_hardware;

@@ -205,6 +205,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   bounded allocation-free `ALMCAP02` board decoding, board-name-independent
   owned UI state, explicit descriptive-versus-graph authority, searchable
   TinyBee resource/hazard/owner views, and an honest missing-photo/HIL gate.
+- [`M9-OFFLINE-DIAGNOSTIC-EXPLORER.md`](M9-OFFLINE-DIAGNOSTIC-EXPLORER.md) —
+  canonical bounded overview and triggered digital-edge records, deterministic
+  TinyBee fixture, capability-reconciled resource cross-linking, exact-cycle UI
+  trace, and explicit simulator/no-authority gates.
 - [`M9-FIXED-GRAPH-IR.md`](M9-FIXED-GRAPH-IR.md) — fixed 4 KiB portable graph
   package, allocation-free independent admission, complete implementation
   identity, and browser lowering into bounded Service/Realtime arenas.

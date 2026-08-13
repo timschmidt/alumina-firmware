@@ -279,6 +279,16 @@ Experiment records bundle board/config/job/graph digests, clock models, capture
 settings, commands, telemetry, annotations, and exports. Webcam snapshots may be
 attached as user evidence but are not silently treated as calibrated metrology.
 
+Implementation checkpoint: `ALMOVW01` and `ALMDIG01` now provide the first
+bounded allocation-free overview and triggered digital-edge record boundary.
+The interface independently reconciles complete device/boot/capability/config/
+clock identity, rejects unknown board resources, and cross-links resource
+selection to a four-lane deterministic TinyBee plot. This is explicitly
+simulator evidence with no network, physical acquisition, lease, or output
+authority. Authenticated streaming, device acquisition admission, analog
+waveforms, physical analyzer comparison, and overload retention evidence remain
+open.
+
 Exit:
 
 - TinyBee and T-Deck photographs provide complete reviewed hotspot coverage for
