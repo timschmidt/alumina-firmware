@@ -289,3 +289,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   replay, selected-stream/partition reconstruction, canonical
   `ALMSYN01`/`ALMSRT01` evidence, derived global-job timing identity, and
   native/WASM/loopback evidence with every physical claim kept closed.
+- [`M10-DIRECT-FINITE-DIFFERENCE-IR.md`](M10-DIRECT-FINITE-DIFFERENCE-IR.md) —
+  greenfield kind-bound Q31.32 third-order records, logarithmic sparse
+  electrical admission, allocation-free dense execution, exact cached-token
+  ownership, and immutable-partition simulation with every physical claim kept
+  closed.
