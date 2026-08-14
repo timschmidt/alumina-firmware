@@ -16,7 +16,7 @@ machine-arm, and safety claim remains closed.
 The coordinated implementation checkpoints are:
 
 - `aluminafw` `c4e8e94cc6989afce73bd59c2322c104ccf0a77b`;
-- `alumina-interface` `ddbcce10cd59b89e12b001d6269079b96849b10b`.
+- `alumina-interface` `8444d3a073cb789c2edeb4920f688d03e245e56a`.
 
 ## Narrow simulator provider seam
 
@@ -114,6 +114,14 @@ capability bounds. The worker explicitly requests diagnostic arm after
 configuration. That operation does not and cannot create machine arm, resource
 lease, pin write, motion schedule, or process-energy authority.
 
+A completed retained record remains busy in firmware until its exact
+configuration reference is stopped. A repeat UI request therefore does not
+replace the client machine or send a conflicting configure. It asks the old
+machine for stop, retains one bounded pending request, reconciles an ambiguous
+stop through status, and constructs the new configuration from current
+authority only after the old machine reaches `Stopped`. Reboot or stable-device
+change erases both active and pending capture state.
+
 Snapshot validation rejects capture state without a nonzero attempt ID, boot,
 strict identity, and complete matching capability. It also rejects impossible
 range progress, a complete record with missing bytes, or a complete state with
@@ -155,27 +163,30 @@ background networking, component updates, default apps, extensions, and sync
 disabled, and host resolution rejected every non-loopback name. The connected
 bare MKS TinyBee V1.0 and workstation WLAN were not contacted.
 
-`tests/browser/worker-clock-harness.html?expect=waveform` uses the production
-module worker and schema v4. It reaches the capture command only after clock,
-health, public identity, complete capability, and one-time capability-document
-checks pass. It rejects a malformed/duplicate capture event, mismatched
-generation, incomplete range progress, any capture error, or a record length
-that differs from the complete snapshot.
+`tests/browser/worker-clock-harness.html?expect=waveform-repeat` uses the
+production module worker and schema v4. It reaches the first capture command
+only after clock, health, public identity, complete capability, and one-time
+capability-document checks pass. It reaches the second only after the first
+record is complete. It rejects malformed or excess capture events, mismatched
+generation/capture identity, incomplete range progress, any capture error, a
+record length that differs from the complete snapshot, or a canonical header
+whose requested posttrigger duration is not exactly 2,000 then 3,000 cycles.
 
 The final run reached `passed` with:
 
-- worker generation 1 and capture sequence 1;
-- six accepted and zero rejected heartbeat samples, with a qualified exact
+- worker generation 1 and capture sequences 1 then 2;
+- seven accepted and zero rejected heartbeat samples, with a qualified exact
   cycle interval;
 - available service/real-time health and zero health failures;
 - public board ID `mks-tinybee-v1`, device ID `ALUM-SIM:TINYBEE`, and
   development-fallback credential provenance;
 - the exact 3,435-byte TinyBee capability with digest
   `0e82513896e52e0a58fb92de9130c446d590bf649fbc22742209b2d04c8cb0a5`;
-- GPIO22, GPIO32, GPIO33, and GPIO35 over a 2,000-cycle window at 1 MHz;
-- one 544-byte `ALMDIG01` record with four channels, 16 transitions,
-  `SIMULATED`, and `CLOCK_UNQUALIFIED`;
-- exact range progress 544/544 bytes; and
+- GPIO22, GPIO32, GPIO33, and GPIO35 first over a 2,000-cycle window and then a
+  3,000-cycle window at 1 MHz;
+- two distinct 544-byte `ALMDIG01` records, each with four channels, 16
+  transitions, `SIMULATED`, and `CLOCK_UNQUALIFIED`;
+- exact final range progress 544/544 bytes after stop/release/reconfigure; and
 - zero consecutive waveform failures and no waveform error.
 
 The harness observes typed worker events rather than application pixels. The
@@ -204,7 +215,7 @@ At the commits above:
 - optimized locked/offline Trunk build: passed after expressing the host's
   `NO_COLOR` value in the Boolean form required by Trunk 0.21.14;
 - `wasm-tools validate`, gzip integrity, and Brotli integrity: passed; and
-- the final loopback Chromium `waveform` expectation: passed.
+- the final loopback Chromium `waveform-repeat` expectation: passed.
 
 Tool versions were Rust 1.97.0, Trunk 0.21.14, wasm-tools 1.235.0, Chromium
 147.0.7727.137, and Node.js 22.22.2.
@@ -213,11 +224,11 @@ The optimized browser artifacts were:
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `alumina-interface_bg.wasm` | 5,780,185 | `48b5779c6e294f19a7733f00b8a8e2e15a5da799077830aa90e6189e4e2ec3cb` |
-| `alumina-interface.js` | 91,813 | `4199d5580ef6fc2dc1ec601dc176e738a80109062b552c01642f0f7ff764d3bd` |
+| `alumina-interface_bg.wasm` | 5,781,161 | `463b3b632de689fea86a6b9cc15767fc8621e2f90cf56163b9b697d947953e0b` |
+| `alumina-interface.js` | 91,813 | `e0cf1582cfcd82cac58cb93b500440c86213c4badb41e426f6f2bbef05ae7917` |
 | `alumina-worker.js` | 631 | `cfc5a142c87bab91d29697bc9af98308ff67fddf745259291f80ceb11e342a4a` |
 
-The optimized WASM compressed to 2,577,372 gzip bytes and 2,050,788 Brotli
+The optimized WASM compressed to 2,577,709 gzip bytes and 2,050,823 Brotli
 bytes.
 
 ## License and moving-Hyper boundary

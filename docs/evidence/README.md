@@ -386,5 +386,6 @@ a hardware qualification: board promotion still follows the evidence ladder in
   explorer facts, and isolated localhost capability-loss recovery.
 - [`M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md`](M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md)
   — strict public identity reconciliation, worker-owned capability-selected
-  input capture, an opt-in deterministic simulator provider, schema-v4 exact
-  trace admission/rendering, and loopback Chromium lifecycle evidence.
+  input capture, an opt-in deterministic simulator provider, retry-safe
+  retained-record release, schema-v4 exact trace admission/rendering, and
+  repeated loopback Chromium lifecycle evidence.
