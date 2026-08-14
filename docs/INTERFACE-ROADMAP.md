@@ -341,12 +341,18 @@ bind complete device/boot/capability/config/clock context and exact SHA-256
 identities. The fixed core-0 owner and typed client prove idempotent mutation,
 latest-only loss accounting, retained-record recovery, ambiguous-response retry,
 and complete validation through in-memory and localhost HTTP/HMAC simulations.
-The interface independently rejects unknown board resources and cross-links
-resource selection to a four-lane deterministic TinyBee plot. This remains
-explicit simulator evidence with no physical acquisition, lease, command, or
-output authority. Hardware providers return `Unsupported`; live WebSocket
+The production browser worker now reconciles public device identity with signed
+capability/boot/clock facts, selects only capability-admitted stable Boolean
+inputs, explicitly requests diagnostic arm, downloads exact retained ranges,
+and revalidates the complete record in the rendering realm. The live panel
+cross-links the resulting four-lane deterministic TinyBee trace to the same
+resource aliases and integer cycle cursor. The standalone host simulator opts
+into a dynamic immediate-capture provider; hardware providers still return
+`Unsupported`. This remains explicit simulator evidence with no physical
+acquisition, lease, machine arm, command, or output authority. Live WebSocket
 delivery, analog waveforms, physical analyzer comparison, and overload HIL
-remain open.
+remain open. See
+[`capability-bound waveform worker/UI`](evidence/M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md).
 
 Exit:
 
@@ -504,8 +510,9 @@ views grant no operation. No photo or hotspot is drawn because the exact package
 publishes no licensed visual; its physical-reconciliation HIL gate remains
 open. The same explorer is now admitted from the live worker's complete
 authenticated capability document rather than only the offline reference
-fixture. Live telemetry/capture and annotated-photo rendering remain separate
-open gates. See the
+fixture. Capability-bound one-shot digital capture is now live only through
+the opt-in host simulator; live telemetry, physical acquisition, and
+annotated-photo rendering remain separate open gates. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and

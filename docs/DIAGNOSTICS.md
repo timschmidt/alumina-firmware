@@ -63,6 +63,23 @@ selected-resource card, and digital plot all resolve through the same
 `ResourceId`. Screen coordinates are lossy projections of retained integer
 cycles and never flow back into a command or canonical record.
 
+## Dynamic simulator acquisition
+
+`simulated_immediate_waveform_capture` builds a new deterministic record from
+the exact configuration currently retained in the service's `Armed` phase. The
+portable service exposes that configuration through a narrow provider-only
+borrow; it remains inaccessible to the network caller. The simulator accepts
+only immediate, zero-pretrigger requests and mirrors the requested context,
+capture ID, ordered channels, duration, capacity, and trigger deadline. It
+generates at most four transitions per channel, encodes `SIMULATED` and
+`CLOCK_UNQUALIFIED`, and submits the result back through the ordinary service
+record validator before it can be downloaded.
+
+The HTTP fixture keeps this provider disabled by default so tests must opt in.
+The standalone `alumina-sim-http` binary enables it for production browser
+worker integration. This is a host simulation provider, not an ESP peripheral
+backend or a physical waveform claim.
+
 ## Authenticated transport checkpoint
 
 Canonical `TelemetrySubscribe`/`Status`/`Event` and
@@ -75,6 +92,7 @@ mutations and validates the complete capture before exposure; a localhost
 HTTP/HMAC/native-frame test exercises the same dispatcher.
 
 See [`DIAGNOSTIC-TRANSPORT.md`](DIAGNOSTIC-TRANSPORT.md). Hardware compositions
-currently report both evidence providers as unsupported. Physical TinyBee
-sampling/capture, WebSocket event delivery, Wi-Fi/AP transport, and SLogic
-comparison remain HIL gates rather than simulator claims.
+currently report both evidence providers as unsupported. The production browser
+worker can now complete one-shot capture through the opt-in host simulator;
+physical TinyBee sampling/capture, WebSocket event delivery, Wi-Fi/AP transport,
+and SLogic comparison remain HIL gates rather than simulator claims.

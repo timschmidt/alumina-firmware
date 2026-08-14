@@ -384,3 +384,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — one shared firmware/simulator range service, retry-safe authenticated
   browser assembly, strict schema-v3 one-time document transfer, connected-board
   explorer facts, and isolated localhost capability-loss recovery.
+- [`M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md`](M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md)
+  — strict public identity reconciliation, worker-owned capability-selected
+  input capture, an opt-in deterministic simulator provider, schema-v4 exact
+  trace admission/rendering, and loopback Chromium lifecycle evidence.
