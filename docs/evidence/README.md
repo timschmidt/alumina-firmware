@@ -380,3 +380,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M10-RUNTIME-HEALTH-WORKER-UI.md`](M10-RUNTIME-HEALTH-WORKER-UI.md) — strict
   schema-v2 worker polling, health-specific error retention, exact live-device
   queue/stack rendering, and signed localhost browser loss/recovery evidence.
+- [`M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md`](M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md)
+  — one shared firmware/simulator range service, retry-safe authenticated
+  browser assembly, strict schema-v3 one-time document transfer, connected-board
+  explorer facts, and isolated localhost capability-loss recovery.

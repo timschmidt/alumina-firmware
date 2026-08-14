@@ -1046,9 +1046,22 @@ and authenticated window/worker fetch seam in the Hyper-independent
 `alumina-interface-client` package. It independently rejects wire,
 response-cycle, epoch/layout, counter/time, and observed-headroom regressions;
 keeps stale, missing, and unsupported evidence distinct; and exposes integer
-queue/stack facts without granting safety authority. The visible worker schema,
-poll scheduler, and board-debug panel remain open. See
-[`M10-RUNTIME-HEALTH-CLIENT.md`](evidence/M10-RUNTIME-HEALTH-CLIENT.md).
+queue/stack facts without granting safety authority. A subsequent checkpoint
+connects that model to a bounded worker poll scheduler, strict schema-v2
+projection, rendering-realm revalidation, and the visible live-MCU panel. See
+[`M10-RUNTIME-HEALTH-CLIENT.md`](evidence/M10-RUNTIME-HEALTH-CLIENT.md) and
+[`M10-RUNTIME-HEALTH-WORKER-UI.md`](evidence/M10-RUNTIME-HEALTH-WORKER-UI.md).
+
+The next coordinated checkpoint moves immutable target authority through the
+same real browser boundary. Firmware and simulator share one stateless
+capability-range dispatcher. The browser retains a bounded contiguous prefix,
+repeats the exact range after ambiguity, freezes identity after discovery,
+revalidates the complete canonical bytes, and emits them once through strict
+schema v3. The rendering realm revalidates again before building the
+board-name-independent explorer and displaying exact connected-board facts.
+Physical Wi-Fi, live resource telemetry, annotated photography, and every
+control/safety authority remain open. See
+[`M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md`](evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
 
 Exit gate:
 
@@ -1156,6 +1169,13 @@ reconciled interface plot retains its exact cycle cursor, trigger, source,
 quality, and loss facts. This is simulation evidence only; hardware provider
 policies remain unsupported, and physical acquisition/WebSocket/SLogic
 qualification remain open.
+The production browser worker now also downloads the complete authenticated
+capability document in bounded ranges, survives one deliberately lost range,
+and admits the independently revalidated board-name-independent explorer into
+the visible live-MCU panel. This establishes the immutable resource context
+needed by later live telemetry; it does not yet connect the subscription or
+capture state machines, render an annotated photograph, or grant a diagnostic
+lease.
 The editor now intersects the complete caller-authenticated graph-executor
 capability with the reviewed deployment registry and materializes only exact
 matching resource handles. Its visible offline TinyBee target draft offers

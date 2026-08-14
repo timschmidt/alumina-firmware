@@ -195,9 +195,11 @@ evidence](docs/evidence/M10-RUNTIME-STACK-WATERMARKS.md).
 The companion headless interface client now independently decodes and
 monotonically reconciles that health response, exposes exact queue/stack facts,
 and compiles authenticated window and worker fetch adapters without depending
-on the moving Hyper geometry graph. Automatic worker polling and visible
-board-debug rendering remain open. See the [runtime-health client
-evidence](docs/evidence/M10-RUNTIME-HEALTH-CLIENT.md).
+on the moving Hyper geometry graph. The production worker now polls it at the
+bounded health cadence, carries a strict independently revalidated projection,
+and renders exact queue/stack facts without granting safety authority. See the
+[runtime-health client evidence](docs/evidence/M10-RUNTIME-HEALTH-CLIENT.md) and
+[worker/UI evidence](docs/evidence/M10-RUNTIME-HEALTH-WORKER-UI.md).
 
 The cache backend itself is now concrete: `alumina-storage` implements a bounded
 asynchronous 512-byte block-device contract, an explicitly provisioned raw SD
@@ -282,6 +284,14 @@ consumer decoder now exposes borrowed resource, alias, visual and hotspot views
 without allocation; the interface uses it for a searchable TinyBee ledger that
 keeps all descriptive facts separate from the four explicitly graph-readable
 inputs and draws no physical overlay while the package has no licensed photo.
+The capability range service is now shared by firmware and the authenticated
+HTTP simulator. A retry-safe browser client assembles one bounded contiguous
+document, holds its digest stable after discovery, independently decodes and
+hashes the complete bytes, and transfers them once through worker schema v3.
+The live MCU panel then renders board/revision/chip/core/memory/resource/hazard/
+visual/HIL facts while explicitly granting no lease, command, arm, or safety
+authority. See the [authenticated capability worker/UI
+evidence](docs/evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
 See the
 [portable lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md) and
 [firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md), plus the
@@ -311,12 +321,15 @@ boot-scoped clock samples from window or worker contexts and coordinates exact
 prepare/install/confirm-or-abort transitions without confirming before all
 installs. The browser now creates a dedicated control worker that owns
 independent authenticated sessions, exact causal clock models, bounded history,
-and retry-safe redacted diagnostic panels; its module lifecycle reaches a
-rendered worker-ready state in Chromium. That production worker now exchanges
-real authenticated browser HTTP/CORS heartbeat traffic with a deterministic
-host MCU fixture, recovers from response loss, a finite outage, and reboot, and
-refuses an excessive causal interval. Physical radio and timing qualification
-remain closed. The same coordinator now consumes canonical first-output
+retry-safe redacted diagnostic panels, passive runtime health, and canonical
+board-capability acquisition; its module lifecycle reaches a rendered
+worker-ready state in Chromium. That production worker now exchanges real
+authenticated browser HTTP/CORS clock, health, and bounded capability traffic
+with a deterministic host MCU fixture. It recovers from clock/health response
+loss, a finite outage, reboot, and an ambiguous capability range without
+cross-contaminating the three models, and refuses an excessive causal interval.
+Physical radio and timing qualification remain closed. The same coordinator
+now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped
 affine clock envelopes, preserves whether their authority is a simulator,
 peripheral latch, or software bracket, and displays conservative cross-device

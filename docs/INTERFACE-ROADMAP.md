@@ -151,11 +151,17 @@ supervises an explicit module worker that owns independent HMAC sessions, clock
 models, bounded histories, retry cadence, and redacted live diagnostic panels.
 Authenticated browser/HTTP simulation now covers nominal traffic, response loss,
 a finite outage, reboot, bounded delay, and conservative excessive-delay
-rejection. Device identity/capability discovery, broader network/storage fault
-injection, WLAN provisioning, and physical connections remain open. See the
+rejection. The same worker now acquires immutable capabilities through bounded
+digest-stable ranges, repeats the exact range after ambiguous loss, revalidates
+the complete canonical document on both sides of schema v3, and exposes a
+board-name-independent live explorer. Complete public device/security/machine-
+membership discovery, broader network/storage fault injection, WLAN
+provisioning, and physical connections remain open. See the
 [M7 browser cache-delivery evidence](evidence/M7-BROWSER-CACHE-DELIVERY.md) and
 [clock/coordinator evidence](evidence/M7-BROWSER-CLOCK-COORDINATOR.md), plus the
-[authenticated browser/HTTP evidence](evidence/M7-BROWSER-AUTH-HTTP-SIM.md).
+[authenticated browser/HTTP evidence](evidence/M7-BROWSER-AUTH-HTTP-SIM.md) and
+[authenticated capability worker/UI
+evidence](evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
 
 Exit:
 
@@ -496,7 +502,10 @@ owners, safe states, hazards and supporting-section counts while keeping its
 four graph-readable inputs visibly narrower. Searchable graph-closed/hazardous
 views grant no operation. No photo or hotspot is drawn because the exact package
 publishes no licensed visual; its physical-reconciliation HIL gate remains
-open. See the
+open. The same explorer is now admitted from the live worker's complete
+authenticated capability document rather than only the offline reference
+fixture. Live telemetry/capture and annotated-photo rendering remain separate
+open gates. See the
 [`canonical document`](evidence/M9-CANONICAL-GRAPH-DOCUMENT-V1.md) and
 [`audited semantic`](evidence/M9-AUDITED-GRAPH-SEMANTICS.md), plus the
 [`type-storage`](evidence/M9-CANONICAL-TYPE-STORAGE.md) and
