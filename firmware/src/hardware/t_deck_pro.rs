@@ -261,6 +261,19 @@ impl EstablishedRealtimeResources {
     /// Clears the no-op target selection transaction.
     pub fn clear_target_configuration(&mut self) {}
 
+    /// T-Deck Pro has no extra machine-target facts to replay at authorization.
+    pub fn validate_target_authorization(
+        &self,
+        _configuration: &RealtimeConfiguration,
+    ) -> Result<(), SafeOutputError> {
+        Ok(())
+    }
+
+    /// Portable validation is the complete target fact layer on T-Deck Pro.
+    pub fn target_configuration_ready(&self, _configuration: &RealtimeConfiguration) -> bool {
+        true
+    }
+
     /// Rejects any configured safety route because T-Deck Pro exposes none to
     /// the real-time machine domain in this board package.
     pub fn configure_safety_inputs<const INPUTS: usize>(

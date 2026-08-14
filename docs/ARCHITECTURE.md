@@ -1322,6 +1322,20 @@ add no target-specific fact layer at this boundary. This retention is not
 MCPWM/ADC/encoder activation and does not change any arming predicate. See
 [`evidence/M10-CORE1-MKS-TARGET-SELECTION.md`](evidence/M10-CORE1-MKS-TARGET-SELECTION.md).
 
+The retained facts are now load-bearing before configuration authorization.
+The configuration service exposes an immutable document only when the exact
+`Authorize` command, current phase, identity, and mutation policy would pass;
+invalid commands still flow through its canonical rejection path. MKS replays
+the complete prepared selection from that document and requires byte-for-value
+equality with the retained value before the service may set its authorization
+bit. Failure leaves the service active but unauthorized and enters the
+permanent real-time fault/safe path. Arm reconciliation separately requires
+the retained target digest to match the authorized document on every attempt.
+TinyBee and T-Deck Pro acknowledge this check because portable validation is
+their complete target fact layer. No peripheral transition or output gate is
+added. See
+[`evidence/M10-SELECTED-BOARD-AUTHORIZATION.md`](evidence/M10-SELECTED-BOARD-AUTHORIZATION.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage

@@ -501,6 +501,17 @@ T-Deck Pro participate with zero-sized acknowledgements. No register, pin,
 encoder, or ADC operation occurs and all output gates remain closed. See
 [`M10-CORE1-MKS-TARGET-SELECTION.md`](evidence/M10-CORE1-MKS-TARGET-SELECTION.md).
 
+Authorization now makes that retained target layer mandatory rather than
+decorative. A pure configuration-service preflight exposes the active document
+only for an otherwise admissible exact `Authorize` command. MKS replays the
+complete target selection and compares it to retained facts before the service
+can authorize; arm reconciliation also requires the retained digest to match
+the authorized configuration. Invalid commands retain canonical rejection,
+while a missing or substituted target selection faults safe without gaining
+authorization. TinyBee and T-Deck Pro add no second fact layer. All peripheral
+and output gates remain closed. See
+[`M10-SELECTED-BOARD-AUTHORIZATION.md`](evidence/M10-SELECTED-BOARD-AUTHORIZATION.md).
+
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
@@ -972,6 +983,13 @@ must bind the complete dual-stage selection and exact digest before the target
 commit retains it; configuration clear removes it. This still performs no
 peripheral transition and cannot authorize a job. See
 [`M10-CORE1-MKS-TARGET-SELECTION.md`](evidence/M10-CORE1-MKS-TARGET-SELECTION.md).
+
+The following authorization checkpoint makes retained selected-board facts a
+precondition for durable configuration authority and future arming. It replays
+the full MKS selection before the authorization state change and requires its
+digest during every arm reconciliation, without activating a peripheral or
+changing any target gate. See
+[`M10-SELECTED-BOARD-AUTHORIZATION.md`](evidence/M10-SELECTED-BOARD-AUTHORIZATION.md).
 
 Exit gate:
 

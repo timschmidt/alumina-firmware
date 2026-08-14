@@ -543,6 +543,10 @@ impl PreparedTargetConfiguration {
 pub enum TargetConfigurationError {
     /// A prior target selection must be cleared before another is installed.
     Active,
+    /// No selected-board facts are retained for the active configuration.
+    Missing,
+    /// Retained facts do not replay to the exact active configuration.
+    Mismatch,
     /// Canonical MKS topology or exact hardware facts rejected.
     Selection(StoredFocHardwareSelectionError),
 }
@@ -1408,6 +1412,30 @@ impl<Encoders, Current, Stage0, Stage1>
     /// Exact target facts retained beside the closed stage owners.
     pub const fn target_configuration(&self) -> Option<PreparedTargetConfiguration> {
         self.target_configuration
+    }
+
+    /// Replays and compares every retained MKS fact before authorization.
+    pub fn validate_target_authorization(
+        &self,
+        configuration: &RealtimeConfiguration,
+    ) -> Result<(), TargetConfigurationError> {
+        let retained = self
+            .target_configuration()
+            .ok_or(TargetConfigurationError::Missing)?;
+        let replay = PreparedTargetConfiguration::from_configuration(configuration)?;
+        if retained != replay {
+            return Err(TargetConfigurationError::Mismatch);
+        }
+        Ok(())
+    }
+
+    /// Fast exact-identity gate used by permanent arm reconciliation.
+    pub fn target_configuration_ready(&self, configuration: &RealtimeConfiguration) -> bool {
+        let identity = configuration.identity();
+        self.target_configuration().is_some_and(|retained| {
+            retained.configuration_digest() == identity.digest
+                && retained.foc_selection().is_some() == (identity.summary.foc_axes != 0)
+        })
     }
 
     /// Rejects configured safety routes because none is established on V1.0.

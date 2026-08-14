@@ -4551,6 +4551,31 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
         }
     }
 
+    /// Borrows the active configuration only when this exact authorization
+    /// command is currently admissible without changing service state.
+    ///
+    /// A selected-board owner uses this pure preflight to replay its retained
+    /// target facts before [`Self::apply`] makes the configuration available to
+    /// other real-time actors. Invalid or currently forbidden commands remain
+    /// for `apply` to reject with its canonical report.
+    pub fn authorization_preflight_configuration(
+        &self,
+        command: CoreConfigurationCommand,
+        mutation_allowed: bool,
+    ) -> Option<&RealtimeConfiguration> {
+        if !mutation_allowed
+            || command.action != CoreConfigurationAction::Authorize
+            || !self.matches(command)
+            || self.candidate.is_some()
+            || self.receiving.is_some()
+        {
+            return None;
+        }
+        self.active
+            .as_ref()
+            .filter(|active| identity_matches(active.identity, command))
+    }
+
     /// Exact independently validated but inactive candidate.
     pub fn candidate_identity(&self) -> Option<ConfigurationIdentity> {
         self.candidate
@@ -7887,6 +7912,12 @@ mod tests {
         );
         assert_eq!(report.state, RealtimeConfigurationState::CandidateValid);
         assert_eq!(service.candidate_identity().unwrap().digest, digest);
+        let authorize = CoreConfigurationCommand::authorize(41, digest, total).unwrap();
+        assert!(
+            service
+                .authorization_preflight_configuration(authorize, true)
+                .is_none()
+        );
         let report = service.apply(
             CoreConfigurationCommand::activate(41, digest, total).unwrap(),
             true,
@@ -7896,10 +7927,30 @@ mod tests {
         assert!(service.authorized_identity().is_none());
         assert!(service.authorized_configuration().is_none());
         assert!(!report.active_authorized);
-        let report = service.apply(
-            CoreConfigurationCommand::authorize(41, digest, total).unwrap(),
-            true,
+        let before_preflight = service.report();
+        assert_eq!(
+            service
+                .authorization_preflight_configuration(authorize, true)
+                .unwrap()
+                .identity
+                .digest,
+            digest
         );
+        assert!(
+            service
+                .authorization_preflight_configuration(authorize, false)
+                .is_none()
+        );
+        assert!(
+            service
+                .authorization_preflight_configuration(
+                    CoreConfigurationCommand::authorize(42, digest, total).unwrap(),
+                    true,
+                )
+                .is_none()
+        );
+        assert_eq!(service.report(), before_preflight);
+        let report = service.apply(authorize, true);
         assert_eq!(report.state, RealtimeConfigurationState::Active);
         assert!(report.active_authorized);
         assert_eq!(service.authorized_identity().unwrap().digest, digest);

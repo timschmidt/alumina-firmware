@@ -352,6 +352,19 @@ impl EstablishedRealtimeResources {
     /// Clears the no-op target selection transaction.
     pub fn clear_target_configuration(&mut self) {}
 
+    /// TinyBee has no extra target facts to replay before authorization.
+    pub fn validate_target_authorization(
+        &self,
+        _configuration: &RealtimeConfiguration,
+    ) -> Result<(), SafeOutputError> {
+        Ok(())
+    }
+
+    /// Portable validation is the complete target fact layer on TinyBee.
+    pub fn target_configuration_ready(&self, _configuration: &RealtimeConfiguration) -> bool {
+        true
+    }
+
     /// Applies a complete configuration-derived GPIO-input transaction.
     pub fn configure_safety_inputs<const INPUTS: usize>(
         &mut self,

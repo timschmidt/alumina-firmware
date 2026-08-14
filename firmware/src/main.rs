@@ -875,15 +875,17 @@ async fn realtime_task(
                 );
             }
 
-            match reconcile_arm_state(
-                &configurations,
-                &jobs,
-                &motion,
-                &mut safety,
+            let authorized_configuration = configurations.authorized_configuration();
+            let arm_inputs = ArmReconciliationInputs {
+                configuration_authorized: authorized_configuration.is_some(),
+                target_configuration_ready: authorized_configuration.is_some_and(|configuration| {
+                    resources.target_configuration_ready(configuration)
+                }),
                 safe_outputs_established,
-                safety_input_status,
-                probe.misses() == 0,
-            ) {
+                safety_inputs: safety_input_status,
+                deadline_healthy: probe.misses() == 0,
+            };
+            match reconcile_arm_state(&jobs, &motion, &mut safety, arm_inputs) {
                 Ok(true) => {
                     transition_generation = next_nonzero(transition_generation);
                     publish_safety_snapshot(
@@ -1282,28 +1284,35 @@ fn service_realtime_motion(
     }
 }
 
-fn reconcile_arm_state(
-    configurations: &RealtimeConfigurationService<'static, { selected::CONFIGURATION_BINDINGS }>,
-    jobs: &RealtimeJobService,
-    motion: &MotionService,
-    safety: &mut SafetyMachine,
+#[derive(Clone, Copy)]
+struct ArmReconciliationInputs {
+    configuration_authorized: bool,
+    target_configuration_ready: bool,
     safe_outputs_established: bool,
     safety_inputs: SafetyInputStatus,
     deadline_healthy: bool,
+}
+
+fn reconcile_arm_state(
+    jobs: &RealtimeJobService,
+    motion: &MotionService,
+    safety: &mut SafetyMachine,
+    inputs: ArmReconciliationInputs,
 ) -> Result<bool, ()> {
     if safety.state() == SafetyState::Configured
-        && configurations.authorized_configuration().is_some()
+        && inputs.configuration_authorized
+        && inputs.target_configuration_ready
         && jobs.ready_to_arm()
         && motion.ready_to_arm(jobs.descriptor())
-        && safe_outputs_established
-        && safety_inputs.ready_to_arm()
-        && deadline_healthy
+        && inputs.safe_outputs_established
+        && inputs.safety_inputs.ready_to_arm()
+        && inputs.deadline_healthy
     {
         safety
             .apply(
                 SafetyEvent::Arm,
                 Conditions {
-                    safe_outputs_established,
+                    safe_outputs_established: inputs.safe_outputs_established,
                     configuration_valid: true,
                     interlocks_closed: true,
                     buffer_ready: true,
@@ -1536,6 +1545,13 @@ fn apply_configuration_command(
         && graphs.active_identity().is_none()
         && graphs.candidate_identity().is_none()
         && endpoint.work_depth() == 0;
+    if let Some(active) =
+        configurations.authorization_preflight_configuration(command, mutation_allowed)
+    {
+        resources
+            .validate_target_authorization(active)
+            .map_err(|_| ())?;
+    }
     let report = configurations.apply(command, mutation_allowed);
     let mut safety_changed = false;
 
