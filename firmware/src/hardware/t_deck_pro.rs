@@ -1,5 +1,5 @@
 use alumina_board::BoardPackage;
-use alumina_config::RealtimeConfigurationProfile;
+use alumina_config::{RealtimeConfiguration, RealtimeConfigurationProfile};
 use alumina_motion::{
     OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
 };
@@ -225,6 +225,10 @@ pub enum SafeOutputError {
     MotionUnsupported,
 }
 
+/// Zero-sized selected-board acknowledgement after portable validation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreparedTargetConfiguration;
+
 impl RealtimeResources {
     /// Establishes the only RT-owned hazardous pin as a retained input/high-Z.
     pub fn establish_safe_outputs(self) -> Result<EstablishedRealtimeResources, SafeOutputError> {
@@ -238,6 +242,25 @@ impl RealtimeResources {
 }
 
 impl EstablishedRealtimeResources {
+    /// T-Deck Pro adds no machine-target selection beyond portable validation.
+    pub fn prepare_target_configuration(
+        &self,
+        _configuration: &RealtimeConfiguration,
+    ) -> Result<PreparedTargetConfiguration, SafeOutputError> {
+        Ok(PreparedTargetConfiguration)
+    }
+
+    /// Completes the no-op target selection transaction.
+    pub fn commit_target_configuration(
+        &mut self,
+        _prepared: PreparedTargetConfiguration,
+    ) -> Result<(), SafeOutputError> {
+        Ok(())
+    }
+
+    /// Clears the no-op target selection transaction.
+    pub fn clear_target_configuration(&mut self) {}
+
     /// Rejects any configured safety route because T-Deck Pro exposes none to
     /// the real-time machine domain in this board package.
     pub fn configure_safety_inputs<const INPUTS: usize>(

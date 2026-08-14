@@ -1546,9 +1546,15 @@ fn apply_configuration_command(
                     return Err(());
                 }
                 let active = configurations.active_configuration().ok_or(())?;
+                let target_configuration = resources
+                    .prepare_target_configuration(active)
+                    .map_err(|_| ())?;
                 motion.configure(active).map_err(|_| ())?;
                 let monitor = resources
                     .configure_safety_inputs(active.profile(), nominal_scan_period_cycles)
+                    .map_err(|_| ())?;
+                resources
+                    .commit_target_configuration(target_configuration)
                     .map_err(|_| ())?;
                 *safety_inputs = monitor;
                 *safety_input_status = safety_inputs
@@ -1580,6 +1586,7 @@ fn apply_configuration_command(
                 if report.state != RealtimeConfigurationState::Cleared {
                     return Err(());
                 }
+                resources.clear_target_configuration();
                 resources.clear_safety_inputs();
                 motion.clear();
                 *safety_inputs = None;

@@ -21,7 +21,7 @@ use alumina_motion::{
     CachedServoConfiguration, OutputCommitToken, ScheduledShiftOutput,
     ServoSetpointAdmissionProfileError, ShiftImageContract, ShiftImageUpdate,
 };
-use alumina_protocol::DeviceCycle;
+use alumina_protocol::{DeviceCycle, Digest};
 use alumina_safety::{SafetyContractId, SafetyInputMonitor};
 use alumina_service::CACHE_LIMITS;
 use alumina_storage::media::{AsyncBlockDevice, MediaBlock};
@@ -269,20 +269,12 @@ impl From<ServoSetpointAdmissionProfileError> for StoredFocHardwareSelectionErro
 /// routing. It still exposes only the unqualified ADC commissioning selection
 /// and the stopped, disconnected MCPWM state; it grants no output transition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "stored target selection remains unreachable while the compiled stage is unqualified"
-)]
 pub struct StoredFocAxisHardwareSelection {
     axis: CurrentAxis,
     adc: Adc1MotorAttenuation,
     mcpwm: ClosedMcpwmConfiguration,
 }
 
-#[allow(
-    dead_code,
-    reason = "stored target selection remains unreachable while the compiled stage is unqualified"
-)]
 impl StoredFocAxisHardwareSelection {
     /// Derives one fixed motor selection from an independently validated profile.
     pub fn from_configuration(
@@ -400,6 +392,10 @@ impl StoredFocAxisHardwareSelection {
         self.axis
     }
 
+    #[allow(
+        dead_code,
+        reason = "retained ADC facts are consumed only by a future qualified physical activation"
+    )]
     pub const fn adc(self) -> Adc1MotorAttenuation {
         self.adc
     }
@@ -416,19 +412,11 @@ impl StoredFocAxisHardwareSelection {
 /// contracts share one configuration identity and exact loop grid. The value
 /// exposes no pin transition, compare write, gate enable, or power-stage owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(
-    dead_code,
-    reason = "dual-stage selection remains unreachable while physical outputs are unqualified"
-)]
 pub struct StoredFocHardwareBankSelection {
     axes: [StoredFocAxisHardwareSelection; JOB_AXES],
     cached_servo: CachedServoConfiguration<JOB_AXES>,
 }
 
-#[allow(
-    dead_code,
-    reason = "dual-stage selection remains unreachable while physical outputs are unqualified"
-)]
 impl StoredFocHardwareBankSelection {
     /// Selects both schematic motor stages as one non-energizing transaction.
     pub fn from_configuration(
@@ -467,11 +455,19 @@ impl StoredFocHardwareBankSelection {
     }
 
     /// Both exact target-checked per-axis selections in schematic order.
+    #[allow(
+        dead_code,
+        reason = "retained axis facts are consumed only by a future qualified physical activation"
+    )]
     pub const fn axes(self) -> [StoredFocAxisHardwareSelection; JOB_AXES] {
         self.axes
     }
 
     /// ADC1 attenuation settings for both fixed current-sense route pairs.
+    #[allow(
+        dead_code,
+        reason = "retained ADC facts are consumed only by a future qualified physical activation"
+    )]
     pub const fn adc_configuration(self) -> Adc1AcquisitionConfiguration {
         Adc1AcquisitionConfiguration {
             motor0: self.axes[0].adc(),
@@ -480,6 +476,10 @@ impl StoredFocHardwareBankSelection {
     }
 
     /// Stopped and disconnected MCPWM timer contracts in schematic order.
+    #[allow(
+        dead_code,
+        reason = "retained PWM facts are consumed only by a future qualified physical activation"
+    )]
     pub const fn mcpwm_configurations(self) -> [ClosedMcpwmConfiguration; JOB_AXES] {
         [self.axes[0].mcpwm(), self.axes[1].mcpwm()]
     }
@@ -487,6 +487,69 @@ impl StoredFocHardwareBankSelection {
     /// Exact cached-servo authority derived from the same document.
     pub const fn cached_servo_configuration(self) -> CachedServoConfiguration<JOB_AXES> {
         self.cached_servo
+    }
+}
+
+/// Pure target selection prepared before core-1 resource state changes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreparedTargetConfiguration {
+    configuration_digest: Digest,
+    foc: Option<StoredFocHardwareBankSelection>,
+}
+
+impl PreparedTargetConfiguration {
+    fn from_configuration(
+        configuration: &RealtimeConfiguration,
+    ) -> Result<Self, StoredFocHardwareSelectionError> {
+        let identity = configuration.identity();
+        let summary = identity.summary;
+        if summary.stepper_axes != 0 || !matches!(usize::from(summary.foc_axes), 0 | JOB_AXES) {
+            return Err(StoredFocHardwareSelectionError::Topology);
+        }
+        let foc = if summary.foc_axes == 0 {
+            None
+        } else {
+            Some(StoredFocHardwareBankSelection::from_configuration(
+                configuration,
+            )?)
+        };
+        if foc.is_some_and(|selection| {
+            selection
+                .cached_servo_configuration()
+                .configuration_digest()
+                != identity.digest
+        }) {
+            return Err(StoredFocHardwareSelectionError::Topology);
+        }
+        Ok(Self {
+            configuration_digest: identity.digest,
+            foc,
+        })
+    }
+
+    /// Exact fully validated document identity retained by core 1.
+    pub const fn configuration_digest(self) -> Digest {
+        self.configuration_digest
+    }
+
+    /// Complete dual-stage facts, or `None` for a resource-free document.
+    pub const fn foc_selection(self) -> Option<StoredFocHardwareBankSelection> {
+        self.foc
+    }
+}
+
+/// Rejection while preparing or installing target-specific configuration facts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetConfigurationError {
+    /// A prior target selection must be cleared before another is installed.
+    Active,
+    /// Canonical MKS topology or exact hardware facts rejected.
+    Selection(StoredFocHardwareSelectionError),
+}
+
+impl From<StoredFocHardwareSelectionError> for TargetConfigurationError {
+    fn from(error: StoredFocHardwareSelectionError) -> Self {
+        Self::Selection(error)
     }
 }
 
@@ -853,6 +916,7 @@ pub struct EstablishedRealtimeResources<
     current_sense: Current,
     encoders: Encoders,
     safety_inputs: SafetyInputBank<0>,
+    target_configuration: Option<PreparedTargetConfiguration>,
 }
 
 /// Physical motor axis selecting one independent AS5600 bus.
@@ -940,6 +1004,7 @@ impl RealtimeResources {
                 encoder_index1,
             },
             safety_inputs,
+            target_configuration: None,
         })
     }
 }
@@ -966,6 +1031,7 @@ impl<Current, Stage0, Stage1>
             current_sense,
             encoders,
             safety_inputs,
+            target_configuration,
         } = self;
         let DormantEncoderResources {
             i2c0,
@@ -1001,6 +1067,7 @@ impl<Current, Stage0, Stage1>
                 encoder_index1,
             },
             safety_inputs,
+            target_configuration,
         }
     }
 }
@@ -1030,6 +1097,7 @@ impl<Encoders, Stage0, Stage1>
             current_sense,
             encoders,
             safety_inputs,
+            target_configuration,
         } = self;
         let UncalibratedCurrentSense {
             adc1,
@@ -1066,6 +1134,7 @@ impl<Encoders, Stage0, Stage1>
             },
             encoders,
             safety_inputs,
+            target_configuration,
         }
     }
 }
@@ -1110,6 +1179,7 @@ impl<Encoders, Current>
             current_sense,
             encoders,
             safety_inputs,
+            target_configuration,
         } = self;
         Ok(EstablishedRealtimeResources {
             timer_group1,
@@ -1118,6 +1188,7 @@ impl<Encoders, Current>
             current_sense,
             encoders,
             safety_inputs,
+            target_configuration,
         })
     }
 }
@@ -1293,6 +1364,52 @@ impl<Current, Stage0, Stage1>
 impl<Encoders, Current, Stage0, Stage1>
     EstablishedRealtimeResources<Encoders, Current, Stage0, Stage1>
 {
+    /// Validates all target-specific facts without mutating hardware ownership.
+    pub fn prepare_target_configuration(
+        &self,
+        configuration: &RealtimeConfiguration,
+    ) -> Result<PreparedTargetConfiguration, TargetConfigurationError> {
+        if self.target_configuration().is_some() {
+            return Err(TargetConfigurationError::Active);
+        }
+        PreparedTargetConfiguration::from_configuration(configuration).map_err(Into::into)
+    }
+
+    /// Retains a previously prepared target selection after other core-1 checks.
+    pub fn commit_target_configuration(
+        &mut self,
+        prepared: PreparedTargetConfiguration,
+    ) -> Result<(), TargetConfigurationError> {
+        if self.target_configuration().is_some() {
+            return Err(TargetConfigurationError::Active);
+        }
+        let digest = prepared.configuration_digest();
+        if digest.is_zero()
+            || prepared.foc_selection().is_some_and(|selection| {
+                selection
+                    .cached_servo_configuration()
+                    .configuration_digest()
+                    != digest
+            })
+        {
+            return Err(TargetConfigurationError::Selection(
+                StoredFocHardwareSelectionError::Topology,
+            ));
+        }
+        self.target_configuration = Some(prepared);
+        Ok(())
+    }
+
+    /// Drops target selection facts while retaining every closed peripheral.
+    pub fn clear_target_configuration(&mut self) {
+        self.target_configuration = None;
+    }
+
+    /// Exact target facts retained beside the closed stage owners.
+    pub const fn target_configuration(&self) -> Option<PreparedTargetConfiguration> {
+        self.target_configuration
+    }
+
     /// Rejects configured safety routes because none is established on V1.0.
     pub fn configure_safety_inputs<const INPUTS: usize>(
         &mut self,

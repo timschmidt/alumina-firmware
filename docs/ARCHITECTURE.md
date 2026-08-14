@@ -1304,6 +1304,24 @@ physical backend must then transfer permanently rather than borrow from its
 enclosing resources. See
 [`evidence/M10-CLOSED-MKS-PWM-BACKEND.md`](evidence/M10-CLOSED-MKS-PWM-BACKEND.md).
 
+Selected-board target configuration now follows a separate pure prepare and
+state-retention commit around the generic configuration actor. On MKS,
+`PreparedTargetConfiguration` accepts only a resource-free document or exactly
+two FOC axes with no stepper axes. The FOC case constructs
+`StoredFocHardwareBankSelection`, thereby replaying both fixed power-stage,
+phase-output, ADC1-pair, stopped-MCPWM, common-grid, and cached-servo contracts,
+then verifies that its cached authority has the active document digest.
+
+Preparation borrows resources immutably and touches no peripheral. After the
+portable motion configuration and configuration-derived safety-input setup
+succeed, commit stores the immutable prepared value in the permanent core-1
+resource owner. A second selection rejects until configuration clear; clear
+drops only the stored facts and retains every closed hardware singleton.
+TinyBee and T-Deck Pro use zero-sized prepared acknowledgements because they
+add no target-specific fact layer at this boundary. This retention is not
+MCPWM/ADC/encoder activation and does not change any arming predicate. See
+[`evidence/M10-CORE1-MKS-TARGET-SELECTION.md`](evidence/M10-CORE1-MKS-TARGET-SELECTION.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage

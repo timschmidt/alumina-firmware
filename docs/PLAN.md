@@ -490,6 +490,17 @@ yet because there is no exact activation boundary or target FOC candidate to
 own, and all arm/qualification constants remain false. See
 [`M10-CLOSED-MKS-PWM-BACKEND.md`](evidence/M10-CLOSED-MKS-PWM-BACKEND.md).
 
+Core-1 configuration activation now has a selected-board prepare/commit/clear
+hook. MKS preparation is pure: it replays the canonical dual-stage target
+selector from the already validated document, rejects stepper/mixed or partial
+FOC shapes, and binds both stage/ADC/MCPWM selections plus cached-servo facts
+to the document digest. Only after portable motion and safety configuration
+succeeds does commit retain that immutable value beside the still-closed
+peripherals; clear drops the value without releasing any singleton. TinyBee and
+T-Deck Pro participate with zero-sized acknowledgements. No register, pin,
+encoder, or ADC operation occurs and all output gates remain closed. See
+[`M10-CORE1-MKS-TARGET-SELECTION.md`](evidence/M10-CORE1-MKS-TARGET-SELECTION.md).
+
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
@@ -954,6 +965,13 @@ remain impossible, and permanent servo mailbox bypass attempts run board safety
 before rejecting. Exact owner construction remains deferred to a future
 qualified activation boundary. See
 [`M10-CLOSED-MKS-PWM-BACKEND.md`](evidence/M10-CLOSED-MKS-PWM-BACKEND.md).
+
+The next target-selection checkpoint makes the previously compile-only MKS
+topology replay part of core-1 configuration activation. A pure prepared value
+must bind the complete dual-stage selection and exact digest before the target
+commit retains it; configuration clear removes it. This still performs no
+peripheral transition and cannot authorize a job. See
+[`M10-CORE1-MKS-TARGET-SELECTION.md`](evidence/M10-CORE1-MKS-TARGET-SELECTION.md).
 
 Exit gate:
 
