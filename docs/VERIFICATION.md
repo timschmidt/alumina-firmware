@@ -85,6 +85,10 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   edges through synchronized raw ADC/current/rotor observations, dq control,
   interval SVPWM, complete-image staging, and the next exact timer-zero, with
   explicit counter/device clock grids and compare-precision rejection;
+- portable cascaded-servo replay on an integral current/velocity/position
+  device-cycle grid, including Q31.32 position uncertainty, widened velocity
+  error, setpoint/sample sequencing, stale/overspeed/following limits,
+  transactionality, held current targets, and deterministic plant convergence;
 - bounded cross-block ownership: two independently validated tokens, successor
   prefill before predecessor release, per-block commit-count/terminal-cycle
   barriers, strict acknowledgement order, and a gap-free dense wire trace;

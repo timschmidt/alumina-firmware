@@ -771,6 +771,22 @@ uncertainty visible. See the
 It remains portable simulation: no HAL peripheral, electrical plant, target
 task, or energizing operation is attached.
 
+The portable cascaded-servo checkpoint now adds a signed Q31.32 mechanical
+position lattice and conservative position/velocity observations around the
+existing Q2.30 FOC domain. An exact device-cycle grid expands the immutable
+current/velocity/position dividers and rejects fractional or skipped service.
+Contiguous scheduled setpoints drive proportional position-to-velocity control;
+fresh contiguous samples drive anti-windup velocity-to-q-current PI control.
+Velocity/current feed-forward, overspeed, worst-case following error, sample
+age/time, digest, cycle, identity, and current-circle gates are transactional
+and latch first cause. A synthetic ideal-current mechanical plant produces an
+identical 12,000-tick replay with exactly 240 position and 1,200 velocity
+updates and converges within fixed lattice assertions. Configuration V5
+lowering, encoder unwrap/estimation, cached servo commands, inner-current-loop
+composition, core-1 execution, WCET, safety integration, and every physical
+claim remain open. See
+[`M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
+
 Exit gate:
 
 - PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,

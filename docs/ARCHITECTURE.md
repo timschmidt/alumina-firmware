@@ -1005,6 +1005,35 @@ datasheets, independently written behavioral tests, ESP-specific MCPWM/ADC
 synchronization, measured execution budgets, fixed memory, and Alumina’s safety
 state machine.
 
+The first portable outer-loop implementation is deliberately narrower than a
+motor profile. `ServoPosition` is an exact signed Q31.32 value in an explicitly
+configuration-defined axis unit; `ServoPositionInterval` encloses observation
+uncertainty without pretending a sensor count is exact physical position.
+Velocity and current remain Q2.30. `ServoLoopGrid` requires an integral
+device-cycle/current-loop relationship, then derives velocity boundaries every
+`velocity_loop_divider` current ticks and position boundaries every
+`position_loop_divider` velocity ticks. A service owner accepts every current
+tick contiguously, requires a fresh bounded sample only on velocity boundaries,
+and requires a new scheduled setpoint only on position boundaries.
+
+At a position boundary, the conservative target-minus-observation interval is
+checked against the following-error limit. Its deterministic midpoint passes
+through a proportional position gain plus velocity feed-forward and an exact
+symmetric clamp; outward endpoint rounding retains the target interval. At a
+velocity boundary, the target-minus-observation interval stays widened beyond
+Q2.30 when necessary, while its midpoint drives the existing anti-windup PI
+controller plus q-current feed-forward. A fixed d-current and both q-output
+endpoints must fit the validated current circle. Digest, schedule, sequence,
+sample time/age, overspeed, following-error, and arithmetic failures latch a
+first cause without partially advancing PI or accepted identities.
+
+This portable cascade does not yet have canonical Configuration V5 records,
+encoder unwrapping/velocity estimation, a cached command schema, current-loop
+composition, a core-1 task, MCPWM/ADC attachment, WCET, or motor evidence. Its
+dimensionless simulator assumes ideal q-current availability and exists only to
+replay grid, controller, limit, and numerical behavior. See
+[`evidence/M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
+
 The first power profile is MKS ESP32 FOC V1.0, not TinyBee. Its V1.0 schematic
 establishes dual 3-PWM stages on GPIOs `32/33/25` and `26/27/14`, AS5600 buses
 on SDA/SCL `19/18` and `23/5`, encoder auxiliary/index inputs `15` and `13`, and

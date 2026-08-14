@@ -6,6 +6,7 @@ use alumina_protocol::{DeviceCycle, Digest};
 mod angle;
 mod current;
 mod pwm;
+mod servo;
 
 pub use angle::{
     CountUncertainty, ElectricalPhase, ElectricalPhaseEstimate, HALF_TURN_BITS,
@@ -21,6 +22,13 @@ pub use current::{
 pub use pwm::{
     PwmCompareContract, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
     PwmCompareLatchOwner, PwmCompareValue,
+};
+pub use servo::{
+    CascadedServoController, SERVO_POSITION_FRACTION_BITS, SERVO_POSITION_SCALE,
+    ServoCascadeConfig, ServoCascadeError, ServoCascadeProfileError, ServoCascadeUpdate,
+    ServoKinematicSample, ServoLoopGrid, ServoLoopGridError, ServoLoopTick, ServoPosition,
+    ServoPositionErrorInterval, ServoPositionInterval, ServoPositionIntervalError,
+    ServoQ30ErrorInterval, ServoSetpoint,
 };
 
 /// Fractional bits in the signed Q2.30 real-time representation.

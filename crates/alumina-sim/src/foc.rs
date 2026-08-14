@@ -4,7 +4,12 @@
 //! They are intentionally not motor identification, electrical simulation, or
 //! evidence that a physical power stage is safe to energize.
 
-use alumina_foc::{DqControlUpdate, DqCurrentController, DqPoint, FocError, Q30};
+use alumina_foc::{
+    CascadedServoController, DqControlUpdate, DqCurrentController, DqPoint, FocError, Q30,
+    Q30Interval, ServoCascadeError, ServoCascadeUpdate, ServoKinematicSample, ServoPosition,
+    ServoPositionInterval, ServoSetpoint,
+};
+use alumina_protocol::DeviceCycle;
 
 /// Plant configuration or fixed-point execution rejection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +22,35 @@ pub enum DqPlantError {
     TraceLength,
     /// The portable controller or plant encountered an arithmetic rejection.
     Arithmetic(FocError),
+}
+
+/// Dimensionless servo-plant or cascaded-control rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServoPlantError {
+    /// Per-update velocity response was outside `(0, 1]`.
+    VelocityResponse,
+    /// Position integration scale was outside `(0, 1]`.
+    PositionScale,
+    /// A supplied dq-current vector exceeded the normalized unit circle.
+    CurrentRange,
+    /// A fixed trace index, cycle, position, or identity overflowed.
+    Arithmetic,
+    /// Portable FOC fixed-point arithmetic rejected one plant operation.
+    Foc(FocError),
+    /// The portable outer-loop owner rejected one exact service boundary.
+    Cascade(ServoCascadeError),
+}
+
+impl From<FocError> for ServoPlantError {
+    fn from(error: FocError) -> Self {
+        Self::Foc(error)
+    }
+}
+
+impl From<ServoCascadeError> for ServoPlantError {
+    fn from(error: ServoCascadeError) -> Self {
+        Self::Cascade(error)
+    }
 }
 
 impl From<FocError> for DqPlantError {
@@ -49,6 +83,40 @@ pub struct DqLoopSample {
     pub control: DqControlUpdate,
     /// Plant current after applying the selected voltage.
     pub measured_after: DqPoint,
+}
+
+/// Deterministic dimensionless single-axis mechanical response.
+///
+/// Velocity follows q current through the exact convex recurrence
+/// `velocity' = (1 - response) * velocity + response * q_current`. Position
+/// then integrates `velocity' * position_scale` on the Q31.32 lattice. These
+/// coefficients are synthetic numerical fixtures, not motor parameters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FirstOrderServoPlant {
+    velocity_response_per_update: Q30,
+    position_scale_per_update: Q30,
+    position: ServoPosition,
+    velocity: Q30,
+    updates: u64,
+}
+
+/// One complete cascaded-controller and mechanical-plant replay record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServoLoopSample {
+    /// Zero-based current-loop update index.
+    pub index: u64,
+    /// Exact device-cycle service boundary.
+    pub at: DeviceCycle,
+    /// Plant position supplied to any due outer loop.
+    pub position_before: ServoPosition,
+    /// Plant velocity supplied to any due outer loop.
+    pub velocity_before: Q30,
+    /// Complete portable cascaded-controller result.
+    pub control: ServoCascadeUpdate,
+    /// Plant position after applying the held q-current target.
+    pub position_after: ServoPosition,
+    /// Plant velocity after applying the held q-current target.
+    pub velocity_after: Q30,
 }
 
 impl FirstOrderDqPlant {
@@ -134,6 +202,90 @@ impl FirstOrderDqPlant {
     }
 }
 
+impl FirstOrderServoPlant {
+    /// Constructs a zero-position, zero-velocity fixture.
+    pub const fn new(
+        velocity_response_per_update: Q30,
+        position_scale_per_update: Q30,
+    ) -> Result<Self, ServoPlantError> {
+        Self::with_state(
+            velocity_response_per_update,
+            position_scale_per_update,
+            ServoPosition::ZERO,
+            Q30::ZERO,
+        )
+    }
+
+    /// Constructs a fixture from an explicit exact state.
+    pub const fn with_state(
+        velocity_response_per_update: Q30,
+        position_scale_per_update: Q30,
+        position: ServoPosition,
+        velocity: Q30,
+    ) -> Result<Self, ServoPlantError> {
+        if velocity_response_per_update.bits() <= 0
+            || velocity_response_per_update.bits() > Q30::ONE.bits()
+        {
+            return Err(ServoPlantError::VelocityResponse);
+        }
+        if position_scale_per_update.bits() <= 0
+            || position_scale_per_update.bits() > Q30::ONE.bits()
+        {
+            return Err(ServoPlantError::PositionScale);
+        }
+        Ok(Self {
+            velocity_response_per_update,
+            position_scale_per_update,
+            position,
+            velocity,
+            updates: 0,
+        })
+    }
+
+    /// Current exact Q31.32 position state.
+    pub const fn position(self) -> ServoPosition {
+        self.position
+    }
+
+    /// Current exact normalized velocity state.
+    pub const fn velocity(self) -> Q30 {
+        self.velocity
+    }
+
+    /// Number of complete plant updates.
+    pub const fn updates(self) -> u64 {
+        self.updates
+    }
+
+    /// Applies one complete normalized dq-current target transactionally.
+    pub fn update(&mut self, current: DqPoint) -> Result<(ServoPosition, Q30), ServoPlantError> {
+        if !within_unit_circle(current) {
+            return Err(ServoPlantError::CurrentRange);
+        }
+        let retained = Q30::ONE.checked_sub(self.velocity_response_per_update)?;
+        let velocity = self
+            .velocity
+            .checked_mul(retained)?
+            .checked_add(current.q.checked_mul(self.velocity_response_per_update)?)?;
+        let position_delta = velocity.checked_mul(self.position_scale_per_update)?;
+        let position_delta_bits = i64::from(position_delta.bits())
+            .checked_mul(4)
+            .ok_or(ServoPlantError::Arithmetic)?;
+        let position = self
+            .position
+            .checked_add_bits(position_delta_bits)
+            .map_err(|_| ServoPlantError::Arithmetic)?;
+        let updates = self
+            .updates
+            .checked_add(1)
+            .ok_or(ServoPlantError::Arithmetic)?;
+        self.position = position;
+        self.velocity = velocity;
+        self.updates = updates;
+        Ok((position, velocity))
+    }
+}
+
 /// Runs a fixed count of portable dq-current control and plant updates.
 ///
 /// The returned trace contains every pre-state, selected voltage, PI state, and
@@ -170,6 +322,86 @@ pub fn simulate_dq_current_loop(
     Ok(trace)
 }
 
+/// Replays a fixed target through every exact current-loop boundary.
+///
+/// Fresh point observations are produced only when the controller's velocity
+/// domain is due, and contiguous setpoints are produced only when its position
+/// domain is due. The returned trace retains every held current command and
+/// exact plant transition.
+pub fn simulate_cascaded_servo(
+    mut plant: FirstOrderServoPlant,
+    mut controller: CascadedServoController,
+    target_position: ServoPosition,
+    updates: usize,
+) -> Result<Vec<ServoLoopSample>, ServoPlantError> {
+    let updates_u64 = u64::try_from(updates).map_err(|_| ServoPlantError::Arithmetic)?;
+    plant
+        .updates
+        .checked_add(updates_u64)
+        .ok_or(ServoPlantError::Arithmetic)?;
+    let grid = controller.grid();
+    let config = controller.config();
+    let mut setpoint_id = 0_u32;
+    let mut sample_sequence = 0_u32;
+    let mut trace = Vec::with_capacity(updates);
+    for index in 0..updates_u64 {
+        let offset = index
+            .checked_mul(grid.current_period_cycles())
+            .ok_or(ServoPlantError::Arithmetic)?;
+        let at = DeviceCycle(
+            grid.epoch()
+                .0
+                .checked_add(offset)
+                .ok_or(ServoPlantError::Arithmetic)?,
+        );
+        let tick = grid.tick(at).map_err(ServoCascadeError::Grid)?;
+        let setpoint = if tick.position_due {
+            setpoint_id = setpoint_id
+                .checked_add(1)
+                .ok_or(ServoPlantError::Arithmetic)?;
+            Some(ServoSetpoint {
+                command_id: setpoint_id,
+                scheduled_at: at,
+                configuration_digest: config.configuration_digest,
+                position: target_position,
+                velocity_feed_forward: Q30::ZERO,
+                quadrature_current_feed_forward: Q30::ZERO,
+            })
+        } else {
+            None
+        };
+        let position_before = plant.position();
+        let velocity_before = plant.velocity();
+        let sample = if tick.velocity_due {
+            sample_sequence = sample_sequence
+                .checked_add(1)
+                .ok_or(ServoPlantError::Arithmetic)?;
+            Some(ServoKinematicSample {
+                sequence: sample_sequence,
+                sampled_at: at,
+                available_at: at,
+                configuration_digest: config.configuration_digest,
+                position: ServoPositionInterval::point(position_before),
+                velocity: Q30Interval::point(velocity_before),
+            })
+        } else {
+            None
+        };
+        let control = controller.service(at, setpoint, sample)?;
+        let (position_after, velocity_after) = plant.update(control.current_target)?;
+        trace.push(ServoLoopSample {
+            index,
+            at,
+            position_before,
+            velocity_before,
+            control,
+            position_after,
+            velocity_after,
+        });
+    }
+    Ok(trace)
+}
+
 fn convex_update(current: Q30, drive: Q30, retained: Q30, response: Q30) -> Result<Q30, FocError> {
     current
         .checked_mul(retained)?
@@ -185,7 +417,10 @@ const fn within_unit_circle(value: DqPoint) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use alumina_foc::{PiConfig, Q30Interval};
+    use alumina_foc::{
+        FocParameterSnapshot, FocTimingProfile, PiConfig, ServoCascadeConfig, ServoLoopGrid,
+    };
+    use alumina_protocol::Digest;
 
     use super::*;
 
@@ -205,6 +440,55 @@ mod tests {
             output_maximum: output_limit,
         };
         DqCurrentController::new(config, config).unwrap()
+    }
+
+    fn servo_fixture() -> (FirstOrderServoPlant, CascadedServoController) {
+        let digest = Digest([0x6b; 32]);
+        let timing = FocTimingProfile {
+            pwm_hz: 20_000,
+            current_loop_hz: 10_000,
+            velocity_loop_divider: 10,
+            position_loop_divider: 5,
+        };
+        let current_pi = PiConfig {
+            proportional_gain: Q30::HALF,
+            integral_gain_per_update: point(1, 32),
+            integral_minimum: point(-1, 2),
+            integral_maximum: Q30::HALF,
+            output_minimum: point(-1, 2),
+            output_maximum: Q30::HALF,
+        };
+        let snapshot = FocParameterSnapshot {
+            configuration_digest: digest,
+            pole_pairs: 7,
+            timing,
+            maximum_phase_current: point(3, 4),
+            maximum_phase_voltage: point(3, 4),
+            d_current: current_pi,
+            q_current: current_pi,
+        };
+        let grid = ServoLoopGrid::new(DeviceCycle(10_000), 1_000_000, timing).unwrap();
+        let outer = ServoCascadeConfig {
+            configuration_digest: digest,
+            position_proportional_gain: point(3, 4),
+            velocity_controller: PiConfig {
+                proportional_gain: point(3, 4),
+                integral_gain_per_update: point(1, 64),
+                integral_minimum: point(-1, 2),
+                integral_maximum: Q30::HALF,
+                output_minimum: point(-1, 2),
+                output_maximum: Q30::HALF,
+            },
+            maximum_velocity: Q30::HALF,
+            maximum_current: point(3, 4),
+            direct_current_target: Q30::ZERO,
+            maximum_following_error_bits: 1_u64 << 32,
+            maximum_sample_age_cycles: 100,
+        };
+        (
+            FirstOrderServoPlant::new(point(1, 16), point(1, 2_048)).unwrap(),
+            CascadedServoController::new(grid, outer, &snapshot).unwrap(),
+        )
     }
 
     #[test]
@@ -286,6 +570,63 @@ mod tests {
             Err(DqPlantError::VectorRange)
         );
         assert_eq!(plant.current(), DqPoint::default());
+        assert_eq!(plant.updates(), 0);
+    }
+
+    #[test]
+    fn cascaded_servo_trace_is_repeatable_and_converges_on_exact_grids() {
+        let (plant, controller) = servo_fixture();
+        let target = ServoPosition::from_bits(1_i64 << 29);
+        let first = simulate_cascaded_servo(plant, controller, target, 12_000).unwrap();
+        let replay = simulate_cascaded_servo(plant, controller, target, 12_000).unwrap();
+        assert_eq!(first, replay);
+        assert_eq!(first.len(), 12_000);
+        assert_eq!(
+            first
+                .iter()
+                .filter(|sample| sample.control.position_updated)
+                .count(),
+            240
+        );
+        assert_eq!(
+            first
+                .iter()
+                .filter(|sample| sample.control.velocity_updated)
+                .count(),
+            1_200
+        );
+        let final_sample = first.last().unwrap();
+        let position_error =
+            i128::from(target.bits()) - i128::from(final_sample.position_after.bits());
+        assert!(position_error.unsigned_abs() < 1_u128 << 22);
+        assert!(i64::from(final_sample.velocity_after.bits()).unsigned_abs() < 1_u64 << 20);
+        assert!(
+            first
+                .iter()
+                .all(|sample| sample.control.current_target.d == Q30::ZERO)
+        );
+    }
+
+    #[test]
+    fn servo_plant_rejects_invalid_coefficients_and_drive_transactionally() {
+        assert_eq!(
+            FirstOrderServoPlant::new(Q30::ZERO, Q30::HALF),
+            Err(ServoPlantError::VelocityResponse)
+        );
+        assert_eq!(
+            FirstOrderServoPlant::new(Q30::HALF, Q30::ZERO),
+            Err(ServoPlantError::PositionScale)
+        );
+        let mut plant = FirstOrderServoPlant::new(Q30::HALF, Q30::HALF).unwrap();
+        assert_eq!(
+            plant.update(DqPoint {
+                d: Q30::ONE,
+                q: Q30::ONE,
+            }),
+            Err(ServoPlantError::CurrentRange)
+        );
+        assert_eq!(plant.position(), ServoPosition::ZERO);
+        assert_eq!(plant.velocity(), Q30::ZERO);
         assert_eq!(plant.updates(), 0);
     }
 }

@@ -451,6 +451,22 @@ parameter/vector rejection. Energizing PWM/ADC adapters, motor identification,
 deadlines, shutdown measurement, and every energization claim remain open. See
 the [portable FOC evidence](docs/evidence/M8-PORTABLE-FOC-FOUNDATION.md).
 
+A separate portable M8 outer-loop slice now implements the first clean-room
+cascaded servo contract. Configuration-defined position uses an exact signed
+Q31.32 lattice with conservative observation intervals, while velocity and
+current retain the existing Q2.30 domain. An integer device-cycle grid derives
+current, velocity, and position boundaries from the immutable FOC dividers; no
+fractional period is rounded. Scheduled position setpoints feed a proportional
+position loop with bounded velocity feed-forward, and the held velocity target
+feeds an anti-windup PI q-current loop. Digest, cycle, contiguous identity,
+fresh-sample, overspeed, following-error, and current-circle substitutions latch
+transactionally before controller state advances. A dimensionless ideal-current
+mechanical fixture replays 12,000 current ticks identically and converges while
+preserving the exact 240 position and 1,200 velocity updates. Configuration V5
+does not yet store or lower this outer profile, and no firmware task, encoder
+unwrap, inner-loop composition, target adapter, or energizing path selects it.
+See the [portable cascaded-servo evidence](docs/evidence/M8-PORTABLE-CASCADED-SERVO.md).
+
 The MKS ESP32 FOC V1.0 now also has an independently authored typed board
 package and linked `xtensa-esp32-none-elf` safe target. The revision schematic,
 not example code, is authoritative: GPIO22/GPIO12 are unconnected, no
