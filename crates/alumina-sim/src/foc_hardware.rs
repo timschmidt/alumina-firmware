@@ -920,10 +920,16 @@ fn add_cycles(base: DeviceCycle, offset: u64) -> Result<DeviceCycle, FocHardware
 
 #[cfg(test)]
 mod tests {
+    use alumina_board::{BoardPackage, OwnerDomain, ResourceId, SupportLevel};
+    use alumina_capability::calculate_identity;
     use alumina_config::{
-        FactEvidence, FocAdcAttenuation, FocAdcFrontendParameters, FocCurrentChannel,
-        FocEncoderPolicyParameters, FocEncoderScaleParameters, FocPwmHardwareParameters,
-        FocServoParameters,
+        BindingFlags, BindingRole, ConfigurationFlags, ConfigurationHeader, ConfigurationRecord,
+        ConfigurationStreamValidator, ExactScalar, FactEvidence, FocAdcAttenuation,
+        FocAdcFrontendParameters, FocControllerAxis, FocControllerParameters, FocCurrentChannel,
+        FocCurrentChannelParameters, FocEncoderPolicyParameters, FocEncoderScaleParameters,
+        FocPwmAdcTimingParameters, FocPwmHardwareParameters, FocRotorParameters,
+        FocRuntimeParameters, FocServoParameters, FocShutdownContract, FocShutdownStrategy,
+        Rational, RealtimeConfiguration, ResourceBinding, ScalarFact, SignalPolarity,
     };
     use alumina_foc::{
         CountUncertainty, CurrentChannelCalibration, CurrentPolarity, ElectricalPhase,
@@ -943,12 +949,419 @@ mod tests {
         ScheduledServoExecution, ServoSetpointAxisAdmissionProfile, cached_servo_admission_profile,
     };
     use alumina_protocol::Digest;
-    use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
+    use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject, sha256};
 
     use super::*;
 
     const DIGEST: Digest = Digest([0x94; 32]);
     const ACCEPTED_COMPARE_ERROR_ULPS: u32 = 1_200_000;
+    const CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST: Digest = Digest([
+        0xc2, 0xb7, 0x80, 0xf7, 0x74, 0xcc, 0xcb, 0x37, 0x87, 0x5b, 0xf9, 0x77, 0x88, 0x19, 0x31,
+        0x6e, 0x3d, 0x7d, 0x2e, 0x68, 0x2f, 0x14, 0xaa, 0x74, 0x74, 0x9b, 0x80, 0x84, 0x78, 0xcd,
+        0x2b, 0x4b,
+    ]);
+
+    fn exact_rational(numerator: i64, denominator: u64) -> Rational {
+        Rational::new(numerator, denominator).unwrap()
+    }
+
+    fn configured_binding(
+        instance: u16,
+        role: BindingRole,
+        resource: ResourceId,
+        polarity: SignalPolarity,
+        timed: bool,
+    ) -> ConfigurationRecord {
+        let required_interlock = matches!(
+            role,
+            BindingRole::EmergencyStop | BindingRole::SafetyInterlock
+        );
+        ConfigurationRecord::Binding(ResourceBinding {
+            instance,
+            role,
+            resource,
+            owner: OwnerDomain::Realtime,
+            polarity,
+            flags: BindingFlags(if required_interlock {
+                BindingFlags::REQUIRED_INTERLOCK
+            } else {
+                0
+            }),
+            minimum_active_cycles: u32::from(timed) * 48,
+            minimum_inactive_cycles: u32::from(timed) * 48,
+            maximum_frequency_hz: u32::from(timed) * 100_000,
+            watchdog_cycles: 240_000,
+        })
+    }
+
+    fn configured_sample_binding(
+        instance: u16,
+        role: BindingRole,
+        resource: ResourceId,
+        maximum_frequency_hz: u32,
+    ) -> ConfigurationRecord {
+        ConfigurationRecord::Binding(ResourceBinding {
+            instance,
+            role,
+            resource,
+            owner: OwnerDomain::Realtime,
+            polarity: SignalPolarity::NotApplicable,
+            flags: BindingFlags::default(),
+            minimum_active_cycles: 0,
+            minimum_inactive_cycles: 0,
+            maximum_frequency_hz,
+            watchdog_cycles: 240_000,
+        })
+    }
+
+    fn configured_scalar(instance: u16, fact: ScalarFact, value: Rational) -> ConfigurationRecord {
+        ConfigurationRecord::Scalar(ExactScalar {
+            instance,
+            fact,
+            value,
+            uncertainty: exact_rational(0, 1),
+            evidence: FactEvidence::Declared,
+        })
+    }
+
+    fn canonical_mks_axis_records(
+        instance: u16,
+        pwm_engine: u8,
+        adc_channels: [u8; 2],
+        power_stage: u16,
+        encoder: u16,
+        include_estop: bool,
+        include_timer_tick: bool,
+    ) -> Vec<ConfigurationRecord> {
+        let controller = PiConfig {
+            proportional_gain: Q30::ZERO,
+            integral_gain_per_update: Q30::ZERO,
+            integral_minimum: Q30::NEG_ONE,
+            integral_maximum: Q30::ONE,
+            output_minimum: Q30::from_bits(-Q30::HALF.bits()),
+            output_maximum: Q30::HALF,
+        };
+        let current_channel = CurrentChannelCalibration {
+            adc_maximum_count: 4_095,
+            valid_count_minimum: 1_200,
+            valid_count_maximum: 2_800,
+            count_at_zero: 2_000,
+            polarity: CurrentPolarity::Increasing,
+            normalized_current_per_count: Q30Interval::point(Q30::from_bits(1 << 19)),
+            maximum_additive_error: Q30::from_bits(1 << 18),
+            maximum_interval_width_ulps: 1 << 19,
+        };
+        let mut records = Vec::from([
+            configured_binding(
+                instance,
+                BindingRole::FocPhaseU,
+                ResourceId::TimedOutput {
+                    engine: pwm_engine,
+                    channel: 0,
+                },
+                SignalPolarity::ActiveHigh,
+                true,
+            ),
+            configured_binding(
+                instance,
+                BindingRole::FocPhaseV,
+                ResourceId::TimedOutput {
+                    engine: pwm_engine,
+                    channel: 1,
+                },
+                SignalPolarity::ActiveHigh,
+                true,
+            ),
+            configured_binding(
+                instance,
+                BindingRole::FocPhaseW,
+                ResourceId::TimedOutput {
+                    engine: pwm_engine,
+                    channel: 2,
+                },
+                SignalPolarity::ActiveHigh,
+                true,
+            ),
+            configured_sample_binding(
+                instance,
+                BindingRole::FocCurrentA,
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: adc_channels[0],
+                },
+                20_000,
+            ),
+            configured_sample_binding(
+                instance,
+                BindingRole::FocCurrentB,
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: adc_channels[1],
+                },
+                20_000,
+            ),
+            configured_sample_binding(
+                instance,
+                BindingRole::FocEncoder,
+                ResourceId::Device(encoder),
+                1_000,
+            ),
+            ConfigurationRecord::FocShutdown(FocShutdownContract {
+                instance,
+                strategy: FocShutdownStrategy::PhaseHighImpedance,
+                power_stage: ResourceId::Device(power_stage),
+                control: None,
+                control_polarity: SignalPolarity::NotApplicable,
+                maximum_transition_cycles: 2_400,
+                evidence: FactEvidence::Qualified,
+            }),
+        ]);
+        if include_estop {
+            records.push(configured_binding(
+                0,
+                BindingRole::EmergencyStop,
+                ResourceId::Gpio(15),
+                SignalPolarity::ActiveLow,
+                false,
+            ));
+        }
+
+        for (fact, value) in [
+            (
+                ScalarFact::AxisMotorTurnsPerOutputTurn,
+                exact_rational(1, 1),
+            ),
+            (
+                ScalarFact::AxisTravelMetresPerOutputTurn,
+                exact_rational(1, 100),
+            ),
+            (ScalarFact::AxisCalibrationScale, exact_rational(1, 1)),
+            (ScalarFact::AxisPositionMinimumMetres, exact_rational(-1, 1)),
+            (ScalarFact::AxisPositionMaximumMetres, exact_rational(1, 1)),
+            (
+                ScalarFact::AxisVelocityLimitMetresPerSecond,
+                exact_rational(1, 10),
+            ),
+            (
+                ScalarFact::AxisAccelerationLimitMetresPerSecondSquared,
+                exact_rational(1, 1),
+            ),
+            (
+                ScalarFact::AxisJerkLimitMetresPerSecondCubed,
+                exact_rational(10, 1),
+            ),
+            (
+                ScalarFact::AxisFollowingErrorMetres,
+                exact_rational(1, 1_000),
+            ),
+            (
+                ScalarFact::AxisEncoderCountsPerTurn,
+                exact_rational(4_096, 1),
+            ),
+            (ScalarFact::MotorPolePairs, exact_rational(7, 1)),
+            (ScalarFact::MotorCurrentLimitAmperes, exact_rational(1, 2)),
+            (ScalarFact::MotorVoltageLimitVolts, exact_rational(6, 1)),
+            (ScalarFact::PwmCarrierHertz, exact_rational(20_000, 1)),
+            (
+                ScalarFact::PwmDeadTimeSeconds,
+                exact_rational(1, 10_000_000),
+            ),
+            (ScalarFact::ControlRateHertz, exact_rational(20_000, 1)),
+            (ScalarFact::CurrentSenseOhms, exact_rational(1, 100)),
+            (ScalarFact::CurrentSenseVoltsPerAmpere, exact_rational(1, 1)),
+        ] {
+            records.push(configured_scalar(instance, fact, value));
+        }
+        if include_timer_tick {
+            records.push(configured_scalar(
+                instance,
+                ScalarFact::TimerTickHertz,
+                exact_rational(1_000_000, 1),
+            ));
+        }
+
+        records.extend([
+            ConfigurationRecord::FocRuntime(FocRuntimeParameters {
+                instance,
+                pole_pairs: 7,
+                timing: FocTimingProfile {
+                    pwm_hz: 20_000,
+                    current_loop_hz: 20_000,
+                    velocity_loop_divider: 20,
+                    position_loop_divider: 10,
+                },
+                maximum_phase_current: Q30::ONE,
+                maximum_phase_voltage: Q30::ONE,
+            }),
+            ConfigurationRecord::FocController(FocControllerParameters {
+                instance,
+                axis: FocControllerAxis::Direct,
+                parameters: controller,
+            }),
+            ConfigurationRecord::FocController(FocControllerParameters {
+                instance,
+                axis: FocControllerAxis::Quadrature,
+                parameters: controller,
+            }),
+            ConfigurationRecord::FocRotor(FocRotorParameters {
+                instance,
+                counts_per_mechanical_turn: 4_096,
+                count_at_reference: 0,
+                electrical_phase_at_reference: ElectricalPhase::ZERO,
+                direction: RotorCountDirection::Increasing,
+                maximum_alignment_error_bits: 1_024,
+                maximum_count_error: CountUncertainty::new(1, 2).unwrap(),
+                rotation_precision: RotationPrecision {
+                    maximum_component_width_ulps: 12_000_000,
+                    maximum_norm_error_ulps: 12_000_000,
+                },
+                evidence: FactEvidence::Measured,
+            }),
+            ConfigurationRecord::FocCurrentChannel(FocCurrentChannelParameters {
+                instance,
+                channel: FocCurrentChannel::Channel0,
+                calibration: current_channel,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocCurrentChannel(FocCurrentChannelParameters {
+                instance,
+                channel: FocCurrentChannel::Channel1,
+                calibration: current_channel,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocPwmAdcTiming(FocPwmAdcTimingParameters {
+                instance,
+                phase_pair: TwoShuntPhasePair::Ab,
+                device_cycle_hz: 80_000_000,
+                pwm_period_cycles: 4_000,
+                nominal_acquisition_offset_cycles: 2_000,
+                maximum_trigger_jitter_cycles: 2,
+                maximum_acquisition_cycles: 20,
+                maximum_channel_skew_cycles: 8,
+                maximum_conversion_cycles: 40,
+                minimum_switching_guard_cycles: 50,
+                maximum_normalized_current_slew_per_cycle: Q30::from_bits(1 << 14),
+                maximum_interchannel_skew_error: Q30::from_bits(1 << 17),
+                maximum_phase_current: Q30::ONE,
+                maximum_phase_interval_width_ulps: 1 << 22,
+                pwm_dead_time_cycles: 8,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocAdcFrontend(FocAdcFrontendParameters {
+                instance,
+                channel: FocCurrentChannel::Channel0,
+                attenuation: FocAdcAttenuation::Db11,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocAdcFrontend(FocAdcFrontendParameters {
+                instance,
+                channel: FocCurrentChannel::Channel1,
+                attenuation: FocAdcAttenuation::Db11,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocPwmHardware(FocPwmHardwareParameters {
+                instance,
+                peripheral_source_clock_hz: 160_000_000,
+                counter_clock_hz: 80_000_000,
+                timer_peak_ticks: 2_000,
+                minimum_active_ticks: 8,
+                maximum_quantization_error_ulps: 1_000_000,
+                peripheral_prescaler: 1,
+                timer_prescaler: 0,
+                evidence: FactEvidence::Qualified,
+            }),
+            ConfigurationRecord::FocServo(FocServoParameters {
+                instance,
+                position_proportional_gain: Q30::ONE,
+                velocity_controller: controller,
+                maximum_velocity: Q30::ONE,
+                maximum_current: Q30::ONE,
+                direct_current_target: Q30::ZERO,
+                maximum_following_error_bits: 4_294_967,
+                maximum_sample_age_cycles: 80_000,
+            }),
+            ConfigurationRecord::FocEncoderScale(FocEncoderScaleParameters {
+                instance,
+                position_at_reference: ServoPosition::ZERO,
+                scale: ServoEncoderScale::new(1_073_741_824, 25, 40_960, 1).unwrap(),
+                evidence: FactEvidence::Measured,
+            }),
+            ConfigurationRecord::FocEncoderPolicy(FocEncoderPolicyParameters {
+                instance,
+                device_cycle_hz: 80_000_000,
+                sample_period_cycles: 80_000,
+                maximum_observation_latency_cycles: 20_000,
+                maximum_trackable_velocity: Q30::ONE,
+                maximum_admitted_velocity: Q30::ONE,
+                maximum_velocity_estimation_error: Q30::from_bits(1 << 24),
+                maximum_position_interval_width_ulps: 20_000,
+                maximum_velocity_interval_width_ulps: 100_000_000,
+                evidence: FactEvidence::Qualified,
+            }),
+        ]);
+        records
+    }
+
+    fn canonical_dual_mks_configuration() -> RealtimeConfiguration {
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        for device in &mut devices[..2] {
+            device.support = SupportLevel::Qualified;
+        }
+        let mut package = BoardPackage {
+            devices: &devices,
+            ..board_mks_esp32_foc_v1::PACKAGE
+        };
+        package.board.capability_digest = Digest([1; 32]);
+        package.board.capability_digest = calculate_identity(&package).unwrap().digest;
+
+        let mut records = canonical_mks_axis_records(
+            0,
+            0,
+            [3, 0],
+            board_mks_esp32_foc_v1::device::POWER_STAGE_0,
+            board_mks_esp32_foc_v1::device::ENCODER_0,
+            true,
+            true,
+        );
+        records.extend(canonical_mks_axis_records(
+            1,
+            1,
+            [7, 6],
+            board_mks_esp32_foc_v1::device::POWER_STAGE_1,
+            board_mks_esp32_foc_v1::device::ENCODER_1,
+            false,
+            false,
+        ));
+        records.sort_by_key(|record| record.canonical_order_key());
+        let realtime_record_count = records
+            .iter()
+            .filter(|record| record.realtime_relevant())
+            .count();
+        let header = ConfigurationHeader {
+            capability_digest: package.board.capability_digest,
+            record_count: u16::try_from(records.len()).unwrap(),
+            realtime_record_count: u16::try_from(realtime_record_count).unwrap(),
+            flags: ConfigurationFlags(
+                ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+            ),
+        };
+        let mut bytes = Vec::from(header.encode().unwrap());
+        for record in records {
+            bytes.extend_from_slice(&record.encode().unwrap());
+        }
+        let digest = sha256(&bytes).digest;
+        assert_eq!(digest, CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST);
+        let mut validator = ConfigurationStreamValidator::<64>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        for chunk in bytes.chunks(173) {
+            validator.push(chunk).unwrap();
+        }
+        validator.finish_configuration().unwrap()
+    }
 
     fn point(numerator: i64, denominator: i64) -> Q30 {
         Q30Interval::from_ratio(numerator, denominator)
@@ -1677,6 +2090,80 @@ mod tests {
             3
         );
         assert_eq!(job.status().state, RealtimeJobState::Complete);
+    }
+
+    #[test]
+    fn canonical_dual_mks_document_drives_cached_admission_and_complete_bank() {
+        let configuration = canonical_dual_mks_configuration();
+        assert_eq!(
+            configuration.identity().digest,
+            CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST
+        );
+        let cached = CachedServoConfiguration::<2>::from_configuration(&configuration).unwrap();
+        assert_eq!(
+            cached.configuration_digest(),
+            CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST
+        );
+        assert_eq!(cached.update_period_ticks(), 800_000);
+
+        let seed = ServoEncoderSeed {
+            observation: ServoEncoderObservation {
+                configuration_digest: CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST,
+                raw_count: 0,
+                sampled_at: DeviceCycle(0),
+                available_at: DeviceCycle(0),
+            },
+            turn_index: 0,
+        };
+        let mut hardware = ConfiguredServoFocHardwareBank::from_configuration(
+            &configuration,
+            [0, 1],
+            [0x6d_00, 0x6d_01],
+            [seed; 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        for axis in 0..2 {
+            let controller = hardware.controller().axis(axis).unwrap();
+            assert_eq!(
+                controller.activation_id(),
+                0x6d_00 + u64::try_from(axis).unwrap()
+            );
+            assert_eq!(
+                controller.profile().parameters.configuration_digest,
+                CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST
+            );
+            assert_eq!(controller.period_started_at(), DeviceCycle(80_000));
+        }
+
+        let inputs = core::array::from_fn(|_| FocServoHardwareLoopInput {
+            setpoint: Some(ServoSetpoint {
+                command_id: 1,
+                scheduled_at: DeviceCycle(80_000),
+                configuration_digest: CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST,
+                position: ServoPosition::ZERO,
+                velocity_feed_forward: Q30::ZERO,
+                quadrature_current_feed_forward: Q30::ZERO,
+            }),
+            encoder_observation: Some(ServoEncoderObservation {
+                configuration_digest: CANONICAL_DUAL_MKS_CONFIGURATION_DIGEST,
+                raw_count: 0,
+                sampled_at: DeviceCycle(80_000),
+                available_at: DeviceCycle(80_000),
+            }),
+            raw_current_counts: [2_000, 2_000],
+            raw_rotor_count: 0,
+        });
+        let updates = hardware.step(inputs).unwrap();
+        assert_eq!(updates[0].prepared.at, DeviceCycle(80_000));
+        assert_eq!(updates[0].prepared.at, updates[1].prepared.at);
+        assert_eq!(updates[0].latch.observed_at, DeviceCycle(84_000));
+        assert_eq!(updates[0].latch.observed_at, updates[1].latch.observed_at);
+        for axis in 0..2 {
+            let controller = hardware.controller().axis(axis).unwrap();
+            assert_eq!(controller.period_started_at(), DeviceCycle(84_000));
+            assert_eq!(controller.period_sequence(), 1);
+        }
     }
 
     #[test]

@@ -256,6 +256,7 @@ dependencies = [
  "alumina-service",
  "alumina-shift-register",
  "alumina-storage",
+ "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "critical-section",
  "embassy-futures",

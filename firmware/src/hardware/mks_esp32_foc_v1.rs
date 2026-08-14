@@ -17,7 +17,8 @@ use alumina_foc::{
     SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest, TwoShuntPhasePair,
 };
 use alumina_motion::{
-    OutputCommitToken, ScheduledShiftOutput, ShiftImageContract, ShiftImageUpdate,
+    CachedServoConfiguration, OutputCommitToken, ScheduledShiftOutput,
+    ServoSetpointAdmissionProfileError, ShiftImageContract, ShiftImageUpdate,
 };
 use alumina_protocol::DeviceCycle;
 use alumina_safety::{SafetyContractId, SafetyInputMonitor};
@@ -245,11 +246,19 @@ pub enum StoredFocHardwareSelectionError {
     Topology,
     /// A current calibration does not describe the fixed 12-bit ADC1 owner.
     AdcRange,
+    /// The complete axis set does not admit one common cached-servo grid.
+    ServoAdmission(ServoSetpointAdmissionProfileError),
 }
 
 impl From<ConfigurationError> for StoredFocHardwareSelectionError {
     fn from(error: ConfigurationError) -> Self {
         Self::Configuration(error)
+    }
+}
+
+impl From<ServoSetpointAdmissionProfileError> for StoredFocHardwareSelectionError {
+    fn from(error: ServoSetpointAdmissionProfileError) -> Self {
+        Self::ServoAdmission(error)
     }
 }
 
@@ -396,6 +405,87 @@ impl StoredFocAxisHardwareSelection {
 
     pub const fn mcpwm(self) -> ClosedMcpwmConfiguration {
         self.mcpwm
+    }
+}
+
+/// Complete closed dual-motor selection from one canonical stored document.
+///
+/// Construction proves that cached-servo admission, both independently
+/// lowered FOC axes, both ADC route pairs, and both stopped MCPWM timer
+/// contracts share one configuration identity and exact loop grid. The value
+/// exposes no pin transition, compare write, gate enable, or power-stage owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "dual-stage selection remains unreachable while physical outputs are unqualified"
+)]
+pub struct StoredFocHardwareBankSelection {
+    axes: [StoredFocAxisHardwareSelection; JOB_AXES],
+    cached_servo: CachedServoConfiguration<JOB_AXES>,
+}
+
+#[allow(
+    dead_code,
+    reason = "dual-stage selection remains unreachable while physical outputs are unqualified"
+)]
+impl StoredFocHardwareBankSelection {
+    /// Selects both schematic motor stages as one non-energizing transaction.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+    ) -> Result<Self, StoredFocHardwareSelectionError> {
+        if configuration.identity().capability_digest
+            != board_mks_esp32_foc_v1::PACKAGE.board.capability_digest
+        {
+            return Err(StoredFocHardwareSelectionError::Capability);
+        }
+        let cached_servo = CachedServoConfiguration::from_configuration(configuration)?;
+        let axes = [
+            StoredFocAxisHardwareSelection::from_configuration(configuration, 0)?,
+            StoredFocAxisHardwareSelection::from_configuration(configuration, 1)?,
+        ];
+        if [axes[0].axis(), axes[1].axis()] != [CurrentAxis::Axis0, CurrentAxis::Axis1] {
+            return Err(StoredFocHardwareSelectionError::Topology);
+        }
+
+        let lowered0 = configuration.lower_foc_axis(0)?;
+        let lowered1 = configuration.lower_foc_axis(1)?;
+        if [lowered0.instance, lowered1.instance] != [0, 1]
+            || lowered0.servo_grid != lowered1.servo_grid
+            || lowered0.pwm_compare != lowered1.pwm_compare
+            || lowered0.current.snapshot().synchronization
+                != lowered1.current.snapshot().synchronization
+            || axes.iter().any(|axis| {
+                axis.mcpwm().contract().configuration_digest()
+                    != cached_servo.configuration_digest()
+            })
+        {
+            return Err(StoredFocHardwareSelectionError::Topology);
+        }
+
+        Ok(Self { axes, cached_servo })
+    }
+
+    /// Both exact target-checked per-axis selections in schematic order.
+    pub const fn axes(self) -> [StoredFocAxisHardwareSelection; JOB_AXES] {
+        self.axes
+    }
+
+    /// ADC1 attenuation settings for both fixed current-sense route pairs.
+    pub const fn adc_configuration(self) -> Adc1AcquisitionConfiguration {
+        Adc1AcquisitionConfiguration {
+            motor0: self.axes[0].adc(),
+            motor1: self.axes[1].adc(),
+        }
+    }
+
+    /// Stopped and disconnected MCPWM timer contracts in schematic order.
+    pub const fn mcpwm_configurations(self) -> [ClosedMcpwmConfiguration; JOB_AXES] {
+        [self.axes[0].mcpwm(), self.axes[1].mcpwm()]
+    }
+
+    /// Exact cached-servo authority derived from the same document.
+    pub const fn cached_servo_configuration(self) -> CachedServoConfiguration<JOB_AXES> {
+        self.cached_servo
     }
 }
 

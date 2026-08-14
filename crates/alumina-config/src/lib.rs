@@ -4758,6 +4758,17 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
             realtime_profile,
         ))
     }
+
+    /// Finishes one exact stream and preserves its identity/profile pairing in
+    /// the sole executable container.
+    ///
+    /// This is the safe host/simulator counterpart of the core-1 configuration
+    /// service. Callers cannot construct or mix the container's fields
+    /// independently; both values come from this one hash and semantic replay.
+    pub fn finish_configuration(self) -> Result<RealtimeConfiguration, ConfigurationError> {
+        let (identity, profile) = self.finish_with_profile()?;
+        Ok(RealtimeConfiguration { identity, profile })
+    }
 }
 
 /// Core-0 state of one published configuration validation/transfer pass.
@@ -5696,6 +5707,107 @@ mod tests {
                 evidence: FactEvidence::Qualified,
             }),
         ]);
+        records.sort_by_key(|record| record.canonical_order_key());
+        records
+    }
+
+    fn mks_dual_foc_records() -> Vec<ConfigurationRecord> {
+        let mut records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+        let axis1 = records
+            .iter()
+            .copied()
+            .filter_map(|record| match record {
+                ConfigurationRecord::Binding(mut binding) => {
+                    binding.instance = 1;
+                    binding.resource = match binding.role {
+                        BindingRole::EmergencyStop => return None,
+                        BindingRole::FocPhaseU => ResourceId::TimedOutput {
+                            engine: 1,
+                            channel: 0,
+                        },
+                        BindingRole::FocPhaseV => ResourceId::TimedOutput {
+                            engine: 1,
+                            channel: 1,
+                        },
+                        BindingRole::FocPhaseW => ResourceId::TimedOutput {
+                            engine: 1,
+                            channel: 2,
+                        },
+                        BindingRole::FocCurrentA => ResourceId::Adc {
+                            unit: 1,
+                            channel: 7,
+                        },
+                        BindingRole::FocCurrentB => ResourceId::Adc {
+                            unit: 1,
+                            channel: 6,
+                        },
+                        BindingRole::FocEncoder => {
+                            ResourceId::Device(board_mks_esp32_foc_v1::device::ENCODER_1)
+                        }
+                        _ => panic!("unexpected MKS FOC fixture binding"),
+                    };
+                    Some(ConfigurationRecord::Binding(binding))
+                }
+                ConfigurationRecord::Scalar(mut scalar) => {
+                    if scalar.fact == ScalarFact::TimerTickHertz {
+                        return None;
+                    }
+                    scalar.instance = 1;
+                    Some(ConfigurationRecord::Scalar(scalar))
+                }
+                ConfigurationRecord::FocShutdown(mut shutdown) => {
+                    shutdown.instance = 1;
+                    shutdown.power_stage =
+                        ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_1);
+                    Some(ConfigurationRecord::FocShutdown(shutdown))
+                }
+                ConfigurationRecord::FocRuntime(mut runtime) => {
+                    runtime.instance = 1;
+                    Some(ConfigurationRecord::FocRuntime(runtime))
+                }
+                ConfigurationRecord::FocController(mut controller) => {
+                    controller.instance = 1;
+                    Some(ConfigurationRecord::FocController(controller))
+                }
+                ConfigurationRecord::FocRotor(mut rotor) => {
+                    rotor.instance = 1;
+                    Some(ConfigurationRecord::FocRotor(rotor))
+                }
+                ConfigurationRecord::FocCurrentChannel(mut channel) => {
+                    channel.instance = 1;
+                    Some(ConfigurationRecord::FocCurrentChannel(channel))
+                }
+                ConfigurationRecord::FocPwmAdcTiming(mut timing) => {
+                    timing.instance = 1;
+                    Some(ConfigurationRecord::FocPwmAdcTiming(timing))
+                }
+                ConfigurationRecord::FocAdcFrontend(mut frontend) => {
+                    frontend.instance = 1;
+                    Some(ConfigurationRecord::FocAdcFrontend(frontend))
+                }
+                ConfigurationRecord::FocPwmHardware(mut hardware) => {
+                    hardware.instance = 1;
+                    Some(ConfigurationRecord::FocPwmHardware(hardware))
+                }
+                ConfigurationRecord::FocServo(mut servo) => {
+                    servo.instance = 1;
+                    Some(ConfigurationRecord::FocServo(servo))
+                }
+                ConfigurationRecord::FocEncoderScale(mut scale) => {
+                    scale.instance = 1;
+                    Some(ConfigurationRecord::FocEncoderScale(scale))
+                }
+                ConfigurationRecord::FocEncoderPolicy(mut policy) => {
+                    policy.instance = 1;
+                    Some(ConfigurationRecord::FocEncoderPolicy(policy))
+                }
+            })
+            .collect::<Vec<_>>();
+        records.extend(axis1);
         records.sort_by_key(|record| record.canonical_order_key());
         records
     }
@@ -6877,6 +6989,216 @@ mod tests {
         assert_eq!(
             validate_foc_records(&package, &uncertain),
             Err(ConfigurationError::FocEncoder)
+        );
+    }
+
+    #[test]
+    fn canonical_dual_mks_document_lowers_two_distinct_complete_axes() {
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        for device in &mut devices[..2] {
+            device.support = SupportLevel::Qualified;
+        }
+        let package = qualified_mks_package(&devices);
+        let records = mks_dual_foc_records();
+        let flags = ConfigurationFlags(
+            ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+        );
+        let (bytes, digest) = document(&package, &records, flags);
+        assert_eq!(
+            digest,
+            Digest([
+                0xc2, 0xb7, 0x80, 0xf7, 0x74, 0xcc, 0xcb, 0x37, 0x87, 0x5b, 0xf9, 0x77, 0x88, 0x19,
+                0x31, 0x6e, 0x3d, 0x7d, 0x2e, 0x68, 0x2f, 0x14, 0xaa, 0x74, 0x74, 0x9b, 0x80, 0x84,
+                0x78, 0xcd, 0x2b, 0x4b,
+            ])
+        );
+        let mut validator = ConfigurationStreamValidator::<64>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        for chunk in bytes.chunks(173) {
+            validator.push(chunk).unwrap();
+        }
+        let configuration = validator.finish_configuration().unwrap();
+        let identity = configuration.identity();
+        assert_eq!(identity.digest, digest);
+        assert_eq!(identity.byte_len, 5_072);
+        assert_eq!(identity.summary.record_count, 78);
+        assert_eq!(identity.summary.realtime_record_count, 78);
+        assert_eq!(identity.summary.foc_axes, 2);
+        assert_eq!(identity.summary.stepper_axes, 0);
+        assert_eq!(identity.summary.binding_count, 15);
+        assert!(identity.summary.safety_binding);
+        assert_eq!(configuration.profile().foc_axis_count(), 2);
+
+        let axis0 = configuration.profile().foc_axis(0).unwrap();
+        let axis1 = configuration.profile().foc_axis(1).unwrap();
+        assert_eq!([axis0.instance, axis1.instance], [0, 1]);
+        assert_eq!(
+            [axis0.shutdown.power_stage, axis1.shutdown.power_stage],
+            [
+                ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_0),
+                ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_1),
+            ]
+        );
+        assert_eq!(
+            [axis0.encoder.resource, axis1.encoder.resource],
+            [
+                ResourceId::Device(board_mks_esp32_foc_v1::device::ENCODER_0),
+                ResourceId::Device(board_mks_esp32_foc_v1::device::ENCODER_1),
+            ]
+        );
+        assert_eq!(
+            [
+                axis0.phase_u.resource,
+                axis0.phase_v.resource,
+                axis0.phase_w.resource,
+                axis1.phase_u.resource,
+                axis1.phase_v.resource,
+                axis1.phase_w.resource,
+            ],
+            [
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 0,
+                },
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 1,
+                },
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 2,
+                },
+                ResourceId::TimedOutput {
+                    engine: 1,
+                    channel: 0,
+                },
+                ResourceId::TimedOutput {
+                    engine: 1,
+                    channel: 1,
+                },
+                ResourceId::TimedOutput {
+                    engine: 1,
+                    channel: 2,
+                },
+            ]
+        );
+        assert_eq!(
+            [
+                axis0.current_channel0_binding.resource,
+                axis0.current_channel1_binding.resource,
+                axis1.current_channel0_binding.resource,
+                axis1.current_channel1_binding.resource,
+            ],
+            [
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: 3,
+                },
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: 0,
+                },
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: 7,
+                },
+                ResourceId::Adc {
+                    unit: 1,
+                    channel: 6,
+                },
+            ]
+        );
+
+        let lowered0 = configuration.lower_foc_axis(0).unwrap();
+        let lowered1 = configuration.lower_foc_axis(1).unwrap();
+        lowered0.validate().unwrap();
+        lowered1.validate().unwrap();
+        assert_eq!([lowered0.instance, lowered1.instance], [0, 1]);
+        assert_eq!(
+            lowered0.parameters.configuration_digest,
+            lowered1.parameters.configuration_digest
+        );
+        assert_eq!(lowered0.servo_grid, lowered1.servo_grid);
+        assert_eq!(lowered0.pwm_compare, lowered1.pwm_compare);
+        assert_eq!(
+            lowered0.current.snapshot().synchronization,
+            lowered1.current.snapshot().synchronization
+        );
+        assert_eq!(
+            configuration.lower_foc_axis(2),
+            Err(ConfigurationError::IncompleteAxis)
+        );
+
+        let mut duplicate_phase = records.clone();
+        let ConfigurationRecord::Binding(binding) = duplicate_phase
+            .iter_mut()
+            .find(|record| {
+                matches!(
+                    record,
+                    ConfigurationRecord::Binding(ResourceBinding {
+                        instance: 1,
+                        role: BindingRole::FocPhaseU,
+                        ..
+                    })
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        binding.resource = ResourceId::TimedOutput {
+            engine: 0,
+            channel: 0,
+        };
+        assert_eq!(
+            validate_foc_records(&package, &duplicate_phase),
+            Err(ConfigurationError::DuplicateResource(
+                ResourceId::TimedOutput {
+                    engine: 0,
+                    channel: 0,
+                }
+            ))
+        );
+
+        let mut wrong_stage = records.clone();
+        let ConfigurationRecord::FocShutdown(shutdown) = wrong_stage
+            .iter_mut()
+            .find(|record| {
+                matches!(
+                    record,
+                    ConfigurationRecord::FocShutdown(FocShutdownContract { instance: 1, .. })
+                )
+            })
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        shutdown.power_stage = ResourceId::Device(board_mks_esp32_foc_v1::device::POWER_STAGE_0);
+        assert_eq!(
+            validate_foc_records(&package, &wrong_stage),
+            Err(ConfigurationError::DuplicateResource(ResourceId::Device(
+                board_mks_esp32_foc_v1::device::POWER_STAGE_0,
+            )))
+        );
+
+        let mut missing_encoder = records;
+        missing_encoder.retain(|record| {
+            !matches!(
+                record,
+                ConfigurationRecord::Binding(ResourceBinding {
+                    instance: 1,
+                    role: BindingRole::FocEncoder,
+                    ..
+                })
+            )
+        });
+        assert_eq!(
+            validate_foc_records(&package, &missing_encoder),
+            Err(ConfigurationError::IncompleteAxis)
         );
     }
 

@@ -27,6 +27,7 @@ alumina-shift-register.workspace = true
 board-mks-tinybee.workspace = true
 
 [dev-dependencies]
+board-mks-esp32-foc-v1.workspace = true
 critical-section = { workspace = true, features = ["std"] }
 embassy-futures.workspace = true
 embassy-sync.workspace = true
