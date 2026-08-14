@@ -339,6 +339,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
   pure selected-board preparation and retained exact dual-MKS target facts in
   the permanent core-1 configuration lifecycle, with every peripheral and
   authorization gate closed.
+- [`M10-SELECTED-BOARD-AUTHORIZATION.md`](M10-SELECTED-BOARD-AUTHORIZATION.md)
+  — pure configuration authorization preflight, full retained MKS fact replay,
+  and target-bound arm readiness with every physical output gate still closed.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,
