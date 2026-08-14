@@ -1,4 +1,4 @@
-//! Deterministic authenticated HTTP/CORS clock fixture for real browser tests.
+//! Deterministic authenticated HTTP/CORS clock and health fixture for real browser tests.
 
 use std::fmt;
 
@@ -16,7 +16,9 @@ use alumina_net::{
     Route, classify_route, sign_response, write_lower_hex,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind, Operation, StatusCode};
+use alumina_runtime::stack::{StackDomain, StackWatermarkFlags, StackWatermarkSnapshot};
 use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
+use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
 
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
@@ -149,6 +151,9 @@ pub struct ClockHttpFixture {
     authentication: AuthenticationState,
     policy: ClockFixturePolicy,
     accepted_probes: u64,
+    runtime_health: RuntimeHealthService,
+    runtime_health_epoch: Option<DeviceCycle>,
+    runtime_health_samples: u32,
     diagnostics: FixtureDiagnosticService,
 }
 
@@ -179,6 +184,9 @@ impl ClockHttpFixture {
             authentication,
             policy,
             accepted_probes: 0,
+            runtime_health: RuntimeHealthService::new(policy.frequency_hz.saturating_mul(2)),
+            runtime_health_epoch: None,
+            runtime_health_samples: 0,
             diagnostics: FixtureDiagnosticService::new(
                 diagnostic_context,
                 DiagnosticProviderPolicy::SIMULATED,
@@ -224,6 +232,9 @@ impl ClockHttpFixture {
         self.authentication = AuthenticationState::new(nonce, AuthRateLimit::INITIAL)
             .map_err(ClockFixtureError::Authentication)?;
         self.accepted_probes = 0;
+        self.runtime_health = RuntimeHealthService::new(self.policy.frequency_hz.saturating_mul(2));
+        self.runtime_health_epoch = None;
+        self.runtime_health_samples = 0;
         self.diagnostics = FixtureDiagnosticService::new(
             diagnostic_context(boot_id, self.policy.frequency_hz)?,
             DiagnosticProviderPolicy::SIMULATED,
@@ -233,7 +244,7 @@ impl ClockHttpFixture {
         Ok(())
     }
 
-    /// Applies firmware-equivalent route, CORS, HMAC, replay, and clock framing.
+    /// Applies firmware-equivalent route, CORS, HMAC, replay, clock, and health framing.
     ///
     /// `receive_cycle` and `transmit_cycle` are exact samples from the host
     /// adapter's affine device clock. `now_ms` drives only the authentication
@@ -359,11 +370,11 @@ impl ClockHttpFixture {
                 _ => unauthorized_response(Some(metadata.origin)),
             };
         }
-        let service = self.clock_response(&request.body, receive_cycle, transmit_cycle);
+        let service = self.native_response(&request.body, receive_cycle, transmit_cycle);
         self.authenticated_response(metadata.proof.counter, metadata.origin, service)
     }
 
-    fn clock_response(
+    fn native_response(
         &mut self,
         bytes: &[u8],
         receive_cycle: DeviceCycle,
@@ -380,6 +391,15 @@ impl ClockHttpFixture {
                 return ServiceResponse::invalid_native();
             };
             return self.diagnostics.dispatch(&request, transmit_cycle);
+        }
+        if native.frame.kind == FrameKind::Health {
+            let valid_snapshot_request = native.message.operation == Operation::HealthSnapshot
+                && native.frame.config_digest == Digest::ZERO
+                && native.body.is_empty();
+            let Ok(request) = ServiceRequest::native(bytes) else {
+                return ServiceResponse::invalid_native();
+            };
+            return self.runtime_health_response(&request, transmit_cycle, valid_snapshot_request);
         }
         if native.frame.kind != FrameKind::ClockSample
             || native.message.operation != Operation::ClockHeartbeat
@@ -434,6 +454,54 @@ impl ClockHttpFixture {
             .unwrap_or_else(|_| ServiceResponse::invalid_native())
     }
 
+    fn runtime_health_response(
+        &mut self,
+        request: &ServiceRequest,
+        now: DeviceCycle,
+        update_measurement: bool,
+    ) -> ServiceResponse {
+        const COMMAND_CAPACITY: u16 = 8;
+        const WORK_CAPACITY: u16 = 8;
+        const TELEMETRY_CAPACITY: u16 = 32;
+
+        let command_free = u16::try_from(
+            self.policy
+                .command_queue_free
+                .min(u32::from(COMMAND_CAPACITY)),
+        )
+        .expect("bounded command credits fit u16");
+        let work_depth = u16::try_from(self.policy.work_queue_depth.min(u32::from(WORK_CAPACITY)))
+            .expect("bounded work occupancy fits u16");
+        let queues = RuntimeQueueHealth {
+            command_depth: COMMAND_CAPACITY - command_free,
+            command_capacity: COMMAND_CAPACITY,
+            work_depth,
+            work_capacity: WORK_CAPACITY,
+            telemetry_depth: 1,
+            telemetry_capacity: TELEMETRY_CAPACITY,
+        };
+        if !update_measurement {
+            return self.runtime_health.dispatch(request, now, queues, None);
+        }
+        let Some(samples) = self.runtime_health_samples.checked_add(1) else {
+            return self.runtime_health.dispatch(request, now, queues, None);
+        };
+        let epoch = *self.runtime_health_epoch.get_or_insert(now);
+        let service_stack =
+            simulated_stack_snapshot(StackDomain::ServiceCore, 20 * 1_024, samples, epoch, now);
+        let realtime_stack =
+            simulated_stack_snapshot(StackDomain::RealtimeCore, 24 * 1_024, samples, epoch, now);
+        if self
+            .runtime_health
+            .observe_realtime(samples, now, now, realtime_stack)
+            .is_ok()
+        {
+            self.runtime_health_samples = samples;
+        }
+        self.runtime_health
+            .dispatch(request, now, queues, Some(service_stack))
+    }
+
     fn authenticated_response(
         &self,
         counter: u64,
@@ -469,6 +537,31 @@ impl ClockHttpFixture {
         .with_header(CORS_ALLOW_ORIGIN_HEADER, origin.as_str())
         .with_header("Access-Control-Expose-Headers", EXPOSED_RESPONSE_HEADERS)
         .with_header("Vary", CORS_ORIGIN_HEADER)
+    }
+}
+
+fn simulated_stack_snapshot(
+    domain: StackDomain,
+    minimum_headroom_bytes: u32,
+    samples: u32,
+    epoch_cycle: DeviceCycle,
+    sampled_at: DeviceCycle,
+) -> StackWatermarkSnapshot {
+    StackWatermarkSnapshot {
+        domain,
+        flags: StackWatermarkFlags(
+            StackWatermarkFlags::INITIALIZED
+                | StackWatermarkFlags::PARTIAL_BOOT_EPOCH
+                | StackWatermarkFlags::CURRENT_POINTER_BOUND,
+        ),
+        allocated_bytes: 32 * 1_024,
+        excluded_low_bytes: 256,
+        painted_bytes: 28 * 1_024,
+        minimum_headroom_bytes,
+        samples,
+        completed_sweeps: 0,
+        epoch_cycle,
+        sampled_at,
     }
 }
 
@@ -567,6 +660,7 @@ mod tests {
         verify_response_proof,
     };
     use alumina_protocol::{FrameHeader, MessageDirection, MessageHeader};
+    use alumina_runtime::health::{RuntimeHealthFlags, RuntimeHealthSnapshot};
 
     use super::*;
 
@@ -589,14 +683,32 @@ mod tests {
         }
         .encode()
         .unwrap();
-        let message = MessageHeader::request(
-            Operation::ClockHeartbeat,
-            u32::try_from(counter).unwrap(),
-            u32::try_from(clock.len()).unwrap(),
-        );
-        let payload_len = MessageHeader::WIRE_LEN + clock.len();
-        let frame = FrameHeader::new(
+        native_request(
+            counter,
             FrameKind::ClockSample,
+            Operation::ClockHeartbeat,
+            &clock,
+        )
+    }
+
+    fn native_health_request(counter: u64) -> FixtureHttpRequest {
+        native_request(counter, FrameKind::Health, Operation::HealthSnapshot, &[])
+    }
+
+    fn native_request(
+        counter: u64,
+        kind: FrameKind,
+        operation: Operation,
+        native_body: &[u8],
+    ) -> FixtureHttpRequest {
+        let message = MessageHeader::request(
+            operation,
+            u32::try_from(counter).unwrap(),
+            u32::try_from(native_body.len()).unwrap(),
+        );
+        let payload_len = MessageHeader::WIRE_LEN + native_body.len();
+        let frame = FrameHeader::new(
+            kind,
             u32::try_from(payload_len).unwrap(),
             u32::try_from(counter).unwrap(),
             DeviceCycle(0),
@@ -605,7 +717,7 @@ mod tests {
         let mut body = Vec::new();
         body.extend_from_slice(&frame.encode());
         body.extend_from_slice(&message.encode());
-        body.extend_from_slice(&clock);
+        body.extend_from_slice(native_body);
         let origin = CorsOrigin::parse(ORIGIN).unwrap();
         let nonce = BootNonce::new([0x31; 16]).unwrap();
         let proof = sign_request(
@@ -746,6 +858,93 @@ mod tests {
         let replay = fixture.handle(&request, 11, DeviceCycle(1_001_000), DeviceCycle(1_001_100));
         assert_eq!(replay.status, 401);
         assert_eq!(fixture.accepted_probes(), 1);
+    }
+
+    #[test]
+    fn authenticated_runtime_health_uses_production_service_and_monotonic_stacks() {
+        let mut fixture = fixture();
+        let first = fixture.handle(
+            &native_health_request(72),
+            10,
+            DeviceCycle(1_000_000),
+            DeviceCycle(1_000_100),
+        );
+        assert_eq!(first.status, 200);
+        assert_eq!(fixture.accepted_probes(), 0);
+        let counter = first
+            .headers
+            .iter()
+            .find(|(name, _)| name == AUTH_COUNTER_HEADER)
+            .map(|(_, value)| value.as_str())
+            .unwrap();
+        let tag = first
+            .headers
+            .iter()
+            .find(|(name, _)| name == AUTH_RESPONSE_HEADER)
+            .map(|(_, value)| value.as_str())
+            .unwrap();
+        let RequestProof { counter, tag } = parse_request_proof(counter, tag).unwrap();
+        verify_response_proof(
+            SECRET,
+            BootNonce::new([0x31; 16]).unwrap(),
+            alumina_net::ResponseProof { counter, tag },
+            200,
+            AuthenticatedMedia::NativeFrame,
+            CorsOrigin::parse(ORIGIN).unwrap(),
+            &first.body,
+        )
+        .unwrap();
+        let frame = FrameHeader::decode(&first.body[..FrameHeader::WIRE_LEN], 1_024).unwrap();
+        assert_eq!(frame.kind, FrameKind::Health);
+        let message = MessageHeader::decode_and_validate(
+            &first.body[FrameHeader::WIRE_LEN..FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN],
+            frame.kind,
+            frame.payload_len,
+        )
+        .unwrap();
+        assert_eq!(message.direction, MessageDirection::Response);
+        assert_eq!(message.operation, Operation::HealthSnapshot);
+        let first_snapshot = RuntimeHealthSnapshot::decode(
+            &first.body[FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN..],
+        )
+        .unwrap();
+        assert_eq!(first_snapshot.snapshot_cycle, DeviceCycle(1_000_100));
+        assert_eq!(first_snapshot.command_queue_depth, 0);
+        assert_eq!(first_snapshot.command_queue_capacity, 8);
+        assert_eq!(first_snapshot.work_queue_depth, 0);
+        assert_eq!(first_snapshot.telemetry_queue_depth, 1);
+        assert_eq!(first_snapshot.service_stack.samples, 1);
+        assert_eq!(first_snapshot.realtime_stack.samples, 1);
+        assert_ne!(
+            first_snapshot.flags.0 & RuntimeHealthFlags::REALTIME_STACK_PRESENT,
+            0
+        );
+        assert_ne!(
+            first_snapshot.flags.0 & RuntimeHealthFlags::REALTIME_STACK_FRESH,
+            0
+        );
+
+        let second = fixture.handle(
+            &native_health_request(73),
+            11,
+            DeviceCycle(1_010_000),
+            DeviceCycle(1_010_100),
+        );
+        assert_eq!(second.status, 200);
+        let second_snapshot = RuntimeHealthSnapshot::decode(
+            &second.body[FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN..],
+        )
+        .unwrap();
+        assert_eq!(second_snapshot.service_stack.samples, 2);
+        assert_eq!(second_snapshot.realtime_stack.samples, 2);
+        assert_eq!(
+            second_snapshot.service_stack.epoch_cycle,
+            first_snapshot.service_stack.epoch_cycle
+        );
+        assert!(second_snapshot.service_stack.sampled_at > first_snapshot.service_stack.sampled_at);
+        assert!(
+            second_snapshot.realtime_stack.sampled_at > first_snapshot.realtime_stack.sampled_at
+        );
     }
 
     #[test]
