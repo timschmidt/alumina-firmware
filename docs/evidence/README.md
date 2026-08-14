@@ -335,6 +335,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M10-CLOSED-MKS-PWM-BACKEND.md`](M10-CLOSED-MKS-PWM-BACKEND.md) — a linked
   MKS dual-stage aggregate backend whose only successful operation is the
   complete closed safe transaction, plus safe-first permanent mailbox rejection.
+- [`M10-CORE1-MKS-TARGET-SELECTION.md`](M10-CORE1-MKS-TARGET-SELECTION.md) —
+  pure selected-board preparation and retained exact dual-MKS target facts in
+  the permanent core-1 configuration lifecycle, with every peripheral and
+  authorization gate closed.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,
