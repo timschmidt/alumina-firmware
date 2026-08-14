@@ -303,3 +303,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   same-cycle complete-image composition, explicit successor/tail ownership,
   independent cross-block physical prefixes, and bit-level PCM-short latch
   simulation with every target and energization claim closed.
+- [`M10-TARGET-DIRECT-DISPATCH.md`](M10-TARGET-DIRECT-DISPATCH.md) —
+  descriptor-bound fixed-memory ordinary/direct selection in the permanent
+  core-1 actor, explicit open-boundary and terminal-tail ownership, and renewed
+  host/ESP build evidence with all peripheral and energization claims closed.

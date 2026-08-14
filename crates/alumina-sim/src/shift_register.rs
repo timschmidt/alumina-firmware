@@ -266,9 +266,10 @@ mod tests {
         FiniteDifferenceAxis, FiniteDifferenceSegment, StreamId, StreamTick, ValidationLimits,
     };
     use alumina_motion::{
-        AxisTiming, FiniteDifferenceExecutionLimits, ScheduledFiniteDifferencePlan,
-        ScheduledShiftPlan, ScheduledShiftedFiniteDifferenceStepper, ScheduledShiftedStepper,
-        ShiftImageContract, StepperExecutionProfile, StepperTiming,
+        AxisTiming, FiniteDifferenceExecutionLimits, ScheduledBlockBoundary,
+        ScheduledExecutionBlockCompletion, ScheduledExecutionMode, ScheduledExecutionPlan,
+        ScheduledShiftPlan, ScheduledShiftedExecution, ScheduledShiftedStepper, ShiftImageContract,
+        StepperExecutionProfile, StepperTiming, scheduled_execution_mode_from_descriptor,
     };
     use alumina_protocol::{DeviceCycle, Digest};
     use alumina_shift_register::{
@@ -538,7 +539,12 @@ mod tests {
         }
     }
 
-    fn admitted_direct_pair() -> (RealtimeJob<3>, AdmittedBlock<3>, AdmittedBlock<3>) {
+    fn admitted_direct_pair() -> (
+        JobDescriptor,
+        RealtimeJob<3>,
+        AdmittedBlock<3>,
+        AdmittedBlock<3>,
+    ) {
         let stream_id = StreamId::new([0x61; 16]).unwrap();
         let capability_digest = Digest([0x62; 32]);
         let config_digest = Digest([0x63; 32]);
@@ -614,7 +620,7 @@ mod tests {
                 panic!("second direct block must admit")
             }
         };
-        (job, first, second)
+        (descriptor, job, first, second)
     }
 
     #[test]
@@ -745,20 +751,23 @@ mod tests {
         let mut bootstrap = PcmShortTimeline::<0>::new(grid, SAFE).unwrap();
         let mut wire = SimPcmShortLatch::new(grid, SAFE).unwrap();
         let mut dma = PcmShortDmaHorizon::<_, 16, 4>::new(grid, SAFE).unwrap();
-        let (mut job, first, second) = admitted_direct_pair();
-        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<3, 16>::new(
-            shifted_profile(),
-            direct_limits(),
-            shifted_contract(),
-        )
-        .unwrap();
+        let (descriptor, mut job, first, second) = admitted_direct_pair();
+        let mode = scheduled_execution_mode_from_descriptor::<3>(descriptor).unwrap();
+        assert_eq!(
+            mode,
+            ScheduledExecutionMode::FiniteDifference(direct_limits())
+        );
+        let mut runner =
+            ScheduledShiftedExecution::<3, 16>::new(mode, shifted_profile(), shifted_contract())
+                .unwrap();
         runner.start_job(DeviceCycle(116), [20, -20, 3]).unwrap();
         runner.admit_block(first).unwrap();
         assert_eq!(
             runner.plan_through(DeviceCycle(160)).unwrap(),
-            ScheduledFiniteDifferencePlan::BlockPlanned {
+            ScheduledExecutionPlan::BlockPlanned {
                 sequence: 0,
                 completion_at: DeviceCycle(128),
+                boundary: ScheduledBlockBoundary::ContinuationOpen,
             }
         );
         assert_eq!(runner.queued_outputs(), 2);
@@ -766,14 +775,15 @@ mod tests {
         runner.admit_block(second).unwrap();
         assert_eq!(
             runner.plan_through(DeviceCycle(160)).unwrap(),
-            ScheduledFiniteDifferencePlan::BlockPlanned {
+            ScheduledExecutionPlan::BlockPlanned {
                 sequence: 1,
                 completion_at: DeviceCycle(144),
+                boundary: ScheduledBlockBoundary::ContinuationOpen,
             }
         );
         assert_eq!(
-            runner.plan_through(DeviceCycle(160)).unwrap(),
-            ScheduledFiniteDifferencePlan::OwnerTailComplete {
+            runner.plan_owner_tail_through(DeviceCycle(160)).unwrap(),
+            ScheduledExecutionPlan::OwnerTailComplete {
                 completion_at: DeviceCycle(148),
             }
         );
@@ -838,19 +848,25 @@ mod tests {
             while let Some(completed) =
                 runner.take_completed_block(DeviceCycle(observed.latch_cycle))
             {
-                let (admitted, completion) = completed.into_parts();
+                let completion_at = completed.completion_at();
+                let position = completed.position();
+                assert!(matches!(
+                    &completed,
+                    ScheduledExecutionBlockCompletion::FiniteDifference(_)
+                ));
+                let admitted = completed.into_block();
                 let sequence = admitted.header().sequence;
                 if sequence == 0 {
-                    assert_eq!(completion.at, DeviceCycle(128));
-                    assert_eq!(completion.position, [21, -20, 3]);
+                    assert_eq!(completion_at, DeviceCycle(128));
+                    assert_eq!(position, [21, -20, 3]);
                     assert_eq!(
                         job.acknowledge(admitted).unwrap().state,
                         RealtimeJobState::Admitted
                     );
                 } else {
                     assert_eq!(sequence, 1);
-                    assert_eq!(completion.at, DeviceCycle(144));
-                    assert_eq!(completion.position, [22, -20, 3]);
+                    assert_eq!(completion_at, DeviceCycle(144));
+                    assert_eq!(position, [22, -20, 3]);
                     assert_eq!(
                         job.acknowledge(admitted).unwrap().state,
                         RealtimeJobState::Complete

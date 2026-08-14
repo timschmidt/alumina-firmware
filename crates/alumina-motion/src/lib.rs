@@ -6,9 +6,9 @@ use alumina_config::{
     AxisDriverControl, ConfigurationIdentity, RealtimeConfigurationProfile, SignalPolarity,
     StepperAxisProfile,
 };
-use alumina_job::{AdmittedBlock, REALTIME_BLOCK_WINDOW};
+use alumina_job::{AdmittedBlock, JobDescriptor, REALTIME_BLOCK_WINDOW};
 use alumina_machine_ir::{
-    BlockError, ExecutionSegment, FINITE_DIFFERENCE_ONE_STEP, FiniteDifferenceAxis,
+    BlockError, ExecutionKind, ExecutionSegment, FINITE_DIFFERENCE_ONE_STEP, FiniteDifferenceAxis,
     FiniteDifferenceError, FiniteDifferenceSegment, FiniteDifferenceSegmentSummary,
     FiniteDifferenceValidationLimits, MAX_EXECUTION_AXES, StreamTick,
 };
@@ -5331,6 +5331,27 @@ impl<const AXES: usize, const OUTPUTS: usize>
         self.continuation_open
     }
 
+    /// Exact cached-block boundary held open for immediate same-cycle
+    /// continuation. The generic execution-mode owner uses this to report the
+    /// boundary repeatedly without accidentally choosing the terminal tail.
+    pub fn open_block_boundary(&self) -> Option<(u32, DeviceCycle)> {
+        if !self.continuation_open || self.completed_len == 0 {
+            return None;
+        }
+        let index = (self.completed_head + self.completed_len - 1) % REALTIME_BLOCK_WINDOW;
+        let barrier = self.completed[index].as_ref()?;
+        Some((
+            barrier.completed.admitted.header().sequence,
+            barrier.completed.completion.at,
+        ))
+    }
+
+    /// Whether at least one exact direct block completion is retained while no
+    /// successor block currently owns the recurrence executor.
+    pub const fn block_completion_planned(&self) -> bool {
+        self.completed_len != 0 && !self.cached.has_admitted_block()
+    }
+
     /// Number of retained direct block/physical-prefix barriers.
     pub const fn retained_block_completions(&self) -> usize {
         self.completed_len
@@ -5536,6 +5557,596 @@ impl<const AXES: usize, const OUTPUTS: usize>
         };
         self.finish_token = Some(output.token);
         Ok(output)
+    }
+}
+
+/// Exact machine-record family selected for one configured scheduled output
+/// owner. The mode is fixed for the complete job and never inferred from block
+/// payload bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledExecutionMode {
+    /// Coordinated integer endpoint segments.
+    Motion,
+    /// Dense Q31.32 third-order recurrence records with explicit bounds.
+    FiniteDifference(FiniteDifferenceExecutionLimits),
+}
+
+/// Validate a complete job descriptor for this fixed axis width and derive the
+/// sole scheduled execution mode allowed to consume its blocks.
+pub fn scheduled_execution_mode_from_descriptor<const AXES: usize>(
+    descriptor: JobDescriptor,
+) -> Result<ScheduledExecutionMode, alumina_job::DescriptorError> {
+    descriptor.validate::<AXES>()?;
+    Ok(match descriptor.execution_kind {
+        ExecutionKind::Motion => ScheduledExecutionMode::Motion,
+        ExecutionKind::FiniteDifference => {
+            ScheduledExecutionMode::FiniteDifference(FiniteDifferenceExecutionLimits {
+                maximum_segment_ticks: descriptor.limits.segment.maximum_segment_ticks,
+                maximum_update_count: descriptor.maximum_finite_difference_updates,
+                maximum_steps_per_segment: descriptor.limits.segment.maximum_steps_per_segment,
+            })
+        }
+    })
+}
+
+/// Construction failure for one kind-bound scheduled output owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledExecutionBuildError {
+    /// Coordinated-motion owner construction failed.
+    Motion(ShiftedExecutorBuildError),
+    /// Direct finite-difference owner construction failed.
+    FiniteDifference(ScheduledFiniteDifferenceBuildError),
+}
+
+/// Whether one logical block horizon is already sealed or must remain open
+/// for an immediate direct successor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledBlockBoundary {
+    /// No later logical event can change the terminal complete image.
+    Sealed,
+    /// The direct terminal cycle is unstageable until a successor is admitted
+    /// or terminal-tail planning is explicitly selected.
+    ContinuationOpen,
+}
+
+/// Kind-independent future planning result used by a permanent target actor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledExecutionPlan {
+    /// No block or executor-owned pulse tail remains.
+    Idle,
+    /// The requested boundary precedes the next exact logical deadline.
+    Future { at: DeviceCycle },
+    /// The fixed sparse image ring must be drained before generation resumes.
+    HorizonFull {
+        next_at: DeviceCycle,
+        queued: usize,
+        staged: usize,
+    },
+    /// One block reached its numerical horizon and retains a physical prefix.
+    BlockPlanned {
+        sequence: u32,
+        completion_at: DeviceCycle,
+        boundary: ScheduledBlockBoundary,
+    },
+    /// An explicitly terminal direct stream has sealed its last block boundary
+    /// and planned every executor-owned pulse fall.
+    OwnerTailComplete { completion_at: DeviceCycle },
+}
+
+impl ScheduledExecutionPlan {
+    /// Latest exact cycle whose complete-image value is known after this plan.
+    ///
+    /// A full sparse ring does not cover its ungenerated `next_at`, and an open
+    /// direct block boundary does not cover its unstageable completion cycle.
+    /// A future deadline or completed terminal owner tail proves that the
+    /// current complete image remains unchanged through `requested`.
+    pub fn covered_through(
+        self,
+        requested: DeviceCycle,
+        output_quantum_cycles: u32,
+    ) -> Result<DeviceCycle, MotionError> {
+        if output_quantum_cycles == 0 {
+            return Err(MotionError::Timing);
+        }
+        let preceding = |cycle: DeviceCycle| {
+            cycle
+                .0
+                .checked_sub(u64::from(output_quantum_cycles))
+                .map(DeviceCycle)
+                .ok_or(MotionError::Arithmetic)
+        };
+        match self {
+            Self::Idle => Err(MotionError::State),
+            Self::Future { at } => {
+                if at <= requested {
+                    Err(MotionError::State)
+                } else {
+                    Ok(requested)
+                }
+            }
+            Self::HorizonFull { next_at, .. } => {
+                let covered = preceding(next_at)?;
+                if covered > requested {
+                    Err(MotionError::State)
+                } else {
+                    Ok(covered)
+                }
+            }
+            Self::BlockPlanned {
+                completion_at,
+                boundary: ScheduledBlockBoundary::Sealed,
+                ..
+            } => {
+                if completion_at > requested {
+                    Err(MotionError::State)
+                } else {
+                    Ok(completion_at)
+                }
+            }
+            Self::BlockPlanned {
+                completion_at,
+                boundary: ScheduledBlockBoundary::ContinuationOpen,
+                ..
+            } => {
+                if completion_at > requested {
+                    Err(MotionError::State)
+                } else {
+                    preceding(completion_at)
+                }
+            }
+            Self::OwnerTailComplete { completion_at } => {
+                if completion_at > requested {
+                    Err(MotionError::State)
+                } else {
+                    Ok(requested)
+                }
+            }
+        }
+    }
+}
+
+/// Kind-specific failure behind the unified scheduled execution boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledExecutionError {
+    /// The requested operation is not valid for this mode or lifecycle state.
+    State,
+    /// Coordinated future generation/image composition failed.
+    Motion(ScheduledShiftError),
+    /// Direct future generation/image composition failed.
+    FiniteDifference(ScheduledFiniteDifferenceError),
+    /// Coordinated terminal timing failed.
+    MotionTiming(MotionError),
+    /// Direct terminal timing failed.
+    FiniteDifferenceTiming(FiniteDifferencePreflightError),
+}
+
+/// Kind-specific admission failure retained with the unchanged unique block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledExecutionAdmissionError {
+    /// The block failed coordinated-motion admission.
+    Motion(CachedMotionError),
+    /// The block failed direct finite-difference admission.
+    FiniteDifference(CachedFiniteDifferenceError),
+}
+
+/// One block rejected before the selected scheduled executor took ownership.
+pub struct RejectedScheduledExecutionBlock<const AXES: usize> {
+    error: ScheduledExecutionAdmissionError,
+    admitted: AdmittedBlock<AXES>,
+}
+
+impl<const AXES: usize> RejectedScheduledExecutionBlock<AXES> {
+    /// Exact kind-specific admission failure.
+    pub const fn error(&self) -> ScheduledExecutionAdmissionError {
+        self.error
+    }
+
+    /// Recover the unchanged unique job-actor token.
+    pub fn into_block(self) -> AdmittedBlock<AXES> {
+        self.admitted
+    }
+}
+
+impl<const AXES: usize> core::fmt::Debug for RejectedScheduledExecutionBlock<AXES> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RejectedScheduledExecutionBlock")
+            .field("error", &self.error)
+            .field("header", &self.admitted.header())
+            .finish()
+    }
+}
+
+/// Kind-preserving block completion returned by the unified scheduled owner.
+pub enum ScheduledExecutionBlockCompletion<const AXES: usize> {
+    /// Coordinated integer endpoint completion.
+    Motion(ScheduledBlockCompletion<AXES>),
+    /// Direct integer plus Q31.32 recurrence completion.
+    FiniteDifference(ScheduledFiniteDifferenceBlockCompletion<AXES>),
+}
+
+impl<const AXES: usize> ScheduledExecutionBlockCompletion<AXES> {
+    /// Exact numerical block horizon in the local device-cycle domain.
+    pub const fn completion_at(&self) -> DeviceCycle {
+        match self {
+            Self::Motion(completed) => completed.completion().at,
+            Self::FiniteDifference(completed) => completed.completion().at,
+        }
+    }
+
+    /// Exact terminal integer command-lattice position.
+    pub const fn position(&self) -> [i64; AXES] {
+        match self {
+            Self::Motion(completed) => completed.completion().position,
+            Self::FiniteDifference(completed) => completed.completion().position,
+        }
+    }
+
+    /// Return the unique admission token to the owning job actor.
+    pub fn into_block(self) -> AdmittedBlock<AXES> {
+        match self {
+            Self::Motion(completed) => completed.into_block(),
+            Self::FiniteDifference(completed) => completed.into_block(),
+        }
+    }
+}
+
+impl<const AXES: usize> core::fmt::Debug for ScheduledExecutionBlockCompletion<AXES> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Motion(completed) => formatter.debug_tuple("Motion").field(completed).finish(),
+            Self::FiniteDifference(completed) => formatter
+                .debug_tuple("FiniteDifference")
+                .field(completed)
+                .finish(),
+        }
+    }
+}
+
+/// Fixed-memory kind dispatch for the permanent scheduled step/direction
+/// target actor.
+///
+/// The enum owns exactly one complete executor; it never converts one machine
+/// record family into the other. Generic planning deliberately reports an open
+/// direct block boundary repeatedly. Only [`Self::plan_owner_tail_through`]
+/// chooses terminal closure, preventing a delayed nonfinal lookahead block from
+/// changing physical behavior as a side effect of polling.
+pub enum ScheduledShiftedExecution<const AXES: usize, const OUTPUTS: usize> {
+    /// Coordinated integer endpoint execution.
+    Motion(ScheduledShiftedStepper<AXES, OUTPUTS>),
+    /// Direct Q31.32 finite-difference execution.
+    FiniteDifference(ScheduledShiftedFiniteDifferenceStepper<AXES, OUTPUTS>),
+}
+
+impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedExecution<AXES, OUTPUTS> {
+    /// Construct one inert owner for exactly one declared execution mode.
+    pub fn new(
+        mode: ScheduledExecutionMode,
+        profile: StepperExecutionProfile<AXES>,
+        contract: ShiftImageContract,
+    ) -> Result<Self, ScheduledExecutionBuildError> {
+        match mode {
+            ScheduledExecutionMode::Motion => ScheduledShiftedStepper::new(profile, contract)
+                .map(Self::Motion)
+                .map_err(ScheduledExecutionBuildError::Motion),
+            ScheduledExecutionMode::FiniteDifference(limits) => {
+                ScheduledShiftedFiniteDifferenceStepper::new(profile, limits, contract)
+                    .map(Self::FiniteDifference)
+                    .map_err(ScheduledExecutionBuildError::FiniteDifference)
+            }
+        }
+    }
+
+    /// Exact record family and direct limits fixed at construction.
+    pub const fn mode(&self) -> ScheduledExecutionMode {
+        match self {
+            Self::Motion(_) => ScheduledExecutionMode::Motion,
+            Self::FiniteDifference(runner) => {
+                ScheduledExecutionMode::FiniteDifference(runner.cached.stepper.limits)
+            }
+        }
+    }
+
+    /// Install the job epoch and exact absolute starting lattice position.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), ScheduledExecutionError> {
+        match self {
+            Self::Motion(runner) => runner
+                .start_job(epoch, position)
+                .map_err(ScheduledExecutionError::Motion),
+            Self::FiniteDifference(runner) => runner
+                .start_job(epoch, position)
+                .map_err(ScheduledExecutionError::FiniteDifference),
+        }
+    }
+
+    /// Admit one independently validated block only into the selected family.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection preserves unique inline block ownership"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedScheduledExecutionBlock<AXES>> {
+        match self {
+            Self::Motion(runner) => {
+                runner
+                    .admit_block(admitted)
+                    .map_err(|rejected| RejectedScheduledExecutionBlock {
+                        error: ScheduledExecutionAdmissionError::Motion(rejected.error()),
+                        admitted: rejected.into_block(),
+                    })
+            }
+            Self::FiniteDifference(runner) => {
+                runner
+                    .admit_block(admitted)
+                    .map_err(|rejected| RejectedScheduledExecutionBlock {
+                        error: ScheduledExecutionAdmissionError::FiniteDifference(rejected.error()),
+                        admitted: rejected.into_block(),
+                    })
+            }
+        }
+    }
+
+    /// Advance the selected executor without implicitly closing an open direct
+    /// cached-block boundary.
+    pub fn plan_through(
+        &mut self,
+        through: DeviceCycle,
+    ) -> Result<ScheduledExecutionPlan, ScheduledExecutionError> {
+        match self {
+            Self::Motion(runner) => runner
+                .plan_through(through)
+                .map(map_motion_execution_plan)
+                .map_err(ScheduledExecutionError::Motion),
+            Self::FiniteDifference(runner) => {
+                if let Some((sequence, completion_at)) = runner.open_block_boundary() {
+                    return Ok(ScheduledExecutionPlan::BlockPlanned {
+                        sequence,
+                        completion_at,
+                        boundary: ScheduledBlockBoundary::ContinuationOpen,
+                    });
+                }
+                runner
+                    .plan_through(through)
+                    .map(map_finite_difference_execution_plan)
+                    .map_err(ScheduledExecutionError::FiniteDifference)
+            }
+        }
+    }
+
+    /// Explicitly declare an open direct block to be the final stream boundary
+    /// and advance its executor-owned pulse tail. Coordinated mode and a direct
+    /// boundary already closed by a prior call reject.
+    pub fn plan_owner_tail_through(
+        &mut self,
+        through: DeviceCycle,
+    ) -> Result<ScheduledExecutionPlan, ScheduledExecutionError> {
+        match self {
+            Self::Motion(_) => Err(ScheduledExecutionError::State),
+            Self::FiniteDifference(runner) => {
+                if runner.open_block_boundary().is_none() {
+                    return Err(ScheduledExecutionError::State);
+                }
+                runner
+                    .plan_through(through)
+                    .map(map_finite_difference_execution_plan)
+                    .map_err(ScheduledExecutionError::FiniteDifference)
+            }
+        }
+    }
+
+    /// Next sealed image not yet accepted by the sole target timeline.
+    pub fn next_unstaged_output(&self) -> Option<ScheduledShiftOutput> {
+        match self {
+            Self::Motion(runner) => runner.next_unstaged_output(),
+            Self::FiniteDifference(runner) => runner.next_unstaged_output(),
+        }
+    }
+
+    /// Record exact acceptance of the next sealed image into hardware.
+    pub fn stage_output(
+        &mut self,
+        output: ScheduledShiftOutput,
+    ) -> Result<ScheduledShiftOutput, OutputStageError> {
+        match self {
+            Self::Motion(runner) => runner.stage_output(output),
+            Self::FiniteDifference(runner) => runner.stage_output(output),
+        }
+    }
+
+    /// Retire the oldest staged image from an exact physical latch report.
+    pub fn commit_output(
+        &mut self,
+        token: OutputCommitToken,
+        committed_at: DeviceCycle,
+    ) -> Result<CommittedShiftOutput, OutputCommitError> {
+        match self {
+            Self::Motion(runner) => runner.commit_output(token, committed_at),
+            Self::FiniteDifference(runner) => runner.commit_output(token, committed_at),
+        }
+    }
+
+    /// Return the oldest block whose kind-specific numerical horizon and
+    /// physical output prefix are both complete.
+    pub fn take_completed_block(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Option<ScheduledExecutionBlockCompletion<AXES>> {
+        match self {
+            Self::Motion(runner) => runner
+                .take_completed_block(observed)
+                .map(ScheduledExecutionBlockCompletion::Motion),
+            Self::FiniteDifference(runner) => runner
+                .take_completed_block(observed)
+                .map(ScheduledExecutionBlockCompletion::FiniteDifference),
+        }
+    }
+
+    /// Whether at least one block completion is retained between logical
+    /// blocks.
+    pub const fn block_completion_planned(&self) -> bool {
+        match self {
+            Self::Motion(runner) => runner.block_completion_planned(),
+            Self::FiniteDifference(runner) => runner.block_completion_planned(),
+        }
+    }
+
+    /// Exact normal-disable cycle while the final block remains retained.
+    pub fn planned_finish_cycle(&self) -> Result<DeviceCycle, ScheduledExecutionError> {
+        match self {
+            Self::Motion(runner) => runner
+                .planned_finish_cycle()
+                .map_err(ScheduledExecutionError::MotionTiming),
+            Self::FiniteDifference(runner) => runner
+                .planned_finish_cycle()
+                .map_err(ScheduledExecutionError::FiniteDifferenceTiming),
+        }
+    }
+
+    /// Add final disable to the selected generated/staged/committed pipeline.
+    pub fn schedule_planned_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledExecutionError> {
+        match self {
+            Self::Motion(runner) => runner
+                .schedule_planned_finish(at)
+                .map_err(ScheduledExecutionError::Motion),
+            Self::FiniteDifference(runner) => runner
+                .schedule_planned_finish(at)
+                .map_err(ScheduledExecutionError::FiniteDifference),
+        }
+    }
+
+    /// Consume the one-shot completion fact after final disable committed.
+    pub fn take_job_complete(&mut self) -> bool {
+        match self {
+            Self::Motion(runner) => runner.take_job_complete(),
+            Self::FiniteDifference(runner) => runner.take_job_complete(),
+        }
+    }
+
+    /// Invalidate every pending token and return the complete safe image.
+    pub fn fault(&mut self, at: DeviceCycle) -> ShiftImageUpdate {
+        match self {
+            Self::Motion(runner) => runner.fault(at),
+            Self::FiniteDifference(runner) => runner.fault(at),
+        }
+    }
+
+    /// Return at most one unacknowledgeable retained block after safe output was
+    /// requested.
+    pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
+        match self {
+            Self::Motion(runner) => runner.take_faulted_block(),
+            Self::FiniteDifference(runner) => runner.take_faulted_block(),
+        }
+    }
+
+    /// Bounded logical status of the selected future executor.
+    pub const fn planned_status(&self) -> StepperStatus<AXES> {
+        match self {
+            Self::Motion(runner) => runner.planned_status(),
+            Self::FiniteDifference(runner) => runner.planned_status(),
+        }
+    }
+
+    /// Next exact logical generation deadline.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        match self {
+            Self::Motion(runner) => runner.next_deadline(),
+            Self::FiniteDifference(runner) => runner.next_deadline(),
+        }
+    }
+
+    /// Generated images retained until physical observation.
+    pub const fn queued_outputs(&self) -> usize {
+        match self {
+            Self::Motion(runner) => runner.queued_outputs(),
+            Self::FiniteDifference(runner) => runner.queued_outputs(),
+        }
+    }
+
+    /// Generated images whose exact cycles can no longer be composed further.
+    pub const fn sealed_outputs(&self) -> usize {
+        match self {
+            Self::Motion(runner) => runner.queued_outputs(),
+            Self::FiniteDifference(runner) => runner.sealed_outputs(),
+        }
+    }
+
+    /// Prefix already accepted into the target timeline.
+    pub const fn staged_outputs(&self) -> usize {
+        match self {
+            Self::Motion(runner) => runner.staged_outputs(),
+            Self::FiniteDifference(runner) => runner.staged_outputs(),
+        }
+    }
+
+    /// Number of target-confirmed complete-image updates.
+    pub const fn committed_updates(&self) -> u64 {
+        match self {
+            Self::Motion(runner) => runner.committed_updates(),
+            Self::FiniteDifference(runner) => runner.committed_updates(),
+        }
+    }
+}
+
+const fn map_motion_execution_plan(plan: ScheduledShiftPlan) -> ScheduledExecutionPlan {
+    match plan {
+        ScheduledShiftPlan::Idle => ScheduledExecutionPlan::Idle,
+        ScheduledShiftPlan::Future { at } => ScheduledExecutionPlan::Future { at },
+        ScheduledShiftPlan::HorizonFull {
+            next_at,
+            queued,
+            staged,
+        } => ScheduledExecutionPlan::HorizonFull {
+            next_at,
+            queued,
+            staged,
+        },
+        ScheduledShiftPlan::BlockPlanned {
+            sequence,
+            completion_at,
+        } => ScheduledExecutionPlan::BlockPlanned {
+            sequence,
+            completion_at,
+            boundary: ScheduledBlockBoundary::Sealed,
+        },
+    }
+}
+
+const fn map_finite_difference_execution_plan(
+    plan: ScheduledFiniteDifferencePlan,
+) -> ScheduledExecutionPlan {
+    match plan {
+        ScheduledFiniteDifferencePlan::Idle => ScheduledExecutionPlan::Idle,
+        ScheduledFiniteDifferencePlan::Future { at } => ScheduledExecutionPlan::Future { at },
+        ScheduledFiniteDifferencePlan::HorizonFull {
+            next_at,
+            queued,
+            staged,
+        } => ScheduledExecutionPlan::HorizonFull {
+            next_at,
+            queued,
+            staged,
+        },
+        ScheduledFiniteDifferencePlan::BlockPlanned {
+            sequence,
+            completion_at,
+        } => ScheduledExecutionPlan::BlockPlanned {
+            sequence,
+            completion_at,
+            boundary: ScheduledBlockBoundary::ContinuationOpen,
+        },
+        ScheduledFiniteDifferencePlan::OwnerTailComplete { completion_at } => {
+            ScheduledExecutionPlan::OwnerTailComplete { completion_at }
+        }
     }
 }
 
@@ -6453,6 +7064,58 @@ mod tests {
         (job, admitted)
     }
 
+    fn admitted_motion_block_two_axes(
+        segments: &[ExecutionSegment<2>],
+    ) -> (RealtimeJob<2>, AdmittedBlock<2>) {
+        let stream_id = StreamId::new([0x51; 16]).unwrap();
+        let capability_digest = alumina_protocol::Digest([0x52; 32]);
+        let config_digest = alumina_protocol::Digest([0x53; 32]);
+        let block = ExecutionBlock::encode_motion(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            alumina_protocol::Digest::ZERO,
+            segments,
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 15,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(alumina_protocol::Digest([0x54; 32])),
+                    byte_len: 512,
+                },
+                manifest: ContentId::from_sha256(alumina_protocol::Digest([0x55; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 2,
+            execution_kind: alumina_machine_ir::ExecutionKind::Motion,
+            maximum_finite_difference_updates: 0,
+            block_count: 1,
+            first_tick: StreamTick(0),
+            initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 1_000,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 1_000,
+                    maximum_steps_per_segment: 100,
+                },
+            },
+        };
+        let mut job = RealtimeJob::prepare(descriptor).unwrap();
+        let admitted = match job.poll(&mut OneBlock(Some(block))).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("one two-axis motion block must be admitted")
+            }
+        };
+        (job, admitted)
+    }
+
     fn admitted_finite_difference_block_pair(
         first_segments: &[FiniteDifferenceSegment<2>],
         second_segments: &[FiniteDifferenceSegment<2>],
@@ -7261,6 +7924,198 @@ mod tests {
             shifted_contract().safe_image
         );
         assert!(runner.take_faulted_block().is_some());
+    }
+
+    #[test]
+    fn kind_bound_scheduled_owner_holds_direct_continuation_until_explicit_choice() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let terminal = [first.position_at(0, first.update_count).unwrap(), 0];
+        let second = finite_segment(3, 4, terminal, [first_difference, 0]);
+        let (_job, first_block, second_block) =
+            admitted_finite_difference_block_pair(&[first], &[second]);
+        let mode = ScheduledExecutionMode::FiniteDifference(finite_limits(100));
+        let mut runner = ScheduledShiftedExecution::<2, 8>::new(
+            mode,
+            shifted_finite_difference_profile(),
+            shifted_contract(),
+        )
+        .unwrap();
+        assert_eq!(runner.mode(), mode);
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(first_block).unwrap();
+
+        let first_boundary = ScheduledExecutionPlan::BlockPlanned {
+            sequence: 0,
+            completion_at: DeviceCycle(103),
+            boundary: ScheduledBlockBoundary::ContinuationOpen,
+        };
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            first_boundary
+        );
+        assert_eq!(runner.queued_outputs(), 2);
+        assert_eq!(runner.staged_outputs(), 0);
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            first_boundary
+        );
+        assert_eq!(runner.queued_outputs(), 2);
+
+        runner.admit_block(second_block).unwrap();
+        let second_boundary = ScheduledExecutionPlan::BlockPlanned {
+            sequence: 1,
+            completion_at: DeviceCycle(107),
+            boundary: ScheduledBlockBoundary::ContinuationOpen,
+        };
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            second_boundary
+        );
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            second_boundary
+        );
+        assert_eq!(
+            runner.plan_owner_tail_through(DeviceCycle(107)).unwrap(),
+            ScheduledExecutionPlan::Future {
+                at: DeviceCycle(108),
+            }
+        );
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledExecutionPlan::OwnerTailComplete {
+                completion_at: DeviceCycle(108),
+            }
+        );
+        assert_eq!(
+            runner.plan_owner_tail_through(DeviceCycle(110)),
+            Err(ScheduledExecutionError::State)
+        );
+        assert_eq!(runner.planned_finish_cycle(), Ok(DeviceCycle(110)));
+    }
+
+    #[test]
+    fn kind_bound_scheduled_owner_marks_coordinated_boundary_sealed() {
+        let (_job, admitted) = admitted_block(&[segment(0, 20, [2, 0, 0])]);
+        let mut runner = ScheduledShiftedExecution::<3, 8>::new(
+            ScheduledExecutionMode::Motion,
+            shifted_profile(),
+            shifted_contract(),
+        )
+        .unwrap();
+        assert_eq!(runner.mode(), ScheduledExecutionMode::Motion);
+        runner.start_job(DeviceCycle(100), [0; 3]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(120)).unwrap(),
+            ScheduledExecutionPlan::BlockPlanned {
+                sequence: 0,
+                completion_at: DeviceCycle(120),
+                boundary: ScheduledBlockBoundary::Sealed,
+            }
+        );
+        assert_eq!(
+            runner.plan_owner_tail_through(DeviceCycle(120)),
+            Err(ScheduledExecutionError::State)
+        );
+    }
+
+    #[test]
+    fn kind_bound_scheduled_owner_rejects_cross_family_block_substitution() {
+        let (_motion_job, motion_block) = admitted_motion_block_two_axes(&[segment(0, 20, [2, 0])]);
+        let mut direct_runner = ScheduledShiftedExecution::<2, 8>::new(
+            ScheduledExecutionMode::FiniteDifference(finite_limits(100)),
+            shifted_finite_difference_profile(),
+            shifted_contract(),
+        )
+        .unwrap();
+        direct_runner.start_job(DeviceCycle(100), [0; 2]).unwrap();
+        let rejected = direct_runner.admit_block(motion_block).unwrap_err();
+        assert!(matches!(
+            rejected.error(),
+            ScheduledExecutionAdmissionError::FiniteDifference(_)
+        ));
+        assert_eq!(rejected.into_block().header().sequence, 0);
+        assert_eq!(direct_runner.planned_status().position, [0; 2]);
+        assert_eq!(direct_runner.queued_outputs(), 0);
+
+        let direct = finite_segment(0, 4, [0, 0], [(FINITE_DIFFERENCE_ONE_STEP - 1) / 4, 0]);
+        let (_direct_job, direct_block) = admitted_finite_difference_block(&[direct]);
+        let mut motion_runner = ScheduledShiftedExecution::<2, 8>::new(
+            ScheduledExecutionMode::Motion,
+            shifted_finite_difference_profile(),
+            shifted_contract(),
+        )
+        .unwrap();
+        motion_runner.start_job(DeviceCycle(100), [0; 2]).unwrap();
+        let rejected = motion_runner.admit_block(direct_block).unwrap_err();
+        assert!(matches!(
+            rejected.error(),
+            ScheduledExecutionAdmissionError::Motion(_)
+        ));
+        assert_eq!(rejected.into_block().header().sequence, 0);
+        assert_eq!(motion_runner.planned_status().position, [0; 2]);
+        assert_eq!(motion_runner.queued_outputs(), 0);
+    }
+
+    #[test]
+    fn kind_bound_scheduled_owner_has_a_fixed_target_memory_bound() {
+        let bytes = core::mem::size_of::<ScheduledShiftedExecution<3, 64>>();
+        assert!(bytes <= 6 * 1_024);
+    }
+
+    #[test]
+    fn kind_bound_plan_exposes_only_immutable_complete_image_coverage() {
+        let sealed = ScheduledExecutionPlan::BlockPlanned {
+            sequence: 0,
+            completion_at: DeviceCycle(108),
+            boundary: ScheduledBlockBoundary::Sealed,
+        };
+        let open = ScheduledExecutionPlan::BlockPlanned {
+            sequence: 0,
+            completion_at: DeviceCycle(108),
+            boundary: ScheduledBlockBoundary::ContinuationOpen,
+        };
+        assert_eq!(
+            sealed.covered_through(DeviceCycle(120), 4),
+            Ok(DeviceCycle(108))
+        );
+        assert_eq!(
+            open.covered_through(DeviceCycle(120), 4),
+            Ok(DeviceCycle(104))
+        );
+        assert_eq!(
+            ScheduledExecutionPlan::Future {
+                at: DeviceCycle(124),
+            }
+            .covered_through(DeviceCycle(120), 4),
+            Ok(DeviceCycle(120))
+        );
+        assert_eq!(
+            ScheduledExecutionPlan::HorizonFull {
+                next_at: DeviceCycle(116),
+                queued: 8,
+                staged: 4,
+            }
+            .covered_through(DeviceCycle(120), 4),
+            Ok(DeviceCycle(112))
+        );
+        assert_eq!(
+            ScheduledExecutionPlan::OwnerTailComplete {
+                completion_at: DeviceCycle(112),
+            }
+            .covered_through(DeviceCycle(120), 4),
+            Ok(DeviceCycle(120))
+        );
+        assert_eq!(
+            open.covered_through(DeviceCycle(107), 4),
+            Err(MotionError::State)
+        );
+        assert_eq!(
+            sealed.covered_through(DeviceCycle(120), 0),
+            Err(MotionError::Timing)
+        );
     }
 
     #[test]

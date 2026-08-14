@@ -151,6 +151,34 @@ motion token only at the matching visible latch. The reproducible boundary is
 recorded in
 [`evidence/M10-SCHEDULED-DIRECT-PCM.md`](evidence/M10-SCHEDULED-DIRECT-PCM.md).
 
+## Permanent target execution-kind dispatch
+
+The core-1 `MotionService` now derives exactly one
+`ScheduledExecutionMode` from the independently validated `JobDescriptor` at
+prime time and constructs one fixed-memory `ScheduledShiftedExecution` owner.
+The owner never infers a kind from block payloads or converts between record
+families. A cross-family block is returned unchanged after rejection, and a
+completed block preserves whether ordinary integer or direct Q31.32 terminal
+state was checked before its unique token returns to the job actor.
+
+The common planning boundary distinguishes an ordinary sealed block from a
+direct continuation-open block. Generic polling repeats the latter without
+closing or staging its newest same-cycle image. An admitted successor composes
+normally; only the descriptor-declared final boundary invokes the explicit
+owner-tail operation. A future tail deadline or full output ring leaves that
+terminal decision retained across core-1 polls. Final disable is not planned
+until the owner tail is complete, and the final block cannot return until its
+generated prefix, tail, and disable are owned by the target timeline.
+
+Host regressions cover both execution modes, delayed direct continuation,
+explicit terminal-tail resumption, cross-family rejection, complete-image
+horizon accounting, and the fixed target-owner memory bound. The bit-level
+PCM-short integration now enters through this descriptor-selected owner. The
+target builds prove the permanent actor composes for TinyBee and T-Deck Pro,
+but their hardware adapters still reject motion streaming and neither board is
+armable. The reproducible boundary is recorded in
+[`evidence/M10-TARGET-DIRECT-DISPATCH.md`](evidence/M10-TARGET-DIRECT-DISPATCH.md).
+
 ## Compiler obligations and open gates
 
 The browser/WASM compiler remains authoritative for geometry and CAM. The first
@@ -179,9 +207,10 @@ The remaining lowering stages must:
 5. cache only complete content-addressed partitions plus their evidence before
    deterministic schedule commit.
 
-The current implementation owns no ESP peripheral and makes no TinyBee timing,
-DMA, memory-bandwidth, safe-output, or energization claim. Direct events are
-composed only into the portable single-owner image/PCM model. A target adapter
-must still bind that contract to the qualified GPIO/RMT/I2S peripheral, prove
-its dense hardware horizon and physical latch source, measure it under real
-Wi-Fi/service load, and pass the existing board armability and safety gates.
+The current target composition stops at the abstract real-time resource
+boundary and owns no ESP motion-streaming peripheral. It makes no TinyBee
+timing, DMA, memory-bandwidth, safe-output, or energization claim. A target
+adapter must still bind the single-owner image/PCM contract to a qualified
+GPIO/RMT/I2S peripheral, prove its dense hardware horizon and physical latch
+source, measure it under real Wi-Fi/service load, and pass the existing board
+armability and safety gates.

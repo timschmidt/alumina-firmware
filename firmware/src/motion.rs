@@ -3,8 +3,9 @@
 use alumina_config::RealtimeConfiguration;
 use alumina_job::{AdmittedBlock, JobDescriptor};
 use alumina_motion::{
-    CommittedShiftOutput, ExecutorState, ScheduledShiftPlan, ScheduledShiftedStepper,
-    StepperExecutionProfile,
+    CommittedShiftOutput, ExecutorState, ScheduledBlockBoundary, ScheduledExecutionPlan,
+    ScheduledShiftedExecution, ShiftImageContract, ShiftImageMapper, StepperExecutionProfile,
+    scheduled_execution_mode_from_descriptor,
 };
 use alumina_protocol::{DeviceCycle, Digest};
 use embassy_time::TICK_HZ;
@@ -12,11 +13,18 @@ use embassy_time::TICK_HZ;
 use crate::hardware::selected;
 
 type Runner =
-    ScheduledShiftedStepper<{ selected::JOB_AXES }, { selected::MOTION_OUTPUT_RING_IMAGES }>;
+    ScheduledShiftedExecution<{ selected::JOB_AXES }, { selected::MOTION_OUTPUT_RING_IMAGES }>;
 type OwnedBlock = AdmittedBlock<{ selected::JOB_AXES }>;
 
+#[derive(Clone, Copy)]
+struct ConfiguredOutput {
+    profile: StepperExecutionProfile<{ selected::JOB_AXES }>,
+    contract: ShiftImageContract,
+}
+
 struct PipelinePlan {
-    plan: ScheduledShiftPlan,
+    plan: ScheduledExecutionPlan,
+    final_block_boundary_reached: bool,
     final_block_planned: bool,
 }
 
@@ -52,6 +60,7 @@ pub enum MotionServiceError {
 
 /// Sole core-1 owner of the generated-versus-committed motion boundary.
 pub struct MotionService {
+    configured_output: Option<ConfiguredOutput>,
     runner: Option<Runner>,
     configuration_digest: Digest,
     primed_epoch: Option<DeviceCycle>,
@@ -59,6 +68,7 @@ pub struct MotionService {
     total_blocks: u32,
     remaining_blocks: u32,
     lookahead: Option<OwnedBlock>,
+    final_block_boundary_reached: bool,
     final_block_planned: bool,
     finish_requested: bool,
     finish_preplanned: bool,
@@ -70,6 +80,7 @@ impl MotionService {
     /// Starts without an executable output mapping.
     pub const fn new() -> Self {
         Self {
+            configured_output: None,
             runner: None,
             configuration_digest: Digest::ZERO,
             primed_epoch: None,
@@ -77,6 +88,7 @@ impl MotionService {
             total_blocks: 0,
             remaining_blocks: 0,
             lookahead: None,
+            final_block_boundary_reached: false,
             final_block_planned: false,
             finish_requested: false,
             finish_preplanned: false,
@@ -92,6 +104,7 @@ impl MotionService {
         &mut self,
         configuration: &RealtimeConfiguration,
     ) -> Result<(), MotionServiceError> {
+        self.configured_output = None;
         self.runner = None;
         self.configuration_digest = Digest::ZERO;
         self.primed_epoch = None;
@@ -99,6 +112,7 @@ impl MotionService {
         self.total_blocks = 0;
         self.remaining_blocks = 0;
         self.lookahead = None;
+        self.final_block_boundary_reached = false;
         self.final_block_planned = false;
         self.finish_requested = false;
         self.finish_preplanned = false;
@@ -125,16 +139,19 @@ impl MotionService {
             selected::MOTION_MAXIMUM_COMMIT_LATENESS_CYCLES,
         )
         .map_err(|_| MotionServiceError::Configuration)?;
-        self.runner = Some(
-            ScheduledShiftedStepper::new(profile, contract)
-                .map_err(|_| MotionServiceError::Configuration)?,
-        );
+        if selected::MOTION_OUTPUT_RING_IMAGES == 0 {
+            return Err(MotionServiceError::Configuration);
+        }
+        let _mapper = ShiftImageMapper::new(&profile, contract)
+            .map_err(|_| MotionServiceError::Configuration)?;
+        self.configured_output = Some(ConfiguredOutput { profile, contract });
         self.configuration_digest = identity.digest;
         Ok(())
     }
 
     /// Removes executable mapping only after the caller made outputs safe.
     pub fn clear(&mut self) {
+        self.configured_output = None;
         self.runner = None;
         self.configuration_digest = Digest::ZERO;
         self.primed_epoch = None;
@@ -142,6 +159,7 @@ impl MotionService {
         self.total_blocks = 0;
         self.remaining_blocks = 0;
         self.lookahead = None;
+        self.final_block_boundary_reached = false;
         self.final_block_planned = false;
         self.finish_requested = false;
         self.finish_preplanned = false;
@@ -151,7 +169,9 @@ impl MotionService {
 
     /// Whether the selected package and active mapping can enter arm authority.
     pub fn ready_to_arm(&self) -> bool {
-        selected::PACKAGE.armable && selected::MOTION_OUTPUT_QUALIFIED && self.runner.is_some()
+        selected::PACKAGE.armable
+            && selected::MOTION_OUTPUT_QUALIFIED
+            && self.configured_output.is_some()
     }
 
     /// After the abort guard closes, transfers the first admitted block and
@@ -168,6 +188,7 @@ impl MotionService {
         if descriptor.config_digest != self.configuration_digest
             || self.primed_epoch.is_some()
             || self.running
+            || self.runner.is_some()
             || observed >= epoch
             || (descriptor.block_count == 1) != lookahead.is_none()
             || admitted.header().sequence != 0
@@ -177,19 +198,24 @@ impl MotionService {
         {
             return Err(MotionServiceError::Configuration);
         }
+        let mode = scheduled_execution_mode_from_descriptor::<{ selected::JOB_AXES }>(descriptor)
+            .map_err(|_| MotionServiceError::Configuration)?;
         let initial = descriptor
             .initial_position_for::<{ selected::JOB_AXES }>()
             .map_err(|_| MotionServiceError::Configuration)?;
-        let runner = self
-            .runner
-            .as_mut()
+        let configured = self
+            .configured_output
             .ok_or(MotionServiceError::Unsupported)?;
+        let mut runner = Runner::new(mode, configured.profile, configured.contract)
+            .map_err(|_| MotionServiceError::Configuration)?;
         runner
             .start_job(epoch, initial)
             .map_err(|_| MotionServiceError::State)?;
         runner
             .admit_block(admitted)
             .map_err(|_| MotionServiceError::State)?;
+        self.runner = Some(runner);
+        let runner = self.runner.as_mut().ok_or(MotionServiceError::State)?;
         let mut lookahead = lookahead;
         let required_horizon = DeviceCycle(
             epoch
@@ -235,6 +261,7 @@ impl MotionService {
         self.total_blocks = descriptor.block_count;
         self.remaining_blocks = descriptor.block_count;
         self.lookahead = lookahead;
+        self.final_block_boundary_reached = outcome.final_block_boundary_reached;
         self.final_block_planned = outcome.final_block_planned;
         self.finish_requested = false;
         self.finish_preplanned = finish_preplanned;
@@ -261,6 +288,7 @@ impl MotionService {
     pub fn admit(&mut self, admitted: OwnedBlock) -> Result<(), OwnedBlock> {
         if !self.running
             || self.remaining_blocks == 0
+            || self.final_block_boundary_reached
             || self.final_block_planned
             || self.finish_preplanned
             || self.lookahead.is_some()
@@ -289,11 +317,13 @@ impl MotionService {
             return Err(MotionServiceError::State);
         }
         if self.finish_requested && self.finish_committed {
+            self.runner = None;
             self.running = false;
             self.primed_epoch = None;
             self.total_blocks = 0;
             self.remaining_blocks = 0;
             self.lookahead = None;
+            self.final_block_boundary_reached = false;
             self.final_block_planned = false;
             self.finish_requested = false;
             self.finish_preplanned = false;
@@ -324,6 +354,31 @@ impl MotionService {
             return Ok(action);
         }
         let mut known_writable_horizon = None;
+        if self.final_block_boundary_reached && !self.final_block_planned {
+            let writable_horizon = resources
+                .motion_output_writable_horizon(observed)
+                .map_err(|_| MotionServiceError::Output)?;
+            known_writable_horizon = Some(writable_horizon);
+            let plan = Self::plan_and_stage(runner, resources, writable_horizon)?;
+            if matches!(
+                plan,
+                ScheduledExecutionPlan::Idle | ScheduledExecutionPlan::BlockPlanned { .. }
+            ) {
+                return Err(MotionServiceError::State);
+            }
+            let covered = Self::covered_through(plan, writable_horizon)?;
+            self.final_block_planned =
+                matches!(plan, ScheduledExecutionPlan::OwnerTailComplete { .. });
+            let sealed = resources
+                .seal_motion_output_horizon(covered)
+                .map_err(|_| MotionServiceError::Output)?;
+            if sealed < covered {
+                return Err(MotionServiceError::Output);
+            }
+            if !self.final_block_planned {
+                return Self::action_for_plan(plan);
+            }
+        }
         if self.final_block_planned && !self.finish_preplanned && runner.block_completion_planned()
         {
             let finish_at = runner
@@ -382,6 +437,7 @@ impl MotionService {
         )?;
         let mut covered = Self::covered_through(outcome.plan, writable_horizon)?;
         let mut finish_preplanned = false;
+        self.final_block_boundary_reached |= outcome.final_block_boundary_reached;
         if outcome.final_block_planned {
             self.final_block_planned = true;
             let finish_at = runner
@@ -400,37 +456,29 @@ impl MotionService {
             return Err(MotionServiceError::Output);
         }
         self.finish_preplanned = finish_preplanned;
-        match outcome.plan {
-            ScheduledShiftPlan::Idle => Ok(MotionAction::Idle),
-            ScheduledShiftPlan::Future { at } => Ok(MotionAction::Future { at }),
-            ScheduledShiftPlan::HorizonFull { .. } | ScheduledShiftPlan::BlockPlanned { .. } => {
-                Ok(MotionAction::WaitingForHardware)
-            }
-        }
+        Self::action_for_plan(outcome.plan)
     }
 
     /// Latest boundary whose complete-image value is known from one planning
     /// result. A full sparse ring cannot certify the as-yet ungenerated event
     /// at `next_at`, so coverage ends one exact output quantum earlier.
     fn covered_through(
-        plan: ScheduledShiftPlan,
+        plan: ScheduledExecutionPlan,
         requested: DeviceCycle,
     ) -> Result<DeviceCycle, MotionServiceError> {
+        plan.covered_through(requested, selected::MOTION_OUTPUT_QUANTUM_CYCLES)
+            .map_err(|_| MotionServiceError::State)
+    }
+
+    fn action_for_plan(plan: ScheduledExecutionPlan) -> Result<MotionAction, MotionServiceError> {
         match plan {
-            ScheduledShiftPlan::Idle => Err(MotionServiceError::State),
-            ScheduledShiftPlan::Future { at } => {
-                if at <= requested {
-                    Err(MotionServiceError::State)
-                } else {
-                    Ok(requested)
-                }
+            ScheduledExecutionPlan::Idle => Ok(MotionAction::Idle),
+            ScheduledExecutionPlan::Future { at } => Ok(MotionAction::Future { at }),
+            ScheduledExecutionPlan::HorizonFull { .. }
+            | ScheduledExecutionPlan::BlockPlanned { .. }
+            | ScheduledExecutionPlan::OwnerTailComplete { .. } => {
+                Ok(MotionAction::WaitingForHardware)
             }
-            ScheduledShiftPlan::HorizonFull { next_at, .. } => next_at
-                .0
-                .checked_sub(u64::from(selected::MOTION_OUTPUT_QUANTUM_CYCLES))
-                .map(DeviceCycle)
-                .ok_or(MotionServiceError::State),
-            ScheduledShiftPlan::BlockPlanned { completion_at, .. } => Ok(completion_at),
         }
     }
 
@@ -464,6 +512,7 @@ impl MotionService {
         self.total_blocks = 0;
         self.remaining_blocks = 0;
         self.lookahead = None;
+        self.final_block_boundary_reached = false;
         self.final_block_planned = false;
         self.finish_requested = false;
         self.finish_preplanned = false;
@@ -502,9 +551,16 @@ impl MotionService {
     ) -> Result<PipelinePlan, MotionServiceError> {
         loop {
             let plan = Self::plan_and_stage(runner, resources, through)?;
-            let ScheduledShiftPlan::BlockPlanned { sequence, .. } = plan else {
+            let ScheduledExecutionPlan::BlockPlanned {
+                sequence, boundary, ..
+            } = plan
+            else {
+                if matches!(plan, ScheduledExecutionPlan::OwnerTailComplete { .. }) {
+                    return Err(MotionServiceError::State);
+                }
                 return Ok(PipelinePlan {
                     plan,
+                    final_block_boundary_reached: false,
                     final_block_planned: false,
                 });
             };
@@ -516,14 +572,33 @@ impl MotionService {
                 if lookahead.is_some() {
                     return Err(MotionServiceError::State);
                 }
+                if boundary == ScheduledBlockBoundary::ContinuationOpen {
+                    let tail_plan = Self::plan_owner_tail_and_stage(runner, resources, through)?;
+                    if matches!(
+                        tail_plan,
+                        ScheduledExecutionPlan::Idle | ScheduledExecutionPlan::BlockPlanned { .. }
+                    ) {
+                        return Err(MotionServiceError::State);
+                    }
+                    return Ok(PipelinePlan {
+                        plan: tail_plan,
+                        final_block_boundary_reached: true,
+                        final_block_planned: matches!(
+                            tail_plan,
+                            ScheduledExecutionPlan::OwnerTailComplete { .. }
+                        ),
+                    });
+                }
                 return Ok(PipelinePlan {
                     plan,
+                    final_block_boundary_reached: true,
                     final_block_planned: true,
                 });
             }
             let Some(next) = lookahead.take() else {
                 return Ok(PipelinePlan {
                     plan,
+                    final_block_boundary_reached: false,
                     final_block_planned: false,
                 });
             };
@@ -542,9 +617,28 @@ impl MotionService {
         runner: &mut Runner,
         resources: &mut selected::EstablishedRealtimeResources,
         through: DeviceCycle,
-    ) -> Result<ScheduledShiftPlan, MotionServiceError> {
+    ) -> Result<ScheduledExecutionPlan, MotionServiceError> {
         let plan = runner
             .plan_through(through)
+            .map_err(|_| MotionServiceError::Generator)?;
+        while let Some(output) = runner.next_unstaged_output() {
+            resources
+                .stage_motion_output(output)
+                .map_err(|_| MotionServiceError::Output)?;
+            runner
+                .stage_output(output)
+                .map_err(|_| MotionServiceError::Commit)?;
+        }
+        Ok(plan)
+    }
+
+    fn plan_owner_tail_and_stage(
+        runner: &mut Runner,
+        resources: &mut selected::EstablishedRealtimeResources,
+        through: DeviceCycle,
+    ) -> Result<ScheduledExecutionPlan, MotionServiceError> {
+        let plan = runner
+            .plan_owner_tail_through(through)
             .map_err(|_| MotionServiceError::Generator)?;
         while let Some(output) = runner.next_unstaged_output() {
             resources

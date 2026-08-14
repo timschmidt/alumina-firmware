@@ -774,6 +774,22 @@ portable numerical/output-state/image/wire evidence. It is not a TinyBee
 peripheral adapter or target timing/WCET claim, and every board remains
 non-armable for this path.
 
+The permanent core-1 motion actor now selects one fixed-memory
+`ScheduledShiftedExecution` from the independently validated `ALMJOBD3`
+descriptor when a job is primed. It constructs only the declared ordinary or
+direct executor and rejects a block from the other family without changing
+live state. Ordinary block horizons are reported as sealed. A direct horizon
+is reported repeatedly as continuation-open until its immediate successor is
+owned, so delayed lookahead cannot accidentally change a same-cycle image.
+Only the descriptor-declared final block selects the irreversible owner-tail
+operation. If that tail reaches a later deadline or a full sparse ring, core 1
+retains the final boundary and resumes it before returning the block token;
+normal disable must then enter the same staged/physically committed timeline.
+This closes execution-kind dispatch in the target actor, not the ESP peripheral
+or qualification gate. TinyBee and T-Deck Pro adapters still reject motion
+streaming. The reproducible structural boundary is recorded in
+[`evidence/M10-TARGET-DIRECT-DISPATCH.md`](evidence/M10-TARGET-DIRECT-DISPATCH.md).
+
 A separate complete-image mapper binds those logical transactions to configured
 I²S bit resources, respects active-high/active-low enable or disable semantics,
 and preserves every unrelated shifted output. It accepts only a fully defined
