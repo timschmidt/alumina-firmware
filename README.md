@@ -174,6 +174,11 @@ decodes a native frame. That admission milestone deliberately used an
 unavailable backend, so it could not acknowledge volatile bytes as durable. See
 the historical
 [authenticated-service evidence](docs/evidence/M3-AUTHENTICATED-SERVICE.md).
+The target HTTP adapter now separates bounded body authentication/decode from
+the later service-bridge wait, preserving all route, body, proof, timeout, and
+two-connection limits while reclaiming 4,000 bytes of permanent task storage.
+See the [HTTP phase-storage
+evidence](docs/evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
 
 The cache backend itself is now concrete: `alumina-storage` implements a bounded
 asynchronous 512-byte block-device contract, an explicitly provisioned raw SD

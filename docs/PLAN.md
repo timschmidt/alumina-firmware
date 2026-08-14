@@ -201,8 +201,8 @@ Work:
 
 Static-memory checkpoint: the authenticated HTTP adapter now completes body
 read, HMAC/counter/origin/rate admission, and native request decode in one
-bounded async phase before awaiting the service bridge. All limits and two-way
-connection concurrency remain unchanged, while the permanent HTTP task pool
+bounded async phase before awaiting the service bridge. All limits and
+two-connection concurrency remain unchanged, while the permanent HTTP task pool
 falls by exactly 4,000 bytes on every current board. See
 [`M10-HTTP-PHASE-STORAGE-REUSE.md`](evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
 
