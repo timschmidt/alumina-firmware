@@ -129,6 +129,8 @@ an exact positional-error bound, packages `ALMBLK02` partitions, and replays
 them through the production cached executor. `ALMDFE01`/`ALMDFT01` evidence
 binds source/planner identities, every interval and coefficient, propagated
 error, electrical preflight, and immutable cache identity.
+The reproducible implementation and verification record is
+[`evidence/M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](evidence/M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md).
 
 The remaining lowering stages must:
 

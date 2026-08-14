@@ -345,9 +345,16 @@ admission is logarithmic in each record's update count. The allocation-free
 core consumes every dense update, emits the same logical step/direction/enable
 transactions as ordinary motion, and retains the cached block token until both
 integer and Q31.32 terminal state agree. A deterministic immutable-partition
-simulation covers that full portable path; browser/WASM lowering and TinyBee
+simulation covers that full portable path. The authoritative browser/WASM
+compiler now lowers exact stop-to-stop affine Hyperpath schedules through
+grid-retimed jerk recertification, interval-certified coefficient projection,
+explicit propagated error, direct cache packaging, and replayable `ALMDFE01`
+evidence. Firmware-owned pulse falls may cross contiguous direct records and
+cached blocks without a false dwell. Curved/positive-feed lowering and TinyBee
 PCM/DMA composition remain open, and no hardware qualification is claimed. See
-the [direct finite-difference evidence](docs/evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md).
+the [direct finite-difference IR
+evidence](docs/evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md) and [browser direct
+lowering evidence](docs/evidence/M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md).
 
 The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;
