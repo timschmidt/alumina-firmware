@@ -463,6 +463,21 @@ not a caller-built report array. Neutral duty is not a qualified safe state and
 the target startup/shutdown owner remains open. See
 [`M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md).
 
+The barrier is now enclosed by a fixed-memory `PwmCommitBankTargetOwner` which
+retains unique aggregate-backend ownership and exposes no mutable hardware
+escape. It stages only complete image vectors, polls hardware-owned latch
+reports, and supplies the opaque completion through an all-or-none logical
+publication closure. Every terminal image, hardware, report, boundary, and
+publication failure automatically invokes the complete backend safe
+transaction; a failed safe action enters a distinct unsafe-fault state from
+which only explicit safe retry is permitted. Busy staging and an absent report
+remain the only nonterminal wait results. Canonical dual-MKS activation, normal
+periods, and cached replay now use the owner; modeled faults execute safety once
+without partially advancing the controller bank. The simulator backend cannot
+qualify real MCPWM latch truth or shutdown behavior, and all target gates remain
+closed. See
+[`M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md).
+
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
@@ -908,6 +923,16 @@ initial reports; partial, late, duplicate, substituted, foreign, or wrong-
 sequence evidence yields no live bank. This is still software/simulator
 evidence, not a safe electrical startup. See
 [`M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md).
+
+The subsequent aggregate-owner checkpoint makes the remaining target contract
+explicit: one private backend receives the complete vector, supplies truthful
+per-axis latch reports, and owns the independently qualified all-stage safe
+transaction. Barrier, hardware, and transactional logical-publication failures
+close into safe or unsafe fault states; an unsafe state permits only retrying
+safety. The deterministic two-axis backend exercises this contract through
+activation and 401 current periods, but no ESP implementation is attached and
+no output gate can arm. See
+[`M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md).
 
 Exit gate:
 

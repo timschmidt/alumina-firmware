@@ -5,6 +5,7 @@ use alumina_protocol::{DeviceCycle, Digest};
 
 mod angle;
 mod axis;
+mod bank_owner;
 mod current;
 mod encoder;
 mod pwm;
@@ -23,6 +24,11 @@ pub use axis::{
     PreparedServoFocBankTransition, ServoFocAxisController, ServoFocAxisError,
     ServoFocAxisPeriodInput, ServoFocAxisPreparedUpdate, ServoFocAxisProfile, ServoFocAxisUpdate,
     ServoFocBank, ServoFocBankError,
+};
+pub use bank_owner::{
+    PwmCommitBankHardware, PwmCommitBankHardwareOperation, PwmCommitBankOwnerBuildError,
+    PwmCommitBankOwnerError, PwmCommitBankOwnerFault, PwmCommitBankOwnerState,
+    PwmCommitBankTargetOwner,
 };
 pub use current::{
     CurrentChannelCalibration, CurrentPolarity, CurrentSample, PwmAdcSampleStamp,

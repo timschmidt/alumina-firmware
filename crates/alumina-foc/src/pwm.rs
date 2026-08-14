@@ -517,6 +517,8 @@ pub enum PwmCommitBarrierError {
     CycleOverflow,
     /// The enclosing target completed its separately qualified safe transaction.
     SafetyInvalidated,
+    /// Hardware staging or observation failed and physical safety is not proven.
+    HardwareInvalidated,
     /// A prior terminal error has closed the barrier.
     Faulted,
 }
@@ -727,6 +729,15 @@ impl<const AXES: usize> PwmCommitBankBarrier<AXES> {
         self.observations = [None; AXES];
         if self.fault.is_none() {
             self.fault = Some(PwmCommitBarrierError::SafetyInvalidated);
+        }
+    }
+
+    /// Clears pending authority after a hardware failure with unknown safe state.
+    pub fn invalidate_after_hardware_fault(&mut self) {
+        self.staged = None;
+        self.observations = [None; AXES];
+        if self.fault.is_none() {
+            self.fault = Some(PwmCommitBarrierError::HardwareInvalidated);
         }
     }
 

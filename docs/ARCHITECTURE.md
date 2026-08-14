@@ -1257,6 +1257,34 @@ logical failure after reported physical completion requires immediate
 qualified all-stage shutdown. See
 [`evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md).
 
+`PwmCommitBankTargetOwner<Hardware, AXES>` now encloses that portable barrier
+and unique aggregate hardware value. The no-allocation backend contract has
+three operations: stage the whole inactive/shadow image vector, take truthful
+per-axis latch witnesses, and force the independently qualified complete safe
+state. There is no mutable backend accessor. The owner alone moves between
+ready, awaiting-latches, safe-fault, and unsafe-fault states and alone supplies
+the sealed completion to a transactional, non-panicking logical publication
+closure.
+
+Busy complete-vector staging and a not-yet-present hardware report are waits,
+not faults. Every other stage validation, backend error, report substitution,
+protocol sequence, boundary closure, overflow, or publication rejection
+automatically attempts all-stage safety. Safe success permanently closes the
+owner while retaining first cause; safe failure is recorded separately and
+permits only an explicit safety retry. Physical completion still cannot be
+rolled back, so a publication rejection means future outputs are forced safe,
+not that the completed boundary never occurred.
+
+The host simulator implements the same backend trait with deterministic
+modeled timer-zero reports. Canonical dual-MKS initial activation, ordinary
+periods, and the 401-period cached replay all pass through the owner. A late
+axis or controller preparation failure invokes one modeled complete safe
+transaction and exposes no partial bank publication. This is executable
+software ownership evidence only: the MKS target aggregate remains closed and
+no claim is made about MCPWM synchronization, latch readback, or physical safe
+outputs. See
+[`evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage
