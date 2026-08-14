@@ -197,9 +197,13 @@ Observed results:
 
 ## Open boundary
 
-One shared exact retiming policy across every participant partition, direct
+The subsequent
+[`M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](M10-CANONICAL-PLANNER-EVIDENCE-V3.md)
+checkpoint closes the canonical planner/timer-policy transcript boundary without
+rewriting this historical artifact. One shared exact retiming policy across
+every participant partition, direct
 native jerk/finite-difference IR, curvature-aware axis projection, nonlinear
 kinematics, vector acceleration/jerk, retained blends, time-optimal profiles,
 hold/resume replanning, physical simulator/HIL correlation, and hardware timing
-qualification remain open. The next software evidence boundary is canonical
-V3 planner-policy/certification replay, not another output-only transcript.
+qualification remain open. The next aligned software boundary is shared
+multi-MCU retiming before immutable per-participant cache publication.

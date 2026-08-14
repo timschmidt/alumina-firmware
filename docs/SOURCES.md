@@ -9,8 +9,11 @@ floating dependency specification.
 
 ### Exact geometry and rendering
 
-- [`hyperreal/Cargo.toml`](../../hyperreal/Cargo.toml) and
-  [`hyperreal/src`](../../hyperreal/src) — exact `Rational`/`Real` scalar model.
+- [`hyperreal/Cargo.toml`](../../hyperreal/Cargo.toml),
+  [`hyperreal/src`](../../hyperreal/src), and
+  [`hyperreal/src/serde.rs`](../../hyperreal/src/serde.rs) — exact
+  `Rational`/`Real` scalar model and structural serde representation whose
+  transient caches/signals are excluded from canonical planner evidence.
 - [`hyperlattice/Cargo.toml`](../../hyperlattice/Cargo.toml) and
   [`hyperlattice/src`](../../hyperlattice/src) — exact linear algebra and geometry.
 - [`hyperlimit/Cargo.toml`](../../hyperlimit/Cargo.toml) and
@@ -53,10 +56,11 @@ floating dependency specification.
 
 - [`alumina-interface/Cargo.toml`](../../alumina-interface/Cargo.toml),
   [`motion_schedule.rs`](../../alumina-interface/crates/alumina-interface-core/src/motion_schedule.rs),
+  [`schedule_evidence.rs`](../../alumina-interface/crates/alumina-interface-core/src/schedule_evidence.rs),
   and [`machine_cam_ui.rs`](../../alumina-interface/src/machine_cam_ui.rs) —
   greenfield exact browser compiler, Hypergraphics presentation, canonical
-  machine/cache evidence, exact output-quantum lowering, and visible retained
-  timer-factor policy.
+  machine/cache evidence, exact output-quantum lowering, visible retained
+  timer-factor policy, and `ALMEVD03` exact planner/lowering transcript replay.
 - [`alumina-motion`](../crates/alumina-motion/src/lib.rs) — allocation-free
   production stepper validator and the fail-closed duration-pressure
   classification used only to decide whether an exact candidate may be rebuilt

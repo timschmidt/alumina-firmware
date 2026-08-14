@@ -115,8 +115,13 @@ certificate. It degree-elevates each candidate endpoint chord, bounds the exact
 cubic difference controls, and otherwise uses exact Hypercurve de Casteljau
 half-splits. Hyperpath retains exact Euclidean lengths for the resulting
 diagonal line carriers. Every generated join is a zero-feed stop until a native
-or curvature-certified nonzero-feed curve policy exists. Canonical `ALMEVD02`
-then binds independent source, metric-path, and source-to-motion transcripts.
+or curvature-certified nonzero-feed curve policy exists. Canonical `ALMEVD03`
+now binds independent source, metric-path, source-to-motion, exact planner, and
+complete lowering transcripts. The planner domain includes caller policy,
+affine/lookahead/jerk proposals, and every retained Hypersolve row; the lowering
+domain includes the complete resolution budget, timer lattice and rejected
+candidates, exact scheduled points, canonical segments, and production
+preflight. A byte-identical final stream no longer erases a different policy.
 Generated cubic joins remain explicit zero caller ceilings consumed by the
 exact planner rather than a hand-filled final speed vector. Alumina permits a
 positive ceiling only where two lossless exact source lines meet and Hyperpath
@@ -134,7 +139,9 @@ and
 followed by
 [`evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md`](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md)
 and
-[`evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md).
+[`evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
+then
+[`evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
 
 ## Hypersolve's role
 

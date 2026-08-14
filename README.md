@@ -52,6 +52,12 @@ enter retiming.
 Before cache release it replays the allocation-free production stepper
 electrical contract; the final partition then passes an event-level
 `RealtimeJob`/`CachedStepperExecutor` simulation and canonical evidence replay.
+Canonical `ALMEVD03` now commits independent exact source, metric,
+source-approximation, planner-policy/certification, and complete lowering/timer
+subtranscripts. Exact planner/lowering structures are rebuilt from live state;
+changing caller policy changes evidence even when canonical machine bytes do
+not. Firmware does not parse this browser audit transcript and core 1 continues
+to consume only bounded independently admitted machine IR.
 Native and WASM tests, strict lint, sibling-source and license policy, and the
 compressed production bundle pass. This remains a development checkpoint, not
 a qualified compiler release. See the [interface baseline
@@ -63,7 +69,9 @@ monotonic-jerk evidence](docs/evidence/M10-EXACT-MONOTONIC-JERK.md) and [exact
 jerk-feasible G1 evidence](docs/evidence/M10-EXACT-JERK-FEASIBLE-G1.md), followed
 by the [exact affine-axis projection
 evidence](docs/evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md) and [exact
-timer-lattice evidence](docs/evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md).
+timer-lattice evidence](docs/evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
+followed by the [canonical planner/lowering V3
+evidence](docs/evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
 
 The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource

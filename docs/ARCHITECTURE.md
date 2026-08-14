@@ -50,6 +50,15 @@ already validated, bounded binary frames whose exact schema version,
 configuration digest, sequence, and time range are known. A schema mismatch is
 an update error, not a request to enter a compatibility mode.
 
+The authoritative browser's `ALMEVD03` record is likewise audit material, not a
+real-time command format. It commits exact source/metric/approximation identity,
+the complete planner policy/certification path, and complete lowering/timer/
+executor facts. The browser reconstructs and verifies it before the complete
+transaction becomes visible or exportable;
+firmware independently admits only the resulting canonical object, manifest,
+configuration, and schedule identities. Neither core has a V2 compatibility
+parser, and core 1 never receives Hyperreal expression structure.
+
 ## Execution domains
 
 ### Core 0: service executor

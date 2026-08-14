@@ -250,11 +250,12 @@ ceiled to the configured output quantum, and a caller-bounded rational-factor
 search retains factor-one and immediate-predecessor failures before accepting
 the smallest stream which passes unchanged production stepper preflight.
 Immutable cache partitioning, independent event simulation, and canonical
-`ALMEVD02` source, metric, and approximation evidence replay must all succeed
-transactionally.
-V2 binds the resulting canonical stream but not the detailed
-affine/lookahead/jerk/timer-search transcripts; a greenfield V3 is the next
-evidence boundary.
+`ALMEVD03` source, metric, approximation, planner, and lowering evidence replay
+must all succeed transactionally. V3 independently commits exact caller policy,
+every retained affine/lookahead/jerk certification row, timer-search decisions,
+scheduled points/segments, and production preflight. Its policy-variation tests
+prove that byte-identical machine output does not collapse distinct planner or
+timer policy into one evidence identity.
 
 An optional UI-only CNC adapter now parses a deliberately selected connected XY
 line/explicit-IJ-arc subset directly into exact rationals and native Hypercurve
@@ -278,6 +279,8 @@ See the [initial M5/I1-I3 evidence](evidence/M5-EXACT-CAM-COMPILER.md),
 evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
 [exact timer-lattice
 evidence](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
+[canonical planner/lowering V3
+evidence](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 

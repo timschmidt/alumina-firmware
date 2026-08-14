@@ -279,3 +279,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   dilation search, unchanged production-preflight replay, smallest-factor
   predecessor proof, and renewed native/WASM/loopback evidence with every
   physical claim kept closed.
+- [`M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](M10-CANONICAL-PLANNER-EVIDENCE-V3.md)
+  — canonical exact planner/lowering policy and certification subtranscripts,
+  cache-invariant structural `Real` serialization, policy-distinguishing replay,
+  bounded encoding, and renewed native/WASM/loopback evidence with every
+  physical claim kept closed.

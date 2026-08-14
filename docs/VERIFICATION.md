@@ -172,6 +172,18 @@ structural failures which cannot enter retiming. The selected-factor proof is
 local to one canonical stream; shared multi-MCU retiming, direct jerk IR,
 hardware timing, and physical-output qualification remain separate gates.
 
+The canonical planner/lowering transcript checkpoint is recorded in
+[`evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
+Its required regression set includes deterministic reconstruction, complete
+planner and lowering digest/length commitments, exact-Real cache invariance,
+caller source-reduction element/depth policy variation with unchanged lowering,
+timer-lattice policy variation with byte-identical points/segments/partition,
+corrupt outer evidence rejection, and schedule/program/partition terminal
+agreement. Per-Real
+and per-subtranscript limits must fail closed. V3 is browser/compiler audit
+evidence; it does not replace production executor replay or permit firmware core
+1 to parse planner, Hyperreal, JSON, or source-geometry data.
+
 ### 4. Per-board compile matrix
 
 Every described board has a CI job that:
