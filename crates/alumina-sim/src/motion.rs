@@ -357,6 +357,22 @@ pub fn replay_cached_finite_difference_partition<const AXES: usize>(
         (RealtimeJobState::Complete, Some(progress)) => progress,
         _ => return Err(CachedFiniteDifferenceReplayError::TerminalMismatch),
     };
+    while let Some(deadline) = executor.next_deadline() {
+        match executor
+            .poll(deadline)
+            .map_err(CachedFiniteDifferenceReplayError::FiniteDifference)?
+        {
+            CachedFiniteDifferencePoll::Event { event, .. } => {
+                record_direct_event(event, &mut rising_edges, &mut output_transactions)?;
+            }
+            CachedFiniteDifferencePoll::Future { .. } => {}
+            CachedFiniteDifferencePoll::Idle
+            | CachedFiniteDifferencePoll::Update { .. }
+            | CachedFiniteDifferencePoll::BlockComplete { .. } => {
+                return Err(CachedFiniteDifferenceReplayError::TerminalMismatch);
+            }
+        }
+    }
     let executor_status = executor.status();
     let mut expected_terminal_position = initial_position;
     for (position, displacement) in expected_terminal_position.iter_mut().zip(progress.position) {
@@ -581,5 +597,74 @@ mod tests {
             replay_cached_finite_difference_partition(&corrupt, descriptor, timing()),
             Err(CachedFiniteDifferenceReplayError::PartitionIdentity)
         );
+    }
+
+    #[test]
+    fn immutable_direct_replay_drains_a_terminal_cross_block_pulse() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let segment = FiniteDifferenceSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(3),
+            update_period_ticks: 1,
+            update_count: 3,
+            axes: [
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference,
+                    second_difference: 0,
+                    third_difference: 0,
+                },
+                FiniteDifferenceAxis::default(),
+            ],
+            flags: 0,
+        };
+        let stream_id = StreamId::new([0x81; 16]).unwrap();
+        let capability_digest = Digest([0x82; 32]);
+        let config_digest = Digest([0x83; 32]);
+        let block = ExecutionBlock::encode_finite_difference(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            Digest::ZERO,
+            &[segment],
+        )
+        .unwrap();
+        let bytes = block.as_bytes().to_vec();
+        let descriptor = JobDescriptor {
+            prepare_id: 29,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: sha256(&bytes),
+                    byte_len: EXECUTION_BLOCK_BYTES as u64,
+                },
+                manifest: ContentId::from_sha256(Digest([0x84; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 2,
+            execution_kind: ExecutionKind::FiniteDifference,
+            maximum_finite_difference_updates: 3,
+            block_count: 1,
+            first_tick: StreamTick(0),
+            initial_position: [20, -20, 0, 0, 0, 0, 0, 0],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 100,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 100,
+                    maximum_steps_per_segment: 10,
+                },
+            },
+        };
+        let report =
+            replay_cached_finite_difference_partition(&bytes, descriptor, timing()).unwrap();
+        assert_eq!(report.update_count, 3);
+        assert_eq!(report.rising_edges, [1, 0]);
+        assert_eq!(report.terminal_position, [21, -20]);
+        assert_eq!(report.terminal_tick, StreamTick(3));
+        assert_eq!(report.finish_cycle, DeviceCycle(6));
+        assert_eq!(report.output_transactions, 3);
     }
 }

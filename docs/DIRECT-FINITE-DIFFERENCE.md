@@ -1,9 +1,10 @@
 # Direct finite-difference machine IR
 
-Status: portable schema, independent admission, dense logical execution, and
-deterministic cached-partition simulation are implemented. Browser/WASM
-lowering, target output-engine composition, WCET qualification, and physical
-motion evidence remain open.
+Status: portable schema, independent admission, dense logical execution,
+deterministic cached-partition simulation, and the first browser/WASM lowering
+for exact stop-to-stop affine Hyperpath spans are implemented. Curves,
+positive-feed joins, target output-engine composition, WCET qualification, and
+physical motion evidence remain open.
 
 ## Numerical contract
 
@@ -61,13 +62,17 @@ scheduled at that update boundary. Direction and first enable changes occur at
 the record start; a falling edge occurs exactly `pulse_high_cycles` after its
 rise. All boundaries, updates, and falls lie on the configured output quantum.
 
-A final rise must leave enough time for its falling edge before the record end.
-The authoritative compiler may therefore append exact update padding; firmware
-does not silently extend a record. Direction may change between records only
-when prior pulse-low and direction-hold requirements plus the next setup time
-are all satisfied. A local asynchronous fault ignores ordinary hold timing,
-lowers every active pulse, disables every enabled axis, invalidates the cached
-token, and requires the caller to apply that safe logical transaction.
+A pulse fall may lie after a record or cached-block horizon. The single direct
+executor owns that scheduled fall independently of the coefficient record and
+combines it with later recurrence/output deadlines in exact cycle order. This
+permits a polynomial coefficient change at a physically ordinary point inside
+a pulse without inserting a false dwell. A following rise must still satisfy
+the complete pulse-low and maximum-frequency interval, and direction may
+change only after the prior fall plus direction hold and before the next setup
+interval. Normal job finish is rejected until every pending fall has actually
+been emitted. A local asynchronous fault ignores ordinary hold timing, lowers
+every active pulse, disables every enabled axis, invalidates the cached token,
+and requires the caller to apply that safe logical transaction.
 
 Every update is a real-time deadline even when it creates no output edge. This
 keeps the recurrence cost explicit and makes later timer/DMA/WCET qualification
@@ -103,21 +108,34 @@ the regression suite admits a zero-edge billion-update record without looping a
 billion times.
 
 The complete candidate block is sparse-preflighted on a private copy of current
-direction, enable, rise/fall, integer, and Q31.32 state before its first live
-record is installed. A rejection leaves live state unchanged and returns the
-unique `AdmittedBlock`. Once accepted, the token remains owned until every
-dense update and final pulse fall has occurred and terminal tick, integer
-position, and Q31.32 position all match independent job admission.
+direction, enable, scheduled rise/fall, integer, and Q31.32 state before its
+first live record is installed. A rejection leaves live state unchanged and
+returns the unique `AdmittedBlock`. Once accepted, the token remains owned until
+every dense update has occurred and terminal tick, integer position, and
+Q31.32 position all match independent job admission. Any later pulse fall is a
+small fixed executor-owned deadline, so the next contiguous block can be
+admitted without losing physical ownership; final disable still waits for that
+fall and enable hold.
 
 ## Compiler obligations and open gates
 
-The browser/WASM compiler remains authoritative for geometry and CAM. Its next
-lowering stage must:
+The browser/WASM compiler remains authoritative for geometry and CAM. The first
+implemented lowering accepts exact affine spans that stop at every element,
+rebuilds their symmetric jerk phases on the device output grid, reruns
+Hyperpath/Hypersolve certification, projects exact Newton forward differences
+through certified Hyperreal intervals to Q31.32 with ties to even, adaptively
+splits near zero velocity to preserve monotonic fixed-point records, propagates
+an exact positional-error bound, packages `ALMBLK02` partitions, and replays
+them through the production cached executor. `ALMDFE01`/`ALMDFT01` evidence
+binds source/planner identities, every interval and coefficient, propagated
+error, electrical preflight, and immutable cache identity.
 
-1. derive each polynomial time interval from exact Hyperpath/Hypersolve
-   schedule evidence rather than sampled display geometry;
-2. choose update grids and Q31.32 coefficients with a caller-bounded exact or
-   interval-certified approximation proof;
+The remaining lowering stages must:
+
+1. generalize the exact Hyperpath/Hypersolve polynomial-interval construction
+   beyond the implemented stop-to-stop affine case;
+2. extend the implemented interval-certified projection to curved spans and
+   positive-feed joins without sampling display geometry;
 3. split at every required direction change, coefficient-range boundary,
    physical timing boundary, and error-budget boundary;
 4. preserve the shared multi-MCU time model and independently replay every

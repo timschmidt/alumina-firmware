@@ -748,14 +748,18 @@ retains direction/enable state and prior rise/fall history across records and
 blocks, while exact crossing searches keep validation independent of dense job
 duration. `CachedFiniteDifferenceExecutor` privately fast-forwards the entire
 candidate block, then retains its unique token through every live recurrence
-update and final pulse fall. Release requires agreement on terminal tick,
-integer position, and the separately retained Q31.32 state.
+update and terminal numerical comparison. The executor, rather than the block,
+owns a scheduled pulse fall, so a valid pulse may cross a contiguous record or
+cached-block boundary without inserting a false dwell. Block release still
+requires agreement on terminal tick, integer position, and the separately
+retained Q31.32 state. Normal job finish remains illegal until every pending
+fall has been emitted and the configured enable-hold interval has elapsed.
 
 `alumina-sim::motion` now replays immutable `ALMBLK02` direct partitions through
 real `RealtimeJob` admission and this dense cached executor. It counts empty and
-edge-producing updates separately, acknowledges each token in order, and
-compares both terminal lattices. This is portable numerical/output-state
-evidence. The direct event stream is not yet composed into TinyBee's qualified
+edge-producing updates separately, acknowledges each token in order, drains a
+terminal cross-block pulse, and compares both terminal lattices. This is
+portable numerical/output-state evidence. The direct event stream is not yet composed into TinyBee's qualified
 PCM/DMA owner, no target timing/WCET claim is made, and every board remains
 non-armable for this path.
 
