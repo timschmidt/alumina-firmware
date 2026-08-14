@@ -371,3 +371,12 @@ a hardware qualification: board promotion still follows the evidence ladder in
   grid/ring-bound refill policy, bracketed target-call deadlines,
   interrupt-or-fallback scheduling, first-cause retention, and bit-level timely
   versus delayed-wake simulation with every target attachment closed.
+- [`M10-RUNTIME-STACK-WATERMARKS.md`](M10-RUNTIME-STACK-WATERMARKS.md) — bounded
+  partial-boot executor canary epochs, incremental convergence, fixed passive
+  health wire facts, target-only unsafe isolation, and renewed ESP artifacts.
+- [`M10-RUNTIME-HEALTH-CLIENT.md`](M10-RUNTIME-HEALTH-CLIENT.md) — independent
+  AHLT/ASWM validation, monotonic boot-scoped evidence, exact queue/headroom
+  facts, and native plus window/worker WASM fetch adapters.
+- [`M10-RUNTIME-HEALTH-WORKER-UI.md`](M10-RUNTIME-HEALTH-WORKER-UI.md) — strict
+  schema-v2 worker polling, health-specific error retention, exact live-device
+  queue/stack rendering, and signed localhost browser loss/recovery evidence.
