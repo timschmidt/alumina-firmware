@@ -316,6 +316,11 @@ durably authorized digest reaches either job actor. See the
 [configuration format](docs/CONFIGURATION.md),
 [portable configuration evidence](docs/evidence/M4-CONFIGURATION-IR.md), and
 [firmware lifecycle evidence](docs/evidence/M4-FIRMWARE-CONFIGURATION-LIFECYCLE.md).
+The permanent core-1 actor now also reuses one mutually exclusive validator/
+candidate region while retaining the separately active document, returning
+4,344 bytes of live static storage on every current target without changing a
+wire or configuration bound. See the [real-time configuration storage
+evidence](docs/evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
 
 The first portable M6 execution slice now binds cached ownership to an exact
 integer step-event trace: whole blocks are preflighted without work proportional
