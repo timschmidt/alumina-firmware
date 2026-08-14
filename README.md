@@ -45,7 +45,7 @@ and retains the report; a route containing any curve deliberately keeps the
 older conservative direction-independent limits. The schedule lowers to the
 current constant-velocity IR under a proved interpolation bound. Each exact
 ideal interval is ceiled to the configured output quantum, and a bounded exact
-rational search selects the smallest global factor whose complete stream passes
+rational search selects the smallest local factor whose complete stream passes
 the unchanged production preflight. Factor one and the immediate predecessor
 remain retained failures when headroom is required; structural failures never
 enter retiming.
@@ -58,6 +58,14 @@ subtranscripts. Exact planner/lowering structures are rebuilt from live state;
 changing caller policy changes evidence even when canonical machine bytes do
 not. Firmware does not parse this browser audit transcript and core 1 continues
 to consume only bounded independently admitted machine IR.
+The next browser boundary now also selects one exact factor across a complete
+same-grid MCU set before any immutable participant cache object exists. Every
+candidate is replayed for every MCU; selected streams are checked against their
+retained exact point carriers, independently partitioned, and committed by
+compact `ALMSYN01` over a streamed `ALMSRT01` transcript. That evidence digest
+becomes both the global synchronization identity and each participant's
+timing/error evidence in `ALMJMF01`. Firmware still parses none of these
+Hyper/browser audit formats.
 Native and WASM tests, strict lint, sibling-source and license policy, and the
 compressed production bundle pass. This remains a development checkpoint, not
 a qualified compiler release. See the [interface baseline
@@ -71,7 +79,8 @@ by the [exact affine-axis projection
 evidence](docs/evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md) and [exact
 timer-lattice evidence](docs/evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
 followed by the [canonical planner/lowering V3
-evidence](docs/evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
+evidence](docs/evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md) and [shared-MCU
+timer-retiming evidence](docs/evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
 
 The first I4 diagnostic boundary is portable and remains physically offline.
 `alumina-diagnostics` defines allocation-free bounded canonical resource
@@ -265,6 +274,12 @@ durations equal without floats; those identities feed the existing deterministic
 schedule commit directly. The interface now constructs that exact shared object
 from owned, independently replayed local cache artifacts and can give every MCU
 an independent resumable upload transaction without changing content identity.
+For exact schedule-derived jobs, the interface no longer accepts caller-owned
+duration or synchronization placeholders: it derives the common timer,
+terminal tick, and `ALMSYN01` identity after jointly minimal shared retiming and
+partition replay, then emits the manifest. V1 deliberately requires one exact
+ideal event grid, local timer frequency, and output quantum; mixed grids fail
+closed pending explicit synchronization-marker/idle semantics.
 The headless browser client now authenticates the exact origin-bound native
 route, reconciles retry-safe cache uploads, and orders every executable
 partition before the shared manifest. It also acquires conservatively widened

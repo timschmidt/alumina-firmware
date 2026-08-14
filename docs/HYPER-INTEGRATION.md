@@ -97,7 +97,7 @@ lattice. Only firmware-classified duration pressure can enter the search, and
 the selected stream plus its immediate predecessor traverse the unchanged
 production preflight. Broader work still required includes curvature-aware and
 nonlinear-kinematic projection, process limits, stop/hold replanning, PWM/FOC
-lattice planning, one shared multi-MCU retiming policy, and conservative
+lattice planning, mixed-clock/common-event-grid retiming, and conservative
 composition of later geometric and temporal certificates.
 
 For ideal interval `I_i`, factor `n/d`, device-cycle frequency `F`, and output
@@ -108,6 +108,23 @@ interval, and its grid-only padding after factor application is strictly below
 than mislabeled as spatial error. The exact electrical-ceiling regression
 selects `4158/4096`, while factor one and `4157/4096` retain distinct production
 failures.
+
+The same-grid shared policy is now implemented above immutable cache
+publication. It admits participants only when their exact cumulative ideal
+event times, timer frequency, and output quantum agree. One common rational
+factor is reconstructed for every MCU; every search candidate traverses every
+production preflight, and the selected result retains the complete ordered
+outcome trace. Hyperreal exactness therefore remains authoritative through the
+final common factor while firmware receives only selected integer ticks and
+steps.
+
+`ALMSRT01` incrementally hashes that search trace together with each
+participant's exact source/metric/approximation/planner/lowering transcript
+identities and selected machine IR. Compact `ALMSYN01` commits its digest and
+length, and the global manifest commits `ALMSYN01`. This is explicit temporal
+certificate composition, not a conversion of browser time or device clocks to
+`f64`. Different timer/output/event grids remain rejected until their common
+event and bounded-idle semantics are represented exactly.
 
 The implemented first cubic boundary retains a native exact Hypercurve source
 and constructs a separate Hyperpath metric path only after a bounded pointwise
@@ -141,7 +158,9 @@ followed by
 and
 [`evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
 then
-[`evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
+[`evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md)
+and
+[`evidence/M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
 
 ## Hypersolve's role
 

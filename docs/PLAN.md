@@ -344,6 +344,8 @@ evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
 evidence](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
 the [canonical planner/lowering V3
 evidence](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md),
+the [shared-MCU exact retiming
+evidence](evidence/M10-SHARED-MCU-TIMER-RETIMING.md),
 and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
@@ -384,9 +386,14 @@ Cartesian line routes and retains the conservative fallback for any curve.
 Alumina now ceilings every retained exact interval to the output quantum and
 selects the smallest factor on a caller-bounded rational grid whose full stream
 passes production stepper preflight; the exact ceiling regression selects
-`4158/4096` and proves `4157/4096` still fails. Curvature-aware projection,
-nonlinear kinematics, vector-jerk certification, retained blends, shared
-multi-MCU retiming, time-optimal profiles, hold/resume, and HIL remain open. See
+`4158/4096` and proves `4157/4096` still fails. The same-grid multi-MCU path now
+replays every participant at every common candidate before partition
+publication, retains the jointly minimal factor and complete predecessor
+outcomes, binds selected streams and partitions in `ALMSYN01`/`ALMSRT01`, and
+derives the final global-manifest duration/synchronization identity. Curvature-
+aware projection, nonlinear kinematics, vector-jerk certification, retained
+blends, mixed-clock/common-event-grid retiming, time-optimal profiles,
+hold/resume, and HIL remain open. See
 [`M10-EXACT-TWO-PASS-LOOKAHEAD.md`](evidence/M10-EXACT-TWO-PASS-LOOKAHEAD.md)
 and
 [`M10-EXACT-MONOTONIC-JERK.md`](evidence/M10-EXACT-MONOTONIC-JERK.md), plus
@@ -396,6 +403,8 @@ followed by
 [`M10-EXACT-TIMER-LATTICE-HEADROOM.md`](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md)
 and
 [`M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
+The same-grid shared compiler/evidence boundary is recorded in
+[`M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
@@ -525,6 +534,12 @@ future horizon and confirmed local start to the exact scheduled step executor
 behind configuration, interlock, deadline, cached-work, package, and
 physical-output qualification gates. The interface now produces the canonical
 global manifest and owned participant cache packages consumed by this protocol.
+Its schedule-derived compiler selects a jointly feasible exact factor before
+producing those packages, requires a common V1 ideal event/timer/output grid,
+production-replays every MCU at every candidate, independently replays selected
+partitions, and derives global duration plus synchronization/error evidence
+from canonical `ALMSYN01`. Mixed clocks remain a later explicit-event model
+rather than a tolerance-based extension.
 Origin-bound authenticated browser upload and retry-safe per-participant cache
 reconciliation are now implemented. A worker-capable conservative browser clock
 adapter and headless prepare/install/confirm-or-abort coordinator now enforce

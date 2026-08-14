@@ -284,3 +284,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   cache-invariant structural `Real` serialization, policy-distinguishing replay,
   bounded encoding, and renewed native/WASM/loopback evidence with every
   physical claim kept closed.
+- [`M10-SHARED-MCU-TIMER-RETIMING.md`](M10-SHARED-MCU-TIMER-RETIMING.md) — one
+  jointly minimal exact same-grid timer factor, complete all-participant search
+  replay, selected-stream/partition reconstruction, canonical
+  `ALMSYN01`/`ALMSRT01` evidence, derived global-job timing identity, and
+  native/WASM/loopback evidence with every physical claim kept closed.

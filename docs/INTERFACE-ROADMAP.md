@@ -281,6 +281,8 @@ evidence](evidence/M10-EXACT-AFFINE-AXIS-PROJECTION.md),
 evidence](evidence/M10-EXACT-TIMER-LATTICE-HEADROOM.md),
 [canonical planner/lowering V3
 evidence](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md),
+[shared-MCU exact retiming
+evidence](evidence/M10-SHARED-MCU-TIMER-RETIMING.md),
 [selected CNC import evidence](evidence/M5-UI-CNC-GEOMETRY-IMPORT.md), and
 [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
@@ -367,9 +369,14 @@ Exit:
 
 Implementation checkpoint: canonical participant packages, the identical
 global manifest, and retry-safe authenticated delivery state now reach the
-browser boundary. Conservative heartbeat acquisition works from a window or
-worker scope, and the headless coordinator implements boot-bound
-prepare/install/confirm-or-abort, precommit cancellation, exact deadline
+browser boundary. Schedule-derived packages now pass one jointly minimal exact
+same-grid timer-factor search before publication: every candidate production-
+replays every MCU, selected streams replay against exact point carriers, and
+`ALMSYN01` binds derivations, search outcomes, final IR, and partition
+identities before the compiler derives manifest duration/synchronization facts.
+Mixed clock/event grids still fail closed. Conservative heartbeat acquisition
+works from a window or worker scope, and the headless coordinator implements
+boot-bound prepare/install/confirm-or-abort, precommit cancellation, exact deadline
 classification, and read-only transition reconciliation. Worker
 creation/supervision, live multi-device clock-session ownership, redacted
 history panels, and authenticated Chromium-to-host-MCU HTTP clock tests are now

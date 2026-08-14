@@ -88,6 +88,36 @@ safety policy, and synchronization-marker identities. Storage's separately
 verified object content digest protects the complete encoded manifest; no
 self-referential digest field or alternate JSON representation exists.
 
+The authoritative browser now supplies a schedule-derived path into that same
+schema. `compile_shared_scheduled_global_job` sorts stable devices, requires a
+common exact ideal event grid/timer/output quantum, and replays every MCU's
+complete production stream at every candidate on one caller-bounded rational
+factor lattice. It selects the smallest factor accepted by all participants and
+proves the immediate predecessor is rejected by at least one; another
+participant may legitimately accept that predecessor.
+
+No immutable local cache object exists during the search. After selection, the
+browser checks every participant tick and step delta against its retained exact
+point carrier, constructs and independently replays each partition, and builds
+104-byte `ALMSYN01` over an incrementally hashed `ALMSRT01` transcript. That
+transcript binds the ordered candidate outcomes, exact upstream source/metric/
+planner/lowering identities, selected ticks/segments/preflights, and final
+partition identities. The `ALMSYN01` digest becomes both the global
+`synchronization_digest` and each participant's timing/error evidence digest
+before `ALMJMF01` is encoded.
+
+The compiler derives global timer frequency and duration from the selected
+streams; its shared-policy input requires those and the synchronization digest
+to be zero placeholders. Mixed timer/output grids or ideal event grids fail
+closed in V1. General mixed-clock support needs explicit common synchronization
+events and bounded idle insertion, not rounded-second comparison. Firmware
+parses none of the Hyperreal/browser evidence formats: it continues to admit
+only bounded partition blocks and the fixed global manifest.
+
+The implemented offline boundary and its exact adversarial/browser evidence are
+recorded in
+[`evidence/M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
+
 ## SD cache service
 
 Core 0 owns an explicit raw SD cache region and exposes authenticated APIs to:

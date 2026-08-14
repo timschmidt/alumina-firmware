@@ -684,8 +684,8 @@ span/axis inequality and bottleneck through Hypersolve. The current Cartesian
 browser compiler derives unit-direction rows for an all-line route. A route
 containing a curve retains conservative direction-independent limits and no
 affine report. Curvature-aware projection, nonlinear kinematics, retained blend
-geometry, vector-jerk-aware limits, general and time-optimal profiles, shared
-multi-MCU retiming, and hold/resume replanning remain open.
+geometry, vector-jerk-aware limits, general and time-optimal profiles,
+mixed-clock/common-event-grid retiming, and hold/resume replanning remain open.
 
 Layer 3 now ceilings each exact ideal interval to the configured output quantum
 after applying one exact rational factor. A caller-bounded binary search
@@ -693,6 +693,23 @@ rebuilds and completely replays candidates through the layer-5 production
 validator, selects the smallest admitted factor, and proves the immediate
 predecessor still fails for duration pressure. The continuous electrical-limit
 fixture selects exactly `4158/4096`; no arbitrary float margin enters the path.
+
+For a same-grid multi-MCU job, the browser now runs that construction across
+the complete participant set before immutable cache publication. V1 requires
+equal exact ideal cumulative event times, timer frequency, and output quantum.
+Every factor candidate replays every participant through the unchanged
+production validator; the smallest jointly accepted factor and complete
+immediate-predecessor outcome vector are retained. A participant may accept the
+predecessor while another supplies the rejecting bottleneck.
+
+Selected ticks and step deltas are replayed against each retained exact point
+carrier before local block construction. Independently replayed partitions are
+then committed by `ALMSYN01`/`ALMSRT01`, and the evidence digest supplies the
+global manifest synchronization and per-participant timing/error identities.
+These are browser audit formats only. Core 1 still accepts only fixed machine
+IR and never parses Hyperreal, planner, or shared-evidence transcripts.
+The reproducible checkpoint is recorded in
+[`evidence/M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
 
 The portable `alumina-motion` executor now implements the first step-only part
 of layers 5–7 without owning hardware. It validates a dense stepper profile

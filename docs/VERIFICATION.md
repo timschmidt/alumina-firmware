@@ -184,6 +184,26 @@ and per-subtranscript limits must fail closed. V3 is browser/compiler audit
 evidence; it does not replace production executor replay or permit firmware core
 1 to parse planner, Hyperreal, JSON, or source-geometry data.
 
+The first exact same-grid shared-retiming checkpoint is recorded in
+[`evidence/M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
+Its required regression set includes canonical `DeviceId` order, duplicate and
+zero identity rejection, program/profile identity agreement, exact ideal-event
+count/time agreement, common timer and output quantum, complete all-participant
+replay at every searched numerator, selected-factor acceptance by all, and
+immediate-predecessor rejection by at least one. The adversarial fixture must
+also prove that a relaxed participant may accept factor one and the predecessor
+while a strict participant alone determines the shared minimum.
+
+Selected streams must replay every tick and step delta against their retained
+exact point carriers before immutable block construction. `ALMSYN01` replay
+must bind the deterministic binary-search trace, upstream exact derivation
+digests/lengths, final ticks/segments/preflights, and independently replayed
+partition identities. The resulting digest must be the compiler-derived global
+synchronization identity and every participant's timing/error evidence in the
+canonical manifest. Reordered inputs must produce identical artifacts;
+corruption, stale caller timing fields, mixed timer/output/ideal grids, or a
+terminal mismatch must produce no global job.
+
 ### 4. Per-board compile matrix
 
 Every described board has a CI job that:
