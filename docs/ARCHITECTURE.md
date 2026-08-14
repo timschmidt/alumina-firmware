@@ -1241,6 +1241,22 @@ back if hardware completed and a subsequent logical check fails; that path must
 fault safe rather than claim atomic physical rollback. See
 [`evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md).
 
+Bank activation uses the same boundary rather than joining independently live
+axes. `PreparedServoFocBankActivation<AXES>` privately retains all per-axis
+candidates after checking nonzero distinct boot identities, exact common
+configuration/grid/PWM-period facts, fresh encoder seeds, and the complete
+neutral image vector. Only a sequence-zero, configuration-bound
+`PwmCommitBankCompletion` can construct the live bank. The public already-live
+axis join is absent. Steady-state bank publication also consumes the sealed
+completion directly, so neither transition accepts an unsealed commit array.
+
+The simulator stages both canonical MKS neutral images at the common first
+boundary before it creates either live axis. This remains modeled evidence: a
+50% neutral duty image is not an independently safe electrical state, and any
+logical failure after reported physical completion requires immediate
+qualified all-stage shutdown. See
+[`evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage

@@ -454,6 +454,14 @@ transactions latch terminally without advancing either logical controller.
 This remains a modeled acknowledgement seam rather than MCPWM readback,
 cross-timer synchronization, or rollback evidence. See
 [`M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md).
+Initial bank activation now uses that same sealed seam. One opaque candidate
+retains every validated axis and neutral image; a live bank exists only after a
+configuration-bound sequence-zero completion names the whole first-boundary
+latch set. The former public independently-activated-axis join is removed, and
+steady-state bank commit likewise accepts only the barrier's opaque completion,
+not a caller-built report array. Neutral duty is not a qualified safe state and
+the target startup/shutdown owner remains open. See
+[`M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
@@ -891,6 +899,15 @@ one-cycle lateness on axis 1 leaves both logical controllers unchanged and
 latches the barrier. The simulator reports supplied observations and therefore
 does not qualify MCPWM synchronization or physical shutdown. See
 [`M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md).
+The bank-activation checkpoint removes the remaining independent initial-latch
+path. Up to four axes are validated into one private candidate, their complete
+neutral image vector passes through a sequence-zero barrier, and only its
+configuration-bound opaque completion can construct the bank. The canonical
+dual-MKS simulator begins at cycle 80,000/sequence zero only after both modeled
+initial reports; partial, late, duplicate, substituted, foreign, or wrong-
+sequence evidence yields no live bank. This is still software/simulator
+evidence, not a safe electrical startup. See
+[`M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](evidence/M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md).
 
 Exit gate:
 
