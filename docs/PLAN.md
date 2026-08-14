@@ -522,6 +522,15 @@ layout falls by exactly 4,344 bytes in both the configuration service and
 permanent real-time task pool. See
 [`M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md`](evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
 
+The next static-memory checkpoint makes the existing exclusive motion-family
+policy structural. One inline owner now contains either the complete stepper
+executor or complete servo executor, never both, while configuration
+replacement remains transactional and every wrong-family operation remains
+closed. The classic-ESP32 `MotionService` and permanent real-time task pool
+fall by 3,288 bytes without reducing an axis, block, horizon, or output bound.
+See
+[`M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
+
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
@@ -1006,6 +1015,13 @@ and completed-candidate region inside the core-1 configuration actor. It keeps
 the separately active document and all exact protocol/configuration bounds,
 but returns 4,344 bytes to the classic-ESP32 linker residual. See
 [`M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md`](evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
+
+The following memory-hardening checkpoint replaces the simultaneously retained
+stepper and servo actors with one configuration-exclusive inline motion owner.
+It preserves transactional reconfiguration, job-family binding, and fault/
+clear behavior while returning another 3,288 bytes to the classic-ESP32 linker
+residual. See
+[`M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
 
 Exit gate:
 

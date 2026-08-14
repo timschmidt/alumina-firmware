@@ -709,10 +709,21 @@ impl ServoSetpointOutput<{ selected::JOB_AXES }> for selected::EstablishedRealti
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ActiveExecution {
-    Stepper,
-    Servo,
+/// Exactly one configuration-derived output family can exist at a time.
+///
+/// This target composition already rejects mixed stepper/FOC configurations:
+/// the stepper constructor requires no FOC axes and the servo branch requires
+/// no stepper axes. Reserving both complete executor payloads would therefore
+/// create static state that cannot be used. The selected variant remains
+/// inline and allocation-free.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the exclusive inline owner reuses fixed real-time storage without allocation"
+)]
+enum MotionOwner {
+    Empty,
+    Stepper(StepperMotionService),
+    Servo(ScheduledServoExecution<{ selected::JOB_AXES }>),
 }
 
 /// Permanent core-1 selector for kind-bound stepper or servo output ownership.
@@ -720,18 +731,22 @@ enum ActiveExecution {
 /// Configuration and job descriptors must independently agree on exactly one
 /// family. No fallback or cross-family interpretation exists.
 pub struct MotionService {
-    stepper: StepperMotionService,
-    servo: ScheduledServoExecution<{ selected::JOB_AXES }>,
-    active: Option<ActiveExecution>,
+    owner: MotionOwner,
+    active: bool,
 }
+
+const _: () = assert!(
+    core::mem::size_of::<MotionService>()
+        < core::mem::size_of::<StepperMotionService>()
+            + core::mem::size_of::<ScheduledServoExecution<{ selected::JOB_AXES }>>()
+);
 
 impl MotionService {
     /// Starts without configuration or active execution ownership.
     pub const fn new() -> Self {
         Self {
-            stepper: StepperMotionService::new(),
-            servo: ScheduledServoExecution::new(),
-            active: None,
+            owner: MotionOwner::Empty,
+            active: false,
         }
     }
 
@@ -740,35 +755,44 @@ impl MotionService {
         &mut self,
         configuration: &RealtimeConfiguration,
     ) -> Result<(), MotionServiceError> {
-        if self.active.is_some() {
+        if self.active {
             return Err(MotionServiceError::State);
         }
-        let mut stepper = StepperMotionService::new();
-        let mut servo = ScheduledServoExecution::new();
         let summary = configuration.identity().summary;
-        stepper.configure(configuration)?;
-        if summary.foc_axes != 0 {
+        let owner = if summary.foc_axes != 0 {
+            if summary.stepper_axes != 0 {
+                return Err(MotionServiceError::Configuration);
+            }
             let profile = CachedServoConfiguration::<{ selected::JOB_AXES }>::from_configuration(
                 configuration,
             )
             .map_err(|_| MotionServiceError::Configuration)?;
+            let mut servo = ScheduledServoExecution::new();
             servo
                 .configure(
                     profile,
                     selected::SERVO_MAXIMUM_COMMIT_OBSERVATION_LATENESS_CYCLES,
                 )
                 .map_err(map_servo_error)?;
-        }
-        self.stepper = stepper;
-        self.servo = servo;
+            MotionOwner::Servo(servo)
+        } else {
+            let mut stepper = StepperMotionService::new();
+            stepper.configure(configuration)?;
+            MotionOwner::Stepper(stepper)
+        };
+        self.owner = owner;
         Ok(())
     }
 
     /// Removes every executable mapping only after outputs are safe.
     pub fn clear(&mut self) {
-        self.stepper.clear();
-        self.servo.clear();
-        self.active = None;
+        match &mut self.owner {
+            MotionOwner::Stepper(stepper) => stepper.clear(),
+            MotionOwner::Servo(servo) => servo.clear(),
+            MotionOwner::Empty => {}
+        }
+        self.owner = MotionOwner::Empty;
+        self.active = false;
     }
 
     /// Whether the descriptor selects an installed and physically qualified owner.
@@ -777,14 +801,20 @@ impl MotionService {
             return false;
         };
         match descriptor.execution_kind {
-            ExecutionKind::ServoFiniteDifference => {
-                selected::PACKAGE.armable
-                    && selected::SERVO_OUTPUT_IMPLEMENTED
-                    && selected::SERVO_OUTPUT_QUALIFIED
-                    && self.servo.configured()
-                    && self.servo.configuration_digest() == Some(descriptor.config_digest)
-            }
-            ExecutionKind::Motion | ExecutionKind::FiniteDifference => self.stepper.ready_to_arm(),
+            ExecutionKind::ServoFiniteDifference => match &self.owner {
+                MotionOwner::Servo(servo) => {
+                    selected::PACKAGE.armable
+                        && selected::SERVO_OUTPUT_IMPLEMENTED
+                        && selected::SERVO_OUTPUT_QUALIFIED
+                        && servo.configured()
+                        && servo.configuration_digest() == Some(descriptor.config_digest)
+                }
+                MotionOwner::Empty | MotionOwner::Stepper(_) => false,
+            },
+            ExecutionKind::Motion | ExecutionKind::FiniteDifference => match &self.owner {
+                MotionOwner::Stepper(stepper) => stepper.ready_to_arm(),
+                MotionOwner::Empty | MotionOwner::Servo(_) => false,
+            },
         }
     }
 
@@ -802,34 +832,42 @@ impl MotionService {
         lookahead: Option<OwnedBlock>,
         observed: DeviceCycle,
     ) -> Result<(), MotionServiceError> {
-        if self.active.is_some() {
+        if self.active {
             return Err(MotionServiceError::State);
         }
-        let active = match descriptor.execution_kind {
+        match descriptor.execution_kind {
             ExecutionKind::ServoFiniteDifference => {
                 if !selected::SERVO_OUTPUT_IMPLEMENTED || !selected::SERVO_OUTPUT_QUALIFIED {
                     return Err(MotionServiceError::Unsupported);
                 }
-                self.servo
+                let MotionOwner::Servo(servo) = &mut self.owner else {
+                    return Err(MotionServiceError::Configuration);
+                };
+                servo
                     .prime(resources, descriptor, epoch, admitted, lookahead, observed)
                     .map_err(map_servo_error)?;
-                ActiveExecution::Servo
             }
-            ExecutionKind::Motion | ExecutionKind::FiniteDifference => {
-                self.stepper
-                    .prime(resources, descriptor, epoch, admitted, lookahead, observed)?;
-                ActiveExecution::Stepper
-            }
-        };
-        self.active = Some(active);
+            ExecutionKind::Motion | ExecutionKind::FiniteDifference => match &mut self.owner {
+                MotionOwner::Stepper(stepper) => {
+                    stepper.prime(resources, descriptor, epoch, admitted, lookahead, observed)?;
+                }
+                MotionOwner::Servo(_) => return Err(MotionServiceError::Unsupported),
+                MotionOwner::Empty => return Err(MotionServiceError::Configuration),
+            },
+        }
+        self.active = true;
         Ok(())
     }
 
     /// Releases the previously primed kind-bound owner.
     pub fn start(&mut self, epoch: DeviceCycle) -> Result<(), MotionServiceError> {
-        match self.active.ok_or(MotionServiceError::State)? {
-            ActiveExecution::Stepper => self.stepper.start(epoch),
-            ActiveExecution::Servo => self.servo.start(epoch).map_err(map_servo_error),
+        if !self.active {
+            return Err(MotionServiceError::State);
+        }
+        match &mut self.owner {
+            MotionOwner::Stepper(stepper) => stepper.start(epoch),
+            MotionOwner::Servo(servo) => servo.start(epoch).map_err(map_servo_error),
+            MotionOwner::Empty => Err(MotionServiceError::State),
         }
     }
 
@@ -839,13 +877,15 @@ impl MotionService {
         reason = "rejection must return unique inline block ownership"
     )]
     pub fn admit(&mut self, admitted: OwnedBlock) -> Result<(), OwnedBlock> {
-        match self.active {
-            Some(ActiveExecution::Stepper) => self.stepper.admit(admitted),
-            Some(ActiveExecution::Servo) => self
-                .servo
+        if !self.active {
+            return Err(admitted);
+        }
+        match &mut self.owner {
+            MotionOwner::Stepper(stepper) => stepper.admit(admitted),
+            MotionOwner::Servo(servo) => servo
                 .admit_block(admitted)
                 .map_err(|rejected| rejected.into_block()),
-            None => Err(admitted),
+            MotionOwner::Empty => Err(admitted),
         }
     }
 
@@ -855,19 +895,19 @@ impl MotionService {
         resources: &mut selected::EstablishedRealtimeResources,
         observed: DeviceCycle,
     ) -> Result<MotionAction, MotionServiceError> {
-        match self.active.ok_or(MotionServiceError::State)? {
-            ActiveExecution::Stepper => {
-                let action = self.stepper.poll(resources, observed)?;
+        if !self.active {
+            return Err(MotionServiceError::State);
+        }
+        match &mut self.owner {
+            MotionOwner::Stepper(stepper) => {
+                let action = stepper.poll(resources, observed)?;
                 if matches!(action, MotionAction::JobComplete) {
-                    self.active = None;
+                    self.active = false;
                 }
                 Ok(action)
             }
-            ActiveExecution::Servo => {
-                let action = self
-                    .servo
-                    .poll(resources, observed)
-                    .map_err(map_servo_error)?;
+            MotionOwner::Servo(servo) => {
+                let action = servo.poll(resources, observed).map_err(map_servo_error)?;
                 let action = match action {
                     ScheduledServoAction::Idle => MotionAction::Idle,
                     ScheduledServoAction::Future { at } => MotionAction::Future { at },
@@ -885,45 +925,63 @@ impl MotionService {
                         MotionAction::BlockComplete(admitted)
                     }
                     ScheduledServoAction::JobComplete => {
-                        self.active = None;
+                        self.active = false;
                         MotionAction::JobComplete
                     }
                 };
                 Ok(action)
             }
+            MotionOwner::Empty => Err(MotionServiceError::State),
         }
     }
 
     /// Requests the kind-specific normal terminal transaction.
     pub fn request_finish(&mut self) -> Result<(), MotionServiceError> {
-        match self.active.ok_or(MotionServiceError::State)? {
-            ActiveExecution::Stepper => self.stepper.request_finish(),
-            ActiveExecution::Servo => self.servo.request_finish().map_err(map_servo_error),
+        if !self.active {
+            return Err(MotionServiceError::State);
+        }
+        match &mut self.owner {
+            MotionOwner::Stepper(stepper) => stepper.request_finish(),
+            MotionOwner::Servo(servo) => servo.request_finish().map_err(map_servo_error),
+            MotionOwner::Empty => Err(MotionServiceError::State),
         }
     }
 
     /// Invalidates all pending tokens after the caller synchronously made outputs safe.
     pub fn fault(&mut self, at: DeviceCycle) -> Result<(), MotionServiceError> {
-        let stepper = self.stepper.fault(at);
-        self.servo.fault();
-        self.active = None;
-        stepper
+        let result = match &mut self.owner {
+            MotionOwner::Stepper(stepper) => stepper.fault(at),
+            MotionOwner::Servo(servo) => {
+                servo.fault();
+                Ok(())
+            }
+            MotionOwner::Empty => Ok(()),
+        };
+        self.active = false;
+        result
     }
 
     /// Next exact generation or setpoint-commit deadline.
     pub fn next_deadline(&self) -> Option<DeviceCycle> {
-        match self.active? {
-            ActiveExecution::Stepper => self.stepper.next_deadline(),
-            ActiveExecution::Servo => self.servo.next_deadline(),
+        if !self.active {
+            return None;
+        }
+        match &self.owner {
+            MotionOwner::Stepper(stepper) => stepper.next_deadline(),
+            MotionOwner::Servo(servo) => servo.next_deadline(),
+            MotionOwner::Empty => None,
         }
     }
 
     /// Whether the selected owner has entered its released job lifecycle.
     pub fn started(&self) -> bool {
-        match self.active {
-            Some(ActiveExecution::Stepper) => self.stepper.started(),
-            Some(ActiveExecution::Servo) => self.servo.started(),
-            None => false,
+        if !self.active {
+            return false;
+        }
+        match &self.owner {
+            MotionOwner::Stepper(stepper) => stepper.started(),
+            MotionOwner::Servo(servo) => servo.started(),
+            MotionOwner::Empty => false,
         }
     }
 }

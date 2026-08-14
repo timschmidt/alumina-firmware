@@ -1349,6 +1349,19 @@ validation rule. On the classic ESP32 release layout it reduces
 exactly 4,344 bytes. See
 [`evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md`](evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
 
+The permanent motion selector likewise reserves only one executable family.
+The current composition has always rejected mixed stepper/FOC configurations;
+`MotionOwner` now represents that policy directly as `Empty`, `Stepper`, or
+`Servo` instead of retaining both complete executors beside a redundant family
+tag. Reconfiguration still prepares a complete replacement before atomically
+replacing the prior idle owner. Prime, start, admit, poll, finish, fault, clear,
+deadline, and arm-readiness operations dispatch only to the selected variant,
+and wrong-family jobs remain fail-closed. On classic ESP32,
+`MotionService` falls from 10,288 to 7,000 bytes and the permanent real-time
+task pool falls by 3,288 bytes. No target implementation or qualification gate
+changes. See
+[`evidence/M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage
