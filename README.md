@@ -399,6 +399,15 @@ marker, exact SLogic16U3 probe/photo requirements, bounded VCD reconstruction,
 and a digest-bound run-record replay without flashing or qualifying hardware.
 See the
 [capture-contract evidence](docs/evidence/M6-TINYBEE-SLOGIC-CAPTURE-CONTRACT.md).
+The portable DMA owner now also records the complete static-safe-to-stream
+lifecycle. An identical safe ring and successful HAL start permit safe-only
+refill; motion images remain forbidden until an independent first safe latch
+establishes the exact grid. Stop destroys all tags, software safe rewrite is
+not confused with physical reclaim, and first cause survives recovery. The
+bit-level simulator passes through that gate, while the HIL-only TinyBee image
+deliberately stops at an unobserved safe rewrite. Production still uses the
+static writer and rejects streaming. See the
+[static/stream handoff evidence](docs/evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md).
 
 The first M8 portable FOC slice is also implemented without creating a hardware
 drive path. A new no-std crate carries exact Q2.30 points and outward intervals,

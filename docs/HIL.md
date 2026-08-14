@@ -89,8 +89,9 @@ the circular transfer is live:
    250 kHz, with a two-second fail-closed timeout; and
 3. `HIL_PCM_STOPPED`: after DMA stop and two further safe samples, the artifact
    reports the hypothesized model epoch, device-cycle bracket around the HAL
-   start call, refill outcome, stop bracket, and safe-rewrite result, then parks
-   without starting other services.
+   start call, refill outcome, stop/rewrite brackets, safe-rewrite result, and
+   portable owner state/fault/reclaim facts, then parks without starting other
+   services.
 
 D3 rises immediately before the HAL circular-start call and falls immediately
 after the stop call returns. After a 1 ms low gap, it emits a self-delimiting
@@ -101,9 +102,18 @@ the safe rewrite failed, and code 32 means start failed. A pass requires code
 1. The marker only brackets software calls; physical WS/BCLK remains the
 authority for start and stop timing.
 
-The model epoch is a hypothesis, not a physical timestamp. Correlate it with the
-captured first WS edge; do not promote it merely because the refill loop
-completed.
+The model epoch is the cycle read immediately before the HAL start call and is
+required to lie inside its reported return interval. It remains a hypothesis,
+not a physical timestamp. Correlate it with the captured first WS edge; do not
+promote it merely because the refill loop completed.
+
+A successful safe-only software run reports owner state `SafeRewriteIssued`, no
+owner fault, and `safe_reclaimed=false`. That false value is required: the two
+one-shot samples crossed the HAL API, but software has no independent post-stop
+latch observation. Likewise the live loop remains `StartIssued`, where the
+portable owner permits safe refills but would reject every motion image. The VCD
+and review record, not the firmware log, decide whether the first and final safe
+images were physically latched.
 
 ### Required review
 
@@ -121,8 +131,9 @@ Archive and review at least these facts:
 - reset/brownout behavior in a separate safe fixture before any load is attached.
 
 `HIL_RESULT capture complete` means only that the software refill loop, DMA stop,
-and safe rewrite returned success. It is not a waveform verdict. Attach the raw
-capture and review record before changing `MOTION_OUTPUT_QUALIFIED`, package
+safe rewrite, and portable ownership transitions returned success. It is not a
+waveform verdict and deliberately does not reach `PeripheralSafe`. Attach the
+raw capture and review record before changing `MOTION_OUTPUT_QUALIFIED`, package
 armability, timing limits, or any machine configuration.
 
 This safe-only pattern may contribute evidence to

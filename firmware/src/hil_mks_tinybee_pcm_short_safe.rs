@@ -19,6 +19,7 @@ mod hardware;
 mod storage;
 
 use alumina_protocol::DeviceCycle;
+use alumina_shift_register::{PcmShortDmaStreamState, PcmShortOperationWindow};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
@@ -131,27 +132,78 @@ async fn main(_spawner: Spawner) -> ! {
             park().await
         }
     };
-    let hypothesized_epoch = DeviceCycle(Instant::now().as_ticks());
-    let mut horizon = match pcm.new_horizon(hypothesized_epoch) {
-        Ok(horizon) => horizon,
-        Err(_) => {
-            error!("HIL_ABORT portable safe horizon construction failed");
-            park().await
-        }
-    };
+    let ring_prepared_at = DeviceCycle(Instant::now().as_ticks());
 
-    let start_call_before = Instant::now().as_ticks();
     capture_marker.set_high();
-    let mut transfer = match pcm.start_safe_capture() {
-        Ok(transfer) => transfer,
+    // The exact hypothesized epoch is the lower bound read immediately before
+    // the synchronous HAL start call. Only the analyzer can decide whether
+    // physical WS realized this model. Static safe establishment preceded
+    // timebase start and is therefore recorded no later than device cycle zero.
+    let start_call_before = Instant::now().as_ticks();
+    let hypothesized_epoch = DeviceCycle(start_call_before);
+    let (mut transfer, start_call_after, mut owner) = match pcm.start_safe_capture() {
+        Ok(transfer) => {
+            let start_call_after = Instant::now().as_ticks();
+            let mut owner = match mks_tinybee::pcm_short::UnqualifiedPcmShortResources::new_owner(
+                DeviceCycle(0),
+                ring_prepared_at,
+                hypothesized_epoch,
+            ) {
+                Ok(owner) => owner,
+                Err(_) => {
+                    let _ = transfer.stop();
+                    capture_marker.set_low();
+                    emit_marker_report(&mut capture_marker, MARKER_START_FAILURE).await;
+                    error!("HIL_ABORT portable static/stream owner construction failed");
+                    park().await
+                }
+            };
+            if owner
+                .record_start_call(
+                    PcmShortOperationWindow {
+                        began_at: start_call_before,
+                        returned_at: start_call_after,
+                    },
+                    true,
+                )
+                .is_err()
+            {
+                let _ = transfer.stop();
+                capture_marker.set_low();
+                emit_marker_report(&mut capture_marker, MARKER_START_FAILURE).await;
+                error!("HIL_ABORT portable owner rejected the HAL start interval");
+                park().await
+            }
+            (transfer, start_call_after, owner)
+        }
         Err(_) => {
+            let start_call_after = Instant::now().as_ticks();
+            let mut owner = match mks_tinybee::pcm_short::UnqualifiedPcmShortResources::new_owner(
+                DeviceCycle(0),
+                ring_prepared_at,
+                hypothesized_epoch,
+            ) {
+                Ok(owner) => owner,
+                Err(_) => {
+                    capture_marker.set_low();
+                    emit_marker_report(&mut capture_marker, MARKER_START_FAILURE).await;
+                    error!("HIL_ABORT portable static/stream owner construction failed");
+                    park().await
+                }
+            };
+            let _ = owner.record_start_call(
+                PcmShortOperationWindow {
+                    began_at: start_call_before,
+                    returned_at: start_call_after,
+                },
+                false,
+            );
             capture_marker.set_low();
             emit_marker_report(&mut capture_marker, MARKER_START_FAILURE).await;
             error!("HIL_ABORT circular safe transfer did not start");
             park().await
         }
     };
-    let start_call_after = Instant::now().as_ticks();
 
     // No RTT logging or await point is permitted while the short physical ring
     // is live. Report every start fact only after the transfer has stopped.
@@ -171,11 +223,18 @@ async fn main(_spawner: Spawner) -> ! {
                 Ok(available) => available,
                 Err(_) => break 'capture CaptureExit::Availability,
             };
-        if horizon.synchronize_refill_availability(available).is_err() {
+        if owner.synchronize_refill_availability(available).is_err() {
             break 'capture CaptureExit::AvailabilityModel;
         }
-        while horizon.refill_credit_frames() != 0 {
-            let frame = match horizon.next_refill_frame() {
+        loop {
+            let credit = match owner.refill_credit_frames() {
+                Ok(credit) => credit,
+                Err(_) => break 'capture CaptureExit::AvailabilityModel,
+            };
+            if credit == 0 {
+                break;
+            }
+            let frame = match owner.next_refill_frame() {
                 Ok(Some(frame)) => frame,
                 Ok(None) | Err(_) => break 'capture CaptureExit::FrameModel,
             };
@@ -187,7 +246,7 @@ async fn main(_spawner: Spawner) -> ! {
             {
                 break 'capture CaptureExit::TargetPush;
             }
-            if horizon.accept_refill(frame).is_err() {
+            if owner.accept_refill(frame).is_err() {
                 break 'capture CaptureExit::AcceptanceModel;
             }
             accepted_refills = match accepted_refills.checked_add(1) {
@@ -197,12 +256,40 @@ async fn main(_spawner: Spawner) -> ! {
         }
     };
 
+    let sealed_horizon = owner.sealed_horizon().unwrap_or(0);
     let stop_call_before = Instant::now().as_ticks();
-    let stop_ok = transfer.stop().is_ok();
+    let hal_stop_ok = transfer.stop().is_ok();
     capture_marker.set_low();
     let stop_call_after = Instant::now().as_ticks();
-    let rewrite_ok = pcm.rewrite_safe_pipeline().is_ok();
-    let sealed_horizon = horizon.sealed_horizon().unwrap_or(0);
+    let owner_stop_ok = owner
+        .record_stop_call(
+            PcmShortOperationWindow {
+                began_at: stop_call_before,
+                returned_at: stop_call_after,
+            },
+            hal_stop_ok,
+        )
+        .is_ok();
+    let stop_ok = hal_stop_ok && owner_stop_ok;
+    let rewrite_call_before = Instant::now().as_ticks();
+    let hal_rewrite_ok = pcm.rewrite_safe_pipeline().is_ok();
+    let rewrite_call_after = Instant::now().as_ticks();
+    let safe_image = owner.safe_image();
+    let owner_rewrite_ok = owner
+        .record_safe_rewrite(
+            PcmShortOperationWindow {
+                began_at: rewrite_call_before,
+                returned_at: rewrite_call_after,
+            },
+            safe_image,
+            2,
+            hal_rewrite_ok,
+        )
+        .is_ok();
+    let rewrite_ok = hal_rewrite_ok
+        && owner_rewrite_ok
+        && owner.state() == PcmShortDmaStreamState::SafeRewriteIssued
+        && owner.fault().is_none();
     let report = CaptureReport {
         exit,
         accepted_refills,
@@ -211,7 +298,7 @@ async fn main(_spawner: Spawner) -> ! {
     let marker_code = report.marker_code(stop_ok, rewrite_ok);
     emit_marker_report(&mut capture_marker, marker_code).await;
     info!(
-        "HIL_PCM_STOPPED model_epoch={} start_before={} start_after={} frames={} rate_hz={} report={} stop_before={} stop_after={} stop_ok={} safe_rewrite_ok={} marker_code={}",
+        "HIL_PCM_STOPPED model_epoch={} start_before={} start_after={} frames={} rate_hz={} report={} stop_before={} stop_after={} stop_ok={} rewrite_before={} rewrite_after={} safe_rewrite_ok={} owner_state={:?} owner_fault={:?} safe_reclaimed={} marker_code={}",
         hypothesized_epoch.0,
         start_call_before,
         start_call_after,
@@ -221,7 +308,12 @@ async fn main(_spawner: Spawner) -> ! {
         stop_call_before,
         stop_call_after,
         stop_ok,
+        rewrite_call_before,
+        rewrite_call_after,
         rewrite_ok,
+        defmt::Debug2Format(&owner.state()),
+        defmt::Debug2Format(&owner.fault()),
+        owner.safe_reclaimed(),
         marker_code
     );
     if !matches!(exit, CaptureExit::Complete) || !stop_ok || !rewrite_ok {

@@ -307,3 +307,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   descriptor-bound fixed-memory ordinary/direct selection in the permanent
   core-1 actor, explicit open-boundary and terminal-tail ownership, and renewed
   host/ESP build evidence with all peripheral and energization claims closed.
+- [`M10-STATIC-SAFE-STREAM-HANDOFF.md`](M10-STATIC-SAFE-STREAM-HANDOFF.md) —
+  fixed static-safe/prefill/start-observation/stream/stop/reclaim ownership,
+  observed-safe motion gating, bit-level replay, and compile-only TinyBee HIL
+  adoption with every production and physical claim closed.

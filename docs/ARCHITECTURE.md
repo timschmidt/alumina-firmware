@@ -878,15 +878,31 @@ returns each block at its independent commit-count barrier. This proves bounded
 cross-block circular ownership and ordering in software; it does not equate a
 DMA descriptor EOF with WS or qualify an ESP32 interrupt.
 
+`PcmShortDmaStreamOwner` now places that dense horizon inside an explicit
+static/stream/reclaim lifecycle. It begins with a separately established
+complete static safe image, accepts a DMA ring only when every reported slot is
+prefilled with that identical image, and binds the hypothesized grid epoch to
+the target start-call interval. A successful HAL return grants safe-frame
+refill only. Sparse motion staging remains a latching error until an independent
+first-latch observation finds the safe image at exact grid boundary one. Stop
+immediately invalidates every retained tag; two accepted safe rewrite samples
+move only to `SafeRewriteIssued`, and an independent post-stop safe-image latch
+is still required for `PeripheralSafe`. First cause survives successful stop
+and reclaim. The circular-DMA/bit-level simulator now enters motion only through
+this observed-safe transition. This remains portable ownership evidence, not a
+qualified target observation source. See
+[`evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md`](evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md).
+
 The first target-facing fixture is a separate TinyBee safe-image-only binary,
 not a feature path through production firmware. It establishes the static safe
 transaction first, never initializes Wi-Fi/storage/motion/the second core,
 brackets the I²S start call in the local cycle domain, refills 50,000 exact safe
-frames through the portable owner, explicitly stops the transfer, rewrites two
-safe samples, and parks. Its `xtask` command is build-only. Because the unknown
-first-frame phase is the subject of the capture, disconnected loads and manual
-waveform review remain mandatory; a successful software report cannot promote
-the board.
+frames through the lifecycle while it remains `StartIssued`, explicitly stops
+the transfer, records two safe samples as `SafeRewriteIssued`, and parks. It
+cannot call either physical-observation transition. Its `xtask` command is
+build-only. Because the unknown first-frame and reclaim phase are the subject
+of the capture, disconnected loads and manual waveform review remain mandatory;
+a successful software report cannot promote the board.
 
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The

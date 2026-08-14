@@ -273,7 +273,8 @@ mod tests {
     };
     use alumina_protocol::{DeviceCycle, Digest};
     use alumina_shift_register::{
-        BitOrder, CompleteImage, PcmShortDmaHorizon, PcmShortFrameGrid, PcmShortTimeline,
+        BitOrder, CompleteImage, PcmShortDmaHorizon, PcmShortDmaStreamOwner,
+        PcmShortDmaStreamState, PcmShortFrameGrid, PcmShortOperationWindow, PcmShortTimeline,
         ScheduledCompleteImage, TaggedScheduledCompleteImage,
     };
     use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
@@ -898,7 +899,18 @@ mod tests {
         let grid = PcmShortFrameGrid::new(96, 1_000_000, 250_000).unwrap();
         let mut bootstrap = PcmShortTimeline::<0>::new(grid, SAFE).unwrap();
         let mut wire = SimPcmShortLatch::new(grid, SAFE).unwrap();
-        let mut dma = PcmShortDmaHorizon::<_, 8, 4>::new(grid, SAFE).unwrap();
+        let mut dma = PcmShortDmaStreamOwner::<_, 8, 4>::new(SAFE, 90).unwrap();
+        dma.prepare_safe_ring(grid, SAFE, 4, 94).unwrap();
+        dma.record_start_call(
+            PcmShortOperationWindow {
+                began_at: 95,
+                returned_at: 97,
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(dma.state(), PcmShortDmaStreamState::StartIssued);
+        assert!(!dma.motion_authorized());
         let (mut job, admitted) = admitted_motion_block();
         let mut runner =
             ScheduledShiftedStepper::<3, 8>::new(shifted_profile(), shifted_contract()).unwrap();
@@ -913,6 +925,25 @@ mod tests {
         );
         assert_eq!(runner.planned_finish_cycle(), Ok(DeviceCycle(160)));
         let finish = runner.schedule_planned_finish(DeviceCycle(160)).unwrap();
+
+        // The external static-safe transaction and DMA prefill populate all
+        // four physical slots before start. The first independently decoded
+        // safe latch establishes the exact continuous grid before motion can
+        // enter the released slot.
+        let mut physical_ring = VecDeque::new();
+        for _ in 0..4 {
+            physical_ring.push_back(bootstrap.next_frame().unwrap());
+        }
+        assert_eq!(dma.sealed_horizon(), Ok(112));
+        let first_safe = wire
+            .consume_frame(physical_ring.pop_front().unwrap())
+            .unwrap();
+        assert_eq!(first_safe.latch_cycle, 100);
+        assert_eq!(first_safe.image, SAFE);
+        dma.observe_first_stream_latch(first_safe.latch_cycle, first_safe.image)
+            .unwrap();
+        assert_eq!(dma.state(), PcmShortDmaStreamState::StreamObserved);
+        assert!(dma.motion_authorized());
 
         let mut outputs = Vec::new();
         while let Some(output) = runner.next_unstaged_output() {
@@ -931,12 +962,15 @@ mod tests {
         assert_eq!(outputs.len(), 6);
         assert_eq!(outputs.last().copied(), Some(finish));
 
-        // The external safe transaction populated all four physical slots.
-        let mut physical_ring = VecDeque::new();
-        for _ in 0..4 {
-            physical_ring.push_back(bootstrap.next_frame().unwrap());
-        }
-        assert_eq!(dma.sealed_horizon(), Ok(112));
+        // Refill the slot released by the observed startup frame only after
+        // motion staging. It therefore materializes the first image at cycle
+        // 116 rather than extending an all-safe horizon over that deadline.
+        dma.synchronize_refill_availability(1).unwrap();
+        let first_refill = dma.next_refill_frame().unwrap().unwrap();
+        assert_eq!(first_refill.transmit_index, 4);
+        assert_eq!(first_refill.commits_at, 116);
+        dma.accept_refill(first_refill).unwrap();
+        physical_ring.push_back(first_refill);
 
         let mut final_disable_observed = false;
         let mut returned_block = None;

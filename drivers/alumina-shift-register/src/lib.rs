@@ -890,6 +890,677 @@ pub enum PcmShortDmaHorizonError {
     FaultLatched,
 }
 
+/// Monotonic ownership state around a safe-prefilled PCM-short DMA stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaStreamState {
+    /// A complete safe image is owned by the separate static transport.
+    StaticSafe,
+    /// The future peripheral ring is completely prefilled with that same safe
+    /// image, but the stream has not been started.
+    PreparedSafe,
+    /// The target reported a successful start call, but no physical latch has
+    /// yet established the modeled frame grid.
+    StartIssued,
+    /// The first expected safe latch was independently observed, so future
+    /// motion images may enter the continuous owner.
+    StreamObserved,
+    /// The start call failed or its result is otherwise physically uncertain.
+    StartUncertain,
+    /// The target reported that the circular transfer stopped.
+    Stopped,
+    /// The stop call failed or its result is otherwise physically uncertain.
+    StopUncertain,
+    /// At least two complete safe samples were accepted after stop, but their
+    /// physical latch has not yet been observed.
+    SafeRewriteIssued,
+    /// The post-stop safe rewrite failed or its result is uncertain.
+    SafeRewriteUncertain,
+    /// A post-stop physical observation established the complete safe image.
+    PeripheralSafe,
+}
+
+/// Lower and upper device-cycle observations around one synchronous target
+/// operation. Hardware may act at any cycle inside the closed interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortOperationWindow {
+    /// Cycle observed immediately before entering the target operation.
+    pub began_at: u64,
+    /// Cycle observed immediately after the operation returned.
+    pub returned_at: u64,
+}
+
+/// Fail-closed static/stream/reclaim ownership error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaStreamError {
+    /// The complete safe image could not be represented by PCM-short.
+    Image(PcmShortFrameError),
+    /// An operation was not legal in the retained ownership state.
+    State { state: PcmShortDmaStreamState },
+    /// A purported safe prefill, first latch, or rewrite used another image.
+    SafeImageMismatch {
+        expected: CompleteImage,
+        received: CompleteImage,
+    },
+    /// The target's prefilled frame count did not equal the fixed ring shape.
+    PrefillFrames { expected: usize, received: usize },
+    /// A device-cycle observation moved backward relative to prior ownership.
+    ObservationOrder { prior: u64, received: u64 },
+    /// The modeled stream epoch did not fall inside the target start call.
+    StartEpochOutsideWindow {
+        epoch: u64,
+        began_at: u64,
+        returned_at: u64,
+    },
+    /// The first observed stream latch was not the modeled first frame commit.
+    FirstLatch { expected: u64, received: u64 },
+    /// The target did not report a successful stream start.
+    StartFailed,
+    /// The target did not report a successful circular-transfer stop.
+    StopFailed,
+    /// Fewer than the two samples needed to refill the modeled pipeline were
+    /// accepted by the post-stop safe rewrite.
+    SafeRewriteFrames { received: usize },
+    /// The target did not report a successful post-stop safe rewrite.
+    SafeRewriteFailed,
+    /// The contained dense-horizon owner failed.
+    Horizon(PcmShortDmaHorizonError),
+    /// Internal optional state disagreed with the public lifecycle state.
+    InternalState,
+    /// A separate peripheral or safety owner invalidated the stream.
+    ExternalFault,
+    /// A prior first-cause fault remains retained.
+    FaultLatched,
+}
+
+/// Fixed-memory owner that joins static-safe handoff, a continuous dense DMA
+/// horizon, physical start authority, and post-stop safe reclaim.
+///
+/// Construction records only the separately established static image. A
+/// target must then prove that every physical DMA slot contains that identical
+/// image before starting. Safe-only refills are permitted after a successful
+/// start call, but sparse motion images remain forbidden until the first safe
+/// physical latch establishes the exact frame grid. Stop invalidates all
+/// retained tags immediately. A successful software rewrite is still not a
+/// safe-output observation; reclaim completes only after an independent latch
+/// report names the complete safe image.
+pub struct PcmShortDmaStreamOwner<TAG, const UPDATES: usize, const FRAMES: usize>
+where
+    TAG: Copy + Eq,
+{
+    safe_image: CompleteImage,
+    state: PcmShortDmaStreamState,
+    static_safe_at: u64,
+    prepared_at: Option<u64>,
+    grid: Option<PcmShortFrameGrid>,
+    start_call: Option<PcmShortOperationWindow>,
+    first_stream_latch: Option<u64>,
+    stop_call: Option<PcmShortOperationWindow>,
+    safe_rewrite_call: Option<PcmShortOperationWindow>,
+    safe_reclaim_latch: Option<u64>,
+    horizon: Option<PcmShortDmaHorizon<TAG, UPDATES, FRAMES>>,
+    fault: Option<PcmShortDmaStreamError>,
+}
+
+impl<TAG, const UPDATES: usize, const FRAMES: usize> PcmShortDmaStreamOwner<TAG, UPDATES, FRAMES>
+where
+    TAG: Copy + Eq,
+{
+    /// Retains the complete image already established by a separate static
+    /// transaction. No peripheral ring ownership is claimed yet.
+    pub fn new(
+        safe_image: CompleteImage,
+        static_safe_at: u64,
+    ) -> Result<Self, PcmShortDmaStreamError> {
+        PcmShortMonoFrame::new(safe_image).map_err(PcmShortDmaStreamError::Image)?;
+        Ok(Self {
+            safe_image,
+            state: PcmShortDmaStreamState::StaticSafe,
+            static_safe_at,
+            prepared_at: None,
+            grid: None,
+            start_call: None,
+            first_stream_latch: None,
+            stop_call: None,
+            safe_rewrite_call: None,
+            safe_reclaim_latch: None,
+            horizon: None,
+            fault: None,
+        })
+    }
+
+    /// Records complete safe prefill of the exact future DMA ring.
+    pub fn prepare_safe_ring(
+        &mut self,
+        grid: PcmShortFrameGrid,
+        prefilled_image: CompleteImage,
+        prefilled_frames: usize,
+        completed_at: u64,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        self.ensure_unfaulted()?;
+        if self.state != PcmShortDmaStreamState::StaticSafe {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        if prefilled_image != self.safe_image {
+            return self.fail(PcmShortDmaStreamError::SafeImageMismatch {
+                expected: self.safe_image,
+                received: prefilled_image,
+            });
+        }
+        if prefilled_frames != FRAMES {
+            return self.fail(PcmShortDmaStreamError::PrefillFrames {
+                expected: FRAMES,
+                received: prefilled_frames,
+            });
+        }
+        if completed_at < self.static_safe_at {
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: self.static_safe_at,
+                received: completed_at,
+            });
+        }
+        if grid.epoch_cycle() < completed_at {
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: completed_at,
+                received: grid.epoch_cycle(),
+            });
+        }
+        let horizon = match PcmShortDmaHorizon::new(grid, self.safe_image) {
+            Ok(horizon) => horizon,
+            Err(error) => return self.fail(PcmShortDmaStreamError::Horizon(error)),
+        };
+        self.horizon = Some(horizon);
+        self.grid = Some(grid);
+        self.prepared_at = Some(completed_at);
+        self.state = PcmShortDmaStreamState::PreparedSafe;
+        Ok(())
+    }
+
+    /// Records the bounded synchronous call that started the safe-prefilled
+    /// circular transfer.
+    pub fn record_start_call(
+        &mut self,
+        window: PcmShortOperationWindow,
+        succeeded: bool,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        // This method is called after the target operation returns. Once it is
+        // entered, even malformed model state cannot prove that the peripheral
+        // stayed stopped. Retain the call interval and move to the stoppable
+        // uncertain state on every validation failure.
+        let prior_state = self.state;
+        self.start_call = Some(window);
+        if self.fault.is_some() {
+            self.state = PcmShortDmaStreamState::StartUncertain;
+            if let Some(horizon) = self.horizon.as_mut() {
+                horizon.invalidate();
+            }
+            return Err(PcmShortDmaStreamError::FaultLatched);
+        }
+        if prior_state != PcmShortDmaStreamState::PreparedSafe {
+            self.state = PcmShortDmaStreamState::StartUncertain;
+            return self.fail(PcmShortDmaStreamError::State { state: prior_state });
+        }
+        let prepared_at = match self.prepared_at {
+            Some(prepared_at) => prepared_at,
+            None => {
+                self.state = PcmShortDmaStreamState::StartUncertain;
+                return self.fail(PcmShortDmaStreamError::InternalState);
+            }
+        };
+        if window.began_at < prepared_at {
+            self.state = PcmShortDmaStreamState::StartUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: prepared_at,
+                received: window.began_at,
+            });
+        }
+        if window.returned_at < window.began_at {
+            self.state = PcmShortDmaStreamState::StartUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: window.began_at,
+                received: window.returned_at,
+            });
+        }
+        let epoch = match self.grid {
+            Some(grid) => grid.epoch_cycle(),
+            None => {
+                self.state = PcmShortDmaStreamState::StartUncertain;
+                return self.fail(PcmShortDmaStreamError::InternalState);
+            }
+        };
+        if epoch < window.began_at || epoch > window.returned_at {
+            self.state = PcmShortDmaStreamState::StartUncertain;
+            return self.fail(PcmShortDmaStreamError::StartEpochOutsideWindow {
+                epoch,
+                began_at: window.began_at,
+                returned_at: window.returned_at,
+            });
+        }
+        if succeeded {
+            self.state = PcmShortDmaStreamState::StartIssued;
+            Ok(())
+        } else {
+            self.state = PcmShortDmaStreamState::StartUncertain;
+            self.fail(PcmShortDmaStreamError::StartFailed)
+        }
+    }
+
+    /// Establishes the stream grid only after the first expected safe image is
+    /// independently observed at its physical latch.
+    pub fn observe_first_stream_latch(
+        &mut self,
+        at: u64,
+        image: CompleteImage,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        self.ensure_unfaulted()?;
+        if self.state != PcmShortDmaStreamState::StartIssued {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        if image != self.safe_image {
+            return self.fail(PcmShortDmaStreamError::SafeImageMismatch {
+                expected: self.safe_image,
+                received: image,
+            });
+        }
+        let grid = match self.grid {
+            Some(grid) => grid,
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        let expected = match grid.boundary_cycle(1) {
+            Ok(expected) => expected,
+            Err(error) => {
+                return self.fail(PcmShortDmaStreamError::Horizon(
+                    PcmShortDmaHorizonError::Grid(error),
+                ));
+            }
+        };
+        if at != expected {
+            return self.fail(PcmShortDmaStreamError::FirstLatch {
+                expected,
+                received: at,
+            });
+        }
+        let observation = match self.horizon.as_mut() {
+            Some(horizon) => horizon.observe_latches_through(at),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        if let Err(error) = observation {
+            return self.fail(PcmShortDmaStreamError::Horizon(error));
+        }
+        self.first_stream_latch = Some(at);
+        self.state = PcmShortDmaStreamState::StreamObserved;
+        Ok(())
+    }
+
+    /// Queues a sparse image only after physical safe-stream authority exists.
+    pub fn stage(
+        &mut self,
+        update: TaggedScheduledCompleteImage<TAG>,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        self.require_motion_authority()?;
+        let result = match self.horizon.as_mut() {
+            Some(horizon) => horizon.stage(update),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Reconciles whole-frame release credits while the target stream is live.
+    /// Before physical start observation, only the original safe timeline can
+    /// exist because [`Self::stage`] remains closed.
+    pub fn synchronize_refill_availability(
+        &mut self,
+        available_frames: usize,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        self.require_safe_refill_authority()?;
+        let result = match self.horizon.as_mut() {
+            Some(horizon) => horizon.synchronize_refill_availability(available_frames),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Previews the next dense frame without extending the hardware horizon.
+    pub fn next_refill_frame(
+        &mut self,
+    ) -> Result<Option<PlannedPcmShortFrame>, PcmShortDmaStreamError> {
+        self.require_safe_refill_authority()?;
+        let result = match self.horizon.as_mut() {
+            Some(horizon) => horizon.next_refill_frame(),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Confirms exact target acceptance of the previously previewed frame.
+    pub fn accept_refill(
+        &mut self,
+        frame: PlannedPcmShortFrame,
+    ) -> Result<u64, PcmShortDmaStreamError> {
+        self.require_safe_refill_authority()?;
+        let result = match self.horizon.as_mut() {
+            Some(horizon) => horizon.accept_refill(frame),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Installs a monotonic physical latch observation after the safe first
+    /// stream latch has established authority.
+    pub fn observe_latches_through(&mut self, through: u64) -> Result<(), PcmShortDmaStreamError> {
+        self.require_motion_authority()?;
+        let result = match self.horizon.as_mut() {
+            Some(horizon) => horizon.observe_latches_through(through),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Returns one target tag only after materialization and physical latch
+    /// observation under the established stream grid.
+    pub fn take_commit(
+        &mut self,
+    ) -> Result<Option<PcmShortCommitObservation<TAG>>, PcmShortDmaStreamError> {
+        self.require_motion_authority()?;
+        let result = match self.horizon.as_mut() {
+            Some(horizon) => horizon.take_commit(),
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Records a target stop call and immediately invalidates every future tag.
+    /// Recovery remains legal after an earlier fault so the caller can still
+    /// make a best-effort safe transition without erasing first cause.
+    pub fn record_stop_call(
+        &mut self,
+        window: PcmShortOperationWindow,
+        succeeded: bool,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        if !matches!(
+            self.state,
+            PcmShortDmaStreamState::StartIssued
+                | PcmShortDmaStreamState::StreamObserved
+                | PcmShortDmaStreamState::StartUncertain
+        ) {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        let start = match self.start_call {
+            Some(window) => window,
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        if let Some(horizon) = self.horizon.as_mut() {
+            horizon.invalidate();
+        }
+        self.stop_call = Some(window);
+        if window.began_at < start.returned_at {
+            self.state = PcmShortDmaStreamState::StopUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: start.returned_at,
+                received: window.began_at,
+            });
+        }
+        if window.returned_at < window.began_at {
+            self.state = PcmShortDmaStreamState::StopUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: window.began_at,
+                received: window.returned_at,
+            });
+        }
+        if succeeded {
+            self.state = PcmShortDmaStreamState::Stopped;
+            Ok(())
+        } else {
+            self.state = PcmShortDmaStreamState::StopUncertain;
+            self.fail(PcmShortDmaStreamError::StopFailed)
+        }
+    }
+
+    /// Records at least two complete safe samples accepted after stop.
+    pub fn record_safe_rewrite(
+        &mut self,
+        window: PcmShortOperationWindow,
+        image: CompleteImage,
+        accepted_frames: usize,
+        succeeded: bool,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        if !matches!(
+            self.state,
+            PcmShortDmaStreamState::Stopped | PcmShortDmaStreamState::StopUncertain
+        ) {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        let stop = match self.stop_call {
+            Some(window) => window,
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        self.safe_rewrite_call = Some(window);
+        if window.began_at < stop.returned_at {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: stop.returned_at,
+                received: window.began_at,
+            });
+        }
+        if window.returned_at < window.began_at {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: window.began_at,
+                received: window.returned_at,
+            });
+        }
+        if image != self.safe_image {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            return self.fail(PcmShortDmaStreamError::SafeImageMismatch {
+                expected: self.safe_image,
+                received: image,
+            });
+        }
+        if accepted_frames < 2 {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            return self.fail(PcmShortDmaStreamError::SafeRewriteFrames {
+                received: accepted_frames,
+            });
+        }
+        if succeeded {
+            self.state = PcmShortDmaStreamState::SafeRewriteIssued;
+            Ok(())
+        } else {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            self.fail(PcmShortDmaStreamError::SafeRewriteFailed)
+        }
+    }
+
+    /// Completes safe reclaim only from an independently observed post-stop
+    /// complete image. A prior first-cause fault remains retained.
+    pub fn observe_safe_reclaim(
+        &mut self,
+        at: u64,
+        image: CompleteImage,
+    ) -> Result<(), PcmShortDmaStreamError> {
+        if !matches!(
+            self.state,
+            PcmShortDmaStreamState::SafeRewriteIssued
+                | PcmShortDmaStreamState::SafeRewriteUncertain
+        ) {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        let rewrite = match self.safe_rewrite_call {
+            Some(window) => window,
+            None => return self.fail(PcmShortDmaStreamError::InternalState),
+        };
+        if at < rewrite.returned_at {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            return self.fail(PcmShortDmaStreamError::ObservationOrder {
+                prior: rewrite.returned_at,
+                received: at,
+            });
+        }
+        if image != self.safe_image {
+            self.state = PcmShortDmaStreamState::SafeRewriteUncertain;
+            return self.fail(PcmShortDmaStreamError::SafeImageMismatch {
+                expected: self.safe_image,
+                received: image,
+            });
+        }
+        self.safe_reclaim_latch = Some(at);
+        self.state = PcmShortDmaStreamState::PeripheralSafe;
+        Ok(())
+    }
+
+    /// Invalidates motion/refill authority while retaining the current physical
+    /// lifecycle state for an ordered stop and safe-rewrite attempt.
+    pub fn invalidate(&mut self) {
+        let _ = self.latch(PcmShortDmaStreamError::ExternalFault);
+    }
+
+    /// Latest dense boundary accepted into target ownership.
+    pub fn sealed_horizon(&self) -> Result<u64, PcmShortDmaStreamError> {
+        self.require_horizon_query()?;
+        self.horizon
+            .as_ref()
+            .ok_or(PcmShortDmaStreamError::InternalState)?
+            .sealed_horizon()
+            .map_err(PcmShortDmaStreamError::Horizon)
+    }
+
+    /// Latest dense boundary fillable from current whole-frame credits.
+    pub fn writable_horizon(&self) -> Result<u64, PcmShortDmaStreamError> {
+        self.require_horizon_query()?;
+        self.horizon
+            .as_ref()
+            .ok_or(PcmShortDmaStreamError::InternalState)?
+            .writable_horizon()
+            .map_err(PcmShortDmaStreamError::Horizon)
+    }
+
+    /// Exact sparse updates still awaiting a qualified physical latch.
+    pub fn pending_updates(&self) -> Result<usize, PcmShortDmaStreamError> {
+        self.require_horizon_query()?;
+        Ok(self
+            .horizon
+            .as_ref()
+            .ok_or(PcmShortDmaStreamError::InternalState)?
+            .pending_updates())
+    }
+
+    /// Exact whole-frame credits retained by the portable owner.
+    pub fn refill_credit_frames(&self) -> Result<usize, PcmShortDmaStreamError> {
+        self.require_horizon_query()?;
+        Ok(self
+            .horizon
+            .as_ref()
+            .ok_or(PcmShortDmaStreamError::InternalState)?
+            .refill_credit_frames())
+    }
+
+    /// Current monotonic hardware-ownership state.
+    pub const fn state(&self) -> PcmShortDmaStreamState {
+        self.state
+    }
+
+    /// First retained lifecycle or dense-horizon fault.
+    pub const fn fault(&self) -> Option<PcmShortDmaStreamError> {
+        self.fault
+    }
+
+    /// Exact configured frame grid after safe ring preparation.
+    pub const fn grid(&self) -> Option<PcmShortFrameGrid> {
+        self.grid
+    }
+
+    /// Complete image shared by static establishment, DMA prefill, first-latch
+    /// observation, and post-stop reclaim.
+    pub const fn safe_image(&self) -> CompleteImage {
+        self.safe_image
+    }
+
+    /// Whether safe-only dense refills may continue before/after first-latch
+    /// observation.
+    pub const fn safe_refill_authorized(&self) -> bool {
+        self.fault.is_none()
+            && matches!(
+                self.state,
+                PcmShortDmaStreamState::StartIssued | PcmShortDmaStreamState::StreamObserved
+            )
+    }
+
+    /// Whether sparse motion images and physical commit observations are
+    /// allowed to use the established stream grid.
+    pub const fn motion_authorized(&self) -> bool {
+        self.fault.is_none() && matches!(self.state, PcmShortDmaStreamState::StreamObserved)
+    }
+
+    /// Whether a circular transfer may still require an explicit stop attempt.
+    pub const fn stop_required(&self) -> bool {
+        matches!(
+            self.state,
+            PcmShortDmaStreamState::StartIssued
+                | PcmShortDmaStreamState::StreamObserved
+                | PcmShortDmaStreamState::StartUncertain
+        )
+    }
+
+    /// Whether a post-stop physical observation established the complete safe
+    /// image. This does not erase a retained earlier fault.
+    pub const fn safe_reclaimed(&self) -> bool {
+        matches!(self.state, PcmShortDmaStreamState::PeripheralSafe)
+    }
+
+    fn require_safe_refill_authority(&mut self) -> Result<(), PcmShortDmaStreamError> {
+        self.ensure_unfaulted()?;
+        if !matches!(
+            self.state,
+            PcmShortDmaStreamState::StartIssued | PcmShortDmaStreamState::StreamObserved
+        ) {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        Ok(())
+    }
+
+    fn require_motion_authority(&mut self) -> Result<(), PcmShortDmaStreamError> {
+        self.ensure_unfaulted()?;
+        if self.state != PcmShortDmaStreamState::StreamObserved {
+            return self.fail(PcmShortDmaStreamError::State { state: self.state });
+        }
+        Ok(())
+    }
+
+    fn require_horizon_query(&self) -> Result<(), PcmShortDmaStreamError> {
+        self.ensure_unfaulted()?;
+        if !matches!(
+            self.state,
+            PcmShortDmaStreamState::PreparedSafe
+                | PcmShortDmaStreamState::StartIssued
+                | PcmShortDmaStreamState::StreamObserved
+        ) {
+            return Err(PcmShortDmaStreamError::State { state: self.state });
+        }
+        Ok(())
+    }
+
+    fn ensure_unfaulted(&self) -> Result<(), PcmShortDmaStreamError> {
+        if self.fault.is_some() {
+            Err(PcmShortDmaStreamError::FaultLatched)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn fail<T>(&mut self, error: PcmShortDmaStreamError) -> Result<T, PcmShortDmaStreamError> {
+        Err(self.latch(error))
+    }
+
+    fn latch(&mut self, error: PcmShortDmaStreamError) -> PcmShortDmaStreamError {
+        if self.fault.is_none() {
+            self.fault = Some(error);
+        }
+        if let Some(horizon) = self.horizon.as_mut() {
+            horizon.invalidate();
+        }
+        error
+    }
+}
+
 const fn same_image_contract(left: CompleteImage, right: CompleteImage) -> bool {
     left.width == right.width
         && left.defined_mask == right.defined_mask
@@ -1498,6 +2169,322 @@ mod tests {
             horizon.accept_refill(expected),
             Err(PcmShortDmaHorizonError::FaultLatched)
         );
+    }
+
+    #[test]
+    fn dma_stream_owner_requires_an_observed_safe_latch_before_motion() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let update = image(0x1269, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 2, 4>::new(safe, 90).unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::StaticSafe);
+        owner.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::PreparedSafe);
+        assert_eq!(owner.sealed_horizon(), Ok(116));
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::StartIssued);
+        assert!(owner.safe_refill_authorized());
+        assert!(!owner.motion_authorized());
+
+        // Before physical phase exists, the only possible refill is the
+        // retained safe image because sparse staging remains closed.
+        owner.synchronize_refill_availability(1).unwrap();
+        let safe_frame = owner.next_refill_frame().unwrap().unwrap();
+        assert_eq!(safe_frame.transmit_index, 4);
+        assert_eq!(safe_frame.commits_at, 120);
+        assert_eq!(safe_frame.frame.commits_image(), safe);
+        assert_eq!(owner.accept_refill(safe_frame), Ok(120));
+
+        owner.observe_first_stream_latch(104, safe).unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::StreamObserved);
+        assert!(owner.motion_authorized());
+        owner
+            .stage(TaggedScheduledCompleteImage {
+                tag: 7,
+                commit_cycle: 124,
+                image: update,
+            })
+            .unwrap();
+        owner.synchronize_refill_availability(1).unwrap();
+        let update_frame = owner.next_refill_frame().unwrap().unwrap();
+        assert_eq!(update_frame.transmit_index, 5);
+        assert_eq!(update_frame.commits_at, 124);
+        assert_eq!(update_frame.frame.commits_image(), update);
+        owner.accept_refill(update_frame).unwrap();
+        owner.observe_latches_through(124).unwrap();
+        assert_eq!(
+            owner.take_commit(),
+            Ok(Some(PcmShortCommitObservation {
+                tag: 7,
+                commit_cycle: 124,
+            }))
+        );
+
+        owner
+            .record_stop_call(
+                PcmShortOperationWindow {
+                    began_at: 130,
+                    returned_at: 132,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::Stopped);
+        assert!(!owner.motion_authorized());
+        assert!(!owner.stop_required());
+        owner
+            .record_safe_rewrite(
+                PcmShortOperationWindow {
+                    began_at: 133,
+                    returned_at: 135,
+                },
+                safe,
+                2,
+                true,
+            )
+            .unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::SafeRewriteIssued);
+        assert!(!owner.safe_reclaimed());
+        owner.observe_safe_reclaim(136, safe).unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::PeripheralSafe);
+        assert!(owner.safe_reclaimed());
+        assert_eq!(owner.fault(), None);
+    }
+
+    #[test]
+    fn dma_stream_owner_latches_prefill_and_start_phase_substitution() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let other = image(0x1269, BitOrder::MostSignificantFirst);
+        let mut wrong_prefill = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        assert_eq!(
+            wrong_prefill.prepare_safe_ring(grid, other, 4, 95),
+            Err(PcmShortDmaStreamError::SafeImageMismatch {
+                expected: safe,
+                received: other,
+            })
+        );
+        assert_eq!(
+            wrong_prefill.prepare_safe_ring(grid, safe, 4, 95),
+            Err(PcmShortDmaStreamError::FaultLatched)
+        );
+
+        let mut wrong_count = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        assert_eq!(
+            wrong_count.prepare_safe_ring(grid, safe, 3, 95),
+            Err(PcmShortDmaStreamError::PrefillFrames {
+                expected: 4,
+                received: 3,
+            })
+        );
+
+        let mut wrong_epoch = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        wrong_epoch.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        assert_eq!(
+            wrong_epoch.record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 101,
+                    returned_at: 102,
+                },
+                true,
+            ),
+            Err(PcmShortDmaStreamError::StartEpochOutsideWindow {
+                epoch: 100,
+                began_at: 101,
+                returned_at: 102,
+            })
+        );
+        assert_eq!(
+            wrong_epoch.fault(),
+            Some(PcmShortDmaStreamError::StartEpochOutsideWindow {
+                epoch: 100,
+                began_at: 101,
+                returned_at: 102,
+            })
+        );
+        assert_eq!(wrong_epoch.state(), PcmShortDmaStreamState::StartUncertain);
+        assert!(wrong_epoch.stop_required());
+
+        // A bad model interval cannot prove the already-issued target start
+        // stayed inactive. Recovery therefore remains available, and a safe
+        // reclaim observation cannot predate the rewrite call's return.
+        wrong_epoch
+            .record_stop_call(
+                PcmShortOperationWindow {
+                    began_at: 103,
+                    returned_at: 104,
+                },
+                true,
+            )
+            .unwrap();
+        wrong_epoch
+            .record_safe_rewrite(
+                PcmShortOperationWindow {
+                    began_at: 105,
+                    returned_at: 108,
+                },
+                safe,
+                2,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            wrong_epoch.observe_safe_reclaim(107, safe),
+            Err(PcmShortDmaStreamError::ObservationOrder {
+                prior: 108,
+                received: 107,
+            })
+        );
+        wrong_epoch.observe_safe_reclaim(109, safe).unwrap();
+        assert!(wrong_epoch.safe_reclaimed());
+        assert_eq!(
+            wrong_epoch.fault(),
+            Some(PcmShortDmaStreamError::StartEpochOutsideWindow {
+                epoch: 100,
+                began_at: 101,
+                returned_at: 102,
+            })
+        );
+
+        let mut wrong_latch = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        wrong_latch.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        wrong_latch
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            wrong_latch.observe_first_stream_latch(104, other),
+            Err(PcmShortDmaStreamError::SafeImageMismatch {
+                expected: safe,
+                received: other,
+            })
+        );
+        assert!(!wrong_latch.motion_authorized());
+        assert!(wrong_latch.stop_required());
+    }
+
+    #[test]
+    fn dma_stream_owner_faults_premature_motion_but_still_reclaims_safe() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let update = image(0x1269, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        owner.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            owner.stage(TaggedScheduledCompleteImage {
+                tag: 1,
+                commit_cycle: 120,
+                image: update,
+            }),
+            Err(PcmShortDmaStreamError::State {
+                state: PcmShortDmaStreamState::StartIssued,
+            })
+        );
+        assert_eq!(
+            owner.fault(),
+            Some(PcmShortDmaStreamError::State {
+                state: PcmShortDmaStreamState::StartIssued,
+            })
+        );
+        assert!(!owner.motion_authorized());
+        assert!(owner.stop_required());
+
+        // Recovery is still ordered even though it cannot erase first cause.
+        owner
+            .record_stop_call(
+                PcmShortOperationWindow {
+                    began_at: 110,
+                    returned_at: 111,
+                },
+                true,
+            )
+            .unwrap();
+        owner
+            .record_safe_rewrite(
+                PcmShortOperationWindow {
+                    began_at: 112,
+                    returned_at: 113,
+                },
+                safe,
+                2,
+                true,
+            )
+            .unwrap();
+        owner.observe_safe_reclaim(114, safe).unwrap();
+        assert!(owner.safe_reclaimed());
+        assert_eq!(
+            owner.fault(),
+            Some(PcmShortDmaStreamError::State {
+                state: PcmShortDmaStreamState::StartIssued,
+            })
+        );
+    }
+
+    #[test]
+    fn dma_stream_owner_retains_failed_start_across_successful_recovery() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        owner.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        assert_eq!(
+            owner.record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                false,
+            ),
+            Err(PcmShortDmaStreamError::StartFailed)
+        );
+        assert_eq!(owner.state(), PcmShortDmaStreamState::StartUncertain);
+        assert!(owner.stop_required());
+        owner
+            .record_stop_call(
+                PcmShortOperationWindow {
+                    began_at: 102,
+                    returned_at: 103,
+                },
+                true,
+            )
+            .unwrap();
+        owner
+            .record_safe_rewrite(
+                PcmShortOperationWindow {
+                    began_at: 104,
+                    returned_at: 105,
+                },
+                safe,
+                2,
+                true,
+            )
+            .unwrap();
+        owner.observe_safe_reclaim(106, safe).unwrap();
+        assert_eq!(owner.state(), PcmShortDmaStreamState::PeripheralSafe);
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::StartFailed));
+        assert!(owner.safe_reclaimed());
+        assert!(!owner.motion_authorized());
     }
 
     #[test]

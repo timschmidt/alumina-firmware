@@ -67,6 +67,11 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   release credits, preview/push/accept refill identity, sealed versus writable
   horizons, untracked-write/underrun faults, and final-disable preplanning while
   the unique block remains retained;
+- explicit static-safe/stream/reclaim ownership: identical complete-image ring
+  prefill, start-call epoch bounds, safe-only refill before an independently
+  observed first latch, motion-authority gating, stop-time tag invalidation,
+  two-sample safe rewrite, separately observed physical reclaim, and retained
+  first cause;
 - configuration-derived FOC hardware-loop replay from active integer compare
   edges through synchronized raw ADC/current/rotor observations, dq control,
   interval SVPWM, complete-image staging, and the next exact timer-zero, with

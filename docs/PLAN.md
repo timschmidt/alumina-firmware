@@ -508,6 +508,18 @@ SHA-256-bound analysis report. It targets the separately identified primary
 8 MiB TinyBee package while preserving the 4 MiB build variant. No capture or
 qualification is implied, and production motion still cannot select this HIL
 path.
+The static/stream handoff checkpoint now wraps the dense horizon in a fixed
+portable lifecycle. Static establishment and complete safe DMA prefill are
+separate facts; a successful start call permits only safe refills until an
+independent first safe latch establishes the exact grid. Premature motion
+staging latches first cause. Stop invalidates every tag, a two-sample safe
+rewrite remains physically unproven, and only a separate safe latch completes
+reclaim. The bit-level simulator exercises the observed-safe transition before
+materializing motion. The isolated HIL target adopts the same lifecycle but
+deliberately ends at `SafeRewriteIssued`; it cannot manufacture capture facts.
+Production remains on its static writer, both adapters reject streaming, and
+both boards remain non-armable. See
+[`M10-STATIC-SAFE-STREAM-HANDOFF.md`](evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md).
 
 Exit gate:
 

@@ -8,8 +8,8 @@
 use alumina_motion::{OutputCommitToken, ScheduledShiftOutput};
 use alumina_protocol::DeviceCycle;
 use alumina_shift_register::{
-    CompleteImage, PcmShortDmaHorizon, PcmShortFrameGrid, PcmShortMonoFrame, PlannedPcmShortFrame,
-    TaggedScheduledCompleteImage,
+    CompleteImage, PcmShortDmaStreamOwner, PcmShortFrameGrid, PcmShortMonoFrame,
+    PlannedPcmShortFrame, TaggedScheduledCompleteImage,
 };
 use embassy_time::TICK_HZ;
 use esp_hal::Blocking;
@@ -28,8 +28,8 @@ pub const UNQUALIFIED_PCM_SHORT_DMA_FRAMES: usize = 256;
 pub const UNQUALIFIED_PCM_SHORT_UPDATES: usize = 64;
 const DMA_BYTES: usize = UNQUALIFIED_PCM_SHORT_DMA_FRAMES * size_of::<u32>();
 
-/// Portable horizon shape used by a future disconnected-load capture harness.
-pub type UnqualifiedPcmShortHorizon = PcmShortDmaHorizon<
+/// Portable static/stream/reclaim owner used by the disconnected-load harness.
+pub type UnqualifiedPcmShortOwner = PcmShortDmaStreamOwner<
     OutputCommitToken,
     UNQUALIFIED_PCM_SHORT_UPDATES,
     UNQUALIFIED_PCM_SHORT_DMA_FRAMES,
@@ -42,6 +42,8 @@ pub enum UnqualifiedPcmShortError {
     SafeImage,
     /// The pinned HAL rejected the fixed PCM-short configuration.
     Configuration,
+    /// The portable static/stream/reclaim owner rejected a transition.
+    Ownership,
     /// The pinned HAL or DMA engine rejected a transfer operation.
     Transfer,
 }
@@ -141,26 +143,40 @@ impl EstablishedRealtimeResources {
     reason = "compile-only HIL surface remains unreachable until waveform qualification"
 )]
 impl UnqualifiedPcmShortResources {
-    /// Constructs the portable ownership model for one explicit hypothesized
-    /// stream epoch. Only capture may qualify that epoch against physical WS.
-    pub fn new_horizon(
-        &self,
+    /// Constructs the portable ownership model from the earlier static-safe
+    /// transaction, the completed safe DMA prefill, and one explicit
+    /// hypothesized stream epoch. Only capture may qualify that epoch against
+    /// physical WS.
+    pub fn new_owner(
+        static_safe_at: DeviceCycle,
+        ring_prepared_at: DeviceCycle,
         stream_epoch: DeviceCycle,
-    ) -> Result<UnqualifiedPcmShortHorizon, UnqualifiedPcmShortError> {
+    ) -> Result<UnqualifiedPcmShortOwner, UnqualifiedPcmShortError> {
         let grid =
             PcmShortFrameGrid::new(stream_epoch.0, TICK_HZ, UNQUALIFIED_PCM_SHORT_FRAME_RATE_HZ)
                 .map_err(|_| UnqualifiedPcmShortError::Configuration)?;
-        PcmShortDmaHorizon::new(grid, tinybee_safe_image())
-            .map_err(|_| UnqualifiedPcmShortError::Configuration)
+        let mut owner = PcmShortDmaStreamOwner::new(tinybee_safe_image(), static_safe_at.0)
+            .map_err(|_| UnqualifiedPcmShortError::Ownership)?;
+        owner
+            .prepare_safe_ring(
+                grid,
+                tinybee_safe_image(),
+                UNQUALIFIED_PCM_SHORT_DMA_FRAMES,
+                ring_prepared_at.0,
+            )
+            .map_err(|_| UnqualifiedPcmShortError::Ownership)?;
+        Ok(owner)
     }
 
     /// Transfers one generated motion token into the portable target-owned
-    /// sparse plan without manufacturing a replacement token.
+    /// sparse plan without manufacturing a replacement token. The portable
+    /// owner rejects this until an independent first-safe-latch observation
+    /// establishes physical stream authority.
     pub fn stage_planned_output(
-        horizon: &mut UnqualifiedPcmShortHorizon,
+        owner: &mut UnqualifiedPcmShortOwner,
         output: ScheduledShiftOutput,
     ) -> Result<(), UnqualifiedPcmShortError> {
-        horizon
+        owner
             .stage(TaggedScheduledCompleteImage {
                 tag: output.token,
                 commit_cycle: output.update.at.0,
@@ -169,7 +185,7 @@ impl UnqualifiedPcmShortResources {
                     ..tinybee_safe_image()
                 },
             })
-            .map_err(|_| UnqualifiedPcmShortError::Transfer)
+            .map_err(|_| UnqualifiedPcmShortError::Ownership)
     }
 
     /// Starts a safe-prefilled circular transfer borrowed from the retained
