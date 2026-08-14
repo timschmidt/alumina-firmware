@@ -316,6 +316,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   independently derived dual-core typed admission, fixed-memory distributed
   servo lifecycle, transactional complete-axis simulation join, static-memory
   correction, and renewed ESP artifacts with every physical gate closed.
+- [`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](M10-MULTI-AXIS-SERVO-FOC-BANK.md) —
+  fixed-capacity all-axis candidate/commit installation, two-axis permanent
+  cached-job replay, later-axis fault isolation, ordered safe invalidation, and
+  renewed closed-gate ESP artifacts.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,

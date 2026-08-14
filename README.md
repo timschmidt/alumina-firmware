@@ -392,7 +392,8 @@ implementation, qualification, commit-latency, and prime-lead gates remain
 closed, so no peripheral, energization, or hardware claim follows. See the
 [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md),
 [exact cached-servo evidence](docs/evidence/M10-EXACT-CACHED-SERVO-STREAM.md),
-and [permanent servo-lifecycle evidence](docs/evidence/M10-PERMANENT-SERVO-LIFECYCLE.md).
+[permanent servo-lifecycle evidence](docs/evidence/M10-PERMANENT-SERVO-LIFECYCLE.md),
+and [multi-axis servo/FOC bank evidence](docs/evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
 
 The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;

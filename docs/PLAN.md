@@ -434,7 +434,9 @@ cannot advance the first axis alone. Target PWM/ADC/encoder mailbox
 implementation, safe shutdown integration, WCET, and physical qualification
 remain later gates; every board still rejects servo arming and this structural
 milestone cannot energize hardware. See
-[`M10-PERMANENT-SERVO-LIFECYCLE.md`](evidence/M10-PERMANENT-SERVO-LIFECYCLE.md).
+[`M10-PERMANENT-SERVO-LIFECYCLE.md`](evidence/M10-PERMANENT-SERVO-LIFECYCLE.md)
+and
+[`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
@@ -855,7 +857,8 @@ all axes succeed. A fixed-capacity two-axis simulator drives the permanent
 cached-servo lifecycle through both MKS-sized control channels. This is a
 portable software ownership result: it supplies neither synchronized MCPWM
 hardware nor truthful ADC/encoder observations, and all MKS target gates remain
-closed.
+closed. See
+[`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
 
 Exit gate:
 

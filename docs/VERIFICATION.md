@@ -398,7 +398,9 @@ stream through every axis, inject a later-axis commit failure and a later-axis
 observation failure, and show that no earlier axis advances. Passing this gate
 does not qualify synchronized target peripherals: MCPWM phase/readback, ADC
 triggering, encoder availability, interrupt timing, and the all-stage shutdown
-transaction still require separate physical evidence.
+transaction still require separate physical evidence. The current software
+result is recorded in
+[`evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
 
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.

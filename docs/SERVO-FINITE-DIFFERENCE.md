@@ -142,6 +142,10 @@ encoder observation without first-axis advance, then prove that an enclosing
 safe invalidation clears the staged mailbox before cached-job ownership is
 faulted.
 
+The exact transaction, replay, fault-injection, memory-layout, target-link, and
+closed-gate evidence is recorded in
+`docs/evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md`.
+
 Every firmware board currently implements this setpoint-output boundary as a
 transactional unavailable result. `SERVO_OUTPUT_IMPLEMENTED`,
 `SERVO_OUTPUT_QUALIFIED`, qualified commit-report latency, and qualified prime

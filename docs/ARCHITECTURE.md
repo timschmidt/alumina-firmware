@@ -1221,6 +1221,8 @@ cached setpoint acknowledgement only after the full bank commit. It is not an
 electrical plant or a peripheral model. In particular, simultaneous software
 state installation does not prove that MCPWM0 and MCPWM1 latch together, that
 ADC acquisitions are synchronized, or that the real shutdown action is safe.
+See
+[`evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
 
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
