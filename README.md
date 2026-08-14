@@ -378,11 +378,17 @@ content-addressed blocks and an `ALMJMF02` global job. Firmware independently
 checks those blocks using limits rebuilt from complete FOC axis profiles. Its
 allocation-free two-block runner retains half-open recurrence ownership,
 prepares every simultaneous setpoint transactionally, and appends exactly one
-terminal at-rest hold. Simulation replays a two-block stream through 401 current
-periods. The portable path is deliberately not selected by the permanent ESP
-motion actor yet; no peripheral, energization, or hardware claim follows from
-this checkpoint. See the [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md)
-and [exact cached-servo evidence](docs/evidence/M10-EXACT-CACHED-SERVO-STREAM.md).
+terminal at-rest hold. The permanent core-1 selector now admits kind `3` only
+through independently retained configuration-derived profiles, primes one exact
+future setpoint batch, and preserves block tokens through the distributed
+start, cancellation/fault, continuation, and terminal-hold barriers. A virtual
+setpoint mailbox joins that lifecycle to the complete encoder/cascade/current/
+SVPWM/compare owner for a 401-current-period replay. Every target mailbox still
+returns unavailable, and all servo implementation, qualification, commit-latency,
+and prime-lead gates remain closed, so no peripheral, energization, or hardware
+claim follows. See the [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md),
+[exact cached-servo evidence](docs/evidence/M10-EXACT-CACHED-SERVO-STREAM.md),
+and [permanent servo-lifecycle evidence](docs/evidence/M10-PERMANENT-SERVO-LIFECYCLE.md).
 
 The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;

@@ -87,6 +87,14 @@ pub const SAFETY_INPUT_CAPACITY: usize = 0;
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
 /// No physical PWM/current/sensor timing has been qualified.
 pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// The portable servo actor is not yet attached to MCPWM/ADC/encoder hardware.
+pub const SERVO_OUTPUT_IMPLEMENTED: bool = false;
+/// No energized MKS ESP32 FOC servo path has physical qualification.
+pub const SERVO_OUTPUT_QUALIFIED: bool = false;
+/// No servo commit-reporting latency has been established on this target.
+pub const SERVO_MAXIMUM_COMMIT_OBSERVATION_LATENESS_CYCLES: u32 = 0;
+/// No servo priming lead is qualified; the impossible value closes admission.
+pub const SERVO_MINIMUM_PRIME_LEAD_CYCLES: u64 = u64::MAX;
 /// Inert structural value; no output lattice is admitted.
 pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;
 /// No physical commit-lateness claim exists.

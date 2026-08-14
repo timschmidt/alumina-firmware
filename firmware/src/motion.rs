@@ -2,9 +2,12 @@
 
 use alumina_config::RealtimeConfiguration;
 use alumina_job::{AdmittedBlock, JobDescriptor};
+use alumina_machine_ir::ExecutionKind;
 use alumina_motion::{
-    CommittedShiftOutput, ExecutorState, ScheduledBlockBoundary, ScheduledExecutionPlan,
-    ScheduledShiftedExecution, ShiftImageContract, ShiftImageMapper, StepperExecutionProfile,
+    CachedServoConfiguration, ExecutorState, PreparedServoSetpoints, ScheduledBlockBoundary,
+    ScheduledExecutionPlan, ScheduledServoAction, ScheduledServoExecution,
+    ScheduledServoExecutionError, ScheduledShiftedExecution, ServoSetpointOutput,
+    ServoSetpointOutputCommit, ShiftImageContract, ShiftImageMapper, StepperExecutionProfile,
     scheduled_execution_mode_from_descriptor,
 };
 use alumina_protocol::{DeviceCycle, Digest};
@@ -41,7 +44,15 @@ pub enum MotionAction {
     WaitingForHardware,
     OutputCommitted,
     /// First job-owned complete image physically committed at the start epoch.
-    StartOutputCommitted(CommittedShiftOutput),
+    StartOutputCommitted {
+        output_token: u32,
+        scheduled_at: DeviceCycle,
+        committed_at: DeviceCycle,
+    },
+    /// The servo recurrence needs another admitted block before this deadline.
+    NeedBlock {
+        at: DeviceCycle,
+    },
     BlockComplete(OwnedBlock),
     JobComplete,
 }
@@ -59,7 +70,7 @@ pub enum MotionServiceError {
 }
 
 /// Sole core-1 owner of the generated-versus-committed motion boundary.
-pub struct MotionService {
+struct StepperMotionService {
     configured_output: Option<ConfiguredOutput>,
     runner: Option<Runner>,
     configuration_digest: Digest,
@@ -76,7 +87,7 @@ pub struct MotionService {
     start_observation_recorded: bool,
 }
 
-impl MotionService {
+impl StepperMotionService {
     /// Starts without an executable output mapping.
     pub const fn new() -> Self {
         Self {
@@ -344,7 +355,11 @@ impl MotionService {
                     return Err(MotionServiceError::Commit);
                 }
                 self.start_observation_recorded = true;
-                MotionAction::StartOutputCommitted(committed)
+                MotionAction::StartOutputCommitted {
+                    output_token: committed.token.value(),
+                    scheduled_at: committed.update.at,
+                    committed_at: committed.committed_at,
+                }
             } else {
                 MotionAction::OutputCommitted
             };
@@ -666,5 +681,266 @@ impl MotionService {
             .stage_output(output)
             .map_err(|_| MotionServiceError::Commit)?;
         Ok(())
+    }
+}
+
+/// Current target compositions intentionally have no servo setpoint mailbox.
+///
+/// This implementation is the permanent type seam used by the core-1 actor,
+/// but it is transactionally unavailable. A board may set
+/// `SERVO_OUTPUT_IMPLEMENTED` only when it replaces these methods with an owner
+/// that is driven by its PWM/ADC/encoder interrupt domain.
+impl ServoSetpointOutput<{ selected::JOB_AXES }> for selected::EstablishedRealtimeResources {
+    type Error = ();
+
+    fn stage_servo_setpoints(
+        &mut self,
+        _prepared: PreparedServoSetpoints<{ selected::JOB_AXES }>,
+    ) -> Result<(), Self::Error> {
+        Err(())
+    }
+
+    fn take_servo_setpoint_commit(
+        &mut self,
+    ) -> Result<Option<ServoSetpointOutputCommit>, Self::Error> {
+        Err(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActiveExecution {
+    Stepper,
+    Servo,
+}
+
+/// Permanent core-1 selector for kind-bound stepper or servo output ownership.
+///
+/// Configuration and job descriptors must independently agree on exactly one
+/// family. No fallback or cross-family interpretation exists.
+pub struct MotionService {
+    stepper: StepperMotionService,
+    servo: ScheduledServoExecution<{ selected::JOB_AXES }>,
+    active: Option<ActiveExecution>,
+}
+
+impl MotionService {
+    /// Starts without configuration or active execution ownership.
+    pub const fn new() -> Self {
+        Self {
+            stepper: StepperMotionService::new(),
+            servo: ScheduledServoExecution::new(),
+            active: None,
+        }
+    }
+
+    /// Installs exactly one configuration-derived output family while idle.
+    pub fn configure(
+        &mut self,
+        configuration: &RealtimeConfiguration,
+    ) -> Result<(), MotionServiceError> {
+        if self.active.is_some() {
+            return Err(MotionServiceError::State);
+        }
+        let mut stepper = StepperMotionService::new();
+        let mut servo = ScheduledServoExecution::new();
+        let summary = configuration.identity().summary;
+        stepper.configure(configuration)?;
+        if summary.foc_axes != 0 {
+            let profile = CachedServoConfiguration::<{ selected::JOB_AXES }>::from_configuration(
+                configuration,
+            )
+            .map_err(|_| MotionServiceError::Configuration)?;
+            servo
+                .configure(
+                    profile,
+                    selected::SERVO_MAXIMUM_COMMIT_OBSERVATION_LATENESS_CYCLES,
+                )
+                .map_err(map_servo_error)?;
+        }
+        self.stepper = stepper;
+        self.servo = servo;
+        Ok(())
+    }
+
+    /// Removes every executable mapping only after outputs are safe.
+    pub fn clear(&mut self) {
+        self.stepper.clear();
+        self.servo.clear();
+        self.active = None;
+    }
+
+    /// Whether the descriptor selects an installed and physically qualified owner.
+    pub fn ready_to_arm(&self, descriptor: Option<JobDescriptor>) -> bool {
+        let Some(descriptor) = descriptor else {
+            return false;
+        };
+        match descriptor.execution_kind {
+            ExecutionKind::ServoFiniteDifference => {
+                selected::PACKAGE.armable
+                    && selected::SERVO_OUTPUT_IMPLEMENTED
+                    && selected::SERVO_OUTPUT_QUALIFIED
+                    && self.servo.configured()
+                    && self.servo.configuration_digest() == Some(descriptor.config_digest)
+            }
+            ExecutionKind::Motion | ExecutionKind::FiniteDifference => self.stepper.ready_to_arm(),
+        }
+    }
+
+    /// Transfers the initial bounded window to the descriptor-selected owner.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "prime joins the complete distributed schedule and unique block window"
+    )]
+    pub fn prime(
+        &mut self,
+        resources: &mut selected::EstablishedRealtimeResources,
+        descriptor: JobDescriptor,
+        epoch: DeviceCycle,
+        admitted: OwnedBlock,
+        lookahead: Option<OwnedBlock>,
+        observed: DeviceCycle,
+    ) -> Result<(), MotionServiceError> {
+        if self.active.is_some() {
+            return Err(MotionServiceError::State);
+        }
+        let active = match descriptor.execution_kind {
+            ExecutionKind::ServoFiniteDifference => {
+                if !selected::SERVO_OUTPUT_IMPLEMENTED || !selected::SERVO_OUTPUT_QUALIFIED {
+                    return Err(MotionServiceError::Unsupported);
+                }
+                self.servo
+                    .prime(resources, descriptor, epoch, admitted, lookahead, observed)
+                    .map_err(map_servo_error)?;
+                ActiveExecution::Servo
+            }
+            ExecutionKind::Motion | ExecutionKind::FiniteDifference => {
+                self.stepper
+                    .prime(resources, descriptor, epoch, admitted, lookahead, observed)?;
+                ActiveExecution::Stepper
+            }
+        };
+        self.active = Some(active);
+        Ok(())
+    }
+
+    /// Releases the previously primed kind-bound owner.
+    pub fn start(&mut self, epoch: DeviceCycle) -> Result<(), MotionServiceError> {
+        match self.active.ok_or(MotionServiceError::State)? {
+            ActiveExecution::Stepper => self.stepper.start(epoch),
+            ActiveExecution::Servo => self.servo.start(epoch).map_err(map_servo_error),
+        }
+    }
+
+    /// Retains one successor block without changing its execution family.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection must return unique inline block ownership"
+    )]
+    pub fn admit(&mut self, admitted: OwnedBlock) -> Result<(), OwnedBlock> {
+        match self.active {
+            Some(ActiveExecution::Stepper) => self.stepper.admit(admitted),
+            Some(ActiveExecution::Servo) => self
+                .servo
+                .admit_block(admitted)
+                .map_err(|rejected| rejected.into_block()),
+            None => Err(admitted),
+        }
+    }
+
+    /// Advances the sole active hardware/output owner once.
+    pub fn poll(
+        &mut self,
+        resources: &mut selected::EstablishedRealtimeResources,
+        observed: DeviceCycle,
+    ) -> Result<MotionAction, MotionServiceError> {
+        match self.active.ok_or(MotionServiceError::State)? {
+            ActiveExecution::Stepper => {
+                let action = self.stepper.poll(resources, observed)?;
+                if matches!(action, MotionAction::JobComplete) {
+                    self.active = None;
+                }
+                Ok(action)
+            }
+            ActiveExecution::Servo => {
+                let action = self
+                    .servo
+                    .poll(resources, observed)
+                    .map_err(map_servo_error)?;
+                let action = match action {
+                    ScheduledServoAction::Idle => MotionAction::Idle,
+                    ScheduledServoAction::Future { at } => MotionAction::Future { at },
+                    ScheduledServoAction::NeedBlock { at } => MotionAction::NeedBlock { at },
+                    ScheduledServoAction::WaitingForHardware => MotionAction::WaitingForHardware,
+                    ScheduledServoAction::SetpointsCommitted(_) => MotionAction::OutputCommitted,
+                    ScheduledServoAction::StartSetpointsCommitted(committed) => {
+                        MotionAction::StartOutputCommitted {
+                            output_token: committed.command_id,
+                            scheduled_at: committed.applied_at,
+                            committed_at: committed.applied_at,
+                        }
+                    }
+                    ScheduledServoAction::BlockComplete(admitted) => {
+                        MotionAction::BlockComplete(admitted)
+                    }
+                    ScheduledServoAction::JobComplete => {
+                        self.active = None;
+                        MotionAction::JobComplete
+                    }
+                };
+                Ok(action)
+            }
+        }
+    }
+
+    /// Requests the kind-specific normal terminal transaction.
+    pub fn request_finish(&mut self) -> Result<(), MotionServiceError> {
+        match self.active.ok_or(MotionServiceError::State)? {
+            ActiveExecution::Stepper => self.stepper.request_finish(),
+            ActiveExecution::Servo => self.servo.request_finish().map_err(map_servo_error),
+        }
+    }
+
+    /// Invalidates all pending tokens after the caller synchronously made outputs safe.
+    pub fn fault(&mut self, at: DeviceCycle) -> Result<(), MotionServiceError> {
+        let stepper = self.stepper.fault(at);
+        self.servo.fault();
+        self.active = None;
+        stepper
+    }
+
+    /// Next exact generation or setpoint-commit deadline.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        match self.active? {
+            ActiveExecution::Stepper => self.stepper.next_deadline(),
+            ActiveExecution::Servo => self.servo.next_deadline(),
+        }
+    }
+
+    /// Whether the selected owner has entered its released job lifecycle.
+    pub fn started(&self) -> bool {
+        match self.active {
+            Some(ActiveExecution::Stepper) => self.stepper.started(),
+            Some(ActiveExecution::Servo) => self.servo.started(),
+            None => false,
+        }
+    }
+}
+
+impl Default for MotionService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn map_servo_error(error: ScheduledServoExecutionError) -> MotionServiceError {
+    match error {
+        ScheduledServoExecutionError::Configuration => MotionServiceError::Configuration,
+        ScheduledServoExecutionError::State => MotionServiceError::State,
+        ScheduledServoExecutionError::Output => MotionServiceError::Output,
+        ScheduledServoExecutionError::CommitObservationDeadline { .. } => {
+            MotionServiceError::Commit
+        }
+        ScheduledServoExecutionError::CommitObservationOrder { .. } => MotionServiceError::Commit,
+        ScheduledServoExecutionError::Runner(_) => MotionServiceError::Generator,
     }
 }

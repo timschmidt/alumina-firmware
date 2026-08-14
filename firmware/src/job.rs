@@ -1,6 +1,7 @@
 //! Core-0 ownership and authenticated admission for cached machine jobs.
 
 use alumina_clock::BootId;
+use alumina_config::RealtimeConfiguration;
 use alumina_job::{
     AdmittedBlock, CoreJobCommand, JobCancelRequest, JobCommitRequest, JobDescriptor, JobError,
     JobNetworkPolicy, JobScheduleAction, JobScheduleAdmission, JobScheduleReference,
@@ -8,6 +9,8 @@ use alumina_job::{
     JobStatusReport, RealtimeJob, RealtimeJobReport, RealtimeJobState, RealtimePoll,
     ServiceJobReport, ServiceJobState, ServicePrefetch,
 };
+use alumina_machine_ir::ExecutionKind;
+use alumina_motion::{CachedServoConfiguration, cached_servo_admission_profile_from_configuration};
 use alumina_protocol::{DeviceCycle, Digest, FrameKind, Operation, StatusCode};
 use alumina_runtime::{DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame};
 use alumina_safety::SafetyState;
@@ -20,6 +23,38 @@ use crate::hardware::selected;
 
 const MAXIMUM_JOB_LEASE_CYCLES: u64 = embassy_time::Duration::from_secs(60 * 60).as_ticks();
 const MAXIMUM_SYNC_TOLERANCE_CYCLES: u64 = embassy_time::Duration::from_millis(5).as_ticks();
+
+const fn minimum_prime_lead_cycles(kind: ExecutionKind) -> u64 {
+    match kind {
+        ExecutionKind::ServoFiniteDifference => selected::SERVO_MINIMUM_PRIME_LEAD_CYCLES,
+        ExecutionKind::Motion | ExecutionKind::FiniteDifference => {
+            selected::MOTION_MINIMUM_PRIME_LEAD_CYCLES
+        }
+    }
+}
+
+/// Request-external facts sampled once for one service-core job dispatch.
+#[derive(Clone, Copy)]
+pub struct ServiceJobContext<'a> {
+    latest_clock_probe_id: Option<u64>,
+    safety_state: SafetyState,
+    active_servo_configuration: Option<&'a CachedServoConfiguration<{ selected::JOB_AXES }>>,
+}
+
+impl<'a> ServiceJobContext<'a> {
+    /// Captures one coherent admission view without transferring output authority.
+    pub const fn new(
+        latest_clock_probe_id: Option<u64>,
+        safety_state: SafetyState,
+        active_servo_configuration: Option<&'a CachedServoConfiguration<{ selected::JOB_AXES }>>,
+    ) -> Self {
+        Self {
+            latest_clock_probe_id,
+            safety_state,
+            active_servo_configuration,
+        }
+    }
+}
 
 /// Sole service-core owner of a publication cursor and latest RT observation.
 pub struct JobService {
@@ -64,8 +99,7 @@ impl JobService {
         endpoint: &mut DefaultServiceEndpoint,
         request: &ServiceRequest,
         now: DeviceCycle,
-        latest_clock_probe_id: Option<u64>,
-        safety_state: SafetyState,
+        context: ServiceJobContext<'_>,
     ) -> ServiceResponse {
         let Ok(native) = NativeRequest::decode(request.bytes()) else {
             return ServiceResponse::invalid_native();
@@ -75,13 +109,24 @@ impl JobService {
         }
         match native.message.operation {
             Operation::JobPrepare => {
-                self.prepare(cache, endpoint, native, now, safety_state)
-                    .await
+                self.prepare(
+                    cache,
+                    endpoint,
+                    native,
+                    now,
+                    context.safety_state,
+                    context.active_servo_configuration,
+                )
+                .await
             }
-            Operation::JobCommit => {
-                self.commit(endpoint, native, now, latest_clock_probe_id, safety_state)
-            }
-            Operation::JobConfirm => self.confirm(endpoint, native, now, safety_state),
+            Operation::JobCommit => self.commit(
+                endpoint,
+                native,
+                now,
+                context.latest_clock_probe_id,
+                context.safety_state,
+            ),
+            Operation::JobConfirm => self.confirm(endpoint, native, now, context.safety_state),
             Operation::JobAbort => self.abort(endpoint, native, now),
             Operation::JobCancel => self.cancel(endpoint, native, now),
             Operation::JobStatus if native.body.is_empty() => {
@@ -98,6 +143,7 @@ impl JobService {
         native: NativeRequest<'_>,
         now: DeviceCycle,
         safety_state: SafetyState,
+        active_servo_configuration: Option<&CachedServoConfiguration<{ selected::JOB_AXES }>>,
     ) -> ServiceResponse {
         if self.configuration_transition {
             return self.respond(endpoint, native, now, StatusCode::Busy, false);
@@ -115,8 +161,16 @@ impl JobService {
             return self.respond(endpoint, native, now, StatusCode::Conflict, false);
         }
         let expected_capability = selected::PACKAGE.board.capability_digest;
+        let output_qualified = match descriptor.execution_kind {
+            ExecutionKind::ServoFiniteDifference => {
+                selected::SERVO_OUTPUT_IMPLEMENTED && selected::SERVO_OUTPUT_QUALIFIED
+            }
+            ExecutionKind::Motion | ExecutionKind::FiniteDifference => {
+                selected::MOTION_OUTPUT_QUALIFIED
+            }
+        };
         if !selected::PACKAGE.armable
-            || !selected::MOTION_OUTPUT_QUALIFIED
+            || !output_qualified
             || expected_capability.is_zero()
             || self.active_config.is_zero()
         {
@@ -136,7 +190,24 @@ impl JobService {
             return self.respond(endpoint, native, now, StatusCode::Busy, false);
         }
 
-        let actor = match ServicePrefetch::open(cache, descriptor).await {
+        let servo_profile = if descriptor.execution_kind == ExecutionKind::ServoFiniteDifference {
+            let Some(configuration) = active_servo_configuration else {
+                return self.respond(endpoint, native, now, StatusCode::Conflict, false);
+            };
+            match configuration.bind_descriptor(descriptor) {
+                Ok(profile) => Some(profile),
+                Err(_) => {
+                    return self.respond(endpoint, native, now, StatusCode::Conflict, false);
+                }
+            }
+        } else {
+            None
+        };
+        let opened = match servo_profile {
+            Some(profile) => ServicePrefetch::open_servo(cache, descriptor, profile.limits).await,
+            None => ServicePrefetch::open(cache, descriptor).await,
+        };
+        let actor = match opened {
             Ok(actor) => actor,
             Err(error) => {
                 return self.respond(endpoint, native, now, job_error_status(error), false);
@@ -227,7 +298,8 @@ impl JobService {
                 (MINIMUM_START_LEAD_CYCLES..=MAXIMUM_START_HORIZON_CYCLES).contains(&lead)
             })
             || lease.is_none_or(|lease| lease > MAXIMUM_JOB_LEASE_CYCLES)
-            || prime_lead.is_none_or(|lead| lead < selected::MOTION_MINIMUM_PRIME_LEAD_CYCLES)
+            || prime_lead
+                .is_none_or(|lead| lead < minimum_prime_lead_cycles(descriptor.execution_kind))
         {
             return self.respond(endpoint, native, now, StatusCode::Deadline, false);
         }
@@ -731,6 +803,7 @@ impl RealtimeJobService {
         now: DeviceCycle,
         safety_state: SafetyState,
         deadline_healthy: bool,
+        active_configuration: Option<&RealtimeConfiguration>,
     ) -> Result<(), ()> {
         frame.validate(FrameKind::Job).map_err(|_| ())?;
         let payload = frame.payload().map_err(|_| ())?;
@@ -744,7 +817,14 @@ impl RealtimeJobService {
                     || descriptor.capability_digest != selected::PACKAGE.board.capability_digest
                     || descriptor.capability_digest.is_zero()
                     || !selected::PACKAGE.armable
-                    || !selected::MOTION_OUTPUT_QUALIFIED
+                    || match descriptor.execution_kind {
+                        ExecutionKind::ServoFiniteDifference => {
+                            !selected::SERVO_OUTPUT_IMPLEMENTED || !selected::SERVO_OUTPUT_QUALIFIED
+                        }
+                        ExecutionKind::Motion | ExecutionKind::FiniteDifference => {
+                            !selected::MOTION_OUTPUT_QUALIFIED
+                        }
+                    }
                     || self.active_config.is_zero()
                     || descriptor.config_digest != self.active_config
                 {
@@ -777,7 +857,21 @@ impl RealtimeJobService {
                 if self.job.is_some() || self.admitted.is_some() || self.lookahead.is_some() {
                     return Err(());
                 }
-                self.job = Some(RealtimeJob::prepare(descriptor).map_err(|_| ())?);
+                let job = match descriptor.execution_kind {
+                    ExecutionKind::ServoFiniteDifference => {
+                        let configuration = active_configuration.ok_or(())?;
+                        let profile = cached_servo_admission_profile_from_configuration(
+                            configuration,
+                            descriptor,
+                        )
+                        .map_err(|_| ())?;
+                        RealtimeJob::prepare_servo(descriptor, profile.limits).map_err(|_| ())?
+                    }
+                    ExecutionKind::Motion | ExecutionKind::FiniteDifference => {
+                        RealtimeJob::prepare(descriptor).map_err(|_| ())?
+                    }
+                };
+                self.job = Some(job);
                 self.schedule = Some(
                     alumina_job::PreparedJobSchedule::prepare::<{ selected::JOB_AXES }>(
                         boot_id, descriptor,
@@ -821,7 +915,7 @@ impl RealtimeJobService {
                     maximum_start_horizon_cycles: MAXIMUM_START_HORIZON_CYCLES,
                     maximum_lease_cycles: MAXIMUM_JOB_LEASE_CYCLES,
                     maximum_sync_tolerance_cycles: MAXIMUM_SYNC_TOLERANCE_CYCLES,
-                    minimum_prime_lead_cycles: selected::MOTION_MINIMUM_PRIME_LEAD_CYCLES,
+                    minimum_prime_lead_cycles: minimum_prime_lead_cycles(descriptor.execution_kind),
                     cache_ready,
                     safety_ready: matches!(
                         safety_state,

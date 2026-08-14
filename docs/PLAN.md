@@ -423,9 +423,13 @@ one exact configured cadence. Typed firmware validation derives bounds from
 complete FOC profiles, and an allocation-free two-block runner owns half-open
 records, transactional simultaneous setpoints, and the sole terminal hold. The
 authoritative browser/WASM compiler emits and content-addresses this stream from
-certified Hyperreal intervals. Permanent ESP actor dispatch, target peripherals,
-and physical qualification remain later gates; the portable milestone does not
-energize hardware.
+certified Hyperreal intervals. The permanent ESP actor now performs kind-bound
+typed prepare on both cores and selects a fixed-memory scheduled servo lifecycle
+through distributed prime/start, block return, finish, cancellation, and fault.
+A virtual transactional mailbox joins it to the complete FOC-axis owner. Target
+PWM/ADC/encoder mailbox implementation, safe shutdown integration, WCET, and
+physical qualification remain later gates; every board still rejects servo
+arming and this structural milestone cannot energize hardware.
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

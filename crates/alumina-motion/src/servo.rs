@@ -1,7 +1,8 @@
 //! Portable core-1 ownership and exact replay of cached servo setpoints.
 
+use alumina_config::RealtimeConfiguration;
 use alumina_foc::{Q30, Q30_SCALE, ServoFocAxisProfile, ServoPosition, ServoSetpoint};
-use alumina_job::AdmittedBlock;
+use alumina_job::{AdmittedBlock, JobDescriptor};
 use alumina_machine_ir::{
     BlockError, ExecutionKind, MAX_SERVO_EXECUTION_AXES,
     ServoFiniteDifferenceBlockValidationLimits, ServoFiniteDifferenceSegment,
@@ -101,6 +102,117 @@ impl ServoSetpointAxisAdmissionProfile {
     }
 }
 
+/// Compact independently derived servo facts retained across cached jobs.
+///
+/// Every field originates in a complete validated FOC-axis profile. A job may
+/// later choose only bounded stream horizons; it cannot replace this identity,
+/// cadence, or per-axis physical authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CachedServoConfiguration<const AXES: usize> {
+    axes: [ServoSetpointAxisAdmissionProfile; AXES],
+}
+
+impl<const AXES: usize> CachedServoConfiguration<AXES> {
+    /// Joins already validated axis profiles onto one common command grid.
+    pub fn from_axes(
+        axes: [ServoSetpointAxisAdmissionProfile; AXES],
+    ) -> Result<Self, ServoSetpointAdmissionProfileError> {
+        if AXES == 0 || AXES > MAX_SERVO_EXECUTION_AXES {
+            return Err(ServoSetpointAdmissionProfileError::AxisCount);
+        }
+        let first = axes[0];
+        if first.configuration_digest.is_zero()
+            || first.position_period_ticks == 0
+            || axes.iter().any(|axis| {
+                axis.configuration_digest != first.configuration_digest
+                    || axis.position_period_ticks != first.position_period_ticks
+                    || axis.maximum_position_increment_bits == 0
+                    || axis.maximum_velocity_feed_forward_bits == 0
+            })
+        {
+            return Err(ServoSetpointAdmissionProfileError::CommonGrid);
+        }
+        Ok(Self { axes })
+    }
+
+    /// Independently lowers all FOC axes from one canonical active configuration.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+    ) -> Result<Self, ServoSetpointAdmissionProfileError> {
+        if AXES == 0 || AXES > MAX_SERVO_EXECUTION_AXES {
+            return Err(ServoSetpointAdmissionProfileError::AxisCount);
+        }
+        let identity = configuration.identity();
+        if identity.summary.stepper_axes != 0
+            || usize::from(identity.summary.foc_axes) != AXES
+            || configuration.profile().foc_axis_count() != AXES
+        {
+            return Err(ServoSetpointAdmissionProfileError::Configuration);
+        }
+        let first = configured_servo_axis(configuration, 0)?;
+        let mut axes = [first; AXES];
+        let mut axis = 1;
+        while axis < AXES {
+            axes[axis] = configured_servo_axis(configuration, axis)?;
+            axis += 1;
+        }
+        Self::from_axes(axes)
+    }
+
+    /// Complete active-configuration identity common to every axis.
+    pub const fn configuration_digest(self) -> Digest {
+        self.axes[0].configuration_digest
+    }
+
+    /// Exact common position-loop period in local device cycles.
+    pub const fn update_period_ticks(self) -> u32 {
+        self.axes[0].position_period_ticks
+    }
+
+    /// Applies only descriptor-owned bounded horizons to these retained facts.
+    pub fn bind_descriptor(
+        self,
+        descriptor: JobDescriptor,
+    ) -> Result<CachedServoAdmissionProfile<AXES>, ServoSetpointAdmissionProfileError> {
+        descriptor
+            .validate::<AXES>()
+            .map_err(|_| ServoSetpointAdmissionProfileError::Descriptor)?;
+        if descriptor.execution_kind != ExecutionKind::ServoFiniteDifference
+            || descriptor.config_digest != self.configuration_digest()
+            || descriptor.dense_update_period_ticks != self.update_period_ticks()
+        {
+            return Err(ServoSetpointAdmissionProfileError::Configuration);
+        }
+        let admission = cached_servo_admission_profile(
+            self.axes,
+            CachedServoStreamPolicy {
+                maximum_block_ticks: descriptor.limits.maximum_block_ticks,
+                maximum_segment_ticks: descriptor.limits.segment.maximum_segment_ticks,
+                maximum_update_count: descriptor.maximum_dense_updates,
+            },
+        )?;
+        let maximum_position_delta = admission
+            .limits
+            .segment
+            .maximum_position_delta_bits
+            .iter()
+            .copied()
+            .max()
+            .ok_or(ServoSetpointAdmissionProfileError::Policy)?;
+        if descriptor.limits.maximum_block_ticks != admission.limits.maximum_block_ticks
+            || descriptor.limits.segment.maximum_segment_ticks
+                != admission.limits.segment.maximum_segment_ticks
+            || descriptor.limits.segment.maximum_steps_per_segment != maximum_position_delta
+            || descriptor.maximum_dense_updates != admission.limits.segment.maximum_update_count
+            || descriptor.dense_update_period_ticks
+                != admission.limits.segment.required_update_period_ticks
+        {
+            return Err(ServoSetpointAdmissionProfileError::Configuration);
+        }
+        Ok(admission)
+    }
+}
+
 /// Complete common-cadence profile used by both cache validators and replay.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CachedServoAdmissionProfile<const AXES: usize> {
@@ -187,11 +299,40 @@ pub fn cached_servo_admission_profile<const AXES: usize>(
     })
 }
 
+/// Independently rebuild a descriptor-bound servo admission profile from one
+/// complete canonical active configuration.
+///
+/// Service and realtime actors call this same function against profiles they
+/// derived independently from the configuration bytes. The descriptor may
+/// choose only bounded ownership horizons; it cannot replace axis physics,
+/// cadence, control authority, or the active configuration identity.
+pub fn cached_servo_admission_profile_from_configuration<const AXES: usize>(
+    configuration: &RealtimeConfiguration,
+    descriptor: JobDescriptor,
+) -> Result<CachedServoAdmissionProfile<AXES>, ServoSetpointAdmissionProfileError> {
+    CachedServoConfiguration::from_configuration(configuration)?.bind_descriptor(descriptor)
+}
+
+fn configured_servo_axis(
+    configuration: &RealtimeConfiguration,
+    axis: usize,
+) -> Result<ServoSetpointAxisAdmissionProfile, ServoSetpointAdmissionProfileError> {
+    let profile = configuration
+        .lower_foc_axis(axis)
+        .and_then(|lowered| lowered.servo_foc_axis_profile())
+        .map_err(|_| ServoSetpointAdmissionProfileError::Configuration)?;
+    ServoSetpointAxisAdmissionProfile::from_foc_axis(profile)
+}
+
 /// Rejection while deriving servo command-stream authority from FOC profiles.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ServoSetpointAdmissionProfileError {
     /// Compile-time axis width was unsupported.
     AxisCount,
+    /// Descriptor fields were not canonical for this compile-time axis width.
+    Descriptor,
+    /// Active configuration identity, axis family, or retained FOC facts disagreed.
+    Configuration,
     /// One complete portable FOC axis profile failed validation.
     FocProfile,
     /// Ownership horizon/count policy was zero or internally inconsistent.
@@ -782,6 +923,505 @@ impl<const AXES: usize> CachedServoSetpointRunner<AXES> {
     }
 }
 
+/// Exact physical-owner acknowledgement for one staged setpoint batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServoSetpointOutputCommit {
+    token: ServoSetpointCommitToken,
+    applied_at: DeviceCycle,
+}
+
+impl ServoSetpointOutputCommit {
+    /// Records that the sole output owner applied this token at this cycle.
+    pub const fn new(token: ServoSetpointCommitToken, applied_at: DeviceCycle) -> Self {
+        Self { token, applied_at }
+    }
+
+    /// Opaque identity copied from the exact staged batch.
+    pub const fn token(self) -> ServoSetpointCommitToken {
+        self.token
+    }
+
+    /// Physical control boundary at which all axis setpoints became active.
+    pub const fn applied_at(self) -> DeviceCycle {
+        self.applied_at
+    }
+}
+
+/// Sole bounded hardware/control owner used by scheduled cached-servo replay.
+///
+/// `stage_servo_setpoints` must be transactional: `Err` means the batch was
+/// not accepted. A successful stage owns the exact batch until one matching
+/// commit is returned or an enclosing safety transaction invalidates it.
+pub trait ServoSetpointOutput<const AXES: usize> {
+    type Error;
+
+    /// Accepts one complete simultaneous future setpoint batch.
+    fn stage_servo_setpoints(
+        &mut self,
+        prepared: PreparedServoSetpoints<AXES>,
+    ) -> Result<(), Self::Error>;
+
+    /// Returns at most one exact physical/control-boundary acknowledgement.
+    fn take_servo_setpoint_commit(
+        &mut self,
+    ) -> Result<Option<ServoSetpointOutputCommit>, Self::Error>;
+}
+
+/// One bounded result from the scheduled cached-servo lifecycle owner.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "completion returns the unique inline block to its job actor"
+)]
+pub enum ScheduledServoAction<const AXES: usize> {
+    /// The terminal hold is complete but finish has not yet been requested.
+    Idle,
+    /// No logical transition is due before this exact cycle.
+    Future { at: DeviceCycle },
+    /// The stream needs its next independently admitted block before this cycle.
+    NeedBlock { at: DeviceCycle },
+    /// A staged batch has no reported physical acknowledgement yet.
+    WaitingForHardware,
+    /// An ordinary simultaneous setpoint batch was physically applied.
+    SetpointsCommitted(CommittedServoSetpoints),
+    /// The first batch was physically applied at the distributed start epoch.
+    StartSetpointsCommitted(CommittedServoSetpoints),
+    /// One block crossed its exact continuation/terminal commit barrier.
+    BlockComplete(AdmittedBlock<AXES>),
+    /// The terminal hold and explicit finish handshake are both complete.
+    JobComplete,
+}
+
+/// Configuration, ownership, timing, or hardware rejection in scheduled replay.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledServoExecutionError {
+    /// Active configuration or descriptor facts did not select one exact stream.
+    Configuration,
+    /// The requested transition was not legal in the current lifecycle state.
+    State,
+    /// The sole setpoint output owner rejected staging or observation.
+    Output,
+    /// A staged setpoint acknowledgement exceeded its bounded reporting horizon.
+    CommitObservationDeadline {
+        /// Exact cycle at which the setpoints had to become active.
+        scheduled: DeviceCycle,
+        /// Latest cycle at which the commit report could be consumed.
+        deadline: DeviceCycle,
+        /// Cycle at which the owner was polled.
+        observed: DeviceCycle,
+    },
+    /// A physical acknowledgement cannot be observed before its applied cycle.
+    CommitObservationOrder {
+        /// Cycle claimed by the physical/control owner.
+        applied: DeviceCycle,
+        /// Cycle at which the acknowledgement was consumed.
+        observed: DeviceCycle,
+    },
+    /// The exact recurrence owner rejected the stream transition.
+    Runner(CachedServoSetpointError),
+}
+
+/// Permanent fixed-memory lifecycle around one [`CachedServoSetpointRunner`].
+///
+/// This actor owns block transfer, distributed start priming, one staged batch,
+/// exact commit acknowledgement, terminal hold, and finish. It deliberately
+/// does not own PWM, ADC, or encoder hardware; the sole implementation of
+/// [`ServoSetpointOutput`] does.
+pub struct ScheduledServoExecution<const AXES: usize> {
+    configuration: Option<CachedServoConfiguration<AXES>>,
+    runner: Option<CachedServoSetpointRunner<AXES>>,
+    descriptor: Option<JobDescriptor>,
+    primed_epoch: Option<DeviceCycle>,
+    staged: Option<PreparedServoSetpoints<AXES>>,
+    running: bool,
+    remaining_blocks: u32,
+    first_commit_recorded: bool,
+    finish_requested: bool,
+    maximum_commit_observation_lateness_cycles: u32,
+}
+
+impl<const AXES: usize> ScheduledServoExecution<AXES> {
+    /// Starts without configuration or retained job ownership.
+    pub const fn new() -> Self {
+        Self {
+            configuration: None,
+            runner: None,
+            descriptor: None,
+            primed_epoch: None,
+            staged: None,
+            running: false,
+            remaining_blocks: 0,
+            first_commit_recorded: false,
+            finish_requested: false,
+            maximum_commit_observation_lateness_cycles: 0,
+        }
+    }
+
+    /// Replaces the compact independently validated configuration while idle.
+    pub fn configure(
+        &mut self,
+        configuration: CachedServoConfiguration<AXES>,
+        maximum_commit_observation_lateness_cycles: u32,
+    ) -> Result<(), ScheduledServoExecutionError> {
+        if self.runner.is_some() || self.running || self.staged.is_some() {
+            return Err(ScheduledServoExecutionError::State);
+        }
+        self.configuration = Some(configuration);
+        self.descriptor = None;
+        self.primed_epoch = None;
+        self.remaining_blocks = 0;
+        self.first_commit_recorded = false;
+        self.finish_requested = false;
+        self.maximum_commit_observation_lateness_cycles =
+            maximum_commit_observation_lateness_cycles;
+        Ok(())
+    }
+
+    /// Removes configuration and all inert ownership after outputs are safe.
+    pub fn clear(&mut self) {
+        self.configuration = None;
+        self.runner = None;
+        self.descriptor = None;
+        self.primed_epoch = None;
+        self.staged = None;
+        self.running = false;
+        self.remaining_blocks = 0;
+        self.first_commit_recorded = false;
+        self.finish_requested = false;
+        self.maximum_commit_observation_lateness_cycles = 0;
+    }
+
+    /// Whether a complete compact servo profile is installed.
+    pub const fn configured(&self) -> bool {
+        self.configuration.is_some()
+    }
+
+    /// Complete active-configuration identity retained by this actor.
+    pub fn configuration_digest(&self) -> Option<Digest> {
+        self.configuration
+            .map(CachedServoConfiguration::configuration_digest)
+    }
+
+    /// Transfers the first one or two blocks and stages the exact start batch.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "prime joins the complete distributed schedule and unique block window"
+    )]
+    pub fn prime<O>(
+        &mut self,
+        output: &mut O,
+        descriptor: JobDescriptor,
+        epoch: DeviceCycle,
+        admitted: AdmittedBlock<AXES>,
+        lookahead: Option<AdmittedBlock<AXES>>,
+        observed: DeviceCycle,
+    ) -> Result<(), ScheduledServoExecutionError>
+    where
+        O: ServoSetpointOutput<AXES>,
+    {
+        if self.runner.is_some()
+            || self.descriptor.is_some()
+            || self.primed_epoch.is_some()
+            || self.staged.is_some()
+            || self.running
+            || observed >= epoch
+            || descriptor.execution_kind != ExecutionKind::ServoFiniteDifference
+            || (descriptor.block_count == 1) != lookahead.is_none()
+            || admitted.header().sequence != 0
+            || lookahead
+                .as_ref()
+                .is_some_and(|block| block.header().sequence != 1)
+        {
+            return Err(ScheduledServoExecutionError::Configuration);
+        }
+        let configuration = self
+            .configuration
+            .ok_or(ScheduledServoExecutionError::Configuration)?;
+        let admission = configuration
+            .bind_descriptor(descriptor)
+            .map_err(|_| ScheduledServoExecutionError::Configuration)?;
+        if self.maximum_commit_observation_lateness_cycles
+            >= admission.setpoints.update_period_ticks
+        {
+            return Err(ScheduledServoExecutionError::Configuration);
+        }
+        let initial = descriptor
+            .initial_position_for::<AXES>()
+            .map_err(|_| ScheduledServoExecutionError::Configuration)?;
+        let mut runner = CachedServoSetpointRunner::new(admission.setpoints, epoch)
+            .map_err(ScheduledServoExecutionError::Runner)?;
+        runner
+            .admit_block(admitted)
+            .map_err(|rejected| ScheduledServoExecutionError::Runner(rejected.error()))?;
+        if let Some(lookahead) = lookahead {
+            runner
+                .admit_block(lookahead)
+                .map_err(|rejected| ScheduledServoExecutionError::Runner(rejected.error()))?;
+        }
+        let prepared = match runner
+            .prepare_next()
+            .map_err(ScheduledServoExecutionError::Runner)?
+        {
+            ServoSetpointPlan::Setpoints(prepared) => prepared,
+            ServoSetpointPlan::NeedBlock { .. }
+            | ServoSetpointPlan::CompletionPending
+            | ServoSetpointPlan::Complete => return Err(ScheduledServoExecutionError::State),
+        };
+        if prepared.scheduled_at() != epoch
+            || prepared
+                .setpoints()
+                .iter()
+                .enumerate()
+                .any(|(axis, setpoint)| {
+                    setpoint.position.bits() != initial[axis]
+                        || setpoint.velocity_feed_forward != Q30::ZERO
+                        || setpoint.quadrature_current_feed_forward != Q30::ZERO
+                })
+        {
+            return Err(ScheduledServoExecutionError::Configuration);
+        }
+        output
+            .stage_servo_setpoints(prepared)
+            .map_err(|_| ScheduledServoExecutionError::Output)?;
+
+        self.runner = Some(runner);
+        self.descriptor = Some(descriptor);
+        self.primed_epoch = Some(epoch);
+        self.staged = Some(prepared);
+        self.remaining_blocks = descriptor.block_count;
+        self.first_commit_recorded = false;
+        self.finish_requested = false;
+        Ok(())
+    }
+
+    /// Releases a hardware-primed stream at the exact committed epoch.
+    pub fn start(&mut self, epoch: DeviceCycle) -> Result<(), ScheduledServoExecutionError> {
+        if self.primed_epoch != Some(epoch)
+            || self.running
+            || self.runner.is_none()
+            || self.staged.is_none()
+        {
+            return Err(ScheduledServoExecutionError::State);
+        }
+        self.running = true;
+        Ok(())
+    }
+
+    /// Retains the next exact admitted block in the runner's bounded window.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection must return unique inline block ownership"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedServoSetpointBlock<AXES>> {
+        let valid_state = self.running
+            && self.remaining_blocks > 0
+            && self
+                .descriptor
+                .is_some_and(|descriptor| admitted.header().sequence < descriptor.block_count);
+        if !valid_state {
+            return Err(RejectedServoSetpointBlock {
+                error: CachedServoSetpointError::State,
+                admitted,
+            });
+        }
+        let Some(runner) = self.runner.as_mut() else {
+            return Err(RejectedServoSetpointBlock {
+                error: CachedServoSetpointError::State,
+                admitted,
+            });
+        };
+        runner.admit_block(admitted)
+    }
+
+    /// Advances one staged/committed lifecycle transition without busy waiting.
+    pub fn poll<O>(
+        &mut self,
+        output: &mut O,
+        observed: DeviceCycle,
+    ) -> Result<ScheduledServoAction<AXES>, ScheduledServoExecutionError>
+    where
+        O: ServoSetpointOutput<AXES>,
+    {
+        if !self.running {
+            return Err(ScheduledServoExecutionError::State);
+        }
+        let runner = self
+            .runner
+            .as_mut()
+            .ok_or(ScheduledServoExecutionError::State)?;
+        if let Some(commit) = output
+            .take_servo_setpoint_commit()
+            .map_err(|_| ScheduledServoExecutionError::Output)?
+        {
+            let staged = self.staged.ok_or(ScheduledServoExecutionError::State)?;
+            if observed < commit.applied_at() {
+                return Err(ScheduledServoExecutionError::CommitObservationOrder {
+                    applied: commit.applied_at(),
+                    observed,
+                });
+            }
+            let report_deadline = DeviceCycle(
+                staged
+                    .scheduled_at()
+                    .0
+                    .checked_add(u64::from(self.maximum_commit_observation_lateness_cycles))
+                    .ok_or(ScheduledServoExecutionError::State)?,
+            );
+            if observed > report_deadline {
+                return Err(ScheduledServoExecutionError::CommitObservationDeadline {
+                    scheduled: staged.scheduled_at(),
+                    deadline: report_deadline,
+                    observed,
+                });
+            }
+            let committed = runner
+                .commit(commit.token(), commit.applied_at())
+                .map_err(ScheduledServoExecutionError::Runner)?;
+            self.staged = None;
+            let first = !self.first_commit_recorded;
+            if first {
+                let epoch = self
+                    .primed_epoch
+                    .ok_or(ScheduledServoExecutionError::State)?;
+                if committed.applied_at != epoch {
+                    return Err(ScheduledServoExecutionError::State);
+                }
+                self.first_commit_recorded = true;
+            }
+            if committed.block_completed {
+                if first || self.remaining_blocks == 0 {
+                    return Err(ScheduledServoExecutionError::State);
+                }
+                self.remaining_blocks -= 1;
+                let completed = runner
+                    .take_completed_block()
+                    .ok_or(ScheduledServoExecutionError::State)?;
+                return Ok(ScheduledServoAction::BlockComplete(completed));
+            }
+            return Ok(if first {
+                ScheduledServoAction::StartSetpointsCommitted(committed)
+            } else {
+                ScheduledServoAction::SetpointsCommitted(committed)
+            });
+        }
+
+        if let Some(staged) = self.staged {
+            let scheduled = staged.scheduled_at();
+            let deadline = DeviceCycle(
+                scheduled
+                    .0
+                    .checked_add(u64::from(self.maximum_commit_observation_lateness_cycles))
+                    .ok_or(ScheduledServoExecutionError::State)?,
+            );
+            if observed > deadline {
+                return Err(ScheduledServoExecutionError::CommitObservationDeadline {
+                    scheduled,
+                    deadline,
+                    observed,
+                });
+            }
+            return Ok(if observed < scheduled {
+                ScheduledServoAction::Future { at: scheduled }
+            } else {
+                ScheduledServoAction::WaitingForHardware
+            });
+        }
+
+        match runner
+            .prepare_next()
+            .map_err(ScheduledServoExecutionError::Runner)?
+        {
+            ServoSetpointPlan::Setpoints(prepared) => {
+                if prepared.scheduled_at() <= observed {
+                    return Err(ScheduledServoExecutionError::CommitObservationDeadline {
+                        scheduled: prepared.scheduled_at(),
+                        deadline: prepared.scheduled_at(),
+                        observed,
+                    });
+                }
+                output
+                    .stage_servo_setpoints(prepared)
+                    .map_err(|_| ScheduledServoExecutionError::Output)?;
+                self.staged = Some(prepared);
+                Ok(ScheduledServoAction::Future {
+                    at: prepared.scheduled_at(),
+                })
+            }
+            ServoSetpointPlan::NeedBlock { scheduled_at } => {
+                if scheduled_at <= observed {
+                    return Err(ScheduledServoExecutionError::CommitObservationDeadline {
+                        scheduled: scheduled_at,
+                        deadline: scheduled_at,
+                        observed,
+                    });
+                }
+                Ok(ScheduledServoAction::NeedBlock { at: scheduled_at })
+            }
+            ServoSetpointPlan::CompletionPending => Err(ScheduledServoExecutionError::State),
+            ServoSetpointPlan::Complete if self.finish_requested && self.remaining_blocks == 0 => {
+                self.runner = None;
+                self.descriptor = None;
+                self.primed_epoch = None;
+                self.running = false;
+                self.first_commit_recorded = false;
+                self.finish_requested = false;
+                Ok(ScheduledServoAction::JobComplete)
+            }
+            ServoSetpointPlan::Complete => Ok(ScheduledServoAction::Idle),
+        }
+    }
+
+    /// Allows terminal completion only after every block token was returned.
+    pub fn request_finish(&mut self) -> Result<(), ScheduledServoExecutionError> {
+        if !self.running
+            || self.remaining_blocks != 0
+            || self.staged.is_some()
+            || !self
+                .runner
+                .as_ref()
+                .is_some_and(CachedServoSetpointRunner::is_complete)
+        {
+            return Err(ScheduledServoExecutionError::State);
+        }
+        self.finish_requested = true;
+        Ok(())
+    }
+
+    /// Invalidates every retained token after the enclosing owner made outputs safe.
+    pub fn fault(&mut self) {
+        if let Some(runner) = self.runner.as_mut() {
+            runner.fault();
+            while runner.take_faulted_block().is_some() {}
+        }
+        self.primed_epoch = None;
+        self.staged = None;
+        self.running = false;
+        self.remaining_blocks = 0;
+        self.first_commit_recorded = false;
+        self.finish_requested = false;
+    }
+
+    /// Absolute cycle needed by the staged batch or recurrence owner.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        self.staged
+            .map(PreparedServoSetpoints::scheduled_at)
+            .or_else(|| self.runner.as_ref()?.next_deadline())
+    }
+
+    /// Whether this actor has entered the released job lifecycle.
+    pub const fn started(&self) -> bool {
+        self.running
+    }
+}
+
+impl<const AXES: usize> Default for ScheduledServoExecution<AXES> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[allow(
     clippy::result_large_err,
     reason = "initial decode rejection must preserve the complete unique inline block"
@@ -1098,6 +1738,62 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct SetpointOutput {
+        staged: Option<PreparedServoSetpoints<2>>,
+        commit: Option<ServoSetpointOutputCommit>,
+        stage_count: u32,
+    }
+
+    impl SetpointOutput {
+        fn commit_staged_at(&mut self, applied_at: DeviceCycle) {
+            let staged = self.staged.take().expect("one staged batch");
+            self.commit = Some(ServoSetpointOutputCommit::new(staged.token(), applied_at));
+        }
+    }
+
+    impl ServoSetpointOutput<2> for SetpointOutput {
+        type Error = ();
+
+        fn stage_servo_setpoints(
+            &mut self,
+            prepared: PreparedServoSetpoints<2>,
+        ) -> Result<(), Self::Error> {
+            if self.staged.is_some() {
+                return Err(());
+            }
+            self.staged = Some(prepared);
+            self.stage_count += 1;
+            Ok(())
+        }
+
+        fn take_servo_setpoint_commit(
+            &mut self,
+        ) -> Result<Option<ServoSetpointOutputCommit>, Self::Error> {
+            Ok(self.commit.take())
+        }
+    }
+
+    fn scheduled_profile(
+        descriptor: &mut JobDescriptor,
+    ) -> (
+        CachedServoConfiguration<2>,
+        ServoFiniteDifferenceBlockValidationLimits<2>,
+    ) {
+        let axis = ServoSetpointAxisAdmissionProfile {
+            configuration_digest: descriptor.config_digest,
+            position_period_ticks: descriptor.dense_update_period_ticks,
+            maximum_position_increment_bits: POSITION_ONE as u64 / 2,
+            maximum_velocity_feed_forward_bits: 1_000,
+            maximum_quadrature_current_feed_forward_bits: 1_000,
+        };
+        let configuration = CachedServoConfiguration::from_axes([axis; 2]).unwrap();
+        descriptor.limits.segment.maximum_steps_per_segment =
+            descriptor.maximum_dense_updates as u64 * axis.maximum_position_increment_bits();
+        let admission = configuration.bind_descriptor(*descriptor).unwrap();
+        (configuration, admission.limits)
+    }
+
     #[test]
     fn exact_profile_math_rounds_position_outward_and_current_inward() {
         let scale = alumina_foc::ServoEncoderScale::new(4_294_967_296, 1, 4_096, 1).unwrap();
@@ -1261,6 +1957,163 @@ mod tests {
         assert_eq!(runner.prepare_next(), Ok(ServoSetpointPlan::Complete));
         assert!(runner.is_complete());
         assert_eq!(runner.committed_setpoints(), 9);
+    }
+
+    #[test]
+    fn scheduled_owner_primes_stages_commits_and_returns_each_unique_block() {
+        let mut descriptor = descriptor();
+        let (configuration, admission_limits) = scheduled_profile(&mut descriptor);
+        let mut source = blocks();
+        let mut job = RealtimeJob::<2>::prepare_servo(descriptor, admission_limits).unwrap();
+        let first = poll_block(&mut job, &mut source);
+        let second = poll_block(&mut job, &mut source);
+        let mut output = SetpointOutput::default();
+        let mut execution = ScheduledServoExecution::new();
+        execution.configure(configuration, 0).unwrap();
+        execution
+            .prime(
+                &mut output,
+                descriptor,
+                DeviceCycle(1_000),
+                first,
+                Some(second),
+                DeviceCycle(999),
+            )
+            .unwrap();
+        assert_eq!(execution.next_deadline(), Some(DeviceCycle(1_000)));
+        assert_eq!(output.staged.as_ref().unwrap().command_id(), 1);
+        execution.start(DeviceCycle(1_000)).unwrap();
+
+        for command_id in 1..=9_u32 {
+            let scheduled = DeviceCycle(990 + u64::from(command_id) * 10);
+            if command_id > 1 {
+                assert!(matches!(
+                    execution.poll(&mut output, DeviceCycle(scheduled.0 - 1)),
+                    Ok(ScheduledServoAction::Future { at }) if at == scheduled
+                ));
+                assert_eq!(output.staged.as_ref().unwrap().command_id(), command_id);
+            }
+            output.commit_staged_at(scheduled);
+            match execution.poll(&mut output, scheduled).unwrap() {
+                ScheduledServoAction::StartSetpointsCommitted(committed) => {
+                    assert_eq!(command_id, 1);
+                    assert_eq!(committed.command_id, 1);
+                    assert_eq!(committed.applied_at, DeviceCycle(1_000));
+                }
+                ScheduledServoAction::SetpointsCommitted(committed) => {
+                    assert!(!matches!(command_id, 1 | 5 | 9));
+                    assert_eq!(committed.command_id, command_id);
+                }
+                ScheduledServoAction::BlockComplete(completed) => {
+                    let expected_sequence = if command_id == 5 {
+                        0
+                    } else if command_id == 9 {
+                        1
+                    } else {
+                        panic!("only continuation and terminal commits complete blocks")
+                    };
+                    assert_eq!(completed.header().sequence, expected_sequence);
+                    let status = job.acknowledge(completed).unwrap();
+                    if command_id == 9 {
+                        assert_eq!(status.state, RealtimeJobState::Complete);
+                    }
+                }
+                ScheduledServoAction::Idle
+                | ScheduledServoAction::Future { .. }
+                | ScheduledServoAction::NeedBlock { .. }
+                | ScheduledServoAction::WaitingForHardware
+                | ScheduledServoAction::JobComplete => panic!("unexpected scheduled action"),
+            }
+        }
+
+        assert_eq!(output.stage_count, 9);
+        execution.request_finish().unwrap();
+        assert!(matches!(
+            execution.poll(&mut output, DeviceCycle(1_080)),
+            Ok(ScheduledServoAction::JobComplete)
+        ));
+        assert!(!execution.started());
+        assert_eq!(
+            execution.configuration_digest(),
+            Some(descriptor.config_digest)
+        );
+    }
+
+    #[test]
+    fn scheduled_owner_rejects_substitution_and_late_commit_report() {
+        let mut descriptor = descriptor();
+        let (configuration, admission_limits) = scheduled_profile(&mut descriptor);
+        let mut source = blocks();
+        let mut job = RealtimeJob::<2>::prepare_servo(descriptor, admission_limits).unwrap();
+        let first = poll_block(&mut job, &mut source);
+        let second = poll_block(&mut job, &mut source);
+        let mut output = SetpointOutput::default();
+        let mut execution = ScheduledServoExecution::new();
+        execution.configure(configuration, 0).unwrap();
+        execution
+            .prime(
+                &mut output,
+                descriptor,
+                DeviceCycle(2_000),
+                first,
+                Some(second),
+                DeviceCycle(1_999),
+            )
+            .unwrap();
+        execution.start(DeviceCycle(2_000)).unwrap();
+        output.staged = None;
+        output.commit = Some(ServoSetpointOutputCommit::new(
+            ServoSetpointCommitToken(99),
+            DeviceCycle(2_000),
+        ));
+        assert!(matches!(
+            execution.poll(&mut output, DeviceCycle(2_000)),
+            Err(ScheduledServoExecutionError::Runner(
+                CachedServoSetpointError::Token
+            ))
+        ));
+        execution.fault();
+        job.cancel();
+        assert!(!execution.started());
+        assert_eq!(job.status().state, RealtimeJobState::Cancelled);
+
+        execution.clear();
+        execution.configure(configuration, 0).unwrap();
+        let mut source = blocks();
+        let mut job = RealtimeJob::<2>::prepare_servo(descriptor, admission_limits).unwrap();
+        let first = poll_block(&mut job, &mut source);
+        let second = poll_block(&mut job, &mut source);
+        execution
+            .prime(
+                &mut output,
+                descriptor,
+                DeviceCycle(3_000),
+                first,
+                Some(second),
+                DeviceCycle(2_999),
+            )
+            .unwrap();
+        execution.start(DeviceCycle(3_000)).unwrap();
+        let staged = output.staged.take().unwrap();
+        output.commit = Some(ServoSetpointOutputCommit::new(
+            staged.token(),
+            DeviceCycle(3_000),
+        ));
+        assert!(matches!(
+            execution.poll(&mut output, DeviceCycle(2_999)),
+            Err(ScheduledServoExecutionError::CommitObservationOrder {
+                applied: DeviceCycle(3_000),
+                observed: DeviceCycle(2_999),
+            })
+        ));
+        assert!(matches!(
+            execution.poll(&mut output, DeviceCycle(3_001)),
+            Err(ScheduledServoExecutionError::CommitObservationDeadline {
+                scheduled: DeviceCycle(3_000),
+                deadline: DeviceCycle(3_000),
+                observed: DeviceCycle(3_001),
+            })
+        ));
     }
 
     #[test]

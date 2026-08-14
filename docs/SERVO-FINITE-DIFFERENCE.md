@@ -102,7 +102,7 @@ deterministic software ownership against the functional plant model; it does
 not establish target WCET, interrupt latency, ADC/PWM synchronization, or
 electrical behavior.
 
-## Browser authority and current target gate
+## Permanent lifecycle and current target gate
 
 The browser compiler projects exact Hyperreal cubic recurrences into Q31.32 and
 Q2.30 only after certified dyadic intervals select one ties-to-even integer. It
@@ -112,9 +112,26 @@ ownership/profile limits, reuses the firmware encoder and validators, and
 publishes only complete content-addressed partitions. See the coordinated
 interface contract in `alumina-interface/docs/EXACT-SERVO-MOTION.md`.
 
-The permanent ESP `MotionService` still selects only coordinated-step or direct
-step-finite-difference owners. It intentionally rejects kind `3` until a
-configuration-derived FOC profile, complete-axis actor, target PWM/ADC/encoder
-ownership, safe shutdown, and measured timing gates are joined without an
-energizing compatibility path. TinyBee, T-Deck Pro, and MKS ESP32 FOC images
-therefore gain no servo output authority from this schema milestone.
+The permanent ESP job actors now retain independently validated compact
+configuration profiles and rebuild the exact servo limits on both cores. The
+core-1 `MotionService` selects kind `3` without fallback, primes one future
+simultaneous batch before the distributed start, accepts one opaque physical
+commit at a time, and returns each block only after its continuation or terminal
+commit. Commit-token substitution, an acknowledgement observed before its
+claimed boundary, a report beyond the board-bounded latency, cancellation, and
+safety fault all fail closed. Commit-report latency must be strictly shorter
+than the configured position-loop period so the next batch can be staged.
+
+`ScheduledServoFocHardwareLoop` implements the same setpoint-output boundary in
+simulation. It injects a due batch into the complete encoder, cascaded servo,
+current-control, angle, SVPWM, and compare-image owner and publishes the cached
+commit only after that whole candidate transition succeeds. The two-block test
+replays 401 current periods, three position updates, both block barriers, and
+the terminal hold.
+
+Every firmware board currently implements this setpoint-output boundary as a
+transactional unavailable result. `SERVO_OUTPUT_IMPLEMENTED`,
+`SERVO_OUTPUT_QUALIFIED`, qualified commit-report latency, and qualified prime
+lead all remain closed for TinyBee, T-Deck Pro, and MKS ESP32 FOC. The job is
+therefore rejected before cache ownership or arming; no target PWM, ADC,
+encoder, shutdown, timing, or energization claim follows from this milestone.

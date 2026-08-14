@@ -4783,12 +4783,23 @@ pub struct ServiceConfigurationStatus {
     pub identity: Option<ConfigurationIdentity>,
 }
 
+/// Mutually exclusive working validator or completed compact profile.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "no-allocation core-0 validation deliberately reuses one static inline region"
+)]
+enum ServiceConfigurationPayload<'a, const MAX_BINDINGS: usize> {
+    Validating(ConfigurationStreamValidator<'a, MAX_BINDINGS>),
+    Complete(RealtimeConfiguration),
+    Empty,
+}
+
 /// Sole core-0 owner of one verified publication cursor and validation buffers.
 pub struct ServiceConfigurationValidation<'a, const MAX_BINDINGS: usize> {
     publication: ConfigurationPublication,
     total_bytes: u32,
     reader: PublishedReader,
-    validator: Option<ConfigurationStreamValidator<'a, MAX_BINDINGS>>,
+    payload: ServiceConfigurationPayload<'a, MAX_BINDINGS>,
     storage: [u8; MAX_MEDIA_CHUNK_BYTES],
     storage_offset: usize,
     storage_len: usize,
@@ -4825,7 +4836,7 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
             publication,
             total_bytes,
             reader,
-            validator: Some(validator),
+            payload: ServiceConfigurationPayload::Validating(validator),
             storage: [0; MAX_MEDIA_CHUNK_BYTES],
             storage_offset: 0,
             storage_len: 0,
@@ -4847,7 +4858,7 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
         let result = self.next_inner(cache).await;
         if result.is_err() {
             self.state = ServiceConfigurationState::Faulted;
-            self.validator = None;
+            self.payload = ServiceConfigurationPayload::Empty;
             self.identity = None;
             self.storage.fill(0);
             self.storage_offset = 0;
@@ -4866,6 +4877,19 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
             validated_bytes: self.document_offset,
             storage_chunks_read: self.storage_chunks_read,
             identity: self.identity,
+        }
+    }
+
+    /// Complete independently validated executable facts retained on core 0.
+    ///
+    /// The service core may use this profile only for admission checks that
+    /// must be repeated independently on both cores. Physical output ownership
+    /// remains exclusively real-time. The value appears only after the entire
+    /// publication and its content digest have been validated.
+    pub const fn validated_configuration(&self) -> Option<&RealtimeConfiguration> {
+        match &self.payload {
+            ServiceConfigurationPayload::Complete(configuration) => Some(configuration),
+            ServiceConfigurationPayload::Validating(_) | ServiceConfigurationPayload::Empty => None,
         }
     }
 
@@ -4897,9 +4921,11 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
                             .checked_add(count)
                             .ok_or(ConfigurationTransferError::State)?;
                         let bytes = &self.storage[self.storage_offset..end];
-                        self.validator
-                            .as_mut()
-                            .ok_or(ConfigurationTransferError::State)?
+                        let ServiceConfigurationPayload::Validating(validator) = &mut self.payload
+                        else {
+                            return Err(ConfigurationTransferError::State);
+                        };
+                        validator
                             .push(bytes)
                             .map_err(ConfigurationTransferError::Configuration)?;
                         let command = CoreConfigurationCommand::data(
@@ -4928,12 +4954,21 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
                         if self.document_offset != self.total_bytes {
                             return Err(ConfigurationTransferError::State);
                         }
-                        let identity = self
-                            .validator
-                            .take()
-                            .ok_or(ConfigurationTransferError::State)?
-                            .finish()
+                        let payload = core::mem::replace(
+                            &mut self.payload,
+                            ServiceConfigurationPayload::Empty,
+                        );
+                        let ServiceConfigurationPayload::Validating(validator) = payload else {
+                            return Err(ConfigurationTransferError::State);
+                        };
+                        let (identity, profile) = validator
+                            .finish_with_profile()
                             .map_err(ConfigurationTransferError::Configuration)?;
+                        self.payload =
+                            ServiceConfigurationPayload::Complete(RealtimeConfiguration {
+                                identity,
+                                profile,
+                            });
                         self.identity = Some(identity);
                         self.state = ServiceConfigurationState::Finish;
                         continue;
@@ -7673,13 +7708,26 @@ mod tests {
         );
         assert!(commands > service_status.storage_chunks_read);
         let service_identity = service_status.identity.unwrap();
+        let service_configuration = service.validated_configuration().unwrap();
         let realtime_identity = realtime.candidate_identity().unwrap();
         assert_eq!(service_identity, realtime_identity);
+        assert_eq!(service_configuration.identity(), service_identity);
+        assert!(service_configuration.profile().stepper_axis(0).is_some());
+        assert_eq!(service_configuration.profile().foc_axis_count(), 0);
         assert_eq!(service_identity.digest, digest);
         assert_eq!(
             realtime.report().state,
             RealtimeConfigurationState::CandidateValid
         );
+    }
+
+    #[test]
+    fn service_validation_reuses_working_profile_storage_after_finish() {
+        type Stream = ConfigurationStreamValidator<'static, 32>;
+        type Payload = ServiceConfigurationPayload<'static, 32>;
+        let split_layout = core::mem::size_of::<Option<Stream>>()
+            + core::mem::size_of::<Option<RealtimeConfiguration>>();
+        assert!(core::mem::size_of::<Payload>() < split_layout);
     }
 
     #[test]

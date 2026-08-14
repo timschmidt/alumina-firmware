@@ -14,6 +14,7 @@ use alumina_foc::{
     ServoFocAxisController, ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisUpdate,
     ServoSetpoint, inverse_park, park, space_vector_modulate,
 };
+use alumina_motion::{PreparedServoSetpoints, ServoSetpointOutput, ServoSetpointOutputCommit};
 use alumina_protocol::DeviceCycle;
 
 const INITIAL_DUTY_TOKEN: u32 = 1;
@@ -211,6 +212,122 @@ impl ConfiguredServoFocHardwareLoop {
                 },
             )
             .map_err(FocHardwareLoopError::Axis)
+    }
+}
+
+/// One-axis scheduled-setpoint mailbox joined to the complete virtual FOC owner.
+///
+/// A staged cached command becomes a controller input only at its exact
+/// position-loop boundary. The corresponding commit is published only after
+/// the complete candidate controller state and next PWM compare image commit
+/// successfully; a failed period cannot advance cached-stream ownership.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ScheduledServoFocHardwareLoop {
+    hardware: ConfiguredServoFocHardwareLoop,
+    staged: Option<PreparedServoSetpoints<1>>,
+    commit: Option<ServoSetpointOutputCommit>,
+}
+
+impl ScheduledServoFocHardwareLoop {
+    /// Constructs through one independently validated canonical configuration.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+        slot: usize,
+        activation_id: u64,
+        seed: ServoEncoderSeed,
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        let hardware = ConfiguredServoFocHardwareLoop::from_configuration(
+            configuration,
+            slot,
+            activation_id,
+            seed,
+            first_boundary,
+        )?;
+        Ok(Self {
+            hardware,
+            staged: None,
+            commit: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn from_lowered(
+        lowered: LoweredFocAxisConfiguration,
+        activation_id: u64,
+        seed: ServoEncoderSeed,
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        let hardware = ConfiguredServoFocHardwareLoop::from_lowered(
+            lowered,
+            activation_id,
+            seed,
+            first_boundary,
+        )?;
+        Ok(Self {
+            hardware,
+            staged: None,
+            commit: None,
+        })
+    }
+
+    /// Complete underlying encoder/cascade/current/PWM simulation owner.
+    pub const fn hardware(&self) -> &ConfiguredServoFocHardwareLoop {
+        &self.hardware
+    }
+
+    /// Executes one current/PWM period and consumes a due staged setpoint.
+    pub fn step(
+        &mut self,
+        mut input: FocServoHardwareLoopInput,
+    ) -> Result<ServoFocAxisUpdate, FocHardwareLoopError> {
+        if input.setpoint.is_some() || self.commit.is_some() {
+            return Err(FocHardwareLoopError::Sequence);
+        }
+        let at = self.hardware.controller().period_started_at();
+        let due = match self.staged {
+            Some(prepared) if prepared.scheduled_at() < at => {
+                return Err(FocHardwareLoopError::Sequence);
+            }
+            Some(prepared) if prepared.scheduled_at() == at => Some(prepared),
+            Some(_) | None => None,
+        };
+        if let Some(prepared) = due {
+            input.setpoint = Some(prepared.setpoints()[0]);
+        }
+        let update = self.hardware.step(input)?;
+        if let Some(prepared) = due {
+            self.staged = None;
+            self.commit = Some(ServoSetpointOutputCommit::new(
+                prepared.token(),
+                prepared.scheduled_at(),
+            ));
+        }
+        Ok(update)
+    }
+}
+
+impl ServoSetpointOutput<1> for ScheduledServoFocHardwareLoop {
+    type Error = FocHardwareLoopError;
+
+    fn stage_servo_setpoints(
+        &mut self,
+        prepared: PreparedServoSetpoints<1>,
+    ) -> Result<(), Self::Error> {
+        if self.staged.is_some()
+            || self.commit.is_some()
+            || prepared.scheduled_at() < self.hardware.controller().period_started_at()
+        {
+            return Err(FocHardwareLoopError::Sequence);
+        }
+        self.staged = Some(prepared);
+        Ok(())
+    }
+
+    fn take_servo_setpoint_commit(
+        &mut self,
+    ) -> Result<Option<ServoSetpointOutputCommit>, Self::Error> {
+        Ok(self.commit.take())
     }
 }
 
@@ -524,8 +641,8 @@ mod tests {
         StreamId, StreamTick, ValidationLimits,
     };
     use alumina_motion::{
-        CachedServoSetpointRunner, CachedServoStreamPolicy, ServoSetpointAxisAdmissionProfile,
-        ServoSetpointPlan, cached_servo_admission_profile,
+        CachedServoConfiguration, CachedServoStreamPolicy, ScheduledServoAction,
+        ScheduledServoExecution, ServoSetpointAxisAdmissionProfile, cached_servo_admission_profile,
     };
     use alumina_protocol::Digest;
     use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
@@ -932,6 +1049,7 @@ mod tests {
         let lowered = servo_lowered_fixture();
         let foc_profile = lowered.servo_foc_axis_profile().unwrap();
         let axis = ServoSetpointAxisAdmissionProfile::from_foc_axis(foc_profile).unwrap();
+        let configuration = CachedServoConfiguration::from_axes([axis]).unwrap();
         let admission = cached_servo_admission_profile(
             [axis],
             CachedServoStreamPolicy {
@@ -1028,50 +1146,76 @@ mod tests {
             RealtimePoll::Block(block) => block,
             RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("second block"),
         };
-        let mut runner =
-            CachedServoSetpointRunner::new(admission.setpoints, DeviceCycle(80_000)).unwrap();
-        runner.admit_block(first).unwrap();
-        runner.admit_block(second).unwrap();
-        let mut hardware = ConfiguredServoFocHardwareLoop::from_lowered(
+        assert_eq!(
+            configuration.bind_descriptor(descriptor).unwrap(),
+            admission
+        );
+        let mut hardware = ScheduledServoFocHardwareLoop::from_lowered(
             lowered,
             0x55aa,
             servo_seed(),
             DeviceCycle(80_000),
         )
         .unwrap();
+        let mut execution = ScheduledServoExecution::new();
+        execution.configure(configuration, 4_000).unwrap();
+        execution
+            .prime(
+                &mut hardware,
+                descriptor,
+                DeviceCycle(80_000),
+                first,
+                Some(second),
+                DeviceCycle(79_999),
+            )
+            .unwrap();
+        execution.start(DeviceCycle(80_000)).unwrap();
         let mut command_ids = [0_u32; 3];
         let mut command_count = 0_usize;
 
         for current_index in 0_u64..=400 {
-            let at = hardware.controller().period_started_at();
-            let prepared = if runner.next_deadline() == Some(at) {
-                match runner.prepare_next().unwrap() {
-                    ServoSetpointPlan::Setpoints(prepared) => Some(prepared),
-                    ServoSetpointPlan::NeedBlock { .. }
-                    | ServoSetpointPlan::CompletionPending
-                    | ServoSetpointPlan::Complete => panic!("boundary setpoint"),
-                }
-            } else {
-                None
-            };
-            let mut input = servo_input(&hardware, current_index);
-            input.setpoint = prepared.map(|batch| batch.setpoints()[0]);
+            let mut input = servo_input(hardware.hardware(), current_index);
+            input.setpoint = None;
             hardware.step(input).unwrap();
-            if let Some(prepared) = prepared {
-                command_ids[command_count] = prepared.command_id();
-                command_count += 1;
-                runner.commit(prepared.token(), at).unwrap();
-                if let Some(completed) = runner.take_completed_block() {
+            let observed = hardware.hardware().controller().period_started_at();
+            match execution.poll(&mut hardware, observed).unwrap() {
+                ScheduledServoAction::StartSetpointsCommitted(committed)
+                | ScheduledServoAction::SetpointsCommitted(committed) => {
+                    command_ids[command_count] = committed.command_id;
+                    command_count += 1;
+                }
+                ScheduledServoAction::BlockComplete(completed) => {
+                    command_ids[command_count] = if completed.header().sequence == 0 {
+                        2
+                    } else {
+                        3
+                    };
+                    command_count += 1;
                     job.acknowledge(completed).unwrap();
                 }
+                ScheduledServoAction::Future { .. } | ScheduledServoAction::WaitingForHardware => {}
+                ScheduledServoAction::Idle
+                | ScheduledServoAction::NeedBlock { .. }
+                | ScheduledServoAction::JobComplete => panic!("unexpected scheduled action"),
             }
         }
 
         assert_eq!(command_ids, [1, 2, 3]);
-        assert_eq!(runner.committed_setpoints(), 3);
-        assert!(runner.is_complete());
-        assert_eq!(hardware.controller().period_sequence(), 401);
-        assert_eq!(hardware.controller().cascade().position_updates(), 3);
+        execution.request_finish().unwrap();
+        let final_observed = hardware.hardware().controller().period_started_at();
+        assert!(matches!(
+            execution.poll(&mut hardware, final_observed),
+            Ok(ScheduledServoAction::JobComplete)
+        ));
+        assert_eq!(hardware.hardware().controller().period_sequence(), 401);
+        assert_eq!(
+            hardware
+                .hardware()
+                .controller()
+                .cascade()
+                .position_updates(),
+            3
+        );
         assert_eq!(job.status().state, RealtimeJobState::Complete);
     }
 

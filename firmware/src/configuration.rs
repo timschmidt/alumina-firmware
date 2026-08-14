@@ -8,6 +8,7 @@ use alumina_config::{
     RealtimeConfigurationState, ServiceConfigurationState, ServiceConfigurationStatus,
     ServiceConfigurationValidation,
 };
+use alumina_motion::CachedServoConfiguration;
 use alumina_protocol::{
     DeviceCycle, Digest, FrameHeader, FrameKind, MessageHeader, Operation, StatusCode,
 };
@@ -39,6 +40,7 @@ pub struct ConfigurationService {
     realtime: RealtimeConfigurationReport,
     active: Option<DurableConfigurationSelection>,
     active_identity: Option<ConfigurationIdentity>,
+    active_servo_configuration: Option<CachedServoConfiguration<{ selected::JOB_AXES }>>,
     durable_pending: Option<ConfigurationTransition>,
     durable_prepared: bool,
     boot_orphan: Option<ConfigurationTransition>,
@@ -64,6 +66,7 @@ impl ConfigurationService {
             realtime: RealtimeConfigurationReport::empty(),
             active: None,
             active_identity: None,
+            active_servo_configuration: None,
             durable_pending: None,
             durable_prepared: false,
             boot_orphan: None,
@@ -194,6 +197,22 @@ impl ConfigurationService {
         } else {
             active.publication().object.content.digest
         }
+    }
+
+    /// Compact independently validated servo-admission facts paired with the
+    /// durably authorized identity.
+    ///
+    /// This value authorizes only bounded service-side admission checks. It
+    /// never owns or constructs a physical output peripheral.
+    pub fn authorized_servo_configuration(
+        &self,
+    ) -> Option<&CachedServoConfiguration<{ selected::JOB_AXES }>> {
+        let digest = self.authorized_digest();
+        self.active_servo_configuration
+            .as_ref()
+            .filter(|configuration| {
+                !digest.is_zero() && configuration.configuration_digest() == digest
+            })
     }
 
     /// True while a configuration operation excludes new job preparation.
@@ -578,7 +597,12 @@ impl ConfigurationService {
             return;
         }
         if self.boot_recovery {
+            let Ok(configuration) = self.service_servo_configuration_for_identity() else {
+                self.reject(ConfigurationCoordinatorFault::Internal);
+                return;
+            };
             self.active_identity = self.service_identity;
+            self.active_servo_configuration = configuration;
             self.phase = ConfigurationCoordinatorPhase::Authorizing;
             self.control_sent = false;
         } else {
@@ -595,6 +619,10 @@ impl ConfigurationService {
             self.reject(ConfigurationCoordinatorFault::Internal);
             return;
         };
+        let Ok(configuration) = self.service_servo_configuration_for_identity() else {
+            self.reject(ConfigurationCoordinatorFault::Internal);
+            return;
+        };
         match cache
             .commit_configuration_transition(transition, mutation)
             .await
@@ -602,6 +630,7 @@ impl ConfigurationService {
             Ok(journal) => {
                 self.active = journal.active;
                 self.active_identity = self.service_identity;
+                self.active_servo_configuration = configuration;
                 self.durable_pending = None;
                 self.durable_prepared = false;
                 self.phase = ConfigurationCoordinatorPhase::Authorizing;
@@ -701,6 +730,7 @@ impl ConfigurationService {
             Ok(journal) => {
                 self.active = journal.active;
                 self.active_identity = None;
+                self.active_servo_configuration = None;
                 self.durable_pending = None;
                 self.durable_prepared = false;
                 self.finish_operation(ConfigurationCoordinatorPhase::Empty);
@@ -911,6 +941,24 @@ impl ConfigurationService {
                     && self.realtime.active_authorized
             },
         )
+    }
+
+    fn service_servo_configuration_for_identity(
+        &self,
+    ) -> Result<Option<CachedServoConfiguration<{ selected::JOB_AXES }>>, ()> {
+        let identity = self.service_identity.ok_or(())?;
+        let configuration = self
+            .validation
+            .as_ref()
+            .and_then(Validation::validated_configuration)
+            .filter(|configuration| configuration.identity() == identity)
+            .ok_or(())?;
+        if identity.summary.foc_axes == 0 {
+            return Ok(None);
+        }
+        CachedServoConfiguration::from_configuration(configuration)
+            .map(Some)
+            .map_err(|_| ())
     }
 
     fn finish_operation(&mut self, phase: ConfigurationCoordinatorPhase) {

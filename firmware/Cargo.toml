@@ -84,6 +84,7 @@ alumina-diagnostics.workspace = true
 alumina-foc.workspace = true
 alumina-graph-ir.workspace = true
 alumina-job.workspace = true
+alumina-machine-ir.workspace = true
 alumina-motion.workspace = true
 alumina-net.workspace = true
 alumina-protocol.workspace = true

@@ -1298,8 +1298,15 @@ must end with both feed-forward channels at zero, after which the runner emits
 one separately owned terminal hold. Firmware derives position increment,
 velocity, and current bounds from complete digest-bound FOC axis profiles and
 requires typed servo admission on both cores. The portable two-block runner is
-allocation-free and uses transactional prepare/commit setpoints, but it is not
-yet selected by the permanent ESP motion actor and therefore makes no target
+allocation-free and uses transactional prepare/commit setpoints. The permanent
+core-1 selector now binds that runner to the same distributed prime/start,
+block-acknowledgement, finish, cancellation, and safety-fault lifecycle used by
+step execution, without interpreting one family as another. Core 0 and core 1
+retain separately validated compact FOC profiles and independently rebuild the
+descriptor-bound limits. The selected board must additionally implement a
+transactional setpoint mailbox and qualify its commit-report latency and prime
+lead. Every current board supplies an unavailable mailbox and false
+implementation/qualification gates, so this structural dispatch makes no target
 timing, peripheral, or energization claim.
 
 The firmware validates structure and machine constraints; it does not trust a

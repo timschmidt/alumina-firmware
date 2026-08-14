@@ -92,7 +92,7 @@ use clock::ClockService;
 use configuration::ConfigurationService;
 use graph::{GraphBridge, GraphService, RealtimeGraphExecutor};
 use hardware::selected;
-use job::{JobService, RealtimeJobService};
+use job::{JobService, RealtimeJobService, ServiceJobContext};
 use motion::{MotionAction, MotionService};
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
@@ -487,8 +487,11 @@ async fn service_task(
                     &mut endpoint,
                     request.request(),
                     now,
-                    latest_probe,
-                    storage.effective_safety(now).state,
+                    ServiceJobContext::new(
+                        latest_probe,
+                        storage.effective_safety(now).state,
+                        configurations.authorized_servo_configuration(),
+                    ),
                 )
                 .await
             } else if TargetDiagnosticService::handles(request.request()) {
@@ -779,6 +782,7 @@ async fn realtime_task(
                             DeviceCycle(observed.as_ticks()),
                             safety.state(),
                             probe.misses() == 0,
+                            configurations.authorized_configuration(),
                         )
                         .is_ok(),
                     FrameKind::Job => false,
@@ -1224,19 +1228,34 @@ fn service_realtime_motion(
                 return Ok(false);
             }
             MotionAction::OutputCommitted => {}
-            MotionAction::StartOutputCommitted(committed) => {
+            MotionAction::StartOutputCommitted {
+                output_token,
+                scheduled_at,
+                committed_at,
+            } => {
                 let observation = JobStartObservation {
                     source: JobStartObservationSource::PeripheralLatch,
-                    output_token: committed.token.value(),
-                    scheduled_cycle: committed.update.at,
-                    earliest_cycle: committed.committed_at,
-                    latest_cycle: committed.committed_at,
+                    output_token,
+                    scheduled_cycle: scheduled_at,
+                    earliest_cycle: committed_at,
+                    latest_cycle: committed_at,
                 };
                 if jobs.record_start_observation(endpoint, now, observation)?
                     == JobScheduleState::Faulted
                 {
                     return Err(());
                 }
+            }
+            MotionAction::NeedBlock { at } => {
+                if at <= now {
+                    return Err(());
+                }
+                jobs.preadmit(endpoint, now)?;
+                if let Some(next) = jobs.take_admitted() {
+                    motion.admit(next).map_err(|_| ())?;
+                    continue;
+                }
+                return Ok(false);
             }
             MotionAction::WaitingForHardware => return Ok(false),
             MotionAction::BlockComplete(admitted) => {
@@ -1275,7 +1294,7 @@ fn reconcile_arm_state(
     if safety.state() == SafetyState::Configured
         && configurations.authorized_configuration().is_some()
         && jobs.ready_to_arm()
-        && motion.ready_to_arm()
+        && motion.ready_to_arm(jobs.descriptor())
         && safe_outputs_established
         && safety_inputs.ready_to_arm()
         && deadline_healthy

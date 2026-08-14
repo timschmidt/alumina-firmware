@@ -47,6 +47,14 @@ pub const SAFETY_INPUT_CAPACITY: usize = 4;
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = true;
 /// Physical step/dir output remains closed until I²S/DMA HIL evidence exists.
 pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// TinyBee has no configured FOC-servo output owner.
+pub const SERVO_OUTPUT_IMPLEMENTED: bool = false;
+/// No TinyBee servo output path has physical qualification.
+pub const SERVO_OUTPUT_QUALIFIED: bool = false;
+/// No servo commit-reporting latency has been established on this target.
+pub const SERVO_MAXIMUM_COMMIT_OBSERVATION_LATENESS_CYCLES: u32 = 0;
+/// No servo priming lead is qualified; the impossible value closes admission.
+pub const SERVO_MINIMUM_PRIME_LEAD_CYCLES: u64 = u64::MAX;
 /// Placeholder one-cycle grid for the unqualified static target. The future
 /// I²S backend must replace this with its measured continuous frame quantum.
 pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;

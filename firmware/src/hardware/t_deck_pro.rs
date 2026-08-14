@@ -39,6 +39,14 @@ pub const SAFETY_INPUT_CAPACITY: usize = 0;
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
 /// No machine output can authorize arming on this board package.
 pub const MOTION_OUTPUT_QUALIFIED: bool = false;
+/// T-Deck Pro has no configured FOC-servo output owner.
+pub const SERVO_OUTPUT_IMPLEMENTED: bool = false;
+/// No T-Deck Pro servo output path has physical qualification.
+pub const SERVO_OUTPUT_QUALIFIED: bool = false;
+/// No servo commit-reporting latency has been established on this target.
+pub const SERVO_MAXIMUM_COMMIT_OBSERVATION_LATENESS_CYCLES: u32 = 0;
+/// No servo priming lead is qualified; the impossible value closes admission.
+pub const SERVO_MINIMUM_PRIME_LEAD_CYCLES: u64 = u64::MAX;
 /// Inert one-cycle value; this board currently exposes no motion output.
 pub const MOTION_OUTPUT_QUANTUM_CYCLES: u32 = 1;
 /// No physical commit-lateness claim exists.

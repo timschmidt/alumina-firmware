@@ -82,6 +82,7 @@ dependencies = [
  "alumina-foc",
  "alumina-graph-ir",
  "alumina-job",
+ "alumina-machine-ir",
  "alumina-motion",
  "alumina-net",
  "alumina-protocol",
