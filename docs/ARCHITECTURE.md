@@ -1224,6 +1224,23 @@ ADC acquisitions are synchronized, or that the real shutdown action is safe.
 See
 [`evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
 
+`PwmCommitBankBarrier<AXES>` now makes the next hardware-owner seam explicit.
+It retains one complete configuration-bound compare-image vector for the sole
+next common timer-zero boundary, correlates exactly one token/schedule/boundary
+witness per physical-axis slot, and releases only the complete ordered commit
+array. The barrier is allocation-free for one to four axes; busy staging is
+retryable, while identity, schedule, duplicate, missing, overflow, or safety
+mismatches clear pending authority and latch first cause. The simulator places
+it after pure bank preparation and before logical bank commit, so a later-axis
+report failure cannot publish an earlier axis's candidate state.
+
+This seam exposes images but has no register-write or enable API. It depends on
+a future target owner for truthful latch status, aligned MCPWM epochs, and the
+qualified all-stage shutdown transaction. Physical outputs cannot be rolled
+back if hardware completed and a subsequent logical check fails; that path must
+fault safe rather than claim atomic physical rollback. See
+[`evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage

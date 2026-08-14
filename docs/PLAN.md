@@ -445,6 +445,15 @@ and
 [`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md),
 plus
 [`M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md`](evidence/M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md).
+The simulator now places a fixed-memory physical-commit correlation barrier
+between complete-bank preparation and logical publication. It admits only one
+configuration-bound image vector for one common boundary, accepts per-stage
+latch witnesses in any order, and releases no partial commit set. Late,
+duplicate, missing, foreign, off-boundary, overflow, and safety-invalidated
+transactions latch terminally without advancing either logical controller.
+This remains a modeled acknowledgement seam rather than MCPWM readback,
+cross-timer synchronization, or rollback evidence. See
+[`M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
@@ -873,6 +882,15 @@ validated document drives cached-servo admission and the complete simulator
 bank. A closed target selector replays both bundles but every hardware output
 gate remains false. See
 [`M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md`](evidence/M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md).
+The following physical-commit checkpoint inserts a one-to-four-axis,
+allocation-free barrier before `ServoFocBank` publication. It retains exactly
+one complete compare-image vector and releases an ordered acknowledgement only
+after every slot reports the same exact boundary with its own expected token.
+The canonical two-axis and 401-period cached replays pass through that seam;
+one-cycle lateness on axis 1 leaves both logical controllers unchanged and
+latches the barrier. The simulator reports supplied observations and therefore
+does not qualify MCPWM synchronization or physical shutdown. See
+[`M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](evidence/M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md).
 
 Exit gate:
 
