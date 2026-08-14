@@ -1245,6 +1245,18 @@ and 12-bit ADC range before it can construct the otherwise-private stopped
 MCPWM selection. This is lowering, not peripheral activation: the MKS stage
 remains non-armable, and no operator is attached to a phase pin.
 
+The canonical dual-axis checkpoint streams one 78-record MKS document into the
+private configuration container, then derives both `CachedServoConfiguration<2>`
+and `ConfiguredServoFocHardwareBank<2>` from that same value. Logical instances
+0 and 1 must select power stages 0 and 1, independent MCPWM engines, the two
+schematic ADC1 pairs, and independent encoder endpoints. The target aggregate
+additionally requires equal servo grids, PWM compare contracts, current-sample
+synchronization, and configuration identity before returning only closed ADC,
+MCPWM, and cached-command facts. The test package's power-stage qualification
+is synthetic; the compiled board package and all output gates remain
+unqualified. See
+[`evidence/M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md`](evidence/M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md).
+
 ## Exact CAD-to-motor boundary
 
 Exactness is preserved by making the lossy boundary explicit and provable, not

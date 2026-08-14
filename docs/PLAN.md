@@ -433,10 +433,18 @@ current periods; later-axis latch/encoder faults and ordered safe invalidation
 cannot advance the first axis alone. Target PWM/ADC/encoder mailbox
 implementation, safe shutdown integration, WCET, and physical qualification
 remain later gates; every board still rejects servo arming and this structural
-milestone cannot energize hardware. See
+milestone cannot energize hardware. One canonical 78-record MKS V6 document
+now binds both distinct schematic stage/phase/ADC/encoder groups. Its one
+private validated configuration supplies both cached-servo admission and the
+two-axis simulator bank, while a target-only aggregate checks the compiled
+capability and common exact PWM/current/servo lattice without exposing output
+authority. The fixture's stage qualification is synthetic; production stages
+remain `Described` and non-armable. See
 [`M10-PERMANENT-SERVO-LIFECYCLE.md`](evidence/M10-PERMANENT-SERVO-LIFECYCLE.md)
 and
-[`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
+[`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md),
+plus
+[`M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md`](evidence/M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
@@ -859,6 +867,12 @@ portable software ownership result: it supplies neither synchronized MCPWM
 hardware nor truthful ADC/encoder observations, and all MKS target gates remain
 closed. See
 [`M10-MULTI-AXIS-SERVO-FOC-BANK.md`](evidence/M10-MULTI-AXIS-SERVO-FOC-BANK.md).
+The following canonical-document checkpoint binds logical axes 0 and 1 to
+distinct MKS stage, MCPWM, ADC1, and encoder resources and proves that the same
+validated document drives cached-servo admission and the complete simulator
+bank. A closed target selector replays both bundles but every hardware output
+gate remains false. See
+[`M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md`](evidence/M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md).
 
 Exit gate:
 
