@@ -122,12 +122,25 @@ claimed boundary, a report beyond the board-bounded latency, cancellation, and
 safety fault all fail closed. Commit-report latency must be strictly shorter
 than the configured position-loop period so the next batch can be staged.
 
-`ScheduledServoFocHardwareLoop` implements the same setpoint-output boundary in
-simulation. It injects a due batch into the complete encoder, cascaded servo,
-current-control, angle, SVPWM, and compare-image owner and publishes the cached
-commit only after that whole candidate transition succeeds. The two-block test
-replays 401 current periods, three position updates, both block barriers, and
-the terminal hold.
+`ServoFocBank` extends the complete-axis boundary across one to four axes. It
+requires one configuration identity, exact nested loop grid, common boundary,
+and distinct boot-local activation identity per axis. Preparation calculates
+every encoder, cascaded-servo, current-control, angle, SVPWM, and compare-image
+candidate without advancing a successful axis. Commit derives and validates
+every next controller first, then installs the complete controller array. A
+late or substituted commit on a later axis therefore leaves every estimator,
+controller, sequence, and active-image prefix at the prior boundary and latches
+the bank closed.
+
+`ScheduledServoFocHardwareBank` implements the simultaneous setpoint-output
+boundary in simulation. It injects every due cached axis setpoint into that
+complete bank and publishes one opaque cached commit only after all modeled PWM
+commits succeed. The two-axis, two-block test replays 401 current periods, three
+simultaneous position updates, both block barriers, and the terminal hold.
+Separate regressions reject a late second-axis latch and a missing second-axis
+encoder observation without first-axis advance, then prove that an enclosing
+safe invalidation clears the staged mailbox before cached-job ownership is
+faulted.
 
 Every firmware board currently implements this setpoint-output boundary as a
 transactional unavailable result. `SERVO_OUTPUT_IMPLEMENTED`,

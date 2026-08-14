@@ -18,9 +18,10 @@ pub use angle::{
 pub use axis::{
     MAX_PREPARED_SERVO_FOC_AXIS_ACTIVATION_BYTES, MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES,
     MAX_SERVO_FOC_AXIS_CONTROLLER_BYTES, MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES,
-    PreparedServoFocAxisActivation, PreparedServoFocAxisTransition, ServoFocAxisController,
-    ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisPreparedUpdate, ServoFocAxisProfile,
-    ServoFocAxisUpdate,
+    MAX_SERVO_FOC_BANK_AXES, PreparedServoFocAxisActivation, PreparedServoFocAxisTransition,
+    PreparedServoFocBankTransition, ServoFocAxisController, ServoFocAxisError,
+    ServoFocAxisPeriodInput, ServoFocAxisPreparedUpdate, ServoFocAxisProfile, ServoFocAxisUpdate,
+    ServoFocBank, ServoFocBankError,
 };
 pub use current::{
     CurrentChannelCalibration, CurrentPolarity, CurrentSample, PwmAdcSampleStamp,

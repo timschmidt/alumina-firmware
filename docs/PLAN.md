@@ -426,10 +426,14 @@ authoritative browser/WASM compiler emits and content-addresses this stream from
 certified Hyperreal intervals. The permanent ESP actor now performs kind-bound
 typed prepare on both cores and selects a fixed-memory scheduled servo lifecycle
 through distributed prime/start, block return, finish, cancellation, and fault.
-A virtual transactional mailbox joins it to the complete FOC-axis owner. Target
-PWM/ADC/encoder mailbox implementation, safe shutdown integration, WCET, and
-physical qualification remain later gates; every board still rejects servo
-arming and this structural milestone cannot energize hardware. See
+A portable fixed-capacity FOC bank now joins the mailbox to two complete axes:
+it calculates every candidate, validates all modeled compare commits, and only
+then installs the controller array. The two-axis cached-job replay covers 401
+current periods; later-axis latch/encoder faults and ordered safe invalidation
+cannot advance the first axis alone. Target PWM/ADC/encoder mailbox
+implementation, safe shutdown integration, WCET, and physical qualification
+remain later gates; every board still rejects servo arming and this structural
+milestone cannot energize hardware. See
 [`M10-PERMANENT-SERVO-LIFECYCLE.md`](evidence/M10-PERMANENT-SERVO-LIFECYCLE.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
@@ -840,6 +844,18 @@ command encoding, the core-1 actor/task and HAL observation sources, qualified
 shutdown invocation, physical compare readback, WCET, and bench evidence remain
 open. See
 [`M8-PORTABLE-SERVO-FOC-AXIS.md`](evidence/M8-PORTABLE-SERVO-FOC-AXIS.md).
+
+The multi-axis transaction checkpoint composes up to four already activated
+complete-axis actors only when they share the configuration digest, exact
+nested loop grid, current boundary, and period sequence and have distinct
+activation identities. It calculates every axis transition before output
+acceptance, validates the entire modeled timer-zero commit set against the
+unchanged live prefix, and replaces the complete controller array only after
+all axes succeed. A fixed-capacity two-axis simulator drives the permanent
+cached-servo lifecycle through both MKS-sized control channels. This is a
+portable software ownership result: it supplies neither synchronized MCPWM
+hardware nor truthful ADC/encoder observations, and all MKS target gates remain
+closed.
 
 Exit gate:
 

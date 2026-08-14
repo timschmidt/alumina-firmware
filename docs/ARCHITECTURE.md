@@ -1204,6 +1204,24 @@ shutdown wiring, deadline/WCET qualification, physical encoder/current timing,
 electrical alignment, and energization all remain open. See
 [`evidence/M8-PORTABLE-SERVO-FOC-AXIS.md`](evidence/M8-PORTABLE-SERVO-FOC-AXIS.md).
 
+`ServoFocBank<AXES>` supplies the next portable ownership boundary. It accepts
+one to four already activated axes only when the configuration digest, exact
+nested loop grid, current boundary, and period sequence agree and every
+boot-local activation identity is distinct. A bank preparation calculates all
+axis candidates without advancing successful live state. Its commit then
+derives and validates every complete next controller against the unchanged
+prefix before replacing the full controller array. A later-axis timer-zero
+failure therefore cannot leave an earlier estimator, cascade, current PI,
+compare owner, or sequence advanced. The bank latches globally and delegates
+the physical all-stage shutdown to its enclosing target owner.
+
+The deterministic `ScheduledServoFocHardwareBank` supplies modeled current,
+rotor, encoder, and timer-zero observations for that boundary and publishes one
+cached setpoint acknowledgement only after the full bank commit. It is not an
+electrical plant or a peripheral model. In particular, simultaneous software
+state installation does not prove that MCPWM0 and MCPWM1 latch together, that
+ADC acquisitions are synchronized, or that the real shutdown action is safe.
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage

@@ -30,6 +30,8 @@ pub const MAX_PREPARED_SERVO_FOC_AXIS_ACTIVATION_BYTES: usize = 2_048;
 pub const MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES: usize = 2_304;
 /// Host-verified upper bound for the replayable calculation result alone.
 pub const MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES: usize = 1_024;
+/// Maximum complete axes joined by one simultaneous portable FOC owner.
+pub const MAX_SERVO_FOC_BANK_AXES: usize = 4;
 
 /// Immutable, fully normalized inputs for one portable servo/FOC owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -209,6 +211,71 @@ pub struct ServoFocAxisUpdate {
     pub prepared: ServoFocAxisPreparedUpdate,
     pub power_stage_commit: PowerStageCommit,
     pub latch: PwmCompareLatch,
+}
+
+/// One fixed-capacity multi-axis transition awaiting physical PWM commits.
+///
+/// Every contained axis candidate is calculated before the target stages any
+/// complete-image set. The bank consumes this value only after the target has
+/// observed the corresponding timer-zero commits for all axes.
+#[derive(Debug, Eq, PartialEq)]
+pub struct PreparedServoFocBankTransition<const AXES: usize> {
+    base_period_started_at: DeviceCycle,
+    base_period_sequence: u32,
+    prepared: [Option<PreparedServoFocAxisTransition>; AXES],
+}
+
+impl<const AXES: usize> PreparedServoFocBankTransition<AXES> {
+    /// Exact common current-loop boundary represented by every candidate.
+    pub const fn period_started_at(&self) -> DeviceCycle {
+        self.base_period_started_at
+    }
+
+    /// Pure axis result and complete future image, before physical acceptance.
+    pub fn axis_update(&self, axis: usize) -> Option<ServoFocAxisPreparedUpdate> {
+        self.prepared
+            .get(axis)
+            .and_then(Option::as_ref)
+            .map(PreparedServoFocAxisTransition::update)
+    }
+}
+
+/// Bank-level profile, schedule, axis, or physical-commit rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServoFocBankError {
+    /// A bank must contain between one and the fixed portable maximum axes.
+    AxisCount,
+    /// Axis identities, loop grids, or activation identities cannot form one bank.
+    Profile,
+    /// An input or prepared transition did not represent the common bank boundary.
+    Schedule,
+    /// One indexed complete-axis actor rejected before bank state installation.
+    Axis {
+        axis: usize,
+        error: ServoFocAxisError,
+    },
+    /// The enclosing owner made every power stage safe and invalidated the bank.
+    SafetyInvalidated,
+    /// A prior bank rejection terminally closed all axes.
+    FaultLatched,
+}
+
+/// Allocation-free simultaneous owner for a fixed set of complete FOC axes.
+///
+/// Preparation mutates no successful axis state. Commit first derives and
+/// validates every complete next controller value, then replaces the full axis
+/// array in one bank transaction. A commit failure retains the prior live
+/// array; a preparation failure may retain its axis-local first cause but
+/// advances no estimator, controller, or image prefix. Either latches the bank
+/// closed so an enclosing target can perform its qualified all-stage shutdown
+/// transaction.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ServoFocBank<const AXES: usize> {
+    axes: [ServoFocAxisController; AXES],
+    configuration_digest: Digest,
+    period_started_at: DeviceCycle,
+    period_sequence: u32,
+    fault: Option<ServoFocBankError>,
 }
 
 /// Allocation-free owner joining estimator, outer loops, current loop, and PWM.
@@ -545,8 +612,11 @@ impl ServoFocAxisController {
         if self.fault.is_some() {
             return Err(ServoFocAxisError::FaultLatched);
         }
-        match self.commit_inner(prepared, power_stage_commit) {
-            Ok(update) => Ok(update),
+        match self.committed_candidate(prepared, power_stage_commit) {
+            Ok((next, update)) => {
+                *self = next;
+                Ok(update)
+            }
             Err(error) => {
                 self.fault = Some(error);
                 Err(error)
@@ -554,11 +624,11 @@ impl ServoFocAxisController {
         }
     }
 
-    fn commit_inner(
-        &mut self,
+    fn committed_candidate(
+        &self,
         prepared: PreparedServoFocAxisTransition,
         power_stage_commit: PowerStageCommit,
-    ) -> Result<ServoFocAxisUpdate, ServoFocAxisError> {
+    ) -> Result<(Self, ServoFocAxisUpdate), ServoFocAxisError> {
         if prepared.update.activation_id != self.activation_id
             || prepared.base_period_started_at != self.period_started_at
             || prepared.base_period_sequence != self.period_sequence
@@ -583,20 +653,189 @@ impl ServoFocAxisController {
         let period_sequence =
             u32::try_from(latch.period_sequence).map_err(|_| ServoFocAxisError::CounterOverflow)?;
 
-        self.encoder = prepared.encoder;
-        self.cascade = prepared.cascade;
-        self.current_controller = prepared.current_controller;
-        self.compare_owner = next_compare_owner;
-        self.period_started_at = latch.observed_at;
-        self.period_sequence = period_sequence;
-        self.next_duty_token = prepared.next_duty_token;
-        self.next_current_command_id = prepared.next_current_command_id;
-
-        Ok(ServoFocAxisUpdate {
+        let update = ServoFocAxisUpdate {
             prepared: prepared.update,
             power_stage_commit,
             latch,
+        };
+        let next = Self {
+            profile: self.profile,
+            activation_id: self.activation_id,
+            encoder: prepared.encoder,
+            cascade: prepared.cascade,
+            current_controller: prepared.current_controller,
+            compare_owner: next_compare_owner,
+            period_started_at: latch.observed_at,
+            period_sequence,
+            next_duty_token: prepared.next_duty_token,
+            next_current_command_id: prepared.next_current_command_id,
+            fault: None,
+        };
+        Ok((next, update))
+    }
+}
+
+impl<const AXES: usize> ServoFocBank<AXES> {
+    /// Joins already activated axes only when their identities and exact nested
+    /// loop grids admit one simultaneous current-period transaction.
+    pub fn new(axes: [ServoFocAxisController; AXES]) -> Result<Self, ServoFocBankError> {
+        if AXES == 0 || AXES > MAX_SERVO_FOC_BANK_AXES {
+            return Err(ServoFocBankError::AxisCount);
+        }
+        let first = &axes[0];
+        let configuration_digest = first.profile().configuration_digest();
+        let period_started_at = first.period_started_at();
+        let period_sequence = first.period_sequence();
+        let grid = first.cascade().grid();
+        if first.fault().is_some() {
+            return Err(ServoFocBankError::Profile);
+        }
+        for axis in 0..AXES {
+            let candidate = &axes[axis];
+            if candidate.fault().is_some()
+                || candidate.profile().configuration_digest() != configuration_digest
+                || candidate.period_started_at() != period_started_at
+                || candidate.period_sequence() != period_sequence
+                || candidate.cascade().grid() != grid
+                || candidate
+                    .active_image()
+                    .is_none_or(|image| image.scheduled_at() != period_started_at)
+            {
+                return Err(ServoFocBankError::Profile);
+            }
+            for prior in axes.iter().take(axis) {
+                if prior.activation_id() == candidate.activation_id() {
+                    return Err(ServoFocBankError::Profile);
+                }
+            }
+        }
+        Ok(Self {
+            axes,
+            configuration_digest,
+            period_started_at,
+            period_sequence,
+            fault: None,
         })
+    }
+
+    /// Complete immutable configuration identity shared by every axis.
+    pub const fn configuration_digest(&self) -> Digest {
+        self.configuration_digest
+    }
+
+    /// Exact common current-loop boundary owned by the bank.
+    pub const fn period_started_at(&self) -> DeviceCycle {
+        self.period_started_at
+    }
+
+    /// Common physical PWM-period sequence accepted across every axis.
+    pub const fn period_sequence(&self) -> u32 {
+        self.period_sequence
+    }
+
+    /// Read-only access to one complete live axis controller.
+    pub fn axis(&self, axis: usize) -> Option<&ServoFocAxisController> {
+        self.axes.get(axis)
+    }
+
+    /// First bank-level cause which invalidated all subsequent transitions.
+    pub const fn fault(&self) -> Option<ServoFocBankError> {
+        self.fault
+    }
+
+    /// Calculates every complete axis transition without advancing any
+    /// successfully prepared controller state.
+    pub fn prepare(
+        &mut self,
+        inputs: [ServoFocAxisPeriodInput; AXES],
+    ) -> Result<PreparedServoFocBankTransition<AXES>, ServoFocBankError> {
+        if self.fault.is_some() {
+            return Err(ServoFocBankError::FaultLatched);
+        }
+        if inputs
+            .iter()
+            .any(|input| input.at != self.period_started_at)
+        {
+            return self.latch(ServoFocBankError::Schedule);
+        }
+
+        let mut prepared = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            let candidate = match self.axes[axis].prepare(inputs[axis]) {
+                Ok(candidate) => candidate,
+                Err(error) => return self.latch(ServoFocBankError::Axis { axis, error }),
+            };
+            prepared[axis] = Some(candidate);
+        }
+        Ok(PreparedServoFocBankTransition {
+            base_period_started_at: self.period_started_at,
+            base_period_sequence: self.period_sequence,
+            prepared,
+        })
+    }
+
+    /// Validates every exact physical image acknowledgement before installing
+    /// any candidate axis controller state.
+    pub fn commit(
+        &mut self,
+        mut prepared: PreparedServoFocBankTransition<AXES>,
+        commits: [PowerStageCommit; AXES],
+    ) -> Result<[ServoFocAxisUpdate; AXES], ServoFocBankError> {
+        if self.fault.is_some() {
+            return Err(ServoFocBankError::FaultLatched);
+        }
+        if prepared.base_period_started_at != self.period_started_at
+            || prepared.base_period_sequence != self.period_sequence
+        {
+            return self.latch(ServoFocBankError::Schedule);
+        }
+
+        let mut next_axes = core::array::from_fn(|_| None);
+        let mut updates = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            let Some(axis_prepared) = prepared.prepared[axis].take() else {
+                return self.latch(ServoFocBankError::Schedule);
+            };
+            let (next, update) =
+                match self.axes[axis].committed_candidate(axis_prepared, commits[axis]) {
+                    Ok(candidate) => candidate,
+                    Err(error) => return self.latch(ServoFocBankError::Axis { axis, error }),
+                };
+            next_axes[axis] = Some(next);
+            updates[axis] = Some(update);
+        }
+
+        let Some(first) = next_axes[0].as_ref() else {
+            return self.latch(ServoFocBankError::Schedule);
+        };
+        let next_period_started_at = first.period_started_at();
+        let next_period_sequence = first.period_sequence();
+        if next_axes.iter().any(|axis| {
+            axis.as_ref().is_none_or(|axis| {
+                axis.period_started_at() != next_period_started_at
+                    || axis.period_sequence() != next_period_sequence
+            })
+        }) {
+            return self.latch(ServoFocBankError::Schedule);
+        }
+
+        self.axes = next_axes.map(|axis| axis.expect("complete FOC bank candidate"));
+        self.period_started_at = next_period_started_at;
+        self.period_sequence = next_period_sequence;
+        Ok(updates.map(|update| update.expect("complete FOC bank update")))
+    }
+
+    /// Closes the logical owner after the enclosing target has synchronously
+    /// completed its separately qualified all-power-stage safe transaction.
+    pub fn invalidate_after_safe(&mut self) {
+        if self.fault.is_none() {
+            self.fault = Some(ServoFocBankError::SafetyInvalidated);
+        }
+    }
+
+    fn latch<T>(&mut self, error: ServoFocBankError) -> Result<T, ServoFocBankError> {
+        self.fault = Some(error);
+        Err(error)
     }
 }
 
@@ -1064,6 +1303,107 @@ mod tests {
     }
 
     #[test]
+    fn two_axis_bank_installs_only_a_complete_commit_set() {
+        fn bank() -> ServoFocBank<2> {
+            ServoFocBank::new([
+                controller_with_activation(ACTIVATION),
+                controller_with_activation(ACTIVATION + 1),
+            ])
+            .unwrap()
+        }
+
+        fn first_inputs(bank: &ServoFocBank<2>) -> [ServoFocAxisPeriodInput; 2] {
+            core::array::from_fn(|axis| {
+                let controller = bank.axis(axis).unwrap();
+                input(
+                    controller,
+                    Some(setpoint(
+                        1,
+                        FIRST_BOUNDARY,
+                        ServoPosition::from_bits(i64::try_from(axis).unwrap() << 28),
+                    )),
+                    Some(encoder_observation(FIRST_BOUNDARY, 0)),
+                )
+            })
+        }
+
+        fn exact_commits(prepared: &PreparedServoFocBankTransition<2>) -> [PowerStageCommit; 2] {
+            core::array::from_fn(|axis| {
+                let image = prepared.axis_update(axis).unwrap().staged_image;
+                PowerStageCommit {
+                    token: image.token(),
+                    scheduled_at: image.scheduled_at(),
+                    observed_at: image.scheduled_at(),
+                }
+            })
+        }
+
+        let mut rejected = bank();
+        let prepared = rejected.prepare(first_inputs(&rejected)).unwrap();
+        assert_eq!(prepared.period_started_at(), FIRST_BOUNDARY);
+        let mut commits = exact_commits(&prepared);
+        commits[1].observed_at = DeviceCycle(commits[1].observed_at.0 + 1);
+        assert_eq!(
+            rejected.commit(prepared, commits),
+            Err(ServoFocBankError::Axis {
+                axis: 1,
+                error: ServoFocAxisError::PowerStageCommit,
+            })
+        );
+        assert_eq!(rejected.period_started_at(), FIRST_BOUNDARY);
+        assert_eq!(rejected.period_sequence(), 0);
+        for axis in 0..2 {
+            let controller = rejected.axis(axis).unwrap();
+            assert_eq!(controller.period_started_at(), FIRST_BOUNDARY);
+            assert_eq!(controller.period_sequence(), 0);
+            assert_eq!(controller.encoder().estimate_sequence(), 0);
+            assert_eq!(controller.cascade().last_current_index(), None);
+        }
+        assert_eq!(
+            rejected.fault(),
+            Some(ServoFocBankError::Axis {
+                axis: 1,
+                error: ServoFocAxisError::PowerStageCommit,
+            })
+        );
+        assert_eq!(
+            rejected.prepare(first_inputs(&rejected)),
+            Err(ServoFocBankError::FaultLatched)
+        );
+
+        let mut accepted = bank();
+        let prepared = accepted.prepare(first_inputs(&accepted)).unwrap();
+        let commits = exact_commits(&prepared);
+        let updates = accepted.commit(prepared, commits).unwrap();
+        assert_eq!(accepted.period_started_at(), DeviceCycle(1_100));
+        assert_eq!(accepted.period_sequence(), 1);
+        for (axis, update) in updates.iter().enumerate() {
+            assert_eq!(update.prepared.activation_id, ACTIVATION + axis as u64);
+            assert_eq!(update.prepared.cascade.setpoint_id, 1);
+            assert_eq!(update.latch.period_sequence, 1);
+            assert_eq!(
+                accepted.axis(axis).unwrap().period_started_at(),
+                DeviceCycle(1_100)
+            );
+        }
+
+        accepted.invalidate_after_safe();
+        assert_eq!(accepted.fault(), Some(ServoFocBankError::SafetyInvalidated));
+    }
+
+    #[test]
+    fn bank_rejects_empty_and_duplicate_activation_ownership() {
+        assert_eq!(
+            ServoFocBank::<0>::new([]),
+            Err(ServoFocBankError::AxisCount)
+        );
+        assert_eq!(
+            ServoFocBank::new([controller(), controller()]),
+            Err(ServoFocBankError::Profile)
+        );
+    }
+
+    #[test]
     fn late_inner_failure_does_not_advance_estimator_or_outer_controller() {
         let mut controller = controller();
         let mut invalid = input(
@@ -1224,6 +1564,16 @@ mod tests {
         assert!(
             update <= MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES,
             "update bytes: {update}"
+        );
+        let two_axis_bank = core::mem::size_of::<ServoFocBank<2>>();
+        let two_axis_transition = core::mem::size_of::<PreparedServoFocBankTransition<2>>();
+        assert!(
+            two_axis_bank <= 2 * MAX_SERVO_FOC_AXIS_CONTROLLER_BYTES + 128,
+            "two-axis bank bytes: {two_axis_bank}"
+        );
+        assert!(
+            two_axis_transition <= 2 * MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES + 32,
+            "two-axis transition bytes: {two_axis_transition}"
         );
     }
 }

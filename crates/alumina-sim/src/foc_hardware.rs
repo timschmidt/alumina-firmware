@@ -12,7 +12,7 @@ use alumina_foc::{
     PwmAdcSynchronization, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
     PwmCompareLatchOwner, Q30Interval, RotorSample, ServoEncoderObservation, ServoEncoderSeed,
     ServoFocAxisController, ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisUpdate,
-    ServoSetpoint, inverse_park, park, space_vector_modulate,
+    ServoFocBank, ServoFocBankError, ServoSetpoint, inverse_park, park, space_vector_modulate,
 };
 use alumina_motion::{PreparedServoSetpoints, ServoSetpointOutput, ServoSetpointOutputCommit};
 use alumina_protocol::DeviceCycle;
@@ -29,6 +29,8 @@ pub enum FocHardwareLoopError {
     Latch(PwmCompareLatchError),
     /// The complete estimator/servo/current/PWM actor rejected.
     Axis(ServoFocAxisError),
+    /// The simultaneous complete-axis bank rejected before state publication.
+    Bank(ServoFocBankError),
     /// The first simulator supports one current update per PWM period.
     Rate,
     /// Command identity, time, token, or sequence was not the sole expected value.
@@ -68,6 +70,12 @@ impl From<PwmCompareLatchError> for FocHardwareLoopError {
 impl From<ServoFocAxisError> for FocHardwareLoopError {
     fn from(error: ServoFocAxisError) -> Self {
         Self::Axis(error)
+    }
+}
+
+impl From<ServoFocBankError> for FocHardwareLoopError {
+    fn from(error: ServoFocBankError) -> Self {
+        Self::Bank(error)
     }
 }
 
@@ -212,6 +220,296 @@ impl ConfiguredServoFocHardwareLoop {
                 },
             )
             .map_err(FocHardwareLoopError::Axis)
+    }
+}
+
+/// Fixed-capacity virtual owner for simultaneous complete servo/FOC axes.
+///
+/// The portable bank calculates every encoder/cascade/current/angle/SVPWM
+/// transition first and installs no live axis state until every exact PWM
+/// commit has validated. This models the software transaction required around
+/// synchronized physical timer-zero observations; it does not claim that any
+/// target peripheral supplies those observations.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ConfiguredServoFocHardwareBank<const AXES: usize> {
+    controller: ServoFocBank<AXES>,
+}
+
+impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
+    /// Constructs all axes through one independently validated configuration.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+        slots: [usize; AXES],
+        activation_ids: [u64; AXES],
+        seeds: [ServoEncoderSeed; AXES],
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        let mut axes = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            if slots.iter().take(axis).any(|slot| *slot == slots[axis]) {
+                return Err(FocHardwareLoopError::Bank(ServoFocBankError::Profile));
+            }
+            let configured = ConfiguredServoFocHardwareLoop::from_configuration(
+                configuration,
+                slots[axis],
+                activation_ids[axis],
+                seeds[axis],
+                first_boundary,
+            )?;
+            axes[axis] = Some(configured.controller);
+        }
+        let axes = axes.map(|axis| axis.expect("complete configured FOC bank"));
+        Ok(Self {
+            controller: ServoFocBank::new(axes)?,
+        })
+    }
+
+    #[cfg(test)]
+    fn from_lowered(
+        lowered: [LoweredFocAxisConfiguration; AXES],
+        activation_ids: [u64; AXES],
+        seeds: [ServoEncoderSeed; AXES],
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        let mut axes = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            if lowered
+                .iter()
+                .take(axis)
+                .any(|candidate| candidate.instance == lowered[axis].instance)
+            {
+                return Err(FocHardwareLoopError::Bank(ServoFocBankError::Profile));
+            }
+            let configured = ConfiguredServoFocHardwareLoop::from_lowered(
+                lowered[axis],
+                activation_ids[axis],
+                seeds[axis],
+                first_boundary,
+            )?;
+            axes[axis] = Some(configured.controller);
+        }
+        let axes = axes.map(|axis| axis.expect("complete lowered FOC bank"));
+        Ok(Self {
+            controller: ServoFocBank::new(axes)?,
+        })
+    }
+
+    /// Complete portable simultaneous controller state retained by the owner.
+    pub const fn controller(&self) -> &ServoFocBank<AXES> {
+        &self.controller
+    }
+
+    /// Executes one simultaneous current/PWM period at each exact next boundary.
+    pub fn step(
+        &mut self,
+        inputs: [FocServoHardwareLoopInput; AXES],
+    ) -> Result<[ServoFocAxisUpdate; AXES], FocHardwareLoopError> {
+        let mut observed = [DeviceCycle(0); AXES];
+        for (axis, observation) in observed.iter_mut().enumerate() {
+            let controller = self
+                .controller
+                .axis(axis)
+                .ok_or(FocHardwareLoopError::Sequence)?;
+            *observation = DeviceCycle(
+                controller
+                    .period_started_at()
+                    .0
+                    .checked_add(u64::from(
+                        controller
+                            .profile()
+                            .current
+                            .snapshot()
+                            .synchronization
+                            .pwm_period_cycles,
+                    ))
+                    .ok_or(FocHardwareLoopError::Overflow)?,
+            );
+        }
+        self.step_with_timer_zero(inputs, observed)
+    }
+
+    /// Executes one bank period with per-axis physical-boundary fault injection.
+    pub fn step_with_timer_zero(
+        &mut self,
+        inputs: [FocServoHardwareLoopInput; AXES],
+        observed_timer_zero: [DeviceCycle; AXES],
+    ) -> Result<[ServoFocAxisUpdate; AXES], FocHardwareLoopError> {
+        let mut period_inputs = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            let controller = self
+                .controller
+                .axis(axis)
+                .ok_or(FocHardwareLoopError::Sequence)?;
+            let profile = controller.profile();
+            let active_image = controller
+                .active_image()
+                .ok_or(FocHardwareLoopError::Sequence)?;
+            let at = controller.period_started_at();
+            let stamp = exact_sample_stamp(
+                profile.pwm_compare,
+                &profile.parameters,
+                profile.current.snapshot().synchronization,
+                active_image,
+                controller.period_sequence(),
+                at,
+            )?;
+            period_inputs[axis] = Some(ServoFocAxisPeriodInput {
+                at,
+                setpoint: inputs[axis].setpoint,
+                encoder_observation: inputs[axis].encoder_observation,
+                raw_current_counts: inputs[axis].raw_current_counts,
+                current_stamp: stamp,
+                raw_rotor_count: inputs[axis].raw_rotor_count,
+            });
+        }
+        let period_inputs =
+            period_inputs.map(|input| input.expect("complete FOC bank period input"));
+        let prepared = self.controller.prepare(period_inputs)?;
+        let mut commits = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            let staged = prepared
+                .axis_update(axis)
+                .ok_or(FocHardwareLoopError::Sequence)?
+                .staged_image;
+            commits[axis] = Some(PowerStageCommit {
+                token: staged.token(),
+                scheduled_at: staged.scheduled_at(),
+                observed_at: observed_timer_zero[axis],
+            });
+        }
+        let commits = commits.map(|commit| commit.expect("complete FOC bank commit"));
+        self.controller
+            .commit(prepared, commits)
+            .map_err(FocHardwareLoopError::Bank)
+    }
+
+    /// Invalidates the logical bank only after a separately modeled safe-output action.
+    pub fn invalidate_after_safe(&mut self) {
+        self.controller.invalidate_after_safe();
+    }
+}
+
+/// Cached simultaneous-setpoint mailbox joined to a complete virtual FOC bank.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ScheduledServoFocHardwareBank<const AXES: usize> {
+    hardware: ConfiguredServoFocHardwareBank<AXES>,
+    staged: Option<PreparedServoSetpoints<AXES>>,
+    commit: Option<ServoSetpointOutputCommit>,
+}
+
+impl<const AXES: usize> ScheduledServoFocHardwareBank<AXES> {
+    /// Constructs all axes through one independently validated configuration.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+        slots: [usize; AXES],
+        activation_ids: [u64; AXES],
+        seeds: [ServoEncoderSeed; AXES],
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        Ok(Self {
+            hardware: ConfiguredServoFocHardwareBank::from_configuration(
+                configuration,
+                slots,
+                activation_ids,
+                seeds,
+                first_boundary,
+            )?,
+            staged: None,
+            commit: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn from_lowered(
+        lowered: [LoweredFocAxisConfiguration; AXES],
+        activation_ids: [u64; AXES],
+        seeds: [ServoEncoderSeed; AXES],
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        Ok(Self {
+            hardware: ConfiguredServoFocHardwareBank::from_lowered(
+                lowered,
+                activation_ids,
+                seeds,
+                first_boundary,
+            )?,
+            staged: None,
+            commit: None,
+        })
+    }
+
+    /// Complete underlying simultaneous encoder/cascade/current/PWM owner.
+    pub const fn hardware(&self) -> &ConfiguredServoFocHardwareBank<AXES> {
+        &self.hardware
+    }
+
+    /// Whether one future simultaneous cached batch remains staged.
+    pub const fn has_staged_setpoints(&self) -> bool {
+        self.staged.is_some()
+    }
+
+    /// Executes one bank current period and consumes a due simultaneous batch.
+    pub fn step(
+        &mut self,
+        mut inputs: [FocServoHardwareLoopInput; AXES],
+    ) -> Result<[ServoFocAxisUpdate; AXES], FocHardwareLoopError> {
+        if inputs.iter().any(|input| input.setpoint.is_some()) || self.commit.is_some() {
+            return Err(FocHardwareLoopError::Sequence);
+        }
+        let at = self.hardware.controller().period_started_at();
+        let due = match self.staged {
+            Some(prepared) if prepared.scheduled_at() < at => {
+                return Err(FocHardwareLoopError::Sequence);
+            }
+            Some(prepared) if prepared.scheduled_at() == at => Some(prepared),
+            Some(_) | None => None,
+        };
+        if let Some(prepared) = due {
+            for (axis, input) in inputs.iter_mut().enumerate() {
+                input.setpoint = Some(prepared.setpoints()[axis]);
+            }
+        }
+        let updates = self.hardware.step(inputs)?;
+        if let Some(prepared) = due {
+            self.staged = None;
+            self.commit = Some(ServoSetpointOutputCommit::new(
+                prepared.token(),
+                prepared.scheduled_at(),
+            ));
+        }
+        Ok(updates)
+    }
+
+    /// Clears mailbox ownership after an enclosing all-stage safe transaction.
+    pub fn invalidate_after_safe(&mut self) {
+        self.staged = None;
+        self.commit = None;
+        self.hardware.invalidate_after_safe();
+    }
+}
+
+impl<const AXES: usize> ServoSetpointOutput<AXES> for ScheduledServoFocHardwareBank<AXES> {
+    type Error = FocHardwareLoopError;
+
+    fn stage_servo_setpoints(
+        &mut self,
+        prepared: PreparedServoSetpoints<AXES>,
+    ) -> Result<(), Self::Error> {
+        if self.staged.is_some()
+            || self.commit.is_some()
+            || prepared.scheduled_at() < self.hardware.controller().period_started_at()
+            || self.hardware.controller().fault().is_some()
+        {
+            return Err(FocHardwareLoopError::Sequence);
+        }
+        self.staged = Some(prepared);
+        Ok(())
+    }
+
+    fn take_servo_setpoint_commit(
+        &mut self,
+    ) -> Result<Option<ServoSetpointOutputCommit>, Self::Error> {
+        Ok(self.commit.take())
     }
 }
 
@@ -906,6 +1204,10 @@ mod tests {
     }
 
     fn servo_lowered_fixture() -> LoweredFocAxisConfiguration {
+        servo_lowered_fixture_for(0)
+    }
+
+    fn servo_lowered_fixture_for(instance: u16) -> LoweredFocAxisConfiguration {
         let mut lowered = lowered_fixture();
         let scale = ServoEncoderScale::new(1, 1, 4_096, 1).unwrap();
         lowered.encoder_scale_parameters.scale = scale;
@@ -923,8 +1225,19 @@ mod tests {
             u32::MAX,
         )
         .unwrap();
+        lowered.instance = instance;
+        lowered.adc_channel0.instance = instance;
+        lowered.adc_channel1.instance = instance;
+        lowered.pwm_hardware.instance = instance;
+        lowered.servo_parameters.instance = instance;
+        lowered.encoder_scale_parameters.instance = instance;
+        lowered.encoder_policy_parameters.instance = instance;
         lowered.validate().unwrap();
         lowered
+    }
+
+    fn servo_lowered_bank_fixture() -> [LoweredFocAxisConfiguration; 2] {
+        [servo_lowered_fixture_for(0), servo_lowered_fixture_for(1)]
     }
 
     fn servo_seed() -> ServoEncoderSeed {
@@ -966,6 +1279,153 @@ mod tests {
             raw_current_counts: [2_000, 2_000],
             raw_rotor_count: 0,
         }
+    }
+
+    fn servo_bank_input<const AXES: usize>(
+        bank: &ConfiguredServoFocHardwareBank<AXES>,
+        axis: usize,
+        current_index: u64,
+    ) -> FocServoHardwareLoopInput {
+        let controller = bank.controller().axis(axis).unwrap();
+        let at = controller.period_started_at();
+        let velocity_due = current_index.is_multiple_of(20);
+        let position_due = current_index.is_multiple_of(200);
+        let encoder_observation = velocity_due.then_some(ServoEncoderObservation {
+            configuration_digest: DIGEST,
+            raw_count: 0,
+            sampled_at: DeviceCycle(80_000 + current_index / 20 * 80_000),
+            available_at: at,
+        });
+        let target = if axis.is_multiple_of(2) {
+            1_i64 << 28
+        } else {
+            -(1_i64 << 27)
+        };
+        let setpoint = position_due.then_some(ServoSetpoint {
+            command_id: u32::try_from(current_index / 200 + 1).unwrap(),
+            scheduled_at: at,
+            configuration_digest: DIGEST,
+            position: ServoPosition::from_bits(target),
+            velocity_feed_forward: Q30::ZERO,
+            quadrature_current_feed_forward: Q30::ZERO,
+        });
+        FocServoHardwareLoopInput {
+            setpoint,
+            encoder_observation,
+            raw_current_counts: [2_000, 2_000],
+            raw_rotor_count: 0,
+        }
+    }
+
+    fn two_axis_cached_fixture() -> (
+        CachedServoConfiguration<2>,
+        alumina_motion::CachedServoAdmissionProfile<2>,
+        JobDescriptor,
+        ExecutionBlock,
+        ExecutionBlock,
+    ) {
+        let lowered = servo_lowered_fixture();
+        let axis = ServoSetpointAxisAdmissionProfile::from_foc_axis(
+            lowered.servo_foc_axis_profile().unwrap(),
+        )
+        .unwrap();
+        let configuration = CachedServoConfiguration::from_axes([axis; 2]).unwrap();
+        let admission = cached_servo_admission_profile(
+            [axis; 2],
+            CachedServoStreamPolicy {
+                maximum_block_ticks: 800_000,
+                maximum_segment_ticks: 800_000,
+                maximum_update_count: 1,
+            },
+        )
+        .unwrap();
+        let positive = ServoFiniteDifferenceAxis {
+            position: FiniteDifferenceAxis {
+                initial_position: 1 << 28,
+                first_difference: 0,
+                second_difference: 0,
+                third_difference: 0,
+            },
+            velocity_feed_forward: ServoQ30FiniteDifferenceAxis::default(),
+            quadrature_current_feed_forward: ServoQ30FiniteDifferenceAxis::default(),
+        };
+        let negative = ServoFiniteDifferenceAxis {
+            position: FiniteDifferenceAxis {
+                initial_position: -(1 << 27),
+                ..positive.position
+            },
+            ..positive
+        };
+        let first_segment = ServoFiniteDifferenceSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(800_000),
+            update_period_ticks: 800_000,
+            update_count: 1,
+            axes: [positive, negative],
+            flags: 0,
+        };
+        let second_segment = ServoFiniteDifferenceSegment {
+            start_tick: StreamTick(800_000),
+            end_tick: StreamTick(1_600_000),
+            ..first_segment
+        };
+        let stream_id = StreamId::new([0x91; 16]).unwrap();
+        let capability_digest = Digest([0x92; 32]);
+        let first = ExecutionBlock::encode_servo_finite_difference(
+            stream_id,
+            capability_digest,
+            DIGEST,
+            0,
+            Digest::ZERO,
+            &[first_segment],
+        )
+        .unwrap();
+        let second = ExecutionBlock::encode_servo_finite_difference(
+            stream_id,
+            capability_digest,
+            DIGEST,
+            1,
+            first.header().block_digest,
+            &[second_segment],
+        )
+        .unwrap();
+        let maximum_position_delta = admission
+            .limits
+            .segment
+            .maximum_position_delta_bits
+            .iter()
+            .copied()
+            .max()
+            .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 72,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(Digest([0x93; 32])),
+                    byte_len: 1_024,
+                },
+                manifest: ContentId::from_sha256(Digest([0x95; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest: DIGEST,
+            axis_count: 2,
+            execution_kind: ExecutionKind::ServoFiniteDifference,
+            maximum_dense_updates: 1,
+            dense_update_period_ticks: 800_000,
+            block_count: 2,
+            first_tick: StreamTick(0),
+            initial_position: [1 << 28, -(1 << 27), 0, 0, 0, 0, 0, 0],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: admission.limits.maximum_block_ticks,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: admission.limits.segment.maximum_segment_ticks,
+                    maximum_steps_per_segment: maximum_position_delta,
+                },
+            },
+        };
+        (configuration, admission, descriptor, first, second)
     }
 
     #[test]
@@ -1217,6 +1677,274 @@ mod tests {
             3
         );
         assert_eq!(job.status().state, RealtimeJobState::Complete);
+    }
+
+    #[test]
+    fn cached_two_axis_stream_commits_only_complete_foc_bank_boundaries() {
+        struct Blocks {
+            first: Option<ExecutionBlock>,
+            second: Option<ExecutionBlock>,
+        }
+
+        impl WorkSource for Blocks {
+            fn try_receive(&mut self) -> Option<ExecutionBlock> {
+                self.first.take().or_else(|| self.second.take())
+            }
+
+            fn depth(&self) -> usize {
+                usize::from(self.first.is_some()) + usize::from(self.second.is_some())
+            }
+        }
+
+        let (configuration, admission, descriptor, first, second) = two_axis_cached_fixture();
+        assert_eq!(
+            configuration.bind_descriptor(descriptor).unwrap(),
+            admission
+        );
+        let mut source = Blocks {
+            first: Some(first),
+            second: Some(second),
+        };
+        let mut job = RealtimeJob::<2>::prepare_servo(descriptor, admission.limits).unwrap();
+        let first = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(block) => block,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("first block"),
+        };
+        let second = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(block) => block,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("second block"),
+        };
+        let mut hardware = ScheduledServoFocHardwareBank::from_lowered(
+            servo_lowered_bank_fixture(),
+            [0x55aa, 0x55ab],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut execution = ScheduledServoExecution::new();
+        execution.configure(configuration, 4_000).unwrap();
+        execution
+            .prime(
+                &mut hardware,
+                descriptor,
+                DeviceCycle(80_000),
+                first,
+                Some(second),
+                DeviceCycle(79_999),
+            )
+            .unwrap();
+        execution.start(DeviceCycle(80_000)).unwrap();
+
+        let mut command_ids = [0_u32; 3];
+        let mut command_count = 0_usize;
+        let mut simultaneous_position_updates = 0_u32;
+        for current_index in 0_u64..=400 {
+            let mut inputs = core::array::from_fn(|axis| {
+                servo_bank_input(hardware.hardware(), axis, current_index)
+            });
+            for input in &mut inputs {
+                input.setpoint = None;
+            }
+            let updates = hardware.step(inputs).unwrap();
+            assert_eq!(updates[0].prepared.at, updates[1].prepared.at);
+            assert_eq!(updates[0].latch.observed_at, updates[1].latch.observed_at);
+            assert_eq!(
+                updates[0].prepared.cascade.position_updated,
+                updates[1].prepared.cascade.position_updated
+            );
+            if updates[0].prepared.cascade.position_updated {
+                simultaneous_position_updates += 1;
+                assert_eq!(
+                    updates[0].prepared.cascade.setpoint_id,
+                    updates[1].prepared.cascade.setpoint_id
+                );
+                assert!(updates[0].prepared.cascade.velocity_target.bits() > 0);
+                assert!(updates[1].prepared.cascade.velocity_target.bits() < 0);
+            }
+
+            let observed = hardware.hardware().controller().period_started_at();
+            match execution.poll(&mut hardware, observed).unwrap() {
+                ScheduledServoAction::StartSetpointsCommitted(committed)
+                | ScheduledServoAction::SetpointsCommitted(committed) => {
+                    command_ids[command_count] = committed.command_id;
+                    command_count += 1;
+                }
+                ScheduledServoAction::BlockComplete(completed) => {
+                    command_ids[command_count] = if completed.header().sequence == 0 {
+                        2
+                    } else {
+                        3
+                    };
+                    command_count += 1;
+                    job.acknowledge(completed).unwrap();
+                }
+                ScheduledServoAction::Future { .. } | ScheduledServoAction::WaitingForHardware => {}
+                ScheduledServoAction::Idle
+                | ScheduledServoAction::NeedBlock { .. }
+                | ScheduledServoAction::JobComplete => panic!("unexpected scheduled action"),
+            }
+        }
+
+        assert_eq!(command_ids, [1, 2, 3]);
+        assert_eq!(simultaneous_position_updates, 3);
+        execution.request_finish().unwrap();
+        let final_observed = hardware.hardware().controller().period_started_at();
+        assert!(matches!(
+            execution.poll(&mut hardware, final_observed),
+            Ok(ScheduledServoAction::JobComplete)
+        ));
+        assert_eq!(job.status().state, RealtimeJobState::Complete);
+        for axis in 0..2 {
+            let controller = hardware.hardware().controller().axis(axis).unwrap();
+            assert_eq!(controller.period_sequence(), 401);
+            assert_eq!(controller.cascade().position_updates(), 3);
+            assert_eq!(controller.cascade().velocity_updates(), 21);
+            assert_eq!(controller.encoder().estimate_sequence(), 21);
+        }
+    }
+
+    #[test]
+    fn complete_foc_bank_rejects_late_or_missing_axis_without_partial_advance() {
+        assert_eq!(
+            ConfiguredServoFocHardwareBank::from_lowered(
+                [servo_lowered_fixture(); 2],
+                [0x55a8, 0x55a9],
+                [servo_seed(); 2],
+                DeviceCycle(80_000),
+            ),
+            Err(FocHardwareLoopError::Bank(ServoFocBankError::Profile))
+        );
+        let mut late = ConfiguredServoFocHardwareBank::from_lowered(
+            servo_lowered_bank_fixture(),
+            [0x55aa, 0x55ab],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let inputs = core::array::from_fn(|axis| servo_bank_input(&late, axis, 0));
+        assert_eq!(
+            late.step_with_timer_zero(inputs, [DeviceCycle(84_000), DeviceCycle(84_001)]),
+            Err(FocHardwareLoopError::Bank(ServoFocBankError::Axis {
+                axis: 1,
+                error: ServoFocAxisError::PowerStageCommit,
+            }))
+        );
+        assert_eq!(late.controller().period_started_at(), DeviceCycle(80_000));
+        assert_eq!(late.controller().period_sequence(), 0);
+        for axis in 0..2 {
+            let controller = late.controller().axis(axis).unwrap();
+            assert_eq!(controller.period_started_at(), DeviceCycle(80_000));
+            assert_eq!(controller.period_sequence(), 0);
+            assert_eq!(controller.encoder().estimate_sequence(), 0);
+            assert_eq!(controller.cascade().last_current_index(), None);
+        }
+
+        let mut missing = ConfiguredServoFocHardwareBank::from_lowered(
+            servo_lowered_bank_fixture(),
+            [0x55ba, 0x55bb],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut inputs = core::array::from_fn(|axis| servo_bank_input(&missing, axis, 0));
+        inputs[1].encoder_observation = None;
+        assert_eq!(
+            missing.step(inputs),
+            Err(FocHardwareLoopError::Bank(ServoFocBankError::Axis {
+                axis: 1,
+                error: ServoFocAxisError::EncoderPresence {
+                    required: true,
+                    received: false,
+                },
+            }))
+        );
+        assert_eq!(
+            missing.controller().axis(0).unwrap().period_started_at(),
+            DeviceCycle(80_000)
+        );
+        assert_eq!(
+            missing
+                .controller()
+                .axis(0)
+                .unwrap()
+                .encoder()
+                .estimate_sequence(),
+            0
+        );
+    }
+
+    #[test]
+    fn safe_invalidation_clears_two_axis_cached_mailbox_before_job_fault() {
+        struct Blocks {
+            first: Option<ExecutionBlock>,
+            second: Option<ExecutionBlock>,
+        }
+
+        impl WorkSource for Blocks {
+            fn try_receive(&mut self) -> Option<ExecutionBlock> {
+                self.first.take().or_else(|| self.second.take())
+            }
+
+            fn depth(&self) -> usize {
+                usize::from(self.first.is_some()) + usize::from(self.second.is_some())
+            }
+        }
+
+        let (configuration, admission, descriptor, first, second) = two_axis_cached_fixture();
+        let mut source = Blocks {
+            first: Some(first),
+            second: Some(second),
+        };
+        let mut job = RealtimeJob::<2>::prepare_servo(descriptor, admission.limits).unwrap();
+        let first = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(block) => block,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("first block"),
+        };
+        let second = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(block) => block,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("second block"),
+        };
+        let mut hardware = ScheduledServoFocHardwareBank::from_lowered(
+            servo_lowered_bank_fixture(),
+            [0x55ca, 0x55cb],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut execution = ScheduledServoExecution::new();
+        execution.configure(configuration, 4_000).unwrap();
+        execution
+            .prime(
+                &mut hardware,
+                descriptor,
+                DeviceCycle(80_000),
+                first,
+                Some(second),
+                DeviceCycle(79_999),
+            )
+            .unwrap();
+        execution.start(DeviceCycle(80_000)).unwrap();
+        assert!(hardware.has_staged_setpoints());
+        assert!(execution.started());
+
+        hardware.invalidate_after_safe();
+        execution.fault();
+        assert!(!hardware.has_staged_setpoints());
+        assert!(!execution.started());
+        assert_eq!(
+            hardware.hardware().controller().fault(),
+            Some(ServoFocBankError::SafetyInvalidated)
+        );
+        assert_eq!(hardware.take_servo_setpoint_commit().unwrap(), None);
+        let mut inputs =
+            core::array::from_fn(|axis| servo_bank_input(hardware.hardware(), axis, 0));
+        for input in &mut inputs {
+            input.setpoint = None;
+        }
+        assert_eq!(
+            hardware.step(inputs),
+            Err(FocHardwareLoopError::Bank(ServoFocBankError::FaultLatched))
+        );
     }
 
     #[test]

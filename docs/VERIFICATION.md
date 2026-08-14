@@ -393,6 +393,13 @@ acknowledgements. Those acknowledgements are supplied software evidence, not
 MCPWM register readback or a physical timing measurement; target ownership,
 shutdown, WCET, and all qualification steps below remain unsatisfied.
 
+The multi-axis software gate must additionally replay one complete cached
+stream through every axis, inject a later-axis commit failure and a later-axis
+observation failure, and show that no earlier axis advances. Passing this gate
+does not qualify synchronized target peripherals: MCPWM phase/readback, ADC
+triggering, encoder availability, interrupt timing, and the all-stage shutdown
+transaction still require separate physical evidence.
+
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.
 2. Low-voltage open-loop electrical rotation and sensor alignment.

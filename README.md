@@ -381,12 +381,16 @@ prepares every simultaneous setpoint transactionally, and appends exactly one
 terminal at-rest hold. The permanent core-1 selector now admits kind `3` only
 through independently retained configuration-derived profiles, primes one exact
 future setpoint batch, and preserves block tokens through the distributed
-start, cancellation/fault, continuation, and terminal-hold barriers. A virtual
-setpoint mailbox joins that lifecycle to the complete encoder/cascade/current/
-SVPWM/compare owner for a 401-current-period replay. Every target mailbox still
-returns unavailable, and all servo implementation, qualification, commit-latency,
-and prime-lead gates remain closed, so no peripheral, energization, or hardware
-claim follows. See the [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md),
+start, cancellation/fault, continuation, and terminal-hold barriers. A portable
+FOC bank now prepares all axes, validates every modeled physical compare commit,
+and installs the complete controller array only after the whole simultaneous
+transaction succeeds. The virtual two-axis mailbox drives that bank through a
+401-current-period cached-job replay; a late second-axis latch, missing
+second-axis encoder sample, or ordered safe invalidation cannot advance the
+first axis alone. Every target mailbox still returns unavailable, and all servo
+implementation, qualification, commit-latency, and prime-lead gates remain
+closed, so no peripheral, energization, or hardware claim follows. See the
+[servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md),
 [exact cached-servo evidence](docs/evidence/M10-EXACT-CACHED-SERVO-STREAM.md),
 and [permanent servo-lifecycle evidence](docs/evidence/M10-PERMANENT-SERVO-LIFECYCLE.md).
 
