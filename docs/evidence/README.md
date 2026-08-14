@@ -320,6 +320,18 @@ a hardware qualification: board promotion still follows the evidence ladder in
   fixed-capacity all-axis candidate/commit installation, two-axis permanent
   cached-job replay, later-axis fault isolation, ordered safe invalidation, and
   renewed closed-gate ESP artifacts.
+- [`M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md`](M10-CANONICAL-DUAL-MKS-SERVO-CONFIGURATION.md)
+  — one canonical dual-stage MKS document driving both cached-servo admission
+  and complete simulator lowering while target qualification stays closed.
+- [`M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md`](M10-SIMULTANEOUS-PWM-COMMIT-BARRIER.md)
+  — allocation-free complete-vector latch correlation and sealed all-axis
+  physical completions without partial logical publication.
+- [`M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md`](M10-TRANSACTIONAL-SERVO-BANK-ACTIVATION.md)
+  — one opaque complete-bank initial candidate and configuration-bound
+  sequence-zero activation with no independently live axis join.
+- [`M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](M10-FAIL-CLOSED-PWM-TARGET-OWNER.md)
+  — unique aggregate backend ownership, automatic all-stage safe handling,
+  recoverable unsafe-fault state, and canonical dual-axis simulator replay.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,
