@@ -251,7 +251,7 @@ bytes are recognizable but no valid prior generation can be trusted.
 
 ## Machine execution blocks
 
-A V1 per-MCU machine partition is a nonempty concatenation of exact 512-byte
+A V2 per-MCU machine partition is a nonempty concatenation of exact 512-byte
 blocks. The storage object's byte length determines the block count and its
 SHA-256 identity commits the complete concatenation, so the stream does not
 embed a circular copy of its own object digest. Storage upload chunks may split
@@ -261,12 +261,12 @@ Each block has this canonical layout:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMBLK01` |
-| 8 | 2 | exact machine-IR version (`1`) |
-| 10 | 1 | execution kind (`1` motion) |
+| 0 | 8 | ASCII `ALMBLK02` |
+| 8 | 2 | exact machine-IR version (`2`) |
+| 10 | 1 | execution kind (`1` coordinated motion, `2` direct finite difference) |
 | 11 | 1 | axis count (`1..=8`) |
 | 12 | 4 | contiguous block sequence, beginning at zero |
-| 16 | 4 | nonzero motion-segment count |
+| 16 | 4 | nonzero canonical-record count |
 | 20 | 4 | exact initialized payload bytes |
 | 24 | 8 | inclusive partition-relative stream tick |
 | 32 | 8 | exclusive partition-relative stream tick |
@@ -278,14 +278,26 @@ Each block has this canonical layout:
 | 160 | 320 | records followed by zero padding |
 | 480 | 32 | SHA-256 over bytes `0..480` |
 
-One V1 motion record is `duration_ticks: u64`, zero flags `u32`, reserved zero
+One coordinated-motion record is `duration_ticks: u64`, zero flags `u32`, reserved zero
 `u32`, then one signed little-endian `i64` lattice displacement per axis. The
 payload length must equal `segment_count * (16 + 8 * axis_count)`. Thus one block
 holds exactly eight 3-axis records or four 8-axis records at maximum capacity.
-Durations must be nonzero and sum exactly to the block interval. Stream ticks
-are not absolute device-counter values: deterministic commit supplies a future
-local `DeviceCycle` epoch, and firmware uses checked addition when scheduling.
-This keeps one cached partition independent of its eventual synchronized start.
+One direct finite-difference record is `update_period_ticks: u32`, nonzero
+`update_count: u32`, zero flags `u32`, reserved zero `u32`, then four signed
+little-endian `i64` Q31.32 values per axis: initial position and first, second,
+and third Newton forward differences. Its payload length is
+`segment_count * (16 + 32 * axis_count)`, so one block holds two 3-axis records
+or one 8-axis record. For update index `k`, firmware requires
+`p(k) = p0 + k*d1 + C(k,2)*d2 + C(k,3)*d3` to remain checked and rounds only
+through exact nearest-integer ties-to-even projection.
+
+Every duration must be nonzero and sum exactly to the block interval. Direct
+records additionally require exact Q31.32 continuity, bounded update count and
+displacement, monotonic direction within each record, and a caller-owned bound
+on every discrete first difference. Stream ticks are not absolute
+device-counter values: deterministic commit supplies a future local
+`DeviceCycle` epoch, and firmware uses checked addition when scheduling. This
+keeps one cached partition independent of its eventual synchronized start.
 
 Core 0 verifies the storage object, assembles blocks, checks this structure and
 the prepared machine limits, then moves the complete owned value through a
@@ -293,11 +305,15 @@ fixed-credit channel. Core 1 hashes and validates the same bytes independently
 before extending its admitted horizon. Unknown kinds, flags, versions, padding,
 identity changes, skipped/duplicate/wrapped sequences, time gaps, digest-chain
 changes, limit violations, and cumulative position overflow fail closed.
-Before the portable step executor accepts that ownership token, it analytically
-preflights every segment against its current electrical and lattice state. The
-token is returned for acknowledgement only after the emitted trace reaches the
-same terminal tick and cumulative position; rejection returns it unchanged, and
-a mid-execution fault makes it unacknowledgeable.
+Before either portable step executor accepts that ownership token, it
+analytically preflights every record against current electrical, integer, and
+output-lattice state. Direct admission finds first and last rounded crossings by
+exact monotonic binary search and therefore remains proportional to record count
+times axis count times `log2(update_count)`, while live execution still consumes
+every declared dense update. A block token returns only after the emitted trace
+reaches the same terminal tick, cumulative integer position, and (for direct
+records) Q31.32 state; rejection returns it unchanged, and a mid-execution fault
+makes it unacknowledgeable.
 
 ## Cached global job manifest
 
@@ -335,9 +351,11 @@ not contain a start epoch or permission to energize outputs.
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMJOBD2` |
-| 8 | 2 | exact descriptor version (`2`) |
-| 10 | 6 | flags/reserved, all zero |
+| 0 | 8 | ASCII `ALMJOBD3` |
+| 8 | 2 | exact descriptor version (`3`) |
+| 10 | 1 | exact execution kind (`1` coordinated motion, `2` direct finite difference) |
+| 11 | 1 | reserved zero |
+| 12 | 4 | maximum updates per finite-difference record; nonzero only for kind `2` |
 | 16 | 8 | nonzero boot-local prepare ID |
 | 24 | 1 | fixed `MachineJobPartition` object kind |
 | 25 | 1 | fixed SHA-256 object algorithm |
@@ -345,7 +363,7 @@ not contain a start epoch or permission to energize outputs.
 | 27 | 1 | exact compile-time executor axis count |
 | 28 | 4 | nonzero execution-block count |
 | 32 | 8 | partition byte length, exactly `count * 512` |
-| 40 | 8 | first relative stream tick, zero in V2 |
+| 40 | 8 | first relative stream tick, zero in V3 |
 | 48 | 8 | nonzero maximum block ticks |
 | 56 | 8 | nonzero maximum segment ticks |
 | 64 | 8 | nonzero maximum lattice steps per segment |

@@ -242,6 +242,8 @@ mod tests {
             capability_digest: Digest([0x71; 32]),
             config_digest: Digest([0x72; 32]),
             axis_count: 3,
+            execution_kind: alumina_machine_ir::ExecutionKind::Motion,
+            maximum_finite_difference_updates: 0,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],

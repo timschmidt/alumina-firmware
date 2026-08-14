@@ -10,7 +10,10 @@ pub use schedule::*;
 use alumina_clock::{BOOT_ID_BYTES, BootId};
 use alumina_machine_ir::{
     AssembleOutcome, BlockError, BlockExpectation, BlockValidationLimits, EXECUTION_BLOCK_BYTES,
-    ExecutionBlock, ExecutionBlockHeader, MAX_EXECUTION_AXES, MotionSegments, MotionStreamProgress,
+    ExecutionBlock, ExecutionBlockHeader, ExecutionKind, FINITE_DIFFERENCE_ONE_STEP,
+    FiniteDifferenceBlockValidationLimits, FiniteDifferenceSegments,
+    FiniteDifferenceStreamProgress, FiniteDifferenceStreamValidator,
+    FiniteDifferenceValidationLimits, MAX_EXECUTION_AXES, MotionSegments, MotionStreamProgress,
     MotionStreamValidator, PartitionAssembler, StreamId, StreamTick,
 };
 use alumina_protocol::Digest;
@@ -41,8 +44,8 @@ pub const JOB_CANCEL_WIRE_BYTES: usize = 8;
 /// may await its exact physical-commit barrier while the successor is planned.
 pub const REALTIME_BLOCK_WINDOW: usize = 2;
 
-const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD2";
-const JOB_DESCRIPTOR_VERSION: u16 = 2;
+const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD3";
+const JOB_DESCRIPTOR_VERSION: u16 = 3;
 const JOB_DESCRIPTOR_HASH_OFFSET: usize = JOB_DESCRIPTOR_WIRE_BYTES - 32;
 const CORE_JOB_COMMAND_MAGIC: [u8; 4] = *b"ALJC";
 const CORE_JOB_COMMAND_VERSION: u16 = 1;
@@ -84,9 +87,14 @@ pub struct JobDescriptor {
     pub config_digest: alumina_protocol::Digest,
     /// Exact axis width selected for this per-MCU stream.
     pub axis_count: u8,
+    /// Exact execution-record family required in every partition block.
+    pub execution_kind: ExecutionKind,
+    /// Maximum dense updates in one direct finite-difference record. Ordinary
+    /// coordinated-motion streams require zero.
+    pub maximum_finite_difference_updates: u32,
     /// Exact count implied by partition bytes; repeated for conflict detection.
     pub block_count: u32,
-    /// First relative stream tick; V2 full partitions begin at zero.
+    /// First relative stream tick; V3 full partitions begin at zero.
     pub first_tick: StreamTick,
     /// Exact absolute machine-lattice position at `first_tick`. Slots at and
     /// above `axis_count` are canonical zero.
@@ -112,6 +120,15 @@ impl JobDescriptor {
                 encoded: self.axis_count,
                 expected: AXES,
             });
+        }
+        match self.execution_kind {
+            ExecutionKind::Motion if self.maximum_finite_difference_updates != 0 => {
+                return Err(DescriptorError::Limits);
+            }
+            ExecutionKind::FiniteDifference if self.maximum_finite_difference_updates == 0 => {
+                return Err(DescriptorError::Limits);
+            }
+            ExecutionKind::Motion | ExecutionKind::FiniteDifference => {}
         }
         StreamId::new(self.stream_id.0).map_err(|_| DescriptorError::StreamIdentity)?;
         if self.capability_digest.is_zero() {
@@ -184,7 +201,9 @@ impl JobDescriptor {
         let mut encoded = [0_u8; JOB_DESCRIPTOR_WIRE_BYTES];
         encoded[0..8].copy_from_slice(&JOB_DESCRIPTOR_MAGIC);
         encoded[8..10].copy_from_slice(&JOB_DESCRIPTOR_VERSION.to_le_bytes());
-        // Bytes 10..16 are zero flags and reserved bytes.
+        encoded[10] = self.execution_kind as u8;
+        // Byte 11 remains reserved.
+        encoded[12..16].copy_from_slice(&self.maximum_finite_difference_updates.to_le_bytes());
         encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
         encoded[24] = self.partition.object.kind as u8;
         encoded[25] = self.partition.object.content.algorithm as u8;
@@ -222,9 +241,11 @@ impl JobDescriptor {
         if read_u16(encoded, 8) != JOB_DESCRIPTOR_VERSION {
             return Err(JobDescriptorWireError::Version);
         }
-        if encoded[10..16].iter().any(|byte| *byte != 0) {
+        if encoded[11] != 0 {
             return Err(JobDescriptorWireError::Reserved);
         }
+        let execution_kind =
+            ExecutionKind::from_wire(encoded[10]).ok_or(JobDescriptorWireError::ExecutionKind)?;
         if encoded[24] != ObjectKind::MachineJobPartition as u8 {
             return Err(JobDescriptorWireError::ObjectKind);
         }
@@ -265,6 +286,8 @@ impl JobDescriptor {
             capability_digest: Digest(capability_digest),
             config_digest: Digest(config_digest),
             axis_count: encoded[27],
+            execution_kind,
+            maximum_finite_difference_updates: read_u32(encoded, 12),
             block_count: read_u32(encoded, 28),
             first_tick: StreamTick(read_u64(encoded, 40)),
             initial_position,
@@ -297,6 +320,8 @@ pub enum JobDescriptorWireError {
     Version,
     /// Flags or reserved bytes were nonzero.
     Reserved,
+    /// Execution-record family was not assigned by machine IR V2.
+    ExecutionKind,
     /// The object kind was not a per-MCU executable partition.
     ObjectKind,
     /// A content identity did not select SHA-256.
@@ -556,7 +581,7 @@ pub enum DescriptorError {
     CapabilityIdentity,
     /// Configuration identity used the zero sentinel.
     ConfigurationIdentity,
-    /// V2 full partitions must begin at relative tick zero.
+    /// V3 full partitions must begin at relative tick zero.
     FirstTick,
     /// A fixed position slot above the selected axis width was nonzero.
     InitialPosition,
@@ -571,6 +596,106 @@ pub enum DescriptorError {
         /// Object-derived count.
         derived: u32,
     },
+}
+
+/// Common bounded progress facts exposed by job actors for either execution
+/// record family. Direct finite-difference Q31.32 continuity remains private to
+/// its independent validator and cannot be forged through this status view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MachineStreamProgress<const AXES: usize> {
+    /// Blocks independently admitted so far.
+    pub accepted_blocks: u32,
+    /// Exact immutable block count.
+    pub expected_blocks: u32,
+    /// Exclusive terminal stream-relative tick.
+    pub end_tick: StreamTick,
+    /// Cumulative rounded relative lattice displacement.
+    pub position: [i64; AXES],
+    /// Digest required by the next block, or terminal chain digest.
+    pub block_digest: Digest,
+    /// Whether the complete declared stream was admitted.
+    pub complete: bool,
+}
+
+impl<const AXES: usize> From<MotionStreamProgress<AXES>> for MachineStreamProgress<AXES> {
+    fn from(progress: MotionStreamProgress<AXES>) -> Self {
+        Self {
+            accepted_blocks: progress.accepted_blocks,
+            expected_blocks: progress.expected_blocks,
+            end_tick: progress.end_tick,
+            position: progress.position,
+            block_digest: progress.block_digest,
+            complete: progress.complete,
+        }
+    }
+}
+
+impl<const AXES: usize> From<FiniteDifferenceStreamProgress<AXES>> for MachineStreamProgress<AXES> {
+    fn from(progress: FiniteDifferenceStreamProgress<AXES>) -> Self {
+        Self {
+            accepted_blocks: progress.accepted_blocks,
+            expected_blocks: progress.expected_blocks,
+            end_tick: progress.end_tick,
+            position: progress.position,
+            block_digest: progress.block_digest,
+            complete: progress.complete,
+        }
+    }
+}
+
+enum ExecutionStreamValidator<const AXES: usize> {
+    Motion(MotionStreamValidator<AXES>),
+    FiniteDifference(FiniteDifferenceStreamValidator<AXES>),
+}
+
+impl<const AXES: usize> ExecutionStreamValidator<AXES> {
+    fn new(descriptor: JobDescriptor) -> Result<Self, BlockError> {
+        match descriptor.execution_kind {
+            ExecutionKind::Motion => Ok(Self::Motion(MotionStreamValidator::new(
+                descriptor.block_count,
+                descriptor.first_expectation(),
+                descriptor.limits,
+            )?)),
+            ExecutionKind::FiniteDifference => Ok(Self::FiniteDifference(
+                FiniteDifferenceStreamValidator::new(
+                    descriptor.block_count,
+                    descriptor.first_expectation(),
+                    FiniteDifferenceBlockValidationLimits {
+                        maximum_block_ticks: descriptor.limits.maximum_block_ticks,
+                        segment: FiniteDifferenceValidationLimits {
+                            maximum_segment_ticks: descriptor.limits.segment.maximum_segment_ticks,
+                            maximum_update_count: descriptor.maximum_finite_difference_updates,
+                            maximum_steps_per_segment: descriptor
+                                .limits
+                                .segment
+                                .maximum_steps_per_segment,
+                            maximum_absolute_first_difference: [FINITE_DIFFERENCE_ONE_STEP
+                                .unsigned_abs()
+                                - 1;
+                                AXES],
+                        },
+                    },
+                )?,
+            )),
+        }
+    }
+
+    fn accept(
+        &mut self,
+        block: &ExecutionBlock,
+    ) -> Result<MachineStreamProgress<AXES>, BlockError> {
+        match self {
+            Self::Motion(validator) => validator.accept(block).map(Into::into),
+            Self::FiniteDifference(validator) => validator.accept(block).map(Into::into),
+        }
+    }
+
+    fn finish(&self) -> Result<MachineStreamProgress<AXES>, BlockError> {
+        match self {
+            Self::Motion(validator) => validator.finish().map(Into::into),
+            Self::FiniteDifference(validator) => validator.finish().map(Into::into),
+        }
+    }
 }
 
 /// Minimal fixed-credit sink used by the core-0 prefetch state machine.
@@ -675,7 +800,7 @@ pub struct ServiceJobStatus<const AXES: usize> {
     /// Storage chunks read through the verified publication cursor.
     pub storage_chunks_read: u32,
     /// Complete service-side stream facts, only at terminal prefetch.
-    pub final_progress: Option<MotionStreamProgress<AXES>>,
+    pub final_progress: Option<MachineStreamProgress<AXES>>,
 }
 
 /// Fixed service-side prefetch summary safe for authenticated status responses.
@@ -851,7 +976,7 @@ pub enum ServiceJobReportWireError {
     Reserved,
     /// Prepare correlation was zero.
     PrepareId,
-    /// Axis width was outside the V1 machine-block range.
+    /// Axis width was outside the machine-block schema range.
     AxisCount,
     /// Block counts were empty or out of order.
     Counts,
@@ -888,7 +1013,7 @@ pub struct ServicePrefetch<const AXES: usize> {
     descriptor: JobDescriptor,
     reader: PublishedReader,
     assembler: PartitionAssembler,
-    validator: MotionStreamValidator<AXES>,
+    validator: ExecutionStreamValidator<AXES>,
     storage: [u8; MAX_MEDIA_CHUNK_BYTES],
     storage_offset: usize,
     storage_len: usize,
@@ -897,7 +1022,7 @@ pub struct ServicePrefetch<const AXES: usize> {
     validated_blocks: u32,
     sent_blocks: u32,
     storage_chunks_read: u32,
-    final_progress: Option<MotionStreamProgress<AXES>>,
+    final_progress: Option<MachineStreamProgress<AXES>>,
 }
 
 impl<const AXES: usize> ServicePrefetch<AXES> {
@@ -918,12 +1043,7 @@ impl<const AXES: usize> ServicePrefetch<AXES> {
             .map_err(JobError::Storage)?;
         let assembler = PartitionAssembler::new(descriptor.partition.object.byte_len)
             .map_err(JobError::Machine)?;
-        let validator = MotionStreamValidator::new(
-            descriptor.block_count,
-            descriptor.first_expectation(),
-            descriptor.limits,
-        )
-        .map_err(JobError::Machine)?;
+        let validator = ExecutionStreamValidator::new(descriptor).map_err(JobError::Machine)?;
         Ok(Self {
             descriptor,
             reader,
@@ -1141,7 +1261,7 @@ struct Outstanding<const AXES: usize> {
     prepare_id: u64,
     sequence: u32,
     block_digest: alumina_protocol::Digest,
-    progress: MotionStreamProgress<AXES>,
+    progress: MachineStreamProgress<AXES>,
 }
 
 /// Core-1 status safe to publish as bounded telemetry.
@@ -1158,9 +1278,9 @@ pub struct RealtimeJobStatus<const AXES: usize> {
     /// Exact immutable total.
     pub total_blocks: u32,
     /// Validated facts through the newest block owned by the executor pipeline.
-    pub admitted_progress: Option<MotionStreamProgress<AXES>>,
+    pub admitted_progress: Option<MachineStreamProgress<AXES>>,
     /// Terminal facts for the completed prefix.
-    pub completed_progress: Option<MotionStreamProgress<AXES>>,
+    pub completed_progress: Option<MachineStreamProgress<AXES>>,
     /// Whether one or more admitted blocks are owned outside this state machine.
     pub outstanding: bool,
 }
@@ -1169,7 +1289,7 @@ pub struct RealtimeJobStatus<const AXES: usize> {
 pub struct AdmittedBlock<const AXES: usize> {
     prepare_id: u64,
     block: ExecutionBlock,
-    progress: MotionStreamProgress<AXES>,
+    progress: MachineStreamProgress<AXES>,
 }
 
 impl<const AXES: usize> AdmittedBlock<AXES> {
@@ -1183,8 +1303,15 @@ impl<const AXES: usize> AdmittedBlock<AXES> {
         self.block.motion_segments()
     }
 
+    /// Iterates direct finite-difference records without copying or allocation.
+    pub fn finite_difference_segments(
+        &self,
+    ) -> Result<FiniteDifferenceSegments<'_, AXES>, BlockError> {
+        self.block.finite_difference_segments()
+    }
+
     /// Cumulative independently validated stream facts through this block.
-    pub const fn progress(&self) -> MotionStreamProgress<AXES> {
+    pub const fn progress(&self) -> MachineStreamProgress<AXES> {
         self.progress
     }
 }
@@ -1206,15 +1333,15 @@ pub enum RealtimePoll<const AXES: usize> {
 /// Core-1 independent stream validator and bounded ownership gate.
 pub struct RealtimeJob<const AXES: usize> {
     descriptor: JobDescriptor,
-    validator: MotionStreamValidator<AXES>,
+    validator: ExecutionStreamValidator<AXES>,
     state: RealtimeJobState,
     outstanding: [Option<Outstanding<AXES>>; REALTIME_BLOCK_WINDOW],
     outstanding_head: usize,
     outstanding_len: usize,
     admitted_blocks: u32,
     completed_blocks: u32,
-    admitted_progress: Option<MotionStreamProgress<AXES>>,
-    completed_progress: Option<MotionStreamProgress<AXES>>,
+    admitted_progress: Option<MachineStreamProgress<AXES>>,
+    completed_progress: Option<MachineStreamProgress<AXES>>,
 }
 
 impl<const AXES: usize> RealtimeJob<AXES> {
@@ -1223,12 +1350,7 @@ impl<const AXES: usize> RealtimeJob<AXES> {
         descriptor
             .validate::<AXES>()
             .map_err(JobError::Descriptor)?;
-        let validator = MotionStreamValidator::new(
-            descriptor.block_count,
-            descriptor.first_expectation(),
-            descriptor.limits,
-        )
-        .map_err(JobError::Machine)?;
+        let validator = ExecutionStreamValidator::new(descriptor).map_err(JobError::Machine)?;
         Ok(Self {
             descriptor,
             validator,
@@ -1838,7 +1960,10 @@ mod tests {
     use alloc::boxed::Box;
 
     use alumina_clock::BootId;
-    use alumina_machine_ir::{ExecutionSegment, ValidationLimits};
+    use alumina_machine_ir::{
+        ExecutionSegment, FINITE_DIFFERENCE_ONE_STEP, FiniteDifferenceAxis,
+        FiniteDifferenceSegment, ValidationLimits,
+    };
     use alumina_protocol::{DeviceCycle, Digest};
     use alumina_runtime::IntercoreBoundary;
     use alumina_storage::{ContentId, DigestAlgorithm, StoredObject};
@@ -1866,6 +1991,8 @@ mod tests {
             capability_digest: Digest([0x22; 32]),
             config_digest: Digest([0x33; 32]),
             axis_count: 3,
+            execution_kind: ExecutionKind::Motion,
+            maximum_finite_difference_updates: 0,
             block_count: blocks,
             first_tick: StreamTick(0),
             initial_position: [10, -20, 30, 0, 0, 0, 0, 0],
@@ -1890,6 +2017,42 @@ mod tests {
                 start_tick: StreamTick(u64::from(sequence) * 100),
                 end_tick: StreamTick((u64::from(sequence) + 1) * 100),
                 delta_steps: [1, -1, 0],
+                flags: 0,
+            }],
+        )
+        .unwrap()
+    }
+
+    fn finite_descriptor(blocks: u32) -> JobDescriptor {
+        JobDescriptor {
+            execution_kind: ExecutionKind::FiniteDifference,
+            maximum_finite_difference_updates: 1_000,
+            ..descriptor(blocks)
+        }
+    }
+
+    fn finite_block(sequence: u32, previous: Digest, initial_position: [i64; 3]) -> ExecutionBlock {
+        ExecutionBlock::encode_finite_difference(
+            StreamId([0x11; 16]),
+            Digest([0x22; 32]),
+            Digest([0x33; 32]),
+            sequence,
+            previous,
+            &[FiniteDifferenceSegment::<3> {
+                start_tick: StreamTick(u64::from(sequence) * 16),
+                end_tick: StreamTick((u64::from(sequence) + 1) * 16),
+                update_period_ticks: 1,
+                update_count: 16,
+                axes: core::array::from_fn(|axis| FiniteDifferenceAxis {
+                    initial_position: initial_position[axis],
+                    first_difference: if axis == 0 {
+                        (FINITE_DIFFERENCE_ONE_STEP - 1) / 4
+                    } else {
+                        0
+                    },
+                    second_difference: 0,
+                    third_difference: 0,
+                }),
                 flags: 0,
             }],
         )
@@ -1948,6 +2111,12 @@ mod tests {
             invalid.validate::<3>(),
             Err(DescriptorError::InitialPosition)
         );
+        invalid = descriptor(2);
+        invalid.maximum_finite_difference_updates = 1;
+        assert_eq!(invalid.validate::<3>(), Err(DescriptorError::Limits));
+        invalid = finite_descriptor(2);
+        invalid.maximum_finite_difference_updates = 0;
+        assert_eq!(invalid.validate::<3>(), Err(DescriptorError::Limits));
         assert_eq!(descriptor(2).initial_position_for::<3>(), Ok([10, -20, 30]));
     }
 
@@ -1957,7 +2126,9 @@ mod tests {
         let boot_id = BootId::new([0x66; BOOT_ID_BYTES]).unwrap();
         let encoded = descriptor.encode::<3>().unwrap();
         assert_eq!(encoded.len(), JOB_DESCRIPTOR_WIRE_BYTES);
-        assert_eq!(&encoded[0..8], b"ALMJOBD2");
+        assert_eq!(&encoded[0..8], b"ALMJOBD3");
+        assert_eq!(encoded[10], ExecutionKind::Motion as u8);
+        assert_eq!(&encoded[12..16], &0_u32.to_le_bytes());
         assert_eq!(&encoded[216..224], &10_i64.to_le_bytes());
         assert_eq!(&encoded[224..232], &(-20_i64).to_le_bytes());
         assert_eq!(&encoded[232..240], &30_i64.to_le_bytes());
@@ -2014,6 +2185,17 @@ mod tests {
             JobDescriptor::decode::<3>(&corrupt),
             Err(JobDescriptorWireError::Integrity)
         );
+        let direct = finite_descriptor(2);
+        let direct_encoded = direct.encode::<3>().unwrap();
+        assert_eq!(direct_encoded[10], ExecutionKind::FiniteDifference as u8);
+        assert_eq!(&direct_encoded[12..16], &1_000_u32.to_le_bytes());
+        assert_eq!(JobDescriptor::decode::<3>(&direct_encoded), Ok(direct));
+        let mut retired = direct_encoded;
+        retired[0..8].copy_from_slice(b"ALMJOBD2");
+        assert_eq!(
+            JobDescriptor::decode::<3>(&retired),
+            Err(JobDescriptorWireError::Magic)
+        );
         let mut nonzero_reserved = CoreJobCommand::Cancel { prepare_id: 7 }
             .encode::<3>()
             .unwrap();
@@ -2026,7 +2208,7 @@ mod tests {
 
     #[test]
     fn combined_status_is_fixed_canonical_and_correlated() {
-        let progress = MotionStreamProgress {
+        let progress = MachineStreamProgress {
             accepted_blocks: 2,
             expected_blocks: 2,
             end_tick: StreamTick(200),
@@ -2176,6 +2358,53 @@ mod tests {
         ));
         assert_eq!(job.status().state, RealtimeJobState::Faulted);
         assert!(!job.status().outstanding);
+    }
+
+    #[test]
+    fn realtime_job_admits_only_the_declared_finite_difference_family() {
+        type Boundary = IntercoreBoundary<1, 1, 4, 4, 2>;
+        let boundary = Box::leak(Box::new(Boundary::new()));
+        let (mut service, mut realtime) = boundary.split();
+        let direct_block = finite_block(0, Digest::ZERO, [0; 3]);
+        let digest = direct_block.header().block_digest;
+        service.try_send_work(direct_block).unwrap();
+        let mut job = RealtimeJob::<3>::prepare(finite_descriptor(1)).unwrap();
+        let admitted = match job.poll(&mut realtime).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("direct block must be admitted")
+            }
+        };
+        assert_eq!(admitted.header().kind, ExecutionKind::FiniteDifference);
+        assert_eq!(admitted.finite_difference_segments().unwrap().len(), 1);
+        assert!(matches!(
+            admitted.segments(),
+            Err(BlockError::Kind { received: 2 })
+        ));
+        let progress = admitted.progress();
+        assert_eq!(progress.accepted_blocks, 1);
+        assert_eq!(progress.end_tick, StreamTick(16));
+        assert_eq!(progress.position, [4, 0, 0]);
+        assert_eq!(progress.block_digest, digest);
+        assert!(progress.complete);
+        let status = job.acknowledge(admitted).unwrap();
+        assert_eq!(status.state, RealtimeJobState::Complete);
+        assert_eq!(status.completed_progress, Some(progress));
+
+        let boundary = Box::leak(Box::new(Boundary::new()));
+        let (mut service, mut realtime) = boundary.split();
+        service.try_send_work(block(0, Digest::ZERO)).unwrap();
+        let mut job = RealtimeJob::<3>::prepare(finite_descriptor(1)).unwrap();
+        assert!(matches!(
+            job.poll(&mut realtime),
+            Err(JobError::Machine(BlockError::Kind { received: 1 }))
+        ));
+        let status = job.status();
+        assert_eq!(status.state, RealtimeJobState::Faulted);
+        assert_eq!(status.admitted_blocks, 0);
+        assert_eq!(status.completed_blocks, 0);
+        assert!(status.admitted_progress.is_none());
+        assert!(!status.outstanding);
     }
 
     #[test]

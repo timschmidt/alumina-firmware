@@ -337,7 +337,19 @@ qualification, so both packages remain non-armable. See the
 [portable safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md), plus the
 [target safety-input evidence](docs/evidence/M6-TARGET-SAFETY-INPUTS.md) and
 [target motion-commit evidence](docs/evidence/M6-TARGET-MOTION-COMMIT.md). The
-portable scheduled backend further separates future generation, immutable
+greenfield machine boundary now also has canonical `ALMBLK02` direct
+third-order finite-difference records and `ALMJOBD3` kind-bound preparation.
+Signed Q31.32 Newton-forward state remains exact across records and blocks,
+nearest-integer ties-to-even is the only step projection, and sparse electrical
+admission is logarithmic in each record's update count. The allocation-free
+core consumes every dense update, emits the same logical step/direction/enable
+transactions as ordinary motion, and retains the cached block token until both
+integer and Q31.32 terminal state agree. A deterministic immutable-partition
+simulation covers that full portable path; browser/WASM lowering and TinyBee
+PCM/DMA composition remain open, and no hardware qualification is claimed. See
+the [direct finite-difference evidence](docs/evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md).
+
+The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;
 its motion-to-PCM-to-wire simulator retains ownership through output-free dwell
 and terminal disable. See the

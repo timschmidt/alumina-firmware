@@ -346,6 +346,8 @@ the [canonical planner/lowering V3
 evidence](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md),
 the [shared-MCU exact retiming
 evidence](evidence/M10-SHARED-MCU-TIMER-RETIMING.md),
+the [direct finite-difference machine boundary
+evidence](evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md),
 and [M5/M7 packaging evidence](evidence/M7-GLOBAL-JOB-MANIFEST.md).
 
 ### M6 — Safety kernel, clean-room stepper control, and first workflow
@@ -405,6 +407,14 @@ and
 [`M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
 The same-grid shared compiler/evidence boundary is recorded in
 [`M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
+Firmware machine-block schema V2 now adds a separately kind-bound direct
+third-order Q31.32 record, exact cross-record continuity, logarithmic sparse
+electrical admission, dense allocation-free recurrence execution, and cached
+token retention through integer plus fixed-point terminal agreement. The
+descriptor break is explicit `ALMJOBD3`; no V1/V2 shim is accepted. Browser/WASM
+lowering from exact Hyperpath schedules into these records remains the next
+coordinated step. See
+[`M10-DIRECT-FINITE-DIFFERENCE-IR.md`](evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
@@ -422,6 +432,13 @@ scheduled epoch, interlock-qualified arm/start state, and a two-phase complete-
 image transaction. A block is acknowledged only after its exact generated
 output prefix is physically committed, and normal disable waits for the exact
 enable-hold cycle.
+The direct executor is a parallel portable path rather than a compatibility
+mode. It consumes every declared Q31.32 update deadline, including output-empty
+frames, generates exact step/direction/enable transactions, and faults before a
+late frame or inadmissible edge. Its immutable-partition simulator uses the real
+job actor and acknowledges no block before dense terminal replay. Composition
+into the qualified TinyBee PCM/DMA owner, WCET measurement, browser lowering,
+and hardware output remain open.
 TinyBee's blocking static writer is only a compile/HIL staging path and cannot
 qualify arming; T-Deck Pro has no motion output. The portable safety-input
 layer retains configuration-derived resource/polarity/pull/debounce/watchdog

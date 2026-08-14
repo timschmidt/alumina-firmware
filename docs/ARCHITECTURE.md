@@ -736,6 +736,29 @@ independent progress certificate. Faulted work cannot be acknowledged and is
 released only after the immediate safe logical transaction has been issued;
 physical application remains a separate backend fact.
 
+The parallel direct path is now implemented without weakening that ownership
+model. `JobDescriptor` V3 binds one execution kind and a nonzero per-record
+update bound only for direct streams; both core-0 prefetch and core-1 admission
+select the matching validator, and a kind substitution faults before progress
+is admitted. `FiniteDifferenceStepperExecutor` consumes each declared Q31.32
+update at its exact output-grid deadline, even when no integer boundary is
+crossed. It emits the same logical direction, enable, step-rise, step-fall, and
+terminal-disable transactions as the coordinated executor. Sparse admission
+retains direction/enable state and prior rise/fall history across records and
+blocks, while exact crossing searches keep validation independent of dense job
+duration. `CachedFiniteDifferenceExecutor` privately fast-forwards the entire
+candidate block, then retains its unique token through every live recurrence
+update and final pulse fall. Release requires agreement on terminal tick,
+integer position, and the separately retained Q31.32 state.
+
+`alumina-sim::motion` now replays immutable `ALMBLK02` direct partitions through
+real `RealtimeJob` admission and this dense cached executor. It counts empty and
+edge-producing updates separately, acknowledges each token in order, and
+compares both terminal lattices. This is portable numerical/output-state
+evidence. The direct event stream is not yet composed into TinyBee's qualified
+PCM/DMA owner, no target timing/WCET claim is made, and every board remains
+non-armable for this path.
+
 A separate complete-image mapper binds those logical transactions to configured
 I²S bit resources, respects active-high/active-low enable or disable semantics,
 and preserves every unrelated shifted output. It accepts only a fully defined
@@ -1041,20 +1064,26 @@ For each job, define:
 - integer widths and overflow proof/bounds; and
 - constraints for velocity, acceleration, jerk, following error, and tool events.
 
-The current stepper lowering ceilings each retained exact ideal interval to the
-configured output quantum after applying one exact rational factor. A bounded
-binary search admits only firmware-classified duration pressure and selects the
-smallest factor whose complete canonical stream passes production preflight;
-the immediate predecessor must retain a timing failure. Intentional dilation is
-reported separately from the strictly sub-quantum grid padding and spatial
-error budget. One shared factor across multiple MCU partitions and direct
-native jerk IR remain later contracts.
+The coordinated stepper lowering ceilings each retained exact ideal interval to
+the configured output quantum after applying one exact rational factor. A
+bounded binary search admits only firmware-classified duration pressure and
+selects the smallest factor whose complete canonical stream passes production
+preflight; the immediate predecessor must retain a timing failure. Intentional
+dilation is reported separately from the strictly sub-quantum grid padding and
+spatial error budget. The same-grid multi-MCU compiler now selects that factor
+jointly across every participant and records the complete predecessor outcome
+vector. Mixed clocks remain an explicit-event-grid contract rather than a
+tolerance shortcut.
 
-Machine IR is canonical and hashed. V1 favors a small auditable instruction set:
-set state, jerk/finite-difference segment, linearly coordinated integer move,
-wait/synchronize, sampled input condition, bounded output action, and job
-boundary. Native line/arc/Bezier opcodes are added only when their integer
-interpolators can carry a verified error envelope and preserve planner
+Machine-block schema V2 is canonical and hashed. Kind `1` retains coordinated
+integer displacement records. Kind `2` adds direct third-order Newton forward
+differences in a common signed Q31.32 step lattice: `p0`, `d1`, `d2`, and `d3`
+per axis plus one exact update period/count. Nearest-integer ties-to-even is the
+sole step projection. Firmware independently proves checked closed-form state,
+exact Q31.32 continuity, monotonic direction within a record, bounded rounded
+displacement, and a strict first-difference ceiling before any dense recurrence
+is installed. Native line/arc/Bezier opcodes remain excluded unless an integer
+interpolator can carry a verified error envelope and preserve planner
 constraints. A global job is partitioned into one local stream per MCU.
 
 The firmware validates structure and machine constraints; it does not trust a

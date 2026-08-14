@@ -7,7 +7,11 @@ use alumina_config::{
     StepperAxisProfile,
 };
 use alumina_job::{AdmittedBlock, REALTIME_BLOCK_WINDOW};
-use alumina_machine_ir::{BlockError, ExecutionSegment, MAX_EXECUTION_AXES, StreamTick};
+use alumina_machine_ir::{
+    BlockError, ExecutionSegment, FINITE_DIFFERENCE_ONE_STEP, FiniteDifferenceAxis,
+    FiniteDifferenceError, FiniteDifferenceSegment, FiniteDifferenceSegmentSummary,
+    FiniteDifferenceValidationLimits, MAX_EXECUTION_AXES, StreamTick,
+};
 use alumina_protocol::DeviceCycle;
 
 /// Maximum number of axes representable by the fixed logical event mask.
@@ -512,6 +516,81 @@ pub struct StepperPreflightSummary<const AXES: usize> {
     pub segment_count: u32,
     /// Earliest aligned cycle at which normal driver disable is legal.
     pub earliest_finish_cycle: DeviceCycle,
+}
+
+/// Configuration/backend bounds for direct third-order finite-difference IR.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FiniteDifferenceExecutionLimits {
+    /// Longest one-record ownership horizon in device ticks.
+    pub maximum_segment_ticks: u64,
+    /// Largest dense update count accepted in one record.
+    pub maximum_update_count: u32,
+    /// Largest rounded displacement on one axis in one record.
+    pub maximum_steps_per_segment: u64,
+}
+
+/// Allocation-free replay result for a direct finite-difference segment stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FiniteDifferencePreflightSummary<const AXES: usize> {
+    /// Exclusive terminal stream tick.
+    pub end_tick: StreamTick,
+    /// Absolute terminal integer command-lattice position.
+    pub position: [i64; AXES],
+    /// Exact terminal relative Q31.32 coordinate carried across records.
+    pub terminal_finite_position: [i64; AXES],
+    /// Number of rising step edges on every axis.
+    pub emitted_steps: [u64; AXES],
+    /// Number of admitted direct finite-difference records.
+    pub segment_count: u32,
+    /// Total dense update frames represented without iterating them.
+    pub update_count: u64,
+    /// Earliest aligned cycle at which normal driver disable is legal.
+    pub earliest_finish_cycle: DeviceCycle,
+    /// Exact nearest-lattice projection bound in Q31.32 step units.
+    pub maximum_position_error: u64,
+}
+
+/// Direct finite-difference stream rejection, preserving either the exact
+/// integer-IR failure or the production electrical failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FiniteDifferencePreflightError {
+    /// No records were supplied.
+    Empty,
+    /// Record-local canonical/bounded validation failed.
+    Segment {
+        /// Zero-based record index.
+        index: usize,
+        /// Exact finite-difference failure.
+        error: FiniteDifferenceError,
+    },
+    /// Existing production electrical timing rejected the reconstructed edges.
+    Timing(MotionError),
+    /// Absolute machine position overflowed while applying one record.
+    PositionOverflow {
+        /// Zero-based record index.
+        index: usize,
+        /// Axis index.
+        axis: usize,
+    },
+    /// Checked counters, ticks, or fixed-width conversions overflowed.
+    Arithmetic,
+}
+
+impl FiniteDifferencePreflightError {
+    /// Whether a longer exact schedule may address this rejection.
+    ///
+    /// Structural, coefficient, identity, continuity, and arithmetic failures
+    /// are never reclassified as duration pressure.
+    pub const fn is_time_dilation_candidate(self) -> bool {
+        match self {
+            Self::Timing(error) => error.is_time_dilation_candidate(),
+            Self::Segment {
+                error: FiniteDifferenceError::UpdateRate { .. },
+                ..
+            } => true,
+            _ => false,
+        }
+    }
 }
 
 /// Nonblocking result from checking the next exact event deadline.
@@ -1501,6 +1580,1607 @@ pub fn preflight_stepper_segments<const AXES: usize>(
         segment_count: status.completed_segments,
         earliest_finish_cycle,
     })
+}
+
+fn finite_difference_record_limits<const AXES: usize>(
+    timing: StepperTiming<AXES>,
+    limits: FiniteDifferenceExecutionLimits,
+    segment: &FiniteDifferenceSegment<AXES>,
+) -> Result<FiniteDifferenceValidationLimits<AXES>, FiniteDifferencePreflightError> {
+    if segment.update_period_ticks == 0 {
+        return Err(FiniteDifferencePreflightError::Segment {
+            index: 0,
+            error: FiniteDifferenceError::UpdatePolicy,
+        });
+    }
+    let mut maximum_absolute_first_difference = [0_u64; AXES];
+    let mut axis = 0;
+    while axis < AXES {
+        let axis_timing = timing.axes[axis];
+        let pulse_period = u64::from(axis_timing.pulse_high_cycles)
+            .checked_add(u64::from(axis_timing.pulse_low_cycles))
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let frequency_period = minimum_frequency_period(
+            timing.device_cycle_hz,
+            axis_timing.maximum_step_frequency_hz,
+        )
+        .map_err(FiniteDifferencePreflightError::Timing)?;
+        let required_cycles = pulse_period.max(frequency_period);
+        let update_period = u64::from(segment.update_period_ticks);
+        let minimum_updates = div_ceil_u64(required_cycles, update_period)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let maximum = (FINITE_DIFFERENCE_ONE_STEP.unsigned_abs() - 1)
+            .checked_div(minimum_updates)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        if maximum == 0 {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::Rate {
+                axis,
+            }));
+        }
+        maximum_absolute_first_difference[axis] = maximum;
+        axis += 1;
+    }
+    Ok(FiniteDifferenceValidationLimits {
+        maximum_segment_ticks: limits.maximum_segment_ticks,
+        maximum_update_count: limits.maximum_update_count,
+        maximum_steps_per_segment: limits.maximum_steps_per_segment,
+        maximum_absolute_first_difference,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FiniteDifferenceAdmissionState<const AXES: usize> {
+    next_tick: StreamTick,
+    finite_position: [i64; AXES],
+    relative_steps: [i64; AXES],
+    position: [i64; AXES],
+    direction_known: AxisMask,
+    direction_positive: AxisMask,
+    enabled: AxisMask,
+    last_rise: [Option<DeviceCycle>; AXES],
+    last_fall: [Option<DeviceCycle>; AXES],
+    emitted_steps: [u64; AXES],
+    segment_count: u32,
+    update_count: u64,
+}
+
+impl<const AXES: usize> FiniteDifferenceAdmissionState<AXES> {
+    const fn new(position: [i64; AXES]) -> Self {
+        Self {
+            next_tick: StreamTick(0),
+            finite_position: [0; AXES],
+            relative_steps: [0; AXES],
+            position,
+            direction_known: AxisMask::NONE,
+            direction_positive: AxisMask::NONE,
+            enabled: AxisMask::NONE,
+            last_rise: [None; AXES],
+            last_fall: [None; AXES],
+            emitted_steps: [0; AXES],
+            segment_count: 0,
+            update_count: 0,
+        }
+    }
+
+    fn earliest_finish_cycle(
+        self,
+        timing: StepperTiming<AXES>,
+        epoch: DeviceCycle,
+    ) -> Result<DeviceCycle, FiniteDifferencePreflightError> {
+        let mut earliest = epoch
+            .0
+            .checked_add(self.next_tick.0)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let mut axis = 0;
+        while axis < AXES {
+            if self.enabled.contains(axis) {
+                let last = self.last_fall[axis].ok_or(FiniteDifferencePreflightError::Timing(
+                    MotionError::OutputInvariant,
+                ))?;
+                earliest = earliest.max(
+                    last.0
+                        .checked_add(u64::from(timing.axes[axis].enable_hold_cycles))
+                        .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+                );
+            }
+            axis += 1;
+        }
+        Ok(DeviceCycle(
+            align_up_to_output_grid(earliest, timing.output_quantum_cycles)
+                .map_err(FiniteDifferencePreflightError::Timing)?,
+        ))
+    }
+}
+
+fn preflight_finite_difference_segment<const AXES: usize>(
+    timing: StepperTiming<AXES>,
+    limits: FiniteDifferenceExecutionLimits,
+    epoch: DeviceCycle,
+    state: &mut FiniteDifferenceAdmissionState<AXES>,
+    segment: &FiniteDifferenceSegment<AXES>,
+    index: usize,
+) -> Result<FiniteDifferenceSegmentSummary<AXES>, FiniteDifferencePreflightError> {
+    if segment.update_period_ticks == 0 {
+        return Err(FiniteDifferencePreflightError::Segment {
+            index,
+            error: FiniteDifferenceError::UpdatePolicy,
+        });
+    }
+    require_output_grid(segment.start_tick.0, timing.output_quantum_cycles)
+        .map_err(FiniteDifferencePreflightError::Timing)?;
+    require_output_grid(segment.end_tick.0, timing.output_quantum_cycles)
+        .map_err(FiniteDifferencePreflightError::Timing)?;
+    require_output_grid(
+        u64::from(segment.update_period_ticks),
+        timing.output_quantum_cycles,
+    )
+    .map_err(FiniteDifferencePreflightError::Timing)?;
+
+    let record_limits = finite_difference_record_limits(timing, limits, segment)?;
+    let summary = segment
+        .validate(state.next_tick, state.finite_position, record_limits)
+        .map_err(|error| FiniteDifferencePreflightError::Segment { index, error })?;
+    let mut next = *state;
+    next.update_count = next
+        .update_count
+        .checked_add(u64::from(segment.update_count))
+        .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+
+    let segment_start = epoch
+        .0
+        .checked_add(segment.start_tick.0)
+        .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+    let segment_end = epoch
+        .0
+        .checked_add(segment.end_tick.0)
+        .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+    let mut axis = 0;
+    while axis < AXES {
+        if summary.start_steps[axis] != next.relative_steps[axis] {
+            return Err(FiniteDifferencePreflightError::Segment {
+                index,
+                error: FiniteDifferenceError::PositionContinuity { axis },
+            });
+        }
+        let delta = summary.delta_steps[axis];
+        next.position[axis] = next.position[axis]
+            .checked_add(delta)
+            .ok_or(FiniteDifferencePreflightError::PositionOverflow { index, axis })?;
+        let count = delta.unsigned_abs();
+        next.emitted_steps[axis] = next.emitted_steps[axis]
+            .checked_add(count)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        if count == 0 {
+            axis += 1;
+            continue;
+        }
+
+        let positive = delta > 0;
+        let changes_direction = !next.direction_known.contains(axis)
+            || next.direction_positive.contains(axis) != positive;
+        let first_target = summary.start_steps[axis]
+            .checked_add(if positive { 1 } else { -1 })
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let first_update =
+            finite_difference_crossing_update(segment, index, axis, first_target, positive)?;
+        let last_update = finite_difference_crossing_update(
+            segment,
+            index,
+            axis,
+            summary.end_steps[axis],
+            positive,
+        )?;
+        let first = epoch
+            .0
+            .checked_add(finite_difference_update_cycle(segment, first_update)?)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let last = epoch
+            .0
+            .checked_add(finite_difference_update_cycle(segment, last_update)?)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let fall = last
+            .checked_add(u64::from(timing.axes[axis].pulse_high_cycles))
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        if first < segment_start || fall > segment_end {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::PulseBoundary { axis },
+            ));
+        }
+        if let Some(previous_rise) = next.last_rise[axis] {
+            let frequency_ready = previous_rise
+                .0
+                .checked_add(
+                    minimum_frequency_period(
+                        timing.device_cycle_hz,
+                        timing.axes[axis].maximum_step_frequency_hz,
+                    )
+                    .map_err(FiniteDifferencePreflightError::Timing)?,
+                )
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            if first < frequency_ready {
+                return Err(FiniteDifferencePreflightError::Timing(MotionError::Rate {
+                    axis,
+                }));
+            }
+        }
+        if let Some(previous_fall) = next.last_fall[axis] {
+            let low_ready = previous_fall
+                .0
+                .checked_add(u64::from(timing.axes[axis].pulse_low_cycles))
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            if first < low_ready {
+                return Err(FiniteDifferencePreflightError::Timing(
+                    MotionError::PulseLow { axis },
+                ));
+            }
+            if changes_direction {
+                let hold_ready = previous_fall
+                    .0
+                    .checked_add(u64::from(timing.axes[axis].direction_hold_cycles))
+                    .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+                if segment_start < hold_ready {
+                    return Err(FiniteDifferencePreflightError::Timing(
+                        MotionError::DirectionHold { axis },
+                    ));
+                }
+            }
+        }
+        if changes_direction
+            && first - segment_start < u64::from(timing.axes[axis].direction_setup_cycles)
+        {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::DirectionSetup { axis },
+            ));
+        }
+        if !next.enabled.contains(axis)
+            && first - segment_start < u64::from(timing.axes[axis].enable_setup_cycles)
+        {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::EnableSetup { axis },
+            ));
+        }
+        next.direction_known
+            .insert(axis)
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        if positive {
+            next.direction_positive
+                .insert(axis)
+                .map_err(FiniteDifferencePreflightError::Timing)?;
+        } else {
+            next.direction_positive
+                .remove(axis)
+                .map_err(FiniteDifferencePreflightError::Timing)?;
+        }
+        next.enabled
+            .insert(axis)
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        next.last_rise[axis] = Some(DeviceCycle(last));
+        next.last_fall[axis] = Some(DeviceCycle(fall));
+        axis += 1;
+    }
+    next.next_tick = summary.end_tick;
+    next.relative_steps = summary.end_steps;
+    next.finite_position = summary.terminal_position;
+    next.segment_count = next
+        .segment_count
+        .checked_add(1)
+        .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+    *state = next;
+    Ok(summary)
+}
+
+/// Replay a complete direct third-order stream without iterating its dense
+/// update frames or emitting hardware events.
+///
+/// Each axis is monotonic inside one record. The validator derives a strict
+/// Q31.32 progress ceiling from pulse high/low and maximum-frequency spacing:
+/// if `M` update periods are required between rises, each first difference is
+/// at most `floor((one_step - 1) / M)`. Therefore even a threshold-crossing
+/// update's worst overshoot cannot reach the next rounding boundary in fewer
+/// than `M` updates. First/last crossings are then found by exact monotonic
+/// binary search, keeping admission proportional to
+/// `segments * AXES * log2(updates)` rather than to path duration or edge count.
+pub fn preflight_finite_difference_segments<const AXES: usize>(
+    timing: StepperTiming<AXES>,
+    limits: FiniteDifferenceExecutionLimits,
+    initial_position: [i64; AXES],
+    segments: &[FiniteDifferenceSegment<AXES>],
+) -> Result<FiniteDifferencePreflightSummary<AXES>, FiniteDifferencePreflightError> {
+    timing
+        .validate()
+        .map_err(FiniteDifferencePreflightError::Timing)?;
+    if segments.is_empty() {
+        return Err(FiniteDifferencePreflightError::Empty);
+    }
+    if limits.maximum_segment_ticks == 0
+        || limits.maximum_update_count == 0
+        || limits.maximum_steps_per_segment == 0
+    {
+        return Err(FiniteDifferencePreflightError::Segment {
+            index: 0,
+            error: FiniteDifferenceError::Limits,
+        });
+    }
+
+    let mut state = FiniteDifferenceAdmissionState::new(initial_position);
+    for (index, segment) in segments.iter().enumerate() {
+        preflight_finite_difference_segment(
+            timing,
+            limits,
+            DeviceCycle(0),
+            &mut state,
+            segment,
+            index,
+        )?;
+    }
+    let earliest_finish_cycle = state.earliest_finish_cycle(timing, DeviceCycle(0))?;
+    Ok(FiniteDifferencePreflightSummary {
+        end_tick: state.next_tick,
+        position: state.position,
+        terminal_finite_position: state.finite_position,
+        emitted_steps: state.emitted_steps,
+        segment_count: state.segment_count,
+        update_count: state.update_count,
+        earliest_finish_cycle,
+        maximum_position_error: FINITE_DIFFERENCE_ONE_STEP.unsigned_abs() / 2,
+    })
+}
+
+fn finite_difference_crossing_update<const AXES: usize>(
+    segment: &FiniteDifferenceSegment<AXES>,
+    segment_index: usize,
+    axis: usize,
+    target: i64,
+    increasing: bool,
+) -> Result<u32, FiniteDifferencePreflightError> {
+    let terminal = segment
+        .step_at(axis, segment.update_count)
+        .map_err(|error| FiniteDifferencePreflightError::Segment {
+            index: segment_index,
+            error,
+        })?;
+    if (increasing && terminal < target) || (!increasing && terminal > target) {
+        return Err(FiniteDifferencePreflightError::Arithmetic);
+    }
+    let mut low = 1_u32;
+    let mut high = segment.update_count;
+    while low < high {
+        let middle = low + (high - low) / 2;
+        let coordinate = segment.step_at(axis, middle).map_err(|error| {
+            FiniteDifferencePreflightError::Segment {
+                index: segment_index,
+                error,
+            }
+        })?;
+        let reached = if increasing {
+            coordinate >= target
+        } else {
+            coordinate <= target
+        };
+        if reached {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    Ok(low)
+}
+
+fn finite_difference_update_cycle<const AXES: usize>(
+    segment: &FiniteDifferenceSegment<AXES>,
+    update: u32,
+) -> Result<u64, FiniteDifferencePreflightError> {
+    u64::from(update)
+        .checked_mul(u64::from(segment.update_period_ticks))
+        .and_then(|offset| segment.start_tick.0.checked_add(offset))
+        .ok_or(FiniteDifferencePreflightError::Arithmetic)
+}
+
+fn div_ceil_u64(numerator: u64, denominator: u64) -> Option<u64> {
+    if denominator == 0 {
+        return None;
+    }
+    let quotient = numerator / denominator;
+    let remainder = numerator % denominator;
+    quotient.checked_add(u64::from(remainder != 0))
+}
+
+/// One dense finite-difference update suitable for deterministic DMA/image
+/// expansion after the complete stream has passed production preflight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FiniteDifferenceFrame<const AXES: usize> {
+    /// One-based update index inside the current record.
+    pub update_index: u32,
+    /// Exact stream-relative update boundary.
+    pub at: StreamTick,
+    /// Axes whose rounded command coordinate advanced by one step.
+    pub step: AxisMask,
+    /// Positive direction for the subset in `step`.
+    pub direction_positive: AxisMask,
+    /// Current rounded relative command coordinate.
+    pub relative_steps: [i64; AXES],
+    /// Current unrounded Q31.32 relative coordinate.
+    pub finite_position: [i64; AXES],
+}
+
+/// Allocation-free dense executor for one independently validated direct
+/// finite-difference record.
+///
+/// This primitive performs the canonical three checked additions per axis and
+/// yields exact step-rise decisions. It owns no pins, pulse state, safety
+/// authority, or cache token. A production composition must first run
+/// [`preflight_finite_difference_segments`] over the complete contiguous
+/// stream, then translate these frames through the same qualified output-image
+/// and physical-commit layers used by ordinary motion.
+pub struct FiniteDifferenceFrameGenerator<const AXES: usize> {
+    segment: FiniteDifferenceSegment<AXES>,
+    summary: FiniteDifferenceSegmentSummary<AXES>,
+    state: [FiniteDifferenceAxis; AXES],
+    relative_steps: [i64; AXES],
+    update_index: u32,
+}
+
+impl<const AXES: usize> FiniteDifferenceFrameGenerator<AXES> {
+    /// Revalidates this record against the production timing-derived progress
+    /// limits and exact incoming stream state before any dense update exists.
+    pub fn new(
+        timing: StepperTiming<AXES>,
+        limits: FiniteDifferenceExecutionLimits,
+        expected_start_tick: StreamTick,
+        expected_initial_position: [i64; AXES],
+        segment: FiniteDifferenceSegment<AXES>,
+    ) -> Result<Self, FiniteDifferencePreflightError> {
+        timing
+            .validate()
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        require_output_grid(segment.start_tick.0, timing.output_quantum_cycles)
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        require_output_grid(segment.end_tick.0, timing.output_quantum_cycles)
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        require_output_grid(
+            u64::from(segment.update_period_ticks),
+            timing.output_quantum_cycles,
+        )
+        .map_err(FiniteDifferencePreflightError::Timing)?;
+        let record_limits = finite_difference_record_limits(timing, limits, &segment)?;
+        let summary = segment
+            .validate(
+                expected_start_tick,
+                expected_initial_position,
+                record_limits,
+            )
+            .map_err(|error| FiniteDifferencePreflightError::Segment { index: 0, error })?;
+        Ok(Self {
+            segment,
+            summary,
+            state: segment.axes,
+            relative_steps: summary.start_steps,
+            update_index: 0,
+        })
+    }
+
+    /// Advance exactly one dense update. `None` means every declared update was
+    /// already produced and the caller may require [`Self::finish`].
+    pub fn advance(
+        &mut self,
+    ) -> Result<Option<FiniteDifferenceFrame<AXES>>, FiniteDifferencePreflightError> {
+        if self.update_index == self.segment.update_count {
+            return Ok(None);
+        }
+        let next_index = self
+            .update_index
+            .checked_add(1)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        let mut step = AxisMask::NONE;
+        let mut direction_positive = AxisMask::NONE;
+        let mut axis = 0;
+        while axis < AXES {
+            let state = &mut self.state[axis];
+            state.initial_position = state
+                .initial_position
+                .checked_add(state.first_difference)
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            state.first_difference = state
+                .first_difference
+                .checked_add(state.second_difference)
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            state.second_difference = state
+                .second_difference
+                .checked_add(state.third_difference)
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            let target =
+                alumina_machine_ir::round_finite_difference_position(state.initial_position);
+            let delta = target
+                .checked_sub(self.relative_steps[axis])
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            if !(-1..=1).contains(&delta) {
+                return Err(FiniteDifferencePreflightError::Timing(
+                    MotionError::OutputInvariant,
+                ));
+            }
+            if delta != 0 {
+                step.insert(axis)
+                    .map_err(FiniteDifferencePreflightError::Timing)?;
+                if delta > 0 {
+                    direction_positive
+                        .insert(axis)
+                        .map_err(FiniteDifferencePreflightError::Timing)?;
+                }
+                self.relative_steps[axis] = target;
+            }
+            axis += 1;
+        }
+        let at = StreamTick(finite_difference_update_cycle(&self.segment, next_index)?);
+        self.update_index = next_index;
+        Ok(Some(FiniteDifferenceFrame {
+            update_index: next_index,
+            at,
+            step,
+            direction_positive,
+            relative_steps: self.relative_steps,
+            finite_position: self.state.map(|state| state.initial_position),
+        }))
+    }
+
+    /// Require every dense update and exact terminal integer/fixed-point state.
+    pub fn finish(
+        &self,
+    ) -> Result<FiniteDifferenceSegmentSummary<AXES>, FiniteDifferencePreflightError> {
+        if self.update_index != self.segment.update_count
+            || self.relative_steps != self.summary.end_steps
+            || self.state.map(|state| state.initial_position) != self.summary.terminal_position
+        {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant,
+            ));
+        }
+        Ok(self.summary)
+    }
+
+    /// Dense updates not yet produced.
+    pub const fn remaining_updates(&self) -> u32 {
+        self.segment.update_count - self.update_index
+    }
+}
+
+/// Exact terminal facts from one densely executed finite-difference record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FiniteDifferenceSegmentCompletion<const AXES: usize> {
+    /// Absolute device cycle of the record horizon.
+    pub at: DeviceCycle,
+    /// Exclusive stream-relative record horizon.
+    pub end_tick: StreamTick,
+    /// Rounded relative displacement produced by this record.
+    pub delta_steps: [i64; AXES],
+    /// Absolute terminal command-lattice position.
+    pub position: [i64; AXES],
+    /// Exact terminal Q31.32 stream-relative coordinate.
+    pub terminal_finite_position: [i64; AXES],
+    /// Number of dense recurrence updates consumed by this record.
+    pub update_count: u32,
+}
+
+/// One bounded result from the direct finite-difference real-time executor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FiniteDifferenceMotionPoll<const AXES: usize> {
+    /// No record is installed.
+    Idle,
+    /// The next recurrence/output boundary is in the future.
+    Future { at: DeviceCycle },
+    /// One dense recurrence update was consumed. `event` is present only when
+    /// that update also changes a physical logical output.
+    Update {
+        frame: FiniteDifferenceFrame<AXES>,
+        event: Option<StepperEvent>,
+        lateness_cycles: u32,
+    },
+    /// A direction/enable boundary or pulse fall occurred between updates.
+    Event {
+        event: StepperEvent,
+        lateness_cycles: u32,
+    },
+    /// Every update and pulse fall in the installed record completed exactly.
+    SegmentComplete(FiniteDifferenceSegmentCompletion<AXES>),
+}
+
+struct ActiveFiniteDifferenceSegment<const AXES: usize> {
+    generator: FiniteDifferenceFrameGenerator<AXES>,
+    terminal: FiniteDifferenceAdmissionState<AXES>,
+    start: DeviceCycle,
+    end: DeviceCycle,
+    next_update: Option<DeviceCycle>,
+    next_fall: [Option<DeviceCycle>; AXES],
+    direction_change: AxisMask,
+    direction_positive: AxisMask,
+    enable: AxisMask,
+    boundary_pending: bool,
+}
+
+impl<const AXES: usize> ActiveFiniteDifferenceSegment<AXES> {
+    fn next_output_cycle(&self) -> Option<DeviceCycle> {
+        let mut next = if self.boundary_pending {
+            Some(self.start)
+        } else {
+            self.next_update
+        };
+        if self.boundary_pending {
+            next = minimum_cycle(next, self.next_update);
+        }
+        let mut axis = 0;
+        while axis < AXES {
+            next = minimum_cycle(next, self.next_fall[axis]);
+            axis += 1;
+        }
+        next
+    }
+}
+
+/// Allocation-free direct third-order recurrence and logical step-event owner.
+///
+/// Every dense update is an explicit deadline, including updates that do not
+/// cross an integer step boundary. The executor owns no pins, DMA descriptors,
+/// cache publication, or safety authorization; callers must map each returned
+/// event through the same single-owner physical commit path as ordinary motion.
+pub struct FiniteDifferenceStepperExecutor<const AXES: usize> {
+    timing: StepperTiming<AXES>,
+    limits: FiniteDifferenceExecutionLimits,
+    state: ExecutorState,
+    epoch: DeviceCycle,
+    live: FiniteDifferenceAdmissionState<AXES>,
+    step_high: AxisMask,
+    active: Option<ActiveFiniteDifferenceSegment<AXES>>,
+    maximum_lateness_cycles: u32,
+    deadline_misses: u64,
+}
+
+impl<const AXES: usize> FiniteDifferenceStepperExecutor<AXES> {
+    /// Construct an inert direct executor after validating fixed timing and
+    /// finite-difference ownership bounds.
+    pub fn new(
+        timing: StepperTiming<AXES>,
+        limits: FiniteDifferenceExecutionLimits,
+    ) -> Result<Self, FiniteDifferencePreflightError> {
+        timing
+            .validate()
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        if limits.maximum_segment_ticks == 0
+            || limits.maximum_update_count == 0
+            || limits.maximum_steps_per_segment == 0
+        {
+            return Err(FiniteDifferencePreflightError::Segment {
+                index: 0,
+                error: FiniteDifferenceError::Limits,
+            });
+        }
+        Ok(Self {
+            timing,
+            limits,
+            state: ExecutorState::Idle,
+            epoch: DeviceCycle(0),
+            live: FiniteDifferenceAdmissionState::new([0; AXES]),
+            step_high: AxisMask::NONE,
+            active: None,
+            maximum_lateness_cycles: 0,
+            deadline_misses: 0,
+        })
+    }
+
+    /// Install the deterministic local epoch and absolute starting coordinate
+    /// while all logical outputs remain inactive.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), FiniteDifferencePreflightError> {
+        if !matches!(self.state, ExecutorState::Idle | ExecutorState::Complete)
+            || self.active.is_some()
+            || !self.step_high.is_empty()
+            || !self.live.enabled.is_empty()
+        {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        require_output_grid(epoch.0, self.timing.output_quantum_cycles)
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        self.state = ExecutorState::Ready;
+        self.epoch = epoch;
+        self.live = FiniteDifferenceAdmissionState::new(position);
+        self.maximum_lateness_cycles = 0;
+        self.deadline_misses = 0;
+        Ok(())
+    }
+
+    /// Validate and install one contiguous record without partially mutating
+    /// live numerical or output state on rejection.
+    pub fn load_segment(
+        &mut self,
+        segment: FiniteDifferenceSegment<AXES>,
+    ) -> Result<(), FiniteDifferencePreflightError> {
+        if self.state != ExecutorState::Ready || self.active.is_some() || !self.step_high.is_empty()
+        {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        let mut terminal = self.live;
+        let summary = preflight_finite_difference_segment(
+            self.timing,
+            self.limits,
+            self.epoch,
+            &mut terminal,
+            &segment,
+            0,
+        )?;
+        let generator = FiniteDifferenceFrameGenerator::new(
+            self.timing,
+            self.limits,
+            self.live.next_tick,
+            self.live.finite_position,
+            segment,
+        )?;
+        let start = DeviceCycle(
+            self.epoch
+                .0
+                .checked_add(segment.start_tick.0)
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+        );
+        let end = DeviceCycle(
+            self.epoch
+                .0
+                .checked_add(segment.end_tick.0)
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+        );
+        let next_update = Some(DeviceCycle(
+            start
+                .0
+                .checked_add(u64::from(segment.update_period_ticks))
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+        ));
+        let mut direction_change = AxisMask::NONE;
+        let mut direction_positive = self.live.direction_positive;
+        let mut enable = AxisMask::NONE;
+        let mut axis = 0;
+        while axis < AXES {
+            let delta = summary.delta_steps[axis];
+            if delta != 0 {
+                let positive = delta > 0;
+                if !self.live.direction_known.contains(axis)
+                    || self.live.direction_positive.contains(axis) != positive
+                {
+                    direction_change
+                        .insert(axis)
+                        .map_err(FiniteDifferencePreflightError::Timing)?;
+                    if positive {
+                        direction_positive
+                            .insert(axis)
+                            .map_err(FiniteDifferencePreflightError::Timing)?;
+                    } else {
+                        direction_positive
+                            .remove(axis)
+                            .map_err(FiniteDifferencePreflightError::Timing)?;
+                    }
+                }
+                if !self.live.enabled.contains(axis) {
+                    enable
+                        .insert(axis)
+                        .map_err(FiniteDifferencePreflightError::Timing)?;
+                }
+            }
+            axis += 1;
+        }
+        let boundary_pending = !direction_change.is_empty() || !enable.is_empty();
+        self.active = Some(ActiveFiniteDifferenceSegment {
+            generator,
+            terminal,
+            start,
+            end,
+            next_update,
+            next_fall: [None; AXES],
+            direction_change,
+            direction_positive,
+            enable,
+            boundary_pending,
+        });
+        self.state = ExecutorState::Segment;
+        Ok(())
+    }
+
+    /// Exact next recurrence, edge, or segment-horizon deadline.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        if self.state == ExecutorState::Faulted {
+            return None;
+        }
+        let active = self.active.as_ref()?;
+        active.next_output_cycle().or(Some(active.end))
+    }
+
+    /// Consume at most one dense recurrence update or logical output boundary.
+    /// Late observations fault before returning the uncommitted update/event.
+    pub fn poll(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Result<FiniteDifferenceMotionPoll<AXES>, FiniteDifferencePreflightError> {
+        let result = self.poll_inner(observed);
+        if result.is_err() {
+            self.state = ExecutorState::Faulted;
+            self.active = None;
+        }
+        result
+    }
+
+    fn poll_inner(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Result<FiniteDifferenceMotionPoll<AXES>, FiniteDifferencePreflightError> {
+        if self.state == ExecutorState::Faulted {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        let Some(mut active) = self.active.take() else {
+            return Ok(FiniteDifferenceMotionPoll::Idle);
+        };
+        let output_at = active.next_output_cycle();
+        let scheduled = output_at.unwrap_or(active.end);
+        if observed < scheduled {
+            self.active = Some(active);
+            return Ok(FiniteDifferenceMotionPoll::Future { at: scheduled });
+        }
+        let lateness = observed.0 - scheduled.0;
+        if lateness > u64::from(self.timing.maximum_lateness_cycles) {
+            self.deadline_misses = self.deadline_misses.saturating_add(1);
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::Deadline {
+                    scheduled,
+                    observed,
+                    maximum_lateness_cycles: self.timing.maximum_lateness_cycles,
+                },
+            ));
+        }
+        let lateness_cycles =
+            u32::try_from(lateness).map_err(|_| FiniteDifferencePreflightError::Arithmetic)?;
+        self.maximum_lateness_cycles = self.maximum_lateness_cycles.max(lateness_cycles);
+        if output_at.is_none() {
+            return self.complete_finite_difference_segment(active);
+        }
+
+        let mut event = StepperEvent {
+            at: scheduled,
+            direction_change: AxisMask::NONE,
+            direction_positive: self.live.direction_positive,
+            enable: AxisMask::NONE,
+            disable: AxisMask::NONE,
+            step_high: AxisMask::NONE,
+            step_low: AxisMask::NONE,
+        };
+        if active.boundary_pending && active.start == scheduled {
+            event.direction_change = active.direction_change;
+            event.direction_positive = active.direction_positive;
+            event.enable = active.enable;
+            self.live.direction_known = self.live.direction_known.union(active.direction_change);
+            self.live.direction_positive = active.direction_positive;
+            self.live.enabled = self.live.enabled.union(active.enable);
+            active.boundary_pending = false;
+        }
+
+        let mut axis = 0;
+        while axis < AXES {
+            if active.next_fall[axis] == Some(scheduled) {
+                if !self.step_high.contains(axis) {
+                    return Err(FiniteDifferencePreflightError::Timing(
+                        MotionError::OutputInvariant,
+                    ));
+                }
+                event
+                    .step_low
+                    .insert(axis)
+                    .map_err(FiniteDifferencePreflightError::Timing)?;
+                self.step_high
+                    .remove(axis)
+                    .map_err(FiniteDifferencePreflightError::Timing)?;
+                self.live.last_fall[axis] = Some(scheduled);
+                active.next_fall[axis] = None;
+            }
+            axis += 1;
+        }
+
+        let frame = if active.next_update == Some(scheduled) {
+            let frame =
+                active
+                    .generator
+                    .advance()?
+                    .ok_or(FiniteDifferencePreflightError::Timing(
+                        MotionError::OutputInvariant,
+                    ))?;
+            let frame_at = DeviceCycle(
+                self.epoch
+                    .0
+                    .checked_add(frame.at.0)
+                    .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+            );
+            if frame_at != scheduled {
+                return Err(FiniteDifferencePreflightError::Timing(
+                    MotionError::OutputInvariant,
+                ));
+            }
+            active.next_update = if active.generator.remaining_updates() == 0 {
+                None
+            } else {
+                Some(DeviceCycle(
+                    scheduled
+                        .0
+                        .checked_add(u64::from(active.generator.segment.update_period_ticks))
+                        .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+                ))
+            };
+
+            axis = 0;
+            while axis < AXES {
+                let delta = frame.relative_steps[axis]
+                    .checked_sub(self.live.relative_steps[axis])
+                    .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+                if frame.step.contains(axis) != (delta != 0)
+                    || !(-1..=1).contains(&delta)
+                    || (delta > 0) != frame.direction_positive.contains(axis) && delta != 0
+                {
+                    return Err(FiniteDifferencePreflightError::Timing(
+                        MotionError::OutputInvariant,
+                    ));
+                }
+                if delta != 0 {
+                    let positive = delta > 0;
+                    if !self.live.enabled.contains(axis)
+                        || !self.live.direction_known.contains(axis)
+                        || self.live.direction_positive.contains(axis) != positive
+                        || self.step_high.contains(axis)
+                        || event.step_low.contains(axis)
+                    {
+                        return Err(FiniteDifferencePreflightError::Timing(
+                            MotionError::OutputInvariant,
+                        ));
+                    }
+                    event
+                        .step_high
+                        .insert(axis)
+                        .map_err(FiniteDifferencePreflightError::Timing)?;
+                    self.step_high
+                        .insert(axis)
+                        .map_err(FiniteDifferencePreflightError::Timing)?;
+                    self.live.position[axis] = self.live.position[axis].checked_add(delta).ok_or(
+                        FiniteDifferencePreflightError::PositionOverflow { index: 0, axis },
+                    )?;
+                    self.live.emitted_steps[axis] = self.live.emitted_steps[axis]
+                        .checked_add(1)
+                        .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+                    self.live.last_rise[axis] = Some(scheduled);
+                    active.next_fall[axis] = Some(DeviceCycle(
+                        scheduled
+                            .0
+                            .checked_add(u64::from(self.timing.axes[axis].pulse_high_cycles))
+                            .ok_or(FiniteDifferencePreflightError::Arithmetic)?,
+                    ));
+                }
+                axis += 1;
+            }
+            self.live.relative_steps = frame.relative_steps;
+            self.live.finite_position = frame.finite_position;
+            self.live.update_count = self
+                .live
+                .update_count
+                .checked_add(1)
+                .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+            Some(frame)
+        } else {
+            None
+        };
+
+        if frame.is_none() && event.is_empty() {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant,
+            ));
+        }
+        let physical_event = (!event.is_empty()).then_some(event);
+        self.active = Some(active);
+        if let Some(frame) = frame {
+            Ok(FiniteDifferenceMotionPoll::Update {
+                frame,
+                event: physical_event,
+                lateness_cycles,
+            })
+        } else {
+            Ok(FiniteDifferenceMotionPoll::Event {
+                event: physical_event.expect("a non-update deadline must change outputs"),
+                lateness_cycles,
+            })
+        }
+    }
+
+    fn complete_finite_difference_segment(
+        &mut self,
+        active: ActiveFiniteDifferenceSegment<AXES>,
+    ) -> Result<FiniteDifferenceMotionPoll<AXES>, FiniteDifferencePreflightError> {
+        if !self.step_high.is_empty()
+            || active.boundary_pending
+            || active.next_update.is_some()
+            || active.next_fall.iter().any(Option::is_some)
+        {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant,
+            ));
+        }
+        let summary = active.generator.finish()?;
+        self.live.next_tick = summary.end_tick;
+        self.live.segment_count = self
+            .live
+            .segment_count
+            .checked_add(1)
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        if self.live != active.terminal {
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant,
+            ));
+        }
+        self.state = ExecutorState::Ready;
+        Ok(FiniteDifferenceMotionPoll::SegmentComplete(
+            FiniteDifferenceSegmentCompletion {
+                at: active.end,
+                end_tick: summary.end_tick,
+                delta_steps: summary.delta_steps,
+                position: self.live.position,
+                terminal_finite_position: summary.terminal_position,
+                update_count: active.generator.segment.update_count,
+            },
+        ))
+    }
+
+    /// Earliest aligned cycle at which normal driver disable is legal.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, FiniteDifferencePreflightError> {
+        if self.state != ExecutorState::Ready || self.active.is_some() {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        self.live.earliest_finish_cycle(self.timing, self.epoch)
+    }
+
+    /// Emit the normal terminal disable transaction after all hold times.
+    pub fn finish_job(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<StepperEvent, FiniteDifferencePreflightError> {
+        if self.state != ExecutorState::Ready || self.active.is_some() {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        require_output_grid(at.0, self.timing.output_quantum_cycles)
+            .map_err(FiniteDifferencePreflightError::Timing)?;
+        let earliest = self.live.earliest_finish_cycle(self.timing, self.epoch)?;
+        if at < earliest {
+            let mut axis = 0;
+            while axis < AXES {
+                if self.live.enabled.contains(axis)
+                    && let Some(last_fall) = self.live.last_fall[axis]
+                    && at.0
+                        < last_fall
+                            .0
+                            .checked_add(u64::from(self.timing.axes[axis].enable_hold_cycles))
+                            .ok_or(FiniteDifferencePreflightError::Arithmetic)?
+                {
+                    return Err(FiniteDifferencePreflightError::Timing(
+                        MotionError::EnableHold { axis },
+                    ));
+                }
+                axis += 1;
+            }
+            return Err(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant,
+            ));
+        }
+        let event = StepperEvent {
+            at,
+            direction_change: AxisMask::NONE,
+            direction_positive: self.live.direction_positive,
+            enable: AxisMask::NONE,
+            disable: self.live.enabled,
+            step_high: AxisMask::NONE,
+            step_low: AxisMask::NONE,
+        };
+        self.live.enabled = AxisMask::NONE;
+        self.state = ExecutorState::Complete;
+        Ok(event)
+    }
+
+    /// Immediately lower every active pulse and disable every enabled axis.
+    pub fn fault(&mut self, at: DeviceCycle) -> StepperEvent {
+        let event = StepperEvent {
+            at,
+            direction_change: AxisMask::NONE,
+            direction_positive: self.live.direction_positive,
+            enable: AxisMask::NONE,
+            disable: self.live.enabled,
+            step_high: AxisMask::NONE,
+            step_low: self.step_high,
+        };
+        self.step_high = AxisMask::NONE;
+        self.live.enabled = AxisMask::NONE;
+        self.active = None;
+        self.state = ExecutorState::Faulted;
+        event
+    }
+
+    /// Bounded logical state shared with ordinary step/direction telemetry.
+    pub const fn status(&self) -> StepperStatus<AXES> {
+        StepperStatus {
+            state: self.state,
+            epoch: self.epoch,
+            next_tick: self.live.next_tick,
+            position: self.live.position,
+            direction_known: self.live.direction_known,
+            direction_positive: self.live.direction_positive,
+            enabled: self.live.enabled,
+            step_high: self.step_high,
+            completed_segments: self.live.segment_count,
+            emitted_steps: self.live.emitted_steps,
+            maximum_lateness_cycles: self.maximum_lateness_cycles,
+            deadline_misses: self.deadline_misses,
+        }
+    }
+
+    /// Exact stream-relative Q31.32 coordinate reached by dense recurrence.
+    pub const fn finite_position(&self) -> [i64; AXES] {
+        self.live.finite_position
+    }
+
+    fn preflight_snapshot(&self) -> Result<Self, FiniteDifferencePreflightError> {
+        if self.state != ExecutorState::Ready || self.active.is_some() || !self.step_high.is_empty()
+        {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        Ok(Self {
+            timing: self.timing,
+            limits: self.limits,
+            state: self.state,
+            epoch: self.epoch,
+            live: self.live,
+            step_high: self.step_high,
+            active: None,
+            maximum_lateness_cycles: self.maximum_lateness_cycles,
+            deadline_misses: self.deadline_misses,
+        })
+    }
+
+    fn preflight_complete_segment(&mut self) -> Result<(), FiniteDifferencePreflightError> {
+        if self.state != ExecutorState::Segment || !self.step_high.is_empty() {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        let active = self
+            .active
+            .take()
+            .ok_or(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant,
+            ))?;
+        self.live = active.terminal;
+        self.state = ExecutorState::Ready;
+        Ok(())
+    }
+}
+
+/// One independently admitted finite-difference block rejected before the
+/// dense executor took ownership.
+pub struct RejectedFiniteDifferenceBlock<const AXES: usize> {
+    error: CachedFiniteDifferenceError,
+    admitted: AdmittedBlock<AXES>,
+}
+
+impl<const AXES: usize> RejectedFiniteDifferenceBlock<AXES> {
+    /// Exact admission failure.
+    pub const fn error(&self) -> CachedFiniteDifferenceError {
+        self.error
+    }
+
+    /// Recover the unchanged unique job-actor token.
+    pub fn into_block(self) -> AdmittedBlock<AXES> {
+        self.admitted
+    }
+}
+
+impl<const AXES: usize> core::fmt::Debug for RejectedFiniteDifferenceBlock<AXES> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("RejectedFiniteDifferenceBlock")
+            .field("error", &self.error)
+            .field("header", &self.admitted.header())
+            .finish()
+    }
+}
+
+/// Nonblocking result from one independently admitted direct-motion block.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "completion returns the unique fixed block token to its job actor"
+)]
+pub enum CachedFiniteDifferencePoll<const AXES: usize> {
+    /// No block is owned.
+    Idle,
+    /// The next recurrence/output boundary is in the future.
+    Future { at: DeviceCycle },
+    /// One dense update was consumed, with an optional logical output change.
+    Update {
+        frame: FiniteDifferenceFrame<AXES>,
+        event: Option<StepperEvent>,
+        lateness_cycles: u32,
+    },
+    /// One direction/enable or pulse-fall transaction occurred between updates.
+    Event {
+        event: StepperEvent,
+        lateness_cycles: u32,
+    },
+    /// The exact complete block trace has returned its unique ownership token.
+    BlockComplete {
+        admitted: AdmittedBlock<AXES>,
+        completion: FiniteDifferenceSegmentCompletion<AXES>,
+    },
+}
+
+/// Cached direct-motion correlation, validation, or execution failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CachedFiniteDifferenceError {
+    /// Runner lifecycle or unique ownership was invalid.
+    State,
+    /// The admitted block did not expose the required record family.
+    Block(BlockError),
+    /// Sparse admission or dense recurrence/output execution failed.
+    FiniteDifference(FiniteDifferencePreflightError),
+    /// Declared and decoded record counts diverged.
+    SegmentCount,
+    /// Job admission progress and dense terminal facts diverged.
+    Progress,
+    /// Absolute command position overflowed.
+    PositionOverflow { axis: usize },
+    /// A bounded counter overflowed.
+    Arithmetic,
+}
+
+/// Owns one direct finite-difference cached block until all dense updates and
+/// logical pulse transactions match its independently admitted terminal facts.
+pub struct CachedFiniteDifferenceExecutor<const AXES: usize> {
+    stepper: FiniteDifferenceStepperExecutor<AXES>,
+    admitted: Option<AdmittedBlock<AXES>>,
+    next_segment: u32,
+    segment_count: u32,
+    origin: [i64; AXES],
+    block_terminal_finite_position: [i64; AXES],
+    faulted: bool,
+    safe_transaction_issued: bool,
+}
+
+impl<const AXES: usize> CachedFiniteDifferenceExecutor<AXES> {
+    /// Construct an inert cached runner with the exact direct-motion policy.
+    pub fn new(
+        timing: StepperTiming<AXES>,
+        limits: FiniteDifferenceExecutionLimits,
+    ) -> Result<Self, FiniteDifferencePreflightError> {
+        Ok(Self {
+            stepper: FiniteDifferenceStepperExecutor::new(timing, limits)?,
+            admitted: None,
+            next_segment: 0,
+            segment_count: 0,
+            origin: [0; AXES],
+            block_terminal_finite_position: [0; AXES],
+            faulted: false,
+            safe_transaction_issued: false,
+        })
+    }
+
+    /// Install the committed local epoch and current absolute lattice position.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), FiniteDifferencePreflightError> {
+        if self.admitted.is_some() || self.faulted {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        self.stepper.start_job(epoch, position)?;
+        self.origin = position;
+        self.next_segment = 0;
+        self.segment_count = 0;
+        self.block_terminal_finite_position = [0; AXES];
+        self.safe_transaction_issued = false;
+        Ok(())
+    }
+
+    /// Sparse-preflight the complete block before installing its first dense
+    /// record. Rejection returns the unchanged admission token.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection preserves unique inline block ownership"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedFiniteDifferenceBlock<AXES>> {
+        let (first, segment_count, terminal_finite_position) = match self.validate_block(&admitted)
+        {
+            Ok(validated) => validated,
+            Err(error) => {
+                return Err(RejectedFiniteDifferenceBlock { error, admitted });
+            }
+        };
+        if let Err(error) = self.stepper.load_segment(first) {
+            return Err(RejectedFiniteDifferenceBlock {
+                error: CachedFiniteDifferenceError::FiniteDifference(error),
+                admitted,
+            });
+        }
+        self.admitted = Some(admitted);
+        self.next_segment = 1;
+        self.segment_count = segment_count;
+        self.block_terminal_finite_position = terminal_finite_position;
+        Ok(())
+    }
+
+    /// Consume at most one dense update or output boundary, retaining the
+    /// block token through every final pulse fall and terminal comparison.
+    pub fn poll(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Result<CachedFiniteDifferencePoll<AXES>, CachedFiniteDifferenceError> {
+        if self.faulted {
+            return Err(CachedFiniteDifferenceError::State);
+        }
+        loop {
+            let polled = match self.stepper.poll(observed) {
+                Ok(polled) => polled,
+                Err(error) => {
+                    self.faulted = true;
+                    return Err(CachedFiniteDifferenceError::FiniteDifference(error));
+                }
+            };
+            match polled {
+                FiniteDifferenceMotionPoll::Idle => {
+                    if self.admitted.is_some() {
+                        self.faulted = true;
+                        return Err(CachedFiniteDifferenceError::State);
+                    }
+                    return Ok(CachedFiniteDifferencePoll::Idle);
+                }
+                FiniteDifferenceMotionPoll::Future { at } => {
+                    return Ok(CachedFiniteDifferencePoll::Future { at });
+                }
+                FiniteDifferenceMotionPoll::Update {
+                    frame,
+                    event,
+                    lateness_cycles,
+                } => {
+                    return Ok(CachedFiniteDifferencePoll::Update {
+                        frame,
+                        event,
+                        lateness_cycles,
+                    });
+                }
+                FiniteDifferenceMotionPoll::Event {
+                    event,
+                    lateness_cycles,
+                } => {
+                    return Ok(CachedFiniteDifferencePoll::Event {
+                        event,
+                        lateness_cycles,
+                    });
+                }
+                FiniteDifferenceMotionPoll::SegmentComplete(completion) => {
+                    if self.next_segment < self.segment_count {
+                        let segment = match self.segment(self.next_segment) {
+                            Ok(segment) => segment,
+                            Err(error) => {
+                                self.faulted = true;
+                                return Err(error);
+                            }
+                        };
+                        if let Err(error) = self.stepper.load_segment(segment) {
+                            self.faulted = true;
+                            return Err(CachedFiniteDifferenceError::FiniteDifference(error));
+                        }
+                        self.next_segment = match self.next_segment.checked_add(1) {
+                            Some(next) => next,
+                            None => {
+                                self.faulted = true;
+                                return Err(CachedFiniteDifferenceError::Arithmetic);
+                            }
+                        };
+                        continue;
+                    }
+                    if self.next_segment != self.segment_count {
+                        self.faulted = true;
+                        return Err(CachedFiniteDifferenceError::SegmentCount);
+                    }
+                    let admitted = match self.admitted.as_ref() {
+                        Some(admitted) => admitted,
+                        None => {
+                            self.faulted = true;
+                            return Err(CachedFiniteDifferenceError::State);
+                        }
+                    };
+                    let progress = admitted.progress();
+                    let expected_position =
+                        match finite_difference_absolute_position(self.origin, progress.position) {
+                            Ok(position) => position,
+                            Err(error) => {
+                                self.faulted = true;
+                                return Err(error);
+                            }
+                        };
+                    let status = self.stepper.status();
+                    if completion.end_tick != progress.end_tick
+                        || completion.position != expected_position
+                        || status.next_tick != progress.end_tick
+                        || status.position != expected_position
+                        || self.stepper.finite_position() != self.block_terminal_finite_position
+                    {
+                        self.faulted = true;
+                        return Err(CachedFiniteDifferenceError::Progress);
+                    }
+                    let admitted = match self.admitted.take() {
+                        Some(admitted) => admitted,
+                        None => {
+                            self.faulted = true;
+                            return Err(CachedFiniteDifferenceError::State);
+                        }
+                    };
+                    self.next_segment = 0;
+                    self.segment_count = 0;
+                    return Ok(CachedFiniteDifferencePoll::BlockComplete {
+                        admitted,
+                        completion,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Exact next dense update, output, or segment-horizon deadline.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        if self.faulted {
+            None
+        } else {
+            self.stepper.next_deadline()
+        }
+    }
+
+    /// Earliest normal terminal-disable cycle after block ownership returns.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, FiniteDifferencePreflightError> {
+        if self.admitted.is_some() || self.faulted {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        self.stepper.earliest_finish_cycle()
+    }
+
+    /// Complete a direct job after its final admitted block was acknowledged.
+    pub fn finish_job(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<StepperEvent, FiniteDifferencePreflightError> {
+        if self.admitted.is_some() || self.faulted {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        self.stepper.finish_job(at)
+    }
+
+    /// Latch execution and return the immediate logical safe transaction.
+    pub fn fault(&mut self, at: DeviceCycle) -> StepperEvent {
+        self.faulted = true;
+        self.safe_transaction_issued = true;
+        self.stepper.fault(at)
+    }
+
+    /// Release the unacknowledgeable token only after requesting safe outputs.
+    pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
+        if self.faulted
+            && self.safe_transaction_issued
+            && self.stepper.status().state == ExecutorState::Faulted
+        {
+            self.admitted.take()
+        } else {
+            None
+        }
+    }
+
+    /// Bounded logical executor status.
+    pub const fn status(&self) -> StepperStatus<AXES> {
+        self.stepper.status()
+    }
+
+    /// Exact stream-relative Q31.32 coordinate reached so far.
+    pub const fn finite_position(&self) -> [i64; AXES] {
+        self.stepper.finite_position()
+    }
+
+    /// Whether the runner currently owns a block token.
+    pub const fn has_admitted_block(&self) -> bool {
+        self.admitted.is_some()
+    }
+
+    fn validate_block(
+        &self,
+        admitted: &AdmittedBlock<AXES>,
+    ) -> Result<(FiniteDifferenceSegment<AXES>, u32, [i64; AXES]), CachedFiniteDifferenceError>
+    {
+        if self.faulted
+            || self.admitted.is_some()
+            || self.stepper.status().state != ExecutorState::Ready
+        {
+            return Err(CachedFiniteDifferenceError::State);
+        }
+        let header = admitted.header();
+        let progress = admitted.progress();
+        if header.segment_count == 0
+            || header.start_tick != self.stepper.status().next_tick
+            || header.end_tick != progress.end_tick
+        {
+            return Err(CachedFiniteDifferenceError::Progress);
+        }
+        let mut segments = admitted
+            .finite_difference_segments()
+            .map_err(CachedFiniteDifferenceError::Block)?;
+        let first = segments
+            .next()
+            .ok_or(CachedFiniteDifferenceError::SegmentCount)?;
+        let mut preflight = self
+            .stepper
+            .preflight_snapshot()
+            .map_err(CachedFiniteDifferenceError::FiniteDifference)?;
+        preflight
+            .load_segment(first)
+            .map_err(CachedFiniteDifferenceError::FiniteDifference)?;
+        preflight
+            .preflight_complete_segment()
+            .map_err(CachedFiniteDifferenceError::FiniteDifference)?;
+        let mut count = 1_u32;
+        for segment in segments {
+            preflight
+                .load_segment(segment)
+                .map_err(CachedFiniteDifferenceError::FiniteDifference)?;
+            preflight
+                .preflight_complete_segment()
+                .map_err(CachedFiniteDifferenceError::FiniteDifference)?;
+            count = count
+                .checked_add(1)
+                .ok_or(CachedFiniteDifferenceError::Arithmetic)?;
+        }
+        let expected_position =
+            finite_difference_absolute_position(self.origin, progress.position)?;
+        let status = preflight.status();
+        if count != header.segment_count
+            || status.next_tick != progress.end_tick
+            || status.position != expected_position
+        {
+            return Err(CachedFiniteDifferenceError::Progress);
+        }
+        Ok((first, count, preflight.finite_position()))
+    }
+
+    fn segment(
+        &self,
+        index: u32,
+    ) -> Result<FiniteDifferenceSegment<AXES>, CachedFiniteDifferenceError> {
+        let admitted = self
+            .admitted
+            .as_ref()
+            .ok_or(CachedFiniteDifferenceError::State)?;
+        let index = usize::try_from(index).map_err(|_| CachedFiniteDifferenceError::Arithmetic)?;
+        admitted
+            .finite_difference_segments()
+            .map_err(CachedFiniteDifferenceError::Block)?
+            .nth(index)
+            .ok_or(CachedFiniteDifferenceError::SegmentCount)
+    }
+}
+
+fn finite_difference_absolute_position<const AXES: usize>(
+    origin: [i64; AXES],
+    displacement: [i64; AXES],
+) -> Result<[i64; AXES], CachedFiniteDifferenceError> {
+    let mut position = origin;
+    let mut axis = 0;
+    while axis < AXES {
+        position[axis] = position[axis]
+            .checked_add(displacement[axis])
+            .ok_or(CachedFiniteDifferenceError::PositionOverflow { axis })?;
+        axis += 1;
+    }
+    Ok(position)
 }
 
 /// Owns one independently admitted cached block until every segment has
@@ -3240,6 +4920,364 @@ mod tests {
         );
     }
 
+    fn finite_segment<const AXES: usize>(
+        start: u64,
+        updates: u32,
+        initial_position: [i64; AXES],
+        first_difference: [i64; AXES],
+    ) -> FiniteDifferenceSegment<AXES> {
+        let mut axes = [FiniteDifferenceAxis::default(); AXES];
+        for axis in 0..AXES {
+            axes[axis] = FiniteDifferenceAxis {
+                initial_position: initial_position[axis],
+                first_difference: first_difference[axis],
+                second_difference: 0,
+                third_difference: 0,
+            };
+        }
+        FiniteDifferenceSegment {
+            start_tick: StreamTick(start),
+            end_tick: StreamTick(start + u64::from(updates)),
+            update_period_ticks: 1,
+            update_count: updates,
+            axes,
+            flags: 0,
+        }
+    }
+
+    fn finite_limits(maximum_update_count: u32) -> FiniteDifferenceExecutionLimits {
+        FiniteDifferenceExecutionLimits {
+            maximum_segment_ticks: u64::from(maximum_update_count),
+            maximum_update_count,
+            maximum_steps_per_segment: 1_000_000,
+        }
+    }
+
+    #[test]
+    fn finite_difference_preflight_replays_edges_without_dense_iteration() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let first_difference = (step - 1) / 4;
+        let first = finite_segment(0, 16, [0, 0], [first_difference, 0]);
+        let second = finite_segment(
+            16,
+            16,
+            [first.position_at(0, 16).unwrap(), 0],
+            [first_difference, 0],
+        );
+        let summary = preflight_finite_difference_segments(
+            timing(0),
+            finite_limits(1_000),
+            [10, -4],
+            &[first, second],
+        )
+        .unwrap();
+        assert_eq!(summary.end_tick, StreamTick(32));
+        assert_eq!(summary.position, [18, -4]);
+        assert_eq!(summary.emitted_steps, [8, 0]);
+        assert_eq!(summary.segment_count, 2);
+        assert_eq!(summary.update_count, 32);
+        assert_eq!(summary.earliest_finish_cycle, DeviceCycle(34));
+        assert_eq!(
+            summary.maximum_position_error,
+            FINITE_DIFFERENCE_ONE_STEP.unsigned_abs() / 2
+        );
+
+        let billion_updates = finite_segment(0, 1_000_000_000, [0], [1]);
+        let summary = preflight_finite_difference_segments(
+            timing(0),
+            finite_limits(1_000_000_000),
+            [0],
+            &[billion_updates],
+        )
+        .unwrap();
+        assert_eq!(summary.update_count, 1_000_000_000);
+        assert_eq!(summary.emitted_steps, [0]);
+        assert_eq!(summary.position, [0]);
+    }
+
+    #[test]
+    fn finite_difference_preflight_classifies_timing_and_structure_separately() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let too_fast = finite_segment(0, 8, [0], [step / 2]);
+        let error =
+            preflight_finite_difference_segments(timing(0), finite_limits(100), [0], &[too_fast])
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            FiniteDifferencePreflightError::Segment {
+                index: 0,
+                error: FiniteDifferenceError::UpdateRate { axis: 0, .. }
+            }
+        ));
+        assert!(error.is_time_dilation_candidate());
+
+        let mut reversing = finite_segment(0, 8, [0], [step / 4]);
+        reversing.axes[0].second_difference = -(step / 8);
+        let error =
+            preflight_finite_difference_segments(timing(0), finite_limits(100), [0], &[reversing])
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            FiniteDifferencePreflightError::Segment {
+                error: FiniteDifferenceError::DirectionReversal { axis: 0 },
+                ..
+            }
+        ));
+        assert!(!error.is_time_dilation_candidate());
+    }
+
+    #[test]
+    fn finite_difference_preflight_checks_boundaries_and_exact_phase_continuity() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let first_difference = (step - 1) / 4;
+        let pulse_at_end = finite_segment(0, 15, [0], [first_difference]);
+        assert_eq!(
+            preflight_finite_difference_segments(
+                timing(0),
+                finite_limits(100),
+                [0],
+                &[pulse_at_end],
+            ),
+            Err(FiniteDifferencePreflightError::Timing(
+                MotionError::PulseBoundary { axis: 0 }
+            ))
+        );
+
+        let first = finite_segment(0, 16, [0], [first_difference]);
+        let wrong_second = finite_segment(16, 16, [step * 4], [first_difference]);
+        assert_eq!(
+            preflight_finite_difference_segments(
+                timing(0),
+                finite_limits(100),
+                [0],
+                &[first, wrong_second],
+            ),
+            Err(FiniteDifferencePreflightError::Segment {
+                index: 1,
+                error: FiniteDifferenceError::PositionContinuity { axis: 0 },
+            })
+        );
+    }
+
+    #[test]
+    fn dense_finite_difference_generator_matches_closed_form_and_preflight() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let segment = FiniteDifferenceSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(8),
+            update_period_ticks: 1,
+            update_count: 8,
+            axes: [
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference: step / 16,
+                    second_difference: 0,
+                    third_difference: step / 128,
+                },
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference: -(step / 16),
+                    second_difference: 0,
+                    third_difference: -(step / 128),
+                },
+            ],
+            flags: 0,
+        };
+        let preflight = preflight_finite_difference_segments(
+            timing(0),
+            finite_limits(100),
+            [20, -20],
+            &[segment],
+        )
+        .unwrap();
+        assert_eq!(preflight.position, [21, -21]);
+        assert_eq!(preflight.emitted_steps, [1, 1]);
+
+        let mut generator = FiniteDifferenceFrameGenerator::new(
+            timing(0),
+            finite_limits(100),
+            StreamTick(0),
+            [0, 0],
+            segment,
+        )
+        .unwrap();
+        let mut step_frames = 0;
+        while let Some(frame) = generator.advance().unwrap() {
+            assert_eq!(
+                frame.finite_position,
+                [
+                    segment.position_at(0, frame.update_index).unwrap(),
+                    segment.position_at(1, frame.update_index).unwrap(),
+                ]
+            );
+            assert_eq!(frame.at, StreamTick(u64::from(frame.update_index)));
+            if !frame.step.is_empty() {
+                step_frames += 1;
+                assert_eq!(frame.update_index, 6);
+                assert_eq!(frame.step.bits(), 0b11);
+                assert_eq!(frame.direction_positive.bits(), 0b01);
+                assert_eq!(frame.relative_steps, [1, -1]);
+            }
+        }
+        assert_eq!(step_frames, 1);
+        assert_eq!(generator.remaining_updates(), 0);
+        let terminal = generator.finish().unwrap();
+        assert_eq!(terminal.delta_steps, [1, -1]);
+        assert_eq!(
+            terminal.terminal_position,
+            preflight.terminal_finite_position
+        );
+    }
+
+    #[test]
+    fn dense_finite_difference_generator_requires_complete_validated_state() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let segment = finite_segment(0, 8, [0], [(step - 1) / 4]);
+        let mut generator = FiniteDifferenceFrameGenerator::new(
+            timing(0),
+            finite_limits(100),
+            StreamTick(0),
+            [0],
+            segment,
+        )
+        .unwrap();
+        generator.advance().unwrap();
+        assert_eq!(
+            generator.finish(),
+            Err(FiniteDifferencePreflightError::Timing(
+                MotionError::OutputInvariant
+            ))
+        );
+
+        let too_fast = finite_segment(0, 8, [0], [step / 2]);
+        assert!(matches!(
+            FiniteDifferenceFrameGenerator::new(
+                timing(0),
+                finite_limits(100),
+                StreamTick(0),
+                [0],
+                too_fast,
+            ),
+            Err(FiniteDifferencePreflightError::Segment {
+                error: FiniteDifferenceError::UpdateRate { axis: 0, .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn direct_finite_difference_executor_consumes_every_update_and_exact_edge() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let segment = FiniteDifferenceSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(8),
+            update_period_ticks: 1,
+            update_count: 8,
+            axes: [
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference: step / 16,
+                    second_difference: 0,
+                    third_difference: step / 128,
+                },
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference: -(step / 16),
+                    second_difference: 0,
+                    third_difference: -(step / 128),
+                },
+            ],
+            flags: 0,
+        };
+        let mut executor =
+            FiniteDifferenceStepperExecutor::new(timing(0), finite_limits(100)).unwrap();
+        executor.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        executor.load_segment(segment).unwrap();
+
+        let mut updates = 0_u32;
+        let mut rise_at = None;
+        let mut fall_at = None;
+        let completion = loop {
+            let deadline = executor.next_deadline().unwrap();
+            match executor.poll(deadline).unwrap() {
+                FiniteDifferenceMotionPoll::Event { event, .. } => {
+                    assert_eq!(event.at, DeviceCycle(100));
+                    assert_eq!(event.direction_change.bits(), 0b11);
+                    assert_eq!(event.direction_positive.bits(), 0b01);
+                    assert_eq!(event.enable.bits(), 0b11);
+                }
+                FiniteDifferenceMotionPoll::Update { frame, event, .. } => {
+                    updates += 1;
+                    assert_eq!(frame.update_index, updates);
+                    if frame.step.bits() == 0b11 {
+                        let event = event.unwrap();
+                        assert_eq!(event.step_high.bits(), 0b11);
+                        assert_eq!(event.at, DeviceCycle(106));
+                        rise_at = Some(event.at);
+                    } else if let Some(event) = event {
+                        assert_eq!(event.step_low.bits(), 0b11);
+                        assert_eq!(event.at, DeviceCycle(107));
+                        fall_at = Some(event.at);
+                    }
+                }
+                FiniteDifferenceMotionPoll::SegmentComplete(completion) => break completion,
+                FiniteDifferenceMotionPoll::Idle | FiniteDifferenceMotionPoll::Future { .. } => {
+                    panic!("exact-deadline direct executor cannot be idle or future")
+                }
+            }
+        };
+        assert_eq!(updates, 8);
+        assert_eq!(rise_at, Some(DeviceCycle(106)));
+        assert_eq!(fall_at, Some(DeviceCycle(107)));
+        assert_eq!(completion.at, DeviceCycle(108));
+        assert_eq!(completion.end_tick, StreamTick(8));
+        assert_eq!(completion.delta_steps, [1, -1]);
+        assert_eq!(completion.position, [21, -21]);
+        assert_eq!(completion.update_count, 8);
+        assert_eq!(executor.status().emitted_steps, [1, 1]);
+        assert_eq!(
+            executor.finite_position(),
+            [
+                segment.position_at(0, 8).unwrap(),
+                segment.position_at(1, 8).unwrap(),
+            ]
+        );
+        assert_eq!(executor.earliest_finish_cycle(), Ok(DeviceCycle(109)));
+        let disable = executor.finish_job(DeviceCycle(109)).unwrap();
+        assert_eq!(disable.disable.bits(), 0b11);
+        assert_eq!(executor.status().state, ExecutorState::Complete);
+    }
+
+    #[test]
+    fn direct_finite_difference_executor_deadline_faults_on_empty_update() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let segment = finite_segment(0, 8, [0], [(step - 1) / 4]);
+        let mut executor =
+            FiniteDifferenceStepperExecutor::new(timing(0), finite_limits(100)).unwrap();
+        executor.start_job(DeviceCycle(0), [0]).unwrap();
+        executor.load_segment(segment).unwrap();
+        assert!(matches!(
+            executor.poll(DeviceCycle(0)),
+            Ok(FiniteDifferenceMotionPoll::Event { .. })
+        ));
+        assert_eq!(executor.next_deadline(), Some(DeviceCycle(1)));
+        assert_eq!(
+            executor.poll(DeviceCycle(2)),
+            Err(FiniteDifferencePreflightError::Timing(
+                MotionError::Deadline {
+                    scheduled: DeviceCycle(1),
+                    observed: DeviceCycle(2),
+                    maximum_lateness_cycles: 0,
+                }
+            ))
+        );
+        assert_eq!(executor.status().state, ExecutorState::Faulted);
+        assert_eq!(executor.status().deadline_misses, 1);
+        let safe = executor.fault(DeviceCycle(2));
+        assert_eq!(safe.disable.bits(), 0b1);
+        assert!(safe.step_low.is_empty());
+    }
+
     #[test]
     fn only_electrical_duration_pressure_is_a_time_dilation_candidate() {
         for error in [
@@ -3364,6 +5402,58 @@ mod tests {
         }
     }
 
+    fn admitted_finite_difference_block(
+        segments: &[FiniteDifferenceSegment<2>],
+    ) -> (RealtimeJob<2>, AdmittedBlock<2>) {
+        let stream_id = StreamId::new([0x61; 16]).unwrap();
+        let capability_digest = alumina_protocol::Digest([0x62; 32]);
+        let config_digest = alumina_protocol::Digest([0x63; 32]);
+        let block = ExecutionBlock::encode_finite_difference(
+            stream_id,
+            capability_digest,
+            config_digest,
+            0,
+            alumina_protocol::Digest::ZERO,
+            segments,
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 17,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(alumina_protocol::Digest([0x64; 32])),
+                    byte_len: 512,
+                },
+                manifest: ContentId::from_sha256(alumina_protocol::Digest([0x65; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest,
+            axis_count: 2,
+            execution_kind: alumina_machine_ir::ExecutionKind::FiniteDifference,
+            maximum_finite_difference_updates: 100,
+            block_count: 1,
+            first_tick: StreamTick(0),
+            initial_position: [20, -20, 0, 0, 0, 0, 0, 0],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: 1_000,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: 1_000,
+                    maximum_steps_per_segment: 100,
+                },
+            },
+        };
+        let mut job = RealtimeJob::prepare(descriptor).unwrap();
+        let admitted = match job.poll(&mut OneBlock(Some(block))).unwrap() {
+            RealtimePoll::Block(admitted) => admitted,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => {
+                panic!("one direct block must be admitted")
+            }
+        };
+        (job, admitted)
+    }
+
     fn admitted_block(segments: &[ExecutionSegment<3>]) -> (RealtimeJob<3>, AdmittedBlock<3>) {
         let stream_id = StreamId::new([0x11; 16]).unwrap();
         let capability_digest = alumina_protocol::Digest([0x22; 32]);
@@ -3391,6 +5481,8 @@ mod tests {
             capability_digest,
             config_digest,
             axis_count: 3,
+            execution_kind: alumina_machine_ir::ExecutionKind::Motion,
+            maximum_finite_difference_updates: 0,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
@@ -3451,6 +5543,8 @@ mod tests {
             capability_digest,
             config_digest,
             axis_count: 3,
+            execution_kind: alumina_machine_ir::ExecutionKind::Motion,
+            maximum_finite_difference_updates: 0,
             block_count: 2,
             first_tick: StreamTick(0),
             initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
@@ -3575,6 +5669,114 @@ mod tests {
             runner.finish_job(DeviceCycle(120)).unwrap().disable.bits(),
             0b011
         );
+    }
+
+    #[test]
+    fn cached_direct_runner_preflights_dense_updates_and_returns_exact_token() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let first = FiniteDifferenceSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(8),
+            update_period_ticks: 1,
+            update_count: 8,
+            axes: [
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference: step / 16,
+                    second_difference: 0,
+                    third_difference: step / 128,
+                },
+                FiniteDifferenceAxis {
+                    initial_position: 0,
+                    first_difference: -(step / 16),
+                    second_difference: 0,
+                    third_difference: -(step / 128),
+                },
+            ],
+            flags: 0,
+        };
+        let terminal = [
+            first.position_at(0, 8).unwrap(),
+            first.position_at(1, 8).unwrap(),
+        ];
+        let second = finite_segment(8, 8, terminal, [(step - 1) / 4, -((step - 1) / 4)]);
+        let (mut job, admitted) = admitted_finite_difference_block(&[first, second]);
+        let mut runner =
+            CachedFiniteDifferenceExecutor::new(timing(0), finite_limits(100)).unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert!(runner.has_admitted_block());
+
+        let mut updates = 0_u32;
+        let mut rising_edges = [0_u64; 2];
+        let admitted = loop {
+            let deadline = runner.next_deadline().unwrap();
+            match runner.poll(deadline).unwrap() {
+                CachedFiniteDifferencePoll::Update { event, .. } => {
+                    updates += 1;
+                    if let Some(event) = event {
+                        for (axis, count) in rising_edges.iter_mut().enumerate() {
+                            *count += u64::from(event.step_high.contains(axis));
+                        }
+                    }
+                }
+                CachedFiniteDifferencePoll::Event { event, .. } => {
+                    for (axis, count) in rising_edges.iter_mut().enumerate() {
+                        *count += u64::from(event.step_high.contains(axis));
+                    }
+                }
+                CachedFiniteDifferencePoll::BlockComplete {
+                    admitted,
+                    completion,
+                } => {
+                    assert_eq!(completion.end_tick, StreamTick(16));
+                    assert_eq!(completion.position, [23, -23]);
+                    break admitted;
+                }
+                CachedFiniteDifferencePoll::Future { .. } => {}
+                CachedFiniteDifferencePoll::Idle => {
+                    panic!("a cached direct block cannot become idle before completion")
+                }
+            }
+        };
+        assert_eq!(updates, 16);
+        assert_eq!(rising_edges, [3, 3]);
+        assert_eq!(runner.status().emitted_steps, [3, 3]);
+        assert!(!runner.has_admitted_block());
+        let status = job.acknowledge(admitted).unwrap();
+        assert_eq!(status.state, RealtimeJobState::Complete);
+        assert_eq!(status.completed_progress.unwrap().position, [3, -3]);
+        assert_eq!(runner.earliest_finish_cycle(), Ok(DeviceCycle(118)));
+        assert_eq!(
+            runner.finish_job(DeviceCycle(118)).unwrap().disable.bits(),
+            0b11
+        );
+    }
+
+    #[test]
+    fn cached_direct_runner_rejects_later_electrical_failure_without_live_mutation() {
+        let step = FINITE_DIFFERENCE_ONE_STEP;
+        let first = finite_segment(0, 8, [0, 0], [(step - 1) / 4, 0]);
+        let terminal = [first.position_at(0, 8).unwrap(), 0];
+        let second = finite_segment(8, 8, terminal, [step / 2, 0]);
+        let (_job, admitted) = admitted_finite_difference_block(&[first, second]);
+        let mut runner =
+            CachedFiniteDifferenceExecutor::new(timing(0), finite_limits(100)).unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        let before = runner.status();
+        let rejected = runner.admit_block(admitted).unwrap_err();
+        assert!(matches!(
+            rejected.error(),
+            CachedFiniteDifferenceError::FiniteDifference(
+                FiniteDifferencePreflightError::Segment {
+                    error: FiniteDifferenceError::UpdateRate { axis: 0, .. },
+                    ..
+                }
+            )
+        ));
+        assert_eq!(runner.status(), before);
+        assert!(!runner.has_admitted_block());
+        let _admitted = rejected.into_block();
     }
 
     #[test]
