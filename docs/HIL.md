@@ -84,13 +84,15 @@ the circular transfer is live:
 
 1. `HIL_STATIC_SAFE`: the blocking bootstrap transaction has installed image
    `0x001249`, then BCLK and WS remain low for 50 ms;
-2. a 256-frame safe-prefilled circular transfer starts and about 50,000 exact
-   four-byte safe refills are attempted, nominally 200 ms at
-   250 kHz, with a two-second fail-closed timeout; and
-3. `HIL_PCM_STOPPED`: after DMA stop and two further safe samples, the artifact
-   reports the hypothesized model epoch, device-cycle bracket around the HAL
-   start call, refill outcome, stop/rewrite brackets, safe-rewrite result, and
-   portable owner state/fault/reclaim facts, then parks without starting other
+2. a 256-frame safe-prefilled circular transfer starts and exactly 50,000
+   four-byte safe refills are accepted, nominally 200 ms at
+   250 kHz, with a two-second fail-closed timeout;
+3. `HIL_PCM_ATTEST_V2`: after DMA stop, the marker report, and two further safe
+   samples, one ordered numeric record reports the hypothesized model epoch,
+   start/stop/rewrite brackets, exact refill horizon, lifecycle state/fault,
+   reclaim flag, and marker code; and
+4. `HIL_PCM_STOPPED`: a human-readable rendering of the same post-stop state,
+   followed by `HIL_RESULT` and a permanent park without starting other
    services.
 
 D3 rises immediately before the HAL circular-start call and falls immediately
@@ -114,6 +116,16 @@ latch observation. Likewise the live loop remains `StartIssued`, where the
 portable owner permits safe refills but would reject every motion image. The VCD
 and review record, not the firmware log, decide whether the first and final safe
 images were physically latched.
+
+Retain the plain UTF-8 RTT monitor output from reset through `HIL_RESULT`. The
+machine record uses independent numeric codes rather than Rust discriminants or
+debug text: exit 1 means complete and owner state 8 means
+`SafeRewriteIssued`; each Boolean is exactly zero or one. The schema-v2
+validator accepts at most one such record, proves its field order and canonical
+decimal form, recomputes the marker bits and exact
+`model_epoch + (256 + 50,000) * 4` sealed horizon, and requires its marker code
+to equal the VCD decoder. A pass requires the record; a failed start may retain
+an RTT log without one.
 
 ### Required review
 
@@ -147,10 +159,10 @@ exercise every shifted bit with bounded dwell before that requirement can pass.
 Copy
 [`tinybee-pcm-short-slogic16u3.toml`](hil/templates/tinybee-pcm-short-slogic16u3.toml)
 to `docs/hil/runs/<run-id>/record.toml`, retain the unedited `.sr`, exported
-`.vcd`, analysis report, review notes, actual-fixture photo, and annotated copy,
-and label the four exported one-bit VCD references as `D0`–`D3` (the analyzer
-also accepts their reviewed signal or GPIO names). Generate a new canonical
-analysis report directly from the retained VCD:
+`.vcd`, plain UTF-8 RTT log, analysis report, review notes, actual-fixture photo,
+and annotated copy, and label the four exported one-bit VCD references as
+`D0`–`D3` (the analyzer also accepts their reviewed signal or GPIO names).
+Generate a new canonical analysis report directly from the retained VCD:
 
 ```console
 cargo xtask hil analyze-tinybee-vcd \
@@ -172,14 +184,17 @@ cargo xtask hil validate-tinybee-record \
   docs/hil/runs/<run-id>/record.toml
 ```
 
-The validator independently verifies the VCD and report digests, replays the
-canonical report, and requires every copied measurement to match. A `pass`
-also requires marker code 1, safe static/live images, at least 50,000 complete
-live frames, no invalid or non-64-bit frame, at most one admitted final live
-frame, two complete post-stop frames with at least one observed safe latch, and
-all named timing intervals. Manual waveform review remains mandatory for pulse
-width, duty cycle, electrical integrity, anomalies at exact timestamps, and
-facts outside the four-channel decoder.
+The validator independently verifies the RTT, VCD, and report digests, parses
+the unique software attestation, replays the canonical analyzer report, and
+requires every copied measurement to match. A `pass` also requires exact
+software start/stop/rewrite ordering, 256-frame/250 kHz identity, 50,000
+accepted refills, the recomputed sealed horizon, unfaulted state 8, false
+software reclaim, marker code 1 in both records, safe static/live images, at
+least 50,000 complete live frames, no invalid or non-64-bit frame, at most one
+admitted final live frame, two complete post-stop frames with at least one
+observed safe latch, and all named timing intervals. Manual waveform review
+remains mandatory for pulse width, duty cycle, electrical integrity, anomalies
+at exact timestamps, and facts outside the four-channel decoder.
 
 The validator admits only the primary `mks-tinybee-v1` 8 MiB package. The 4 MiB
 variant remains build-supported but requires its own independently identified

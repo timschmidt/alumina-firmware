@@ -311,3 +311,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   fixed static-safe/prefill/start-observation/stream/stop/reclaim ownership,
   observed-safe motion gating, bit-level replay, and compile-only TinyBee HIL
   adoption with every production and physical claim closed.
+- [`M10-PCM-SOFTWARE-ATTESTATION.md`](M10-PCM-SOFTWARE-ATTESTATION.md) — stable
+  post-stop numeric lifecycle attestation, bounded RTT-log parsing, exact
+  software-horizon replay, and schema-v2 correlation with the independent
+  TinyBee VCD marker result.

@@ -904,6 +904,18 @@ build-only. Because the unknown first-frame and reclaim phase are the subject
 of the capture, disconnected loads and manual waveform review remain mandatory;
 a successful software report cannot promote the board.
 
+The HIL evidence boundary now keeps human logs out of machine semantics. After
+all I²S and marker activity, the fixture emits one ordered numeric
+`HIL_PCM_ATTEST_V2` suffix with stable explicit codes rather than Rust enum
+discriminants. Run-record schema V2 hashes the plain RTT log, admits at most one
+attestation, proves canonical field order and time-window monotonicity,
+recomputes the exact dense horizon from epoch/ring/refill facts, requires
+software reclaim to remain false, and correlates its marker code with the
+independent VCD decoder. A pass requires the complete unfaulted attestation;
+failed-start evidence may retain no post-stop record. This binds software and
+waveform evidence without treating either as the other. See
+[`evidence/M10-PCM-SOFTWARE-ATTESTATION.md`](evidence/M10-PCM-SOFTWARE-ATTESTATION.md).
+
 Synthetos/g2 is a behavioral reference for N-axis jerk-controlled planning,
 junction integration, and sub-millisecond linear-velocity segments. The
 interface compiler and firmware executor implement their respective underlying

@@ -408,6 +408,13 @@ bit-level simulator passes through that gate, while the HIL-only TinyBee image
 deliberately stops at an unobserved safe rewrite. Production still uses the
 static writer and rejects streaming. See the
 [static/stream handoff evidence](docs/evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md).
+The capture contract now also hashes a plain RTT log and parses one stable
+numeric `HIL_PCM_ATTEST_V2` record independently of human debug rendering. A
+schema-v2 pass recomputes the dense horizon, requires ordered start/stop/rewrite
+windows and the unfaulted software-only lifecycle state, and correlates its
+marker code with the VCD decoder. Missing attestation remains valid only for
+non-pass evidence such as a failed start. See the
+[software-attestation evidence](docs/evidence/M10-PCM-SOFTWARE-ATTESTATION.md).
 
 The first M8 portable FOC slice is also implemented without creating a hardware
 drive path. A new no-std crate carries exact Q2.30 points and outward intervals,

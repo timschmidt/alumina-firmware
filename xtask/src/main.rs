@@ -11,6 +11,7 @@ use alumina_capability::{calculate_identity, verify_declared_identity};
 mod hil_record;
 mod tinybee_graph_record;
 mod tinybee_graph_vcd;
+mod tinybee_pcm_log;
 mod tinybee_pcm_record;
 mod tinybee_pcm_vcd;
 
@@ -115,12 +116,13 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
         [group, command, path] if group == "hil" && command == "validate-tinybee-record" => {
             let summary = tinybee_pcm_record::validate(root, Path::new(path))?;
             println!(
-                "TinyBee PCM HIL record {}: {} ({} Hz, {} ms, {} live frames)",
+                "TinyBee PCM HIL record {}: {} ({} Hz, {} ms, {} live frames, software_attested={})",
                 summary.run_id,
                 summary.disposition,
                 summary.sample_rate_hz,
                 summary.capture_milliseconds,
-                summary.decoded_live_frames
+                summary.decoded_live_frames,
+                summary.software_attested
             );
             Ok(())
         }

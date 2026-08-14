@@ -260,8 +260,11 @@ boundaries, the relationship between software completion and the physical latch,
 and safe behavior for starvation, stop, reset, and static-to-stream handoff.
 The initial safe-only capture fixture and mandatory disconnected-load/run-record
 procedure are specified in [`HIL.md`](HIL.md). Its bounded VCD analyzer binds
-decoded edge facts to the retained capture and the strict record validator
-replays them, but their build or software completion is not itself a HIL pass.
+decoded edge facts to the retained capture. Run-record schema V2 separately
+hashes and parses the bounded plain RTT log, recomputes the software lifecycle
+horizon, and requires its outcome marker to equal the decoded physical marker.
+The strict validator replays both domains, but their build or software
+completion is not itself a HIL pass.
 
 ### 6. Core-isolation and load tests
 

@@ -60,12 +60,9 @@ struct CaptureReport {
 }
 
 impl CaptureReport {
-    /// Pulse count between the two long marker sentinels.
-    ///
-    /// Bits 0–2 identify the exit; bit 3 means stop failed and bit 4 means the
-    /// post-stop safe rewrite failed. Code 32 is reserved for start failure.
-    const fn marker_code(self, stop_ok: bool, rewrite_ok: bool) -> u8 {
-        let exit = match self.exit {
+    /// Stable numeric outcome used by the marker and machine attestation.
+    const fn exit_code(self) -> u8 {
+        match self.exit {
             CaptureExit::Complete => 1,
             CaptureExit::Timeout => 2,
             CaptureExit::Availability => 3,
@@ -73,8 +70,15 @@ impl CaptureReport {
             CaptureExit::FrameModel => 5,
             CaptureExit::TargetPush => 6,
             CaptureExit::AcceptanceModel => 7,
-        };
-        exit | if stop_ok { 0 } else { 1 << 3 } | if rewrite_ok { 0 } else { 1 << 4 }
+        }
+    }
+
+    /// Pulse count between the two long marker sentinels.
+    ///
+    /// Bits 0–2 identify the exit; bit 3 means stop failed and bit 4 means the
+    /// post-stop safe rewrite failed. Code 32 is reserved for start failure.
+    const fn marker_code(self, stop_ok: bool, rewrite_ok: bool) -> u8 {
+        self.exit_code() | if stop_ok { 0 } else { 1 << 3 } | if rewrite_ok { 0 } else { 1 << 4 }
     }
 }
 
@@ -227,6 +231,9 @@ async fn main(_spawner: Spawner) -> ! {
             break 'capture CaptureExit::AvailabilityModel;
         }
         loop {
+            if accepted_refills >= TARGET_REFILLS {
+                break;
+            }
             let credit = match owner.refill_credit_frames() {
                 Ok(credit) => credit,
                 Err(_) => break 'capture CaptureExit::AvailabilityModel,
@@ -297,6 +304,29 @@ async fn main(_spawner: Spawner) -> ! {
     };
     let marker_code = report.marker_code(stop_ok, rewrite_ok);
     emit_marker_report(&mut capture_marker, marker_code).await;
+    // This ordered numeric suffix is independently parsed from the retained
+    // RTT log. Human/debug rendering is deliberately not evidence syntax.
+    info!(
+        "HIL_PCM_ATTEST_V2 model_epoch={} start_before={} start_after={} frames={} rate_hz={} exit={} accepted_refills={} sealed_horizon={} stop_before={} stop_after={} stop_ok={} rewrite_before={} rewrite_after={} rewrite_ok={} owner_state={} owner_fault={} safe_reclaimed={} marker_code={}",
+        hypothesized_epoch.0,
+        start_call_before,
+        start_call_after,
+        mks_tinybee::pcm_short::UNQUALIFIED_PCM_SHORT_DMA_FRAMES,
+        mks_tinybee::pcm_short::UNQUALIFIED_PCM_SHORT_FRAME_RATE_HZ,
+        report.exit_code(),
+        report.accepted_refills,
+        report.sealed_horizon,
+        stop_call_before,
+        stop_call_after,
+        u8::from(stop_ok),
+        rewrite_call_before,
+        rewrite_call_after,
+        u8::from(rewrite_ok),
+        pcm_owner_state_code(owner.state()),
+        u8::from(owner.fault().is_some()),
+        u8::from(owner.safe_reclaimed()),
+        marker_code
+    );
     info!(
         "HIL_PCM_STOPPED model_epoch={} start_before={} start_after={} frames={} rate_hz={} report={} stop_before={} stop_after={} stop_ok={} rewrite_before={} rewrite_after={} safe_rewrite_ok={} owner_state={:?} owner_fault={:?} safe_reclaimed={} marker_code={}",
         hypothesized_epoch.0,
@@ -359,5 +389,21 @@ async fn park() -> ! {
 fn halt() -> ! {
     loop {
         core::hint::spin_loop();
+    }
+}
+
+/// Stable attestation codes; these are independent of Rust enum discriminants.
+const fn pcm_owner_state_code(state: PcmShortDmaStreamState) -> u8 {
+    match state {
+        PcmShortDmaStreamState::StaticSafe => 1,
+        PcmShortDmaStreamState::PreparedSafe => 2,
+        PcmShortDmaStreamState::StartIssued => 3,
+        PcmShortDmaStreamState::StreamObserved => 4,
+        PcmShortDmaStreamState::StartUncertain => 5,
+        PcmShortDmaStreamState::Stopped => 6,
+        PcmShortDmaStreamState::StopUncertain => 7,
+        PcmShortDmaStreamState::SafeRewriteIssued => 8,
+        PcmShortDmaStreamState::SafeRewriteUncertain => 9,
+        PcmShortDmaStreamState::PeripheralSafe => 10,
     }
 }

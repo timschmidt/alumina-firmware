@@ -6,9 +6,10 @@ use crate::hil_record::{
     ARTIFACT_PREFIX, EVIDENCE_PREFIX, Record, parse_fields, repository_path, require_hex,
     valid_utc_timestamp, verify_digest, verify_evidence_asset,
 };
+use crate::tinybee_pcm_log::{self, TinyBeePcmSoftwareAttestation};
 use crate::tinybee_pcm_vcd::TinyBeePcmVcdAnalysis;
 
-const SCHEMA: u64 = 1;
+const SCHEMA: u64 = 2;
 const FIXTURE_ID: &str = "mks-tinybee-pcm-short-slogic16u3";
 const BOARD_ID: &str = board_mks_tinybee::BOARD_ID;
 const ANALYZER_MODEL: &str = "Sipeed SLogic16U3";
@@ -21,6 +22,13 @@ const EXPECTED_FRAME_PERIOD_PS: u64 = 4_000_000;
 const MINIMUM_SAMPLE_RATE_HZ: u64 = 200_000_000;
 const MAXIMUM_SAMPLE_RATE_HZ: u64 = 800_000_000;
 const MINIMUM_CAPTURE_MILLISECONDS: u64 = 350;
+const MAXIMUM_RTT_LOG_BYTES: u64 = 1_048_576;
+const EXPECTED_DMA_FRAMES: u64 = 256;
+const EXPECTED_FRAME_RATE_HZ: u64 = 250_000;
+const EXPECTED_FRAME_CYCLES: u64 = 4;
+const EXPECTED_REFILLS: u64 = 50_000;
+const EXIT_COMPLETE: u64 = 1;
+const OWNER_STATE_SAFE_REWRITE_ISSUED: u64 = 8;
 
 const FIELDS: &[&str] = &[
     "schema",
@@ -38,6 +46,8 @@ const FIELDS: &[&str] = &[
     "flash_bytes",
     "artifact_path",
     "artifact_sha256",
+    "rtt_log_path",
+    "rtt_log_sha256",
     "usb_logic_power_only",
     "main_power_disconnected",
     "motor_connectors_empty",
@@ -110,6 +120,7 @@ pub struct TinyBeePcmRunSummary {
     pub sample_rate_hz: u64,
     pub capture_milliseconds: u64,
     pub decoded_live_frames: u64,
+    pub software_attested: bool,
 }
 
 pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeePcmRunSummary, String> {
@@ -252,7 +263,7 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeePcmRunSummary,
     if record.u64("expected_safe_image")? != SAFE_IMAGE {
         return Err(record.error("expected_safe_image", "is not canonical 0x001249"));
     }
-    if record.u64("expected_refills")? != 50_000 {
+    if record.u64("expected_refills")? != EXPECTED_REFILLS {
         return Err(record.error("expected_refills", "does not match the artifact"));
     }
     let admitted_bclk_error = nonzero(&record, "admitted_bclk_period_error_ps")?;
@@ -293,8 +304,19 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeePcmRunSummary,
         minimum_data_setup_ps: minimum_setup,
         minimum_data_hold_ps: minimum_hold,
     };
+    let software_attestation = read_software_attestation(root, &record)?;
+    if let Some(attestation) = software_attestation {
+        validate_software_structure(&record, attestation, marker_code)?;
+    }
 
     if disposition == "pass" {
+        let attestation = software_attestation.ok_or_else(|| {
+            record.error(
+                "rtt_log_path",
+                "contains no HIL_PCM_ATTEST_V2 record for a pass disposition",
+            )
+        })?;
+        validate_success_attestation(&record, attestation)?;
         if marker_code != 1 {
             return Err(record.error(
                 "decoded_marker_code",
@@ -369,6 +391,7 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeePcmRunSummary,
     for key in [
         "fixture_photo_path",
         "annotated_photo_path",
+        "rtt_log_path",
         "raw_capture_path",
         "vcd_capture_path",
         "analysis_report_path",
@@ -408,7 +431,105 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeePcmRunSummary,
         sample_rate_hz,
         capture_milliseconds,
         decoded_live_frames,
+        software_attested: software_attestation.is_some(),
     })
+}
+
+fn read_software_attestation(
+    root: &Path,
+    record: &Record<'_>,
+) -> Result<Option<TinyBeePcmSoftwareAttestation>, String> {
+    verify_evidence_asset(root, record, "rtt_log_path", "rtt_log_sha256")?;
+    let value = record.nonempty("rtt_log_path")?;
+    let path = repository_path(root, Path::new(&value), EVIDENCE_PREFIX, "RTT log")?;
+    let length = fs::metadata(&path)
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+        .len();
+    if length > MAXIMUM_RTT_LOG_BYTES {
+        return Err(record.error("rtt_log_path", "exceeds the 1 MiB evidence limit"));
+    }
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {} as UTF-8: {error}", path.display()))?;
+    tinybee_pcm_log::parse(&source)
+        .map_err(|error| record.error("rtt_log_path", &format!("is invalid: {error}")))
+}
+
+fn validate_software_structure(
+    record: &Record<'_>,
+    report: TinyBeePcmSoftwareAttestation,
+    decoded_marker_code: u64,
+) -> Result<(), String> {
+    if report.model_epoch != report.start_before {
+        return Err(record.error(
+            "rtt_log_path",
+            "reports a model epoch different from the pre-start observation",
+        ));
+    }
+    if report.start_after < report.start_before
+        || report.stop_before < report.start_after
+        || report.stop_after < report.stop_before
+        || report.rewrite_before < report.stop_after
+        || report.rewrite_after < report.rewrite_before
+    {
+        return Err(record.error(
+            "rtt_log_path",
+            "reports a nonmonotonic start/stop/rewrite interval",
+        ));
+    }
+    if report.frames != EXPECTED_DMA_FRAMES || report.rate_hz != EXPECTED_FRAME_RATE_HZ {
+        return Err(record.error(
+            "rtt_log_path",
+            "does not match the artifact's 256-frame 250 kHz stream",
+        ));
+    }
+    let expected_marker = report.exit
+        | if report.stop_ok { 0 } else { 1 << 3 }
+        | if report.rewrite_ok { 0 } else { 1 << 4 };
+    if report.marker_code != expected_marker || report.marker_code != decoded_marker_code {
+        return Err(record.error(
+            "rtt_log_path",
+            "does not correlate its outcome with the decoded hardware marker",
+        ));
+    }
+    if report.safe_reclaimed {
+        return Err(record.error(
+            "rtt_log_path",
+            "claims physical safe reclaim from a software-only HIL path",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_success_attestation(
+    record: &Record<'_>,
+    report: TinyBeePcmSoftwareAttestation,
+) -> Result<(), String> {
+    if report.exit != EXIT_COMPLETE
+        || report.accepted_refills != EXPECTED_REFILLS
+        || !report.stop_ok
+        || !report.rewrite_ok
+        || report.owner_state != OWNER_STATE_SAFE_REWRITE_ISSUED
+        || report.owner_fault
+    {
+        return Err(record.error(
+            "rtt_log_path",
+            "does not report complete refills, stop/rewrite success, and an unfaulted SafeRewriteIssued owner",
+        ));
+    }
+    let total_frames = EXPECTED_DMA_FRAMES
+        .checked_add(report.accepted_refills)
+        .ok_or_else(|| record.error("rtt_log_path", "overflows the sealed frame count"))?;
+    let expected_horizon = total_frames
+        .checked_mul(EXPECTED_FRAME_CYCLES)
+        .and_then(|cycles| report.model_epoch.checked_add(cycles))
+        .ok_or_else(|| record.error("rtt_log_path", "overflows the sealed horizon"))?;
+    if report.sealed_horizon != expected_horizon {
+        return Err(record.error(
+            "rtt_log_path",
+            "does not report the exact model epoch plus prefill/refill horizon",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_photo(record: &Record<'_>, root: &Path, prefix: &str) -> Result<(), String> {
@@ -499,6 +620,7 @@ mod tests {
             for relative in [
                 "docs/hil/runs/run-1/fixture.webp",
                 "docs/hil/runs/run-1/annotated.webp",
+                "docs/hil/runs/run-1/rtt.log",
                 "docs/hil/runs/run-1/capture.sr",
                 "docs/hil/runs/run-1/capture.vcd",
                 "docs/hil/runs/run-1/review.md",
@@ -507,6 +629,7 @@ mod tests {
                 let path = root.join(relative);
                 fs::write(path, relative.as_bytes()).unwrap();
             }
+            fs::write(evidence.join("rtt.log"), valid_rtt()).unwrap();
             let vcd_digest = digest(&root, "docs/hil/runs/run-1/capture.vcd");
             fs::write(
                 evidence.join("analysis.toml"),
@@ -532,7 +655,7 @@ mod tests {
     fn valid_record(root: &Path) -> String {
         let mut source = String::new();
         let values = [
-            ("schema", "1".to_owned()),
+            ("schema", SCHEMA.to_string()),
             ("fixture_id", quoted(FIXTURE_ID)),
             ("run_id", quoted("run-1")),
             ("started_utc", quoted("2026-08-11T20:00:00Z")),
@@ -550,6 +673,11 @@ mod tests {
             ),
             ("artifact_path", quoted(ARTIFACT_PATH)),
             ("artifact_sha256", quoted(&digest(root, ARTIFACT_PATH))),
+            ("rtt_log_path", quoted("docs/hil/runs/run-1/rtt.log")),
+            (
+                "rtt_log_sha256",
+                quoted(&digest(root, "docs/hil/runs/run-1/rtt.log")),
+            ),
             ("usb_logic_power_only", "true".to_owned()),
             ("main_power_disconnected", "true".to_owned()),
             ("motor_connectors_empty", "true".to_owned()),
@@ -670,6 +798,10 @@ mod tests {
         }
     }
 
+    fn valid_rtt() -> &'static str {
+        "[INFO  12.345] HIL_PCM_ATTEST_V2 model_epoch=100 start_before=100 start_after=102 frames=256 rate_hz=250000 exit=1 accepted_refills=50000 sealed_horizon=201124 stop_before=201120 stop_after=201122 stop_ok=1 rewrite_before=201123 rewrite_after=201125 rewrite_ok=1 owner_state=8 owner_fault=0 safe_reclaimed=0 marker_code=1\nHIL_RESULT capture complete; waveform review is still required\n"
+    }
+
     fn quoted(value: &str) -> String {
         format!("\"{value}\"")
     }
@@ -682,6 +814,62 @@ mod tests {
         assert_eq!(summary.sample_rate_hz, 200_000_000);
         assert_eq!(summary.capture_milliseconds, 400);
         assert_eq!(summary.decoded_live_frames, 50_000);
+        assert!(summary.software_attested);
+    }
+
+    #[test]
+    fn software_attestation_binds_lifecycle_horizon_and_hardware_marker() {
+        for (from, to, expected) in [
+            (
+                "model_epoch=100 start_before=100",
+                "start_before=100 model_epoch=100",
+                "expected `model_epoch`",
+            ),
+            (
+                "sealed_horizon=201124",
+                "sealed_horizon=201125",
+                "exact model epoch",
+            ),
+            ("owner_state=8", "owner_state=9", "SafeRewriteIssued"),
+            ("safe_reclaimed=0", "safe_reclaimed=1", "software-only"),
+            ("marker_code=1", "marker_code=2", "decoded hardware marker"),
+        ] {
+            let fixture = Fixture::new();
+            let log_path = fixture.root.join("docs/hil/runs/run-1/rtt.log");
+            fs::write(&log_path, valid_rtt().replace(from, to)).unwrap();
+            fs::write(&fixture.record, valid_record(&fixture.root)).unwrap();
+            assert!(
+                validate(&fixture.root, &fixture.record)
+                    .unwrap_err()
+                    .contains(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn missing_post_stop_attestation_is_allowed_only_for_nonpass_evidence() {
+        let fixture = Fixture::new();
+        let log_path = fixture.root.join("docs/hil/runs/run-1/rtt.log");
+        fs::write(
+            &log_path,
+            "HIL_ABORT circular safe transfer did not start\n",
+        )
+        .unwrap();
+        let pass = valid_record(&fixture.root);
+        fs::write(&fixture.record, &pass).unwrap();
+        assert!(
+            validate(&fixture.root, &fixture.record)
+                .unwrap_err()
+                .contains("contains no HIL_PCM_ATTEST_V2")
+        );
+
+        fs::write(
+            &fixture.record,
+            pass.replace("disposition = \"pass\"", "disposition = \"inconclusive\""),
+        )
+        .unwrap();
+        let summary = validate(&fixture.root, &fixture.record).unwrap();
+        assert!(!summary.software_attested);
     }
 
     #[test]
@@ -718,7 +906,7 @@ mod tests {
             (
                 "decoded_marker_code = 1",
                 "decoded_marker_code = 9",
-                "complete/stop/rewrite",
+                "decoded hardware marker",
             ),
             (
                 "decoded_invalid_image_count = 0",
@@ -763,6 +951,19 @@ mod tests {
                 .contains("raw_capture_sha256")
         );
 
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.root.join("docs/hil/runs/run-1/rtt.log"),
+            b"tampered",
+        )
+        .unwrap();
+        assert!(
+            validate(&fixture.root, &fixture.record)
+                .unwrap_err()
+                .contains("rtt_log_sha256")
+        );
+
+        let fixture = Fixture::new();
         let source = valid_record(&fixture.root).replace(
             "docs/hil/runs/run-1/review.md",
             "docs/hil/runs/../review.md",

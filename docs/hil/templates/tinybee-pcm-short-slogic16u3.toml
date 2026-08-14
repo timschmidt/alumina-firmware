@@ -1,6 +1,6 @@
 # Copy this file to docs/hil/runs/<run-id>/record.toml and replace every
 # REPLACE or zero identity. The template is intentionally invalid evidence.
-schema = 1
+schema = 2
 fixture_id = "mks-tinybee-pcm-short-slogic16u3"
 run_id = "REPLACE"
 started_utc = "REPLACE"
@@ -16,6 +16,11 @@ esp_mac = "000000000000"
 flash_bytes = 8388608
 artifact_path = "target/xtensa-esp32-none-elf/release/alumina-hil-mks-tinybee-pcm-short-safe"
 artifact_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+rtt_log_path = "docs/hil/runs/REPLACE/rtt.log"
+rtt_log_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# Retain plain UTF-8 monitor output from reset through HIL_RESULT. A pass must
+# contain exactly one canonical HIL_PCM_ATTEST_V2 line; do not copy debug text
+# into fields by hand.
 
 usb_logic_power_only = false
 main_power_disconnected = false

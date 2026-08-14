@@ -520,6 +520,16 @@ deliberately ends at `SafeRewriteIssued`; it cannot manufacture capture facts.
 Production remains on its static writer, both adapters reject streaming, and
 both boards remain non-armable. See
 [`M10-STATIC-SAFE-STREAM-HANDOFF.md`](evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md).
+The software-attestation checkpoint upgrades the future physical run record to
+schema V2. The HIL image emits one post-stop numeric record only after I²S and
+marker activity; xtask hashes and parses the retained RTT log, enforces exact
+field order, device-cycle intervals, artifact ring/rate identity, marker-bit
+derivation, and the modeled sealed horizon, and requires a pass to remain
+unfaulted at `SafeRewriteIssued` with `safe_reclaimed=false`. Its marker must
+equal the independent VCD result. Failed-start logs remain valid non-pass
+evidence without inventing a post-stop record. This changes no production path
+or physical claim. See
+[`M10-PCM-SOFTWARE-ATTESTATION.md`](evidence/M10-PCM-SOFTWARE-ATTESTATION.md).
 
 Exit gate:
 
