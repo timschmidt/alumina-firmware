@@ -35,8 +35,10 @@ pub use encoder::{
     ServoEncoderSeed, ServoEncoderSeedState,
 };
 pub use pwm::{
-    PwmCompareContract, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
-    PwmCompareLatchOwner, PwmCompareValue,
+    MAX_PWM_COMMIT_BANK_AXES, MAX_PWM_COMMIT_BANK_BARRIER_BYTES,
+    MAX_PWM_COMMIT_BANK_COMPLETION_BYTES, PwmCommitBankBarrier, PwmCommitBankCompletion,
+    PwmCommitBarrierError, PwmCompareContract, PwmCompareError, PwmCompareImage, PwmCompareLatch,
+    PwmCompareLatchError, PwmCompareLatchOwner, PwmCompareValue,
 };
 pub use servo::{
     CascadedServoController, SERVO_POSITION_FRACTION_BITS, SERVO_POSITION_SCALE,

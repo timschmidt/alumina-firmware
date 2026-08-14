@@ -9,10 +9,11 @@ use alumina_config::{ConfigurationError, LoweredFocAxisConfiguration, RealtimeCo
 use alumina_foc::{
     AlphaBeta, CurrentSample, DqControlUpdate, DqCurrentController, DqInterval, DqPoint,
     FocCurrentCommand, FocError, ModulationResult, PowerStageCommit, PwmAdcSampleStamp,
-    PwmAdcSynchronization, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
-    PwmCompareLatchOwner, Q30Interval, RotorSample, ServoEncoderObservation, ServoEncoderSeed,
-    ServoFocAxisController, ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisUpdate,
-    ServoFocBank, ServoFocBankError, ServoSetpoint, inverse_park, park, space_vector_modulate,
+    PwmAdcSynchronization, PwmCommitBankBarrier, PwmCommitBarrierError, PwmCompareError,
+    PwmCompareImage, PwmCompareLatch, PwmCompareLatchError, PwmCompareLatchOwner, Q30Interval,
+    RotorSample, ServoEncoderObservation, ServoEncoderSeed, ServoFocAxisController,
+    ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisUpdate, ServoFocBank,
+    ServoFocBankError, ServoSetpoint, inverse_park, park, space_vector_modulate,
 };
 use alumina_motion::{PreparedServoSetpoints, ServoSetpointOutput, ServoSetpointOutputCommit};
 use alumina_protocol::DeviceCycle;
@@ -31,6 +32,8 @@ pub enum FocHardwareLoopError {
     Axis(ServoFocAxisError),
     /// The simultaneous complete-axis bank rejected before state publication.
     Bank(ServoFocBankError),
+    /// The physical multi-stage commit barrier rejected before controller publication.
+    CommitBarrier(PwmCommitBarrierError),
     /// The first simulator supports one current update per PWM period.
     Rate,
     /// Command identity, time, token, or sequence was not the sole expected value.
@@ -76,6 +79,12 @@ impl From<ServoFocAxisError> for FocHardwareLoopError {
 impl From<ServoFocBankError> for FocHardwareLoopError {
     fn from(error: ServoFocBankError) -> Self {
         Self::Bank(error)
+    }
+}
+
+impl From<PwmCommitBarrierError> for FocHardwareLoopError {
+    fn from(error: PwmCommitBarrierError) -> Self {
+        Self::CommitBarrier(error)
     }
 }
 
@@ -233,6 +242,7 @@ impl ConfiguredServoFocHardwareLoop {
 #[derive(Debug, Eq, PartialEq)]
 pub struct ConfiguredServoFocHardwareBank<const AXES: usize> {
     controller: ServoFocBank<AXES>,
+    commit_barrier: PwmCommitBankBarrier<AXES>,
 }
 
 impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
@@ -259,9 +269,7 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
             axes[axis] = Some(configured.controller);
         }
         let axes = axes.map(|axis| axis.expect("complete configured FOC bank"));
-        Ok(Self {
-            controller: ServoFocBank::new(axes)?,
-        })
+        Self::from_controllers(axes)
     }
 
     #[cfg(test)]
@@ -289,14 +297,45 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
             axes[axis] = Some(configured.controller);
         }
         let axes = axes.map(|axis| axis.expect("complete lowered FOC bank"));
+        Self::from_controllers(axes)
+    }
+
+    fn from_controllers(
+        axes: [ServoFocAxisController; AXES],
+    ) -> Result<Self, FocHardwareLoopError> {
+        let controller = ServoFocBank::new(axes)?;
+        let first = controller.axis(0).ok_or(FocHardwareLoopError::Sequence)?;
+        let pwm_period_cycles = first.profile().pwm_compare.pwm_period_device_cycles();
+        let next_boundary = DeviceCycle(
+            controller
+                .period_started_at()
+                .0
+                .checked_add(u64::from(pwm_period_cycles))
+                .ok_or(FocHardwareLoopError::Overflow)?,
+        );
+        let next_period_sequence = u64::from(controller.period_sequence())
+            .checked_add(1)
+            .ok_or(FocHardwareLoopError::Overflow)?;
+        let commit_barrier = PwmCommitBankBarrier::new(
+            controller.configuration_digest(),
+            pwm_period_cycles,
+            next_boundary,
+            next_period_sequence,
+        )?;
         Ok(Self {
-            controller: ServoFocBank::new(axes)?,
+            controller,
+            commit_barrier,
         })
     }
 
     /// Complete portable simultaneous controller state retained by the owner.
     pub const fn controller(&self) -> &ServoFocBank<AXES> {
         &self.controller
+    }
+
+    /// Multi-stage physical acknowledgement barrier owned by this simulator.
+    pub const fn commit_barrier(&self) -> &PwmCommitBankBarrier<AXES> {
+        &self.commit_barrier
     }
 
     /// Executes one simultaneous current/PWM period at each exact next boundary.
@@ -334,6 +373,11 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
         inputs: [FocServoHardwareLoopInput; AXES],
         observed_timer_zero: [DeviceCycle; AXES],
     ) -> Result<[ServoFocAxisUpdate; AXES], FocHardwareLoopError> {
+        if self.commit_barrier.fault().is_some() {
+            return Err(FocHardwareLoopError::CommitBarrier(
+                PwmCommitBarrierError::Faulted,
+            ));
+        }
         let mut period_inputs = core::array::from_fn(|_| None);
         for axis in 0..AXES {
             let controller = self
@@ -365,26 +409,34 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
         let period_inputs =
             period_inputs.map(|input| input.expect("complete FOC bank period input"));
         let prepared = self.controller.prepare(period_inputs)?;
-        let mut commits = core::array::from_fn(|_| None);
-        for axis in 0..AXES {
-            let staged = prepared
+        let images = core::array::from_fn(|axis| {
+            prepared
                 .axis_update(axis)
-                .ok_or(FocHardwareLoopError::Sequence)?
-                .staged_image;
-            commits[axis] = Some(PowerStageCommit {
-                token: staged.token(),
-                scheduled_at: staged.scheduled_at(),
-                observed_at: observed_timer_zero[axis],
-            });
+                .expect("complete prepared FOC bank")
+                .staged_image
+        });
+        self.commit_barrier.stage(images)?;
+        for axis in 0..AXES {
+            self.commit_barrier.record_latch(
+                axis,
+                PowerStageCommit {
+                    token: images[axis].token(),
+                    scheduled_at: images[axis].scheduled_at(),
+                    observed_at: observed_timer_zero[axis],
+                },
+            )?;
         }
-        let commits = commits.map(|commit| commit.expect("complete FOC bank commit"));
+        let completion = self
+            .commit_barrier
+            .finish_boundary(images[0].scheduled_at())?;
         self.controller
-            .commit(prepared, commits)
+            .commit(prepared, completion.commits())
             .map_err(FocHardwareLoopError::Bank)
     }
 
     /// Invalidates the logical bank only after a separately modeled safe-output action.
     pub fn invalidate_after_safe(&mut self) {
+        self.commit_barrier.invalidate_after_safe();
         self.controller.invalidate_after_safe();
     }
 }
@@ -2164,6 +2216,13 @@ mod tests {
             assert_eq!(controller.period_started_at(), DeviceCycle(84_000));
             assert_eq!(controller.period_sequence(), 1);
         }
+        assert_eq!(hardware.commit_barrier().staged_images(), None);
+        assert_eq!(
+            hardware.commit_barrier().next_boundary(),
+            DeviceCycle(88_000)
+        );
+        assert_eq!(hardware.commit_barrier().next_period_sequence(), 2);
+        assert_eq!(hardware.commit_barrier().fault(), None);
     }
 
     #[test]
@@ -2281,6 +2340,15 @@ mod tests {
             Ok(ScheduledServoAction::JobComplete)
         ));
         assert_eq!(job.status().state, RealtimeJobState::Complete);
+        assert_eq!(
+            hardware.hardware().commit_barrier().next_boundary(),
+            DeviceCycle(1_688_000)
+        );
+        assert_eq!(
+            hardware.hardware().commit_barrier().next_period_sequence(),
+            402
+        );
+        assert_eq!(hardware.hardware().commit_barrier().fault(), None);
         for axis in 0..2 {
             let controller = hardware.hardware().controller().axis(axis).unwrap();
             assert_eq!(controller.period_sequence(), 401);
@@ -2311,11 +2379,16 @@ mod tests {
         let inputs = core::array::from_fn(|axis| servo_bank_input(&late, axis, 0));
         assert_eq!(
             late.step_with_timer_zero(inputs, [DeviceCycle(84_000), DeviceCycle(84_001)]),
-            Err(FocHardwareLoopError::Bank(ServoFocBankError::Axis {
-                axis: 1,
-                error: ServoFocAxisError::PowerStageCommit,
-            }))
+            Err(FocHardwareLoopError::CommitBarrier(
+                PwmCommitBarrierError::Observation { axis: 1 }
+            ))
         );
+        assert_eq!(
+            late.commit_barrier().fault(),
+            Some(PwmCommitBarrierError::Observation { axis: 1 })
+        );
+        assert_eq!(late.commit_barrier().staged_images(), None);
+        assert_eq!(late.commit_barrier().next_boundary(), DeviceCycle(84_000));
         assert_eq!(late.controller().period_started_at(), DeviceCycle(80_000));
         assert_eq!(late.controller().period_sequence(), 0);
         for axis in 0..2 {
@@ -2422,6 +2495,10 @@ mod tests {
             hardware.hardware().controller().fault(),
             Some(ServoFocBankError::SafetyInvalidated)
         );
+        assert_eq!(
+            hardware.hardware().commit_barrier().fault(),
+            Some(PwmCommitBarrierError::SafetyInvalidated)
+        );
         assert_eq!(hardware.take_servo_setpoint_commit().unwrap(), None);
         let mut inputs =
             core::array::from_fn(|axis| servo_bank_input(hardware.hardware(), axis, 0));
@@ -2430,7 +2507,9 @@ mod tests {
         }
         assert_eq!(
             hardware.step(inputs),
-            Err(FocHardwareLoopError::Bank(ServoFocBankError::FaultLatched))
+            Err(FocHardwareLoopError::CommitBarrier(
+                PwmCommitBarrierError::Faulted
+            ))
         );
     }
 
