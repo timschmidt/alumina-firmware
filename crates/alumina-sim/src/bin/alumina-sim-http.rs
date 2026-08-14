@@ -204,6 +204,7 @@ fn main() -> Result<(), ServerError> {
         ClockFixturePolicy::HEALTHY_1MHZ,
     )
     .map_err(|error| ServerError::Fixture(error.to_string()))?;
+    fixture.enable_simulated_waveform_provider();
     let mut faults = FaultState::default();
     println!(
         "alumina-sim-http ready origin=http://{} drift_ppm={} processing_ms={} response_ms={}",

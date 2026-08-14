@@ -22,6 +22,8 @@ use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceSt
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
 
+use crate::diagnostics::simulated_immediate_waveform_capture;
+
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
 const NATIVE_FRAME_MEDIA_TYPE: &str = "application/vnd.alumina.frame";
 const JSON_MEDIA_TYPE: &str = "application/json";
@@ -156,6 +158,7 @@ pub struct ClockHttpFixture {
     runtime_health_epoch: Option<DeviceCycle>,
     runtime_health_samples: u32,
     diagnostics: FixtureDiagnosticService,
+    simulated_waveform_provider: bool,
 }
 
 impl ClockHttpFixture {
@@ -194,6 +197,7 @@ impl ClockHttpFixture {
                 DiagnosticTransportLimits::native_control(),
                 DiagnosticLimits::interactive(),
             ),
+            simulated_waveform_provider: false,
         })
     }
 
@@ -210,6 +214,15 @@ impl ClockHttpFixture {
     /// Mutably borrow the diagnostic owner to inject deterministic simulator evidence.
     pub const fn diagnostics_mut(&mut self) -> &mut FixtureDiagnosticService {
         &mut self.diagnostics
+    }
+
+    /// Enables deterministic completion of admitted immediate waveform captures.
+    ///
+    /// Tests default to explicit provider injection; the standalone HTTP
+    /// simulator opts in so a production browser worker can exercise the full
+    /// authenticated acquisition and range-download lifecycle.
+    pub const fn enable_simulated_waveform_provider(&mut self) {
+        self.simulated_waveform_provider = true;
     }
 
     /// Complete context accepted by the authenticated diagnostic owner.
@@ -395,10 +408,26 @@ impl ClockHttpFixture {
             native.frame.kind,
             FrameKind::Telemetry | FrameKind::Waveform
         ) {
+            let operation = native.message.operation;
             let Ok(request) = ServiceRequest::native(bytes) else {
                 return ServiceResponse::invalid_native();
             };
-            return self.diagnostics.dispatch(&request, transmit_cycle);
+            let response = self.diagnostics.dispatch(&request, transmit_cycle);
+            if self.simulated_waveform_provider && operation == Operation::WaveformArm {
+                let capture =
+                    self.diagnostics
+                        .armed_waveform_configuration()
+                        .and_then(|configuration| {
+                            simulated_immediate_waveform_capture(configuration, transmit_cycle)
+                                .map_err(|_| {
+                                    alumina_service::diagnostics::DiagnosticServiceError::Capacity
+                                })
+                        });
+                if let Ok(capture) = capture {
+                    let _ = self.diagnostics.retain_waveform_capture(&capture);
+                }
+            }
+            return response;
         }
         if native.frame.kind == FrameKind::Capabilities {
             let Ok(request) = ServiceRequest::native(bytes) else {

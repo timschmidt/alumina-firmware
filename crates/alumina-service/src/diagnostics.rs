@@ -668,6 +668,20 @@ impl<
         self.waveform.status(self.transport_limits)
     }
 
+    /// Borrows the exact configuration only while the acquisition owner is armed.
+    ///
+    /// This is the narrow provider seam used by hardware capture tasks and the
+    /// deterministic host simulator. It grants no network client access to the
+    /// privately retained configuration storage.
+    pub fn armed_waveform_configuration(
+        &self,
+    ) -> Result<WaveformConfigureView<'_>, DiagnosticServiceError> {
+        if self.waveform.phase != WaveformPhase::Armed {
+            return Err(DiagnosticServiceError::ForbiddenState);
+        }
+        self.waveform.view(self.transport_limits)
+    }
+
     /// Retains one complete canonical capture produced by the acquisition owner.
     pub fn retain_waveform_capture(
         &mut self,
