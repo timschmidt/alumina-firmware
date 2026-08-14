@@ -375,12 +375,14 @@ fn add_cycles(base: DeviceCycle, offset: u64) -> Result<DeviceCycle, FocHardware
 mod tests {
     use alumina_config::{
         FactEvidence, FocAdcAttenuation, FocAdcFrontendParameters, FocCurrentChannel,
-        FocPwmHardwareParameters,
+        FocEncoderPolicyParameters, FocEncoderScaleParameters, FocPwmHardwareParameters,
+        FocServoParameters,
     };
     use alumina_foc::{
         CountUncertainty, CurrentChannelCalibration, CurrentPolarity, ElectricalPhase,
         FocParameterSnapshot, FocTimingProfile, PiConfig, PwmAdcSynchronization,
         PwmCompareContract, Q30, RotationPrecision, RotorCalibration, RotorCountDirection,
+        ServoCascadeConfig, ServoEncoderProfile, ServoEncoderScale, ServoLoopGrid, ServoPosition,
         TwoShuntCurrentCalibration, TwoShuntPhasePair,
     };
     use alumina_protocol::Digest;
@@ -530,6 +532,67 @@ mod tests {
             maximum_quantization_error_ulps,
         )
         .unwrap();
+        let servo_grid =
+            ServoLoopGrid::new(DeviceCycle(0), device_cycle_hz, parameters.timing).unwrap();
+        let servo_parameters = FocServoParameters {
+            instance: 0,
+            position_proportional_gain: Q30::ZERO,
+            velocity_controller: controller,
+            maximum_velocity: Q30::ONE,
+            maximum_current: Q30::ONE,
+            direct_current_target: Q30::ZERO,
+            maximum_following_error_bits: u64::MAX,
+            maximum_sample_age_cycles: servo_grid.velocity_period_cycles(),
+        };
+        let servo = ServoCascadeConfig {
+            configuration_digest: DIGEST,
+            position_proportional_gain: servo_parameters.position_proportional_gain,
+            velocity_controller: servo_parameters.velocity_controller,
+            maximum_velocity: servo_parameters.maximum_velocity,
+            maximum_current: servo_parameters.maximum_current,
+            direct_current_target: servo_parameters.direct_current_target,
+            maximum_following_error_bits: servo_parameters.maximum_following_error_bits,
+            maximum_sample_age_cycles: servo_parameters.maximum_sample_age_cycles,
+        };
+        let encoder_scale_parameters = FocEncoderScaleParameters {
+            instance: 0,
+            position_at_reference: ServoPosition::ZERO,
+            scale: ServoEncoderScale::new(1, 1, 1, 1).unwrap(),
+            evidence: FactEvidence::Measured,
+        };
+        let encoder_policy_parameters = FocEncoderPolicyParameters {
+            instance: 0,
+            device_cycle_hz,
+            sample_period_cycles: servo_grid.velocity_period_cycles(),
+            maximum_observation_latency_cycles: 0,
+            maximum_trackable_velocity: Q30::ONE,
+            maximum_admitted_velocity: Q30::ONE,
+            maximum_velocity_estimation_error: Q30::from_bits(1),
+            maximum_position_interval_width_ulps: u64::MAX,
+            maximum_velocity_interval_width_ulps: u32::MAX,
+            evidence: FactEvidence::Qualified,
+        };
+        let encoder = ServoEncoderProfile {
+            configuration_digest: DIGEST,
+            counts_per_mechanical_turn: rotor.counts_per_mechanical_turn,
+            count_at_reference: rotor.count_at_reference,
+            direction: rotor.direction,
+            maximum_count_error: rotor.maximum_count_error,
+            position_at_reference: encoder_scale_parameters.position_at_reference,
+            scale: encoder_scale_parameters.scale,
+            device_cycle_hz: encoder_policy_parameters.device_cycle_hz,
+            sample_period_cycles: encoder_policy_parameters.sample_period_cycles,
+            maximum_observation_latency_cycles: encoder_policy_parameters
+                .maximum_observation_latency_cycles,
+            maximum_trackable_velocity: encoder_policy_parameters.maximum_trackable_velocity,
+            maximum_admitted_velocity: encoder_policy_parameters.maximum_admitted_velocity,
+            maximum_velocity_estimation_error: encoder_policy_parameters
+                .maximum_velocity_estimation_error,
+            maximum_position_interval_width_ulps: encoder_policy_parameters
+                .maximum_position_interval_width_ulps,
+            maximum_velocity_interval_width_ulps: encoder_policy_parameters
+                .maximum_velocity_interval_width_ulps,
+        };
         let lowered = LoweredFocAxisConfiguration {
             instance: 0,
             parameters,
@@ -554,6 +617,12 @@ mod tests {
             },
             pwm_hardware,
             pwm_compare,
+            servo_parameters,
+            encoder_scale_parameters,
+            encoder_policy_parameters,
+            servo_grid,
+            servo,
+            encoder,
         };
         lowered.validate().unwrap();
         lowered
@@ -687,6 +756,15 @@ mod tests {
 
         let mut slower = lowered_fixture();
         slower.parameters.timing.current_loop_hz = 10_000;
+        slower.servo_grid = ServoLoopGrid::new(
+            DeviceCycle(0),
+            slower.encoder_policy_parameters.device_cycle_hz,
+            slower.parameters.timing,
+        )
+        .unwrap();
+        slower.encoder_policy_parameters.sample_period_cycles =
+            slower.servo_grid.velocity_period_cycles();
+        slower.encoder.sample_period_cycles = slower.servo_grid.velocity_period_cycles();
         slower.validate().unwrap();
         assert_eq!(
             ConfiguredFocHardwareLoop::from_lowered(slower, DeviceCycle(0)),

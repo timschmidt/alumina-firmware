@@ -27,7 +27,7 @@ rounding, and timer rounding into the real `alumina-machine-ir` schema. It then
 replays canonical blocks, packages real content-addressed storage objects, and
 binds owned participant artifacts into the shared `alumina-job` manifest.
 The machine-bound line/arc/certified-cubic path now derives exact dynamics and a
-complete position-error budget from canonical Configuration V5, runs exact
+complete position-error budget from canonical Configuration V6, runs exact
 forward/reverse node planning, and certifies jerk schedules through
 Hyperpath/Hypersolve. Hyperpath refines each stop-separated positive component
 by exact uniform halving until every touching span has a replayed monotonic
@@ -462,9 +462,10 @@ feeds an anti-windup PI q-current loop. Digest, cycle, contiguous identity,
 fresh-sample, overspeed, following-error, and current-circle substitutions latch
 transactionally before controller state advances. A dimensionless ideal-current
 mechanical fixture replays 12,000 current ticks identically and converges while
-preserving the exact 240 position and 1,200 velocity updates. Configuration V5
-does not yet store or lower this outer profile, and no firmware task,
-inner-loop composition, target adapter, or energizing path selects it.
+preserving the exact 240 position and 1,200 velocity updates. Configuration V6
+stores the complete cascade and exact loop-grid policy and lowers both under the
+full configuration digest. No firmware task, inner-loop composition, target
+adapter, or energizing path selects it.
 See the [portable cascaded-servo evidence](docs/evidence/M8-PORTABLE-CASCADED-SERVO.md).
 
 The adjacent portable encoder checkpoint now turns truthful raw absolute counts
@@ -482,9 +483,11 @@ separate ULP and admitted-speed gates then apply. All state changes are
 transactional and latch first cause. An independent
 1,600-sample simulator repeatedly crosses the wrap in both configured
 directions and reproduces the same multi-turn truth byte for byte. Configuration
-V5 has no estimator records, no AS5600 target owner creates the required stamps
-or seed, and no physical timestamp, speed, homing, or sensor-accuracy fact is
-claimed. See the
+V6 stores and cross-checks the exact scale, clock, cadence, latency, wrap-speed,
+precision, and acceleration-derived estimator policy, then lowers one
+digest-bound estimator profile. No AS5600 target owner creates the required
+stamps or seed, and no physical timestamp, speed, homing, or sensor-accuracy
+fact is claimed. See the
 [portable encoder-estimator evidence](docs/evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 
 The MKS ESP32 FOC V1.0 now also has an independently authored typed board
@@ -499,15 +502,17 @@ candidate. Every FOC/motion operation still rejects. This is compile evidence
 only, not a reset-state, shutdown, timing, or energization claim. See the
 [MKS safe-target evidence](docs/evidence/M8-MKS-FOC-SAFE-TARGET.md).
 
-Canonical machine configuration is now deliberately V5. It retains the V4 FOC
-hardware records and adds an exact motion `DeviceCycle` frequency plus the
-stepper backend's smallest output quantum. Core 1 retains both and requires
-them to equal the compiled Embassy clock and selected board backend before an
-executor can exist. Both cores validate the same fixed bytes. Only a complete
-SHA-256-verified profile can lower into
-digest-bound FOC controller, rotor, current, and PWM compare objects; no older
-compatibility decoder remains. Board-package qualification remains the
-authority, so configuration cannot promote the MKS stages beyond `Described`;
+Canonical machine configuration is now deliberately V6. It retains the V5
+motion and FOC hardware authority and adds mandatory cascaded-servo,
+encoder-scale, and encoder-policy records for every FOC axis. Exact gearing,
+travel, calibration, velocity, acceleration, following-error, count, and timing
+facts select the Q31.32/Q2.30 runtime lattices through checked rational
+equalities and conservative uncertainty endpoints. Both cores validate the
+same fixed bytes. Only a complete SHA-256-verified profile can lower into
+digest-bound FOC controller, rotor, current, PWM compare, loop-grid, cascade,
+and encoder objects; no V5 or older compatibility decoder remains.
+Board-package qualification remains the authority, so configuration cannot
+promote the MKS stages beyond `Described`;
 the real target still rejects every FOC axis and exposes no energization path.
 See the historical [configuration V4 evidence](docs/evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md)
 and its [V3 predecessor](docs/evidence/M8-FOC-CONFIGURATION-V3.md).

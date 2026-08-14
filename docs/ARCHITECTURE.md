@@ -347,7 +347,7 @@ control route. This document, not `xtask` JSON formatting or Rust memory layout,
 is the browser's immutable board authority.
 
 `alumina-config` consumes that exact capability identity and streams canonical
-`ALMCFG05` bytes from an inert, content-addressed SD publication. Fixed resource
+`ALMCFG06` bytes from an inert, content-addressed SD publication. Fixed resource
 bindings and reduced exact nominal/uncertainty facts cover stepper, FOC,
 process, safety, serial/bus, timer/capture, and general I/O configuration. Core 0
 and core 1 hash and run the same semantic validator; only a later durable
@@ -1027,9 +1027,11 @@ endpoints must fit the validated current circle. Digest, schedule, sequence,
 sample time/age, overspeed, following-error, and arithmetic failures latch a
 first cause without partially advancing PI or accepted identities.
 
-This portable cascade does not yet have canonical Configuration V5 records, a
-cached command schema, current-loop composition, a core-1 task, MCPWM/ADC
-attachment, WCET, or motor evidence. Its
+Canonical Configuration V6 stores the complete cascade, binds its physical
+following-error and normalized-velocity authorities to exact machine scalars,
+derives its integer loop grid, and lowers it under the complete configuration
+digest. The cascade still has no cached command schema, current-loop
+composition, core-1 task, MCPWM/ADC attachment, WCET, or motor evidence. Its
 dimensionless simulator assumes ideal q-current availability and exists only to
 replay grid, controller, limit, and numerical behavior. See
 [`evidence/M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
@@ -1059,8 +1061,11 @@ failures retain the last accepted estimate and latch first cause.
 This contract begins after a transport supplies a truthful raw count and exact
 represented/available device cycles. It does not home the axis, establish the
 turn seed, prove the physical speed bound, model sample aperture or AS5600
-internal latency, or attach an encoder task. Configuration V5 is unchanged. An
-independent host replay inverts reference/direction, crosses repeated wraps in
+internal latency, or attach an encoder task. Configuration V6 stores and lowers
+the exact encoder scale and timing/precision policy, including a conservative
+acceleration-derived minimum estimator error, but does not manufacture those
+physical qualifications. An independent host replay inverts
+reference/direction, crosses repeated wraps in
 both directions, and requires exact recovery of its known multi-turn truth. See
 [`evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md`](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 
@@ -1085,9 +1090,10 @@ current GPIO singletons, and exposes no FOC commit path.
 MCPWM and ADC tokens are sealed in closed type states with no extractor and no
 `PowerStage`/`CurrentSense` implementation. GPIO2 is tied into the USB
 auto-programming/strap circuit and remains service-owned. Core 0 owns Wi-Fi and
-reports an unavailable cache transport. Configuration V5 retains the explicit
-qualified shutdown, rotor, controller, current-map, and PWM/ADC timing records
-and adds canonical ADC-frontend and PWM-hardware selections. The MKS topology
+reports an unavailable cache transport. Configuration V6 retains the explicit
+qualified shutdown, rotor, current-controller, current-map, ADC-frontend,
+PWM/ADC timing, and PWM-hardware selections and adds the canonical cascade and
+encoder profiles. The MKS topology
 selects phase high impedance, but its `Described` stage cannot validate that
 contract until physical evidence
 promotes the immutable board package to `Qualified`. A fake enable binding,
@@ -1168,19 +1174,22 @@ immediately stopped and reset to zero because the HAL exposes no
 configure-while-stopped call. No operator is attached to any pin and the owner
 exposes no controller, timer, compare write, or `PowerStage` implementation.
 
-`ALMCFG05` joins these portable contracts at the only executable boundary. One
+`ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage
 shutdown topology. Fixed records retain loop rates and dividers, both PI loops,
 absolute-count rotor calibration and ULP policy, both current maps, both
 programmed ADC attenuations, the complete PWM/ADC timing envelope, and the exact
 MCPWM source/counter clocks, timer peak, minimum pulse, compare-error policy,
-and raw prescalers. Reduced scalar authorities must exactly equal
+and raw prescalers. Three additional mandatory records retain the cascaded
+position/velocity controller, exact position/count-rate scales, and encoder
+clock/cadence/latency/wrap/precision policy. Reduced scalar authorities must exactly equal
 the duplicated integer pole-pair, encoder-modulus, carrier, control-rate, and
 dead-time facts. Only after independent full-stream SHA-256 validation can the
 private real-time configuration container inject that digest and revalidate a
 `FocParameterSnapshot`, `RotorCalibration`, proof-wrapped
-`TwoShuntCurrentCalibration`, and `PwmCompareContract`. MKS target lowering also
+`TwoShuntCurrentCalibration`, `PwmCompareContract`, `ServoLoopGrid`,
+`ServoCascadeConfig`, and `ServoEncoderProfile`. MKS target lowering also
 checks the compiled capability digest, fixed stage/phase/ADC topology, AB pair,
 and 12-bit ADC range before it can construct the otherwise-private stopped
 MCPWM selection. This is lowering, not peripheral activation: the MKS stage

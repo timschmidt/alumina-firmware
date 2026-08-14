@@ -288,7 +288,7 @@ role-preserving region presentation.
 
 The current authoritative Machine/CAM path derives exact dynamics, usable
 travel, physical-resolution/error budgets, timer rate, and output quantum from
-canonical firmware Configuration V5. Hypercurve lines and explicit arcs pass
+canonical firmware Configuration V6. Hypercurve lines and explicit arcs pass
 losslessly into Hyperpath. Polynomial cubics remain native exact sources and
 are reduced only by a caller-bounded pointwise certificate over exact
 degree-elevated chord differences and Hypercurve de Casteljau spans. The
@@ -301,7 +301,7 @@ lossless exact source-line pair which Hyperpath independently classifies G1.
 For an all-line route, exact retained unit-direction components now feed
 Hyperpath's arbitrary dense-axis affine projection. The planner selects
 route-wide scalar velocity, acceleration, and jerk limits from exact per-axis
-Configuration V5 facts and independently replays every span/axis inequality
+Configuration V6 facts and independently replays every span/axis inequality
 and selected bottleneck through Hypersolve. Any curved carrier keeps the prior
 conservative direction-independent limits because affine derivatives do not
 certify curvature or nonlinear kinematics.
@@ -781,9 +781,10 @@ Velocity/current feed-forward, overspeed, worst-case following error, sample
 age/time, digest, cycle, identity, and current-circle gates are transactional
 and latch first cause. A synthetic ideal-current mechanical plant produces an
 identical 12,000-tick replay with exactly 240 position and 1,200 velocity
-updates and converges within fixed lattice assertions. Configuration V5
-lowering, cached servo commands, inner-current-loop composition, core-1
-execution, WCET, safety integration, and every physical claim remain open. See
+updates and converges within fixed lattice assertions. Configuration V6 now
+stores and digest-binds the cascade and exact nested loop grid. Cached servo
+commands, inner-current-loop composition, core-1 execution, WCET, safety
+integration, and every physical claim remain open. See
 [`M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
 
 The portable absolute-encoder checkpoint now requires an explicit multi-turn
@@ -798,9 +799,11 @@ velocity intervals. Precision, range,
 identity, latency, cadence, wrap, and overflow failures are transactional and
 latch first cause. An independent 1,600-step replay crosses repeated forward
 and reverse wraps in both sensor directions and recovers its known multi-turn
-truth deterministically. Configuration records/lowering, homing and turn-seed
-authority, truthful AS5600 timestamps/aperture, physical speed/error
-qualification, target scheduling, and controller composition remain open. See
+truth deterministically. Configuration V6 now stores and digest-binds the exact
+scale, cadence, latency, speed, estimator-error, and precision policy. Homing
+and turn-seed authority, truthful AS5600 timestamps/aperture, physical
+speed/error qualification, target scheduling, and controller composition remain
+open. See
 [`M8-PORTABLE-ENCODER-ESTIMATOR.md`](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 
 Exit gate:

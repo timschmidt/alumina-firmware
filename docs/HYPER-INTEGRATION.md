@@ -89,7 +89,7 @@ need higher derivative terms and a different certificate.
 The interface CAM layer extends and composes these reports rather than
 introducing unrelated `f64` motion math. Its all-line Cartesian route derives
 exact unit-direction components from retained Hyperpath lines and applies the
-affine projection to Configuration V5 axis facts. If any carrier is curved, it
+affine projection to Configuration V6 axis facts. If any carrier is curved, it
 retains a conservative direction-independent limit and no affine report.
 The local step-timer boundary now ceilings every retained ideal interval to the
 exact backend output quantum and searches a caller-bounded rational dilation

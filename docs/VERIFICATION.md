@@ -85,6 +85,12 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   edges through synchronized raw ADC/current/rotor observations, dq control,
   interval SVPWM, complete-image staging, and the next exact timer-zero, with
   explicit counter/device clock grids and compare-precision rejection;
+- canonical Configuration V6 round-trip and negative replay for the mandatory
+  servo, encoder-scale, and encoder-policy records, including absent records,
+  stale or mismatched clocks/cadence/latency, exact scalar-to-lattice
+  equalities, conservative uncertainty endpoints, following-width containment,
+  acceleration-derived estimator error, digest binding, and raw/derived
+  substitution rejection;
 - portable cascaded-servo replay on an integral current/velocity/position
   device-cycle grid, including Q31.32 position uncertainty, widened velocity
   error, setpoint/sample sequencing, stale/overspeed/following limits,
@@ -371,6 +377,12 @@ proves modular unwrapping and interval conversion only under supplied exact
 timestamps, a supplied multi-turn seed, and declared motion/error bounds. It
 does not qualify AS5600 sample timing, alignment, homing, achievable speed,
 dropout behavior, or any target scheduling path.
+
+Configuration V6 makes those portable cascade and estimator profiles mandatory
+for a FOC axis and lowers them only after both cores can validate the same
+canonical bytes and exact machine-scalar relationships. That closes a software
+configuration seam; it does not satisfy any physical qualification step below
+or make the current MKS power-stage package armable.
 
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.

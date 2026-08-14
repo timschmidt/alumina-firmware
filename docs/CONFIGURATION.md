@@ -1,6 +1,6 @@
-# Canonical machine configuration V5
+# Canonical machine configuration V6
 
-`ALMCFG05` is the content-addressed machine/resource authority emitted by the
+`ALMCFG06` is the content-addressed machine/resource authority emitted by the
 browser/WASM compiler and independently validated on both ESP cores. It is not
 JSON, FluidNC configuration, G-code, a Rust memory image, or executable code.
 The complete bytes are uploaded as storage object kind `MachineConfiguration`
@@ -16,16 +16,16 @@ between revisions or capability/qualification changes.
 Integers are little-endian. Reserved bytes are zero. Unknown flags, record
 kinds, roles, facts, owners, polarities, or evidence values reject. Records are
 fixed-width and strictly ordered by `(kind, instance, selector)`; duplicate keys
-are consequently impossible. V5 admits 1–256 records and no trailing data. V1,
-V2, V3, and V4 are not accepted; firmware and UI are updated together without a
+are consequently impossible. V6 admits 1–256 records and no trailing data. V1
+through V5 are not accepted; firmware and UI are updated together without a
 compatibility decoder.
 
 The fixed 80-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCFG05` |
-| 8 | 2 | exact schema version `5` |
+| 0 | 8 | ASCII `ALMCFG06` |
+| 8 | 2 | exact schema version `6` |
 | 10 | 2 | header bytes, exactly `80` |
 | 12 | 4 | total bytes, exactly `80 + record_count × 64` |
 | 16 | 32 | required canonical board-capability SHA-256 |
@@ -45,7 +45,7 @@ Every record is exactly 64 bytes. Its common prefix is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 2 | kind: binding `1`, scalar `2`, FOC shutdown `3`, runtime `4`, controller `5`, rotor `6`, current channel `7`, PWM/ADC timing `8`, ADC frontend `9`, PWM hardware `10` |
+| 0 | 2 | kind: binding `1`, scalar `2`, FOC shutdown `3`, runtime `4`, controller `5`, rotor `6`, current channel `7`, PWM/ADC timing `8`, ADC frontend `9`, PWM hardware `10`, servo `11`, encoder scale `12`, encoder policy `13` |
 | 2 | 2 | record bytes, exactly `64` |
 | 4 | 2 | logical instance; axis index for axis/motor facts |
 | 6 | 2 | kind-specific role or scalar-fact selector |
@@ -344,6 +344,77 @@ duration is not shorter than the configured dead time. All arithmetic is
 checked before a digest-bound
 `PwmCompareContract` can exist.
 
+### FOC cascaded-servo record
+
+Kind `11` has selector zero and fills the complete payload with the portable
+position/velocity cascade selected for the axis:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 4 | position-error to normalized-velocity proportional gain, Q2.30 |
+| 12 | 4 | velocity PI proportional gain, Q2.30 |
+| 16 | 4 | velocity PI integral gain per velocity update, Q2.30 |
+| 20 | 4 | velocity PI integral minimum, Q2.30 |
+| 24 | 4 | velocity PI integral maximum, Q2.30 |
+| 28 | 4 | velocity PI output minimum, Q2.30 |
+| 32 | 4 | velocity PI output maximum, Q2.30 |
+| 36 | 4 | symmetric maximum normalized velocity, Q2.30 |
+| 40 | 4 | symmetric maximum normalized current-vector magnitude, Q2.30 |
+| 44 | 4 | fixed normalized direct-current target, Q2.30 |
+| 48 | 8 | maximum following error in unsigned Q31.32 position bits |
+| 56 | 8 | maximum velocity-sample age in device cycles |
+
+The position gain is nonnegative. Velocity and current limits are positive and
+at most normalized one; the following limit is nonzero. The existing PI and
+current-circle validators remain authoritative. Lowering also requires the
+sample-age bound to fit one exact velocity period and to be no shorter than the
+encoder's maximum observation latency.
+
+### FOC encoder-scale record
+
+Kind `12` has selector zero and stores the exact mechanical mapping used by the
+portable absolute-count estimator:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 8 | signed Q31.32 position at the configured raw reference and zero turn |
+| 16 | 8 | Q31.32 position bits per positive motor turn, numerator |
+| 24 | 8 | Q31.32 position bits per positive motor turn, denominator |
+| 32 | 8 | raw counts/second at normalized velocity one, numerator |
+| 40 | 8 | raw counts/second at normalized velocity one, denominator |
+| 48 | 1 | measured `2` or qualified `3` evidence |
+| 49 | 15 | reserved zero |
+
+Both ratios are positive and reduced to lowest terms; zero numerators or
+denominators and declared-only evidence reject. The record does not invent a
+multi-turn branch. Homing or retained-position policy must still supply the
+boot-local signed turn seed before an estimator can emit physical position.
+
+### FOC encoder-policy record
+
+Kind `13` has selector zero and stores the complete timing, ambiguity, and
+precision policy for the estimator:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 8 | 4 | exact device-cycle counter frequency |
+| 12 | 8 | exact physical sample period in device cycles |
+| 20 | 8 | maximum sample-to-availability latency in device cycles |
+| 28 | 4 | maximum normalized velocity used for wrap selection, Q2.30 |
+| 32 | 4 | maximum normalized velocity admitted to the servo, Q2.30 |
+| 36 | 4 | symmetric velocity-estimation error, Q2.30 |
+| 40 | 8 | maximum admitted Q31.32 position-interval width in ULPs |
+| 48 | 4 | maximum admitted Q2.30 velocity-interval width in ULPs |
+| 52 | 1 | evidence, exactly qualified `3` |
+| 53 | 11 | reserved zero |
+
+The clock, period, velocity bounds, estimator error, and width policies are
+nonzero. Latency cannot exceed one period; admitted velocity cannot exceed the
+trackable velocity; trackable velocity cannot exceed normalized one; and the
+estimator error cannot exceed admitted velocity. The record's device clock must
+equal the PWM/ADC synchronization clock, and its sample period must equal the
+exact velocity-loop period derived from the kind-`4` divider grid.
+
 ## Cross-record admission
 
 A stepper axis requires unique step and direction bindings plus exactly one
@@ -361,19 +432,61 @@ during configuration validation rather than disappearing from execution state.
 The axis also requires full steps, microsteps, gearing, travel/revolution,
 calibration, position range, velocity, acceleration, and jerk facts. A FOC axis
 requires unique U/V/W resources, one supported absolute-encoder device or PCNT
-resource, exactly the two ADC resources selected by its phase-pair record, one qualified shutdown
-contract, and pole-pair, encoder-count, current/voltage-limit,
-carrier/dead-time/control-rate, shunt, and current-gain facts. It also requires
-exactly one runtime record, direct and quadrature controller records, one rotor
-record, two current-channel records, one PWM/ADC timing record, two ADC-frontend
-records, and one PWM-hardware record. Runtime pole
-pairs, encoder modulus, PWM/current-loop rates, and dead-time ratio must equal
-their scalar authorities exactly. Phase and current binding rates must cover the
-PWM and current loops, while encoder rate times the integer velocity-loop
-divider must cover the current-loop rate. Stepper and FOC bindings cannot
-describe the same logical axis. At most four complete FOC profiles are retained in compact
-logical-instance order on core 1. Position minimum must compare exactly below
+resource, exactly the two ADC resources selected by its phase-pair record, one
+qualified shutdown contract, and the same gearing, travel, calibration,
+position, velocity, acceleration, jerk, and following-error facts used by the
+authoritative browser machine model. It additionally requires pole-pair,
+encoder-count, current/voltage-limit, carrier/dead-time/control-rate, shunt, and
+current-gain facts.
+
+Every FOC axis has exactly one runtime record, direct and quadrature
+current-controller records, one rotor record, two current-channel records, one
+PWM/ADC timing record, two ADC-frontend records, one PWM-hardware record, one
+cascaded-servo record, one encoder-scale record, and one encoder-policy record.
+Runtime pole pairs, encoder modulus, PWM/current-loop rates, and dead-time ratio
+must equal their scalar authorities exactly. Phase and current binding rates
+must cover the PWM and current loops, while encoder rate times the integer
+velocity-loop divider must cover the current-loop rate. Stepper and FOC bindings
+cannot describe the same logical axis. At most four complete FOC profiles are
+retained in compact logical-instance order on core 1. The allocation-free
+profile is compile-time bounded to 4,608 bytes; the V6 four-axis layout is 4,256
+bytes on the verified host target. Position minimum must compare exactly below
 maximum.
+
+Nominal mechanical scalars select the exact runtime lattices; uncertainty is
+retained separately for conservative safety bounds. Checked rational
+cross-products require:
+
+```text
+position_bits_per_turn
+    = 2^32 * travel_metres_per_output_turn
+      / (motor_turns_per_output_turn * calibration_scale)
+
+counts_per_second_at_velocity_one
+    = velocity_limit_metres_per_second
+      * encoder_counts_per_turn
+      * motor_turns_per_output_turn
+      * calibration_scale
+      / travel_metres_per_output_turn
+```
+
+The stored Q31.32 following limit must be the exact floor of the conservative
+lower endpoint of `AxisFollowingErrorMetres × 2^32`; the admitted position
+observation width cannot exceed it. Encoder admitted velocity must equal the
+servo velocity limit. The configured normalized estimator error must be at
+least the following outward-rounded acceleration term:
+
+```text
+ceil_Q2.30(
+    acceleration_limit_upper
+    * sample_period_cycles
+    / (2 * device_cycle_hz * velocity_limit_lower)
+)
+```
+
+This is the minimum secant-to-newest-sample enclosure. Qualification must add
+any timestamp, aperture, transport, or model error not already represented by
+the raw-count uncertainty; firmware never infers those missing physical facts.
 
 Optional FOC bus-voltage and fault bindings are retained rather than accepted
 and discarded. A fault binding also appears in the canonical safety-input
@@ -384,10 +497,14 @@ semantic validation, and SHA-256 verification, core 1 may lower a retained FOC
 slot. The combined `RealtimeConfiguration` cannot be assembled outside
 `alumina-config`; this prevents callers from pairing a profile with a different
 identity. Lowering injects that validated digest into `FocParameterSnapshot`,
-`RotorCalibration`, `TwoShuntCurrentCalibration`, and `PwmCompareContract`,
-revalidates all four, and retains both exact ADC attenuation selections and both
-raw MCPWM prescalers. It does not initialize ADC, attach an MCPWM operator to a
-pin, or create a power stage.
+`RotorCalibration`, `TwoShuntCurrentCalibration`, `PwmCompareContract`,
+`ServoCascadeConfig`, and `ServoEncoderProfile`; it also constructs the exact
+`ServoLoopGrid`. It revalidates every derived object, retains the three raw V6
+outer-loop records for independent replay, and retains both exact ADC
+attenuation selections and both raw MCPWM prescalers. Substituting either raw or
+derived servo/encoder state is rejected. Lowering does not initialize ADC,
+attach an MCPWM operator to a pin, establish the multi-turn seed, or create a
+power stage.
 
 MKS ESP32 FOC V1.0 target lowering additionally requires the configuration's
 capability digest to equal the compiled package, matches U/V/W and both ADC
@@ -495,16 +612,19 @@ selector and likewise remains closed until revalidation finishes.
 
 ## Current implementation boundary
 
-The canonical V5 format, SD publication reader, dual independent validators, core
-framing, authenticated firmware routing, boot recovery, safe-state transitions,
-executable safety/stepper/FOC profiles, digest-bound FOC lowering, job-identity
-handoff, and raw-media two-phase selection journal are implemented. The portable
-monitor consumes its safety profile with exact-cycle debounce, polarity,
-first-stale-cycle watchdogs, arming facts, and typed transitions; TinyBee target
-GPIO sampling is present but remains physically unqualified.
+The canonical V6 format, SD publication reader, dual independent validators,
+core framing, authenticated firmware routing, boot recovery, safe-state
+transitions, executable safety/stepper/FOC profiles, digest-bound inner-current,
+servo-grid, cascade, and encoder-profile lowering, job-identity handoff, and
+raw-media two-phase selection journal are implemented. There is deliberately no
+V5 decoder, adapter, or negotiation path. The portable monitor consumes its
+safety profile with exact-cycle debounce, polarity, first-stale-cycle
+watchdogs, arming facts, and typed transitions; TinyBee target GPIO sampling is
+present but remains physically unqualified.
 Activation, abort, and clear replay as complete fail-closed states across every
 injected write/sync cut. Both current board packages remain explicitly
 non-armable pending physical qualification, so a successfully committed
 configuration still cannot make `JobPrepare` executable on any image. No
-physical-board lifecycle, runtime stack watermark, or Wi-Fi/SD concurrency claim
-is made by this software checkpoint.
+physical-board lifecycle, multi-turn seed/homing owner, encoder transport task,
+closed cascaded-current target task, runtime stack watermark, or Wi-Fi/SD
+concurrency claim is made by this software checkpoint.

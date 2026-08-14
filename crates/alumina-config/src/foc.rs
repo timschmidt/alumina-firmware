@@ -3,7 +3,8 @@
 use alumina_foc::{
     CountUncertainty, CurrentChannelCalibration, ElectricalPhase, FocParameterSnapshot,
     FocTimingProfile, PiConfig, PwmAdcSynchronization, PwmCompareContract, Q30, RotationPrecision,
-    RotorCalibration, RotorCountDirection, TwoShuntCurrentCalibration, TwoShuntPhasePair,
+    RotorCalibration, RotorCountDirection, ServoCascadeConfig, ServoEncoderProfile,
+    ServoEncoderScale, ServoLoopGrid, ServoPosition, TwoShuntCurrentCalibration, TwoShuntPhasePair,
     ValidatedTwoShuntCurrentCalibration,
 };
 use alumina_protocol::{DeviceCycle, Digest};
@@ -289,6 +290,93 @@ impl FocPwmHardwareParameters {
     }
 }
 
+/// Digest-free cascaded position/velocity controller parameters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocServoParameters {
+    pub instance: u16,
+    pub position_proportional_gain: Q30,
+    pub velocity_controller: PiConfig,
+    pub maximum_velocity: Q30,
+    pub maximum_current: Q30,
+    pub direct_current_target: Q30,
+    pub maximum_following_error_bits: u64,
+    pub maximum_sample_age_cycles: u64,
+}
+
+impl FocServoParameters {
+    pub(crate) fn validate_shape(self) -> Result<(), ConfigurationError> {
+        if usize::from(self.instance) >= MAX_EXECUTABLE_FOC_AXES
+            || self.position_proportional_gain.bits() < 0
+            || self.maximum_velocity.bits() <= 0
+            || self.maximum_velocity.bits() > Q30::ONE.bits()
+            || self.maximum_current.bits() <= 0
+            || self.maximum_current.bits() > Q30::ONE.bits()
+            || self.maximum_following_error_bits == 0
+            || self.velocity_controller.validate().is_err()
+        {
+            return Err(ConfigurationError::FocServo);
+        }
+        Ok(())
+    }
+}
+
+/// Exact mechanical position and normalized count-rate scales for one encoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocEncoderScaleParameters {
+    pub instance: u16,
+    pub position_at_reference: ServoPosition,
+    pub scale: ServoEncoderScale,
+    pub evidence: FactEvidence,
+}
+
+impl FocEncoderScaleParameters {
+    pub(crate) fn validate_shape(self) -> Result<(), ConfigurationError> {
+        if usize::from(self.instance) >= MAX_EXECUTABLE_FOC_AXES
+            || self.evidence == FactEvidence::Declared
+        {
+            return Err(ConfigurationError::FocEncoder);
+        }
+        Ok(())
+    }
+}
+
+/// Qualified exact timing, ambiguity, and precision policy for one encoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocEncoderPolicyParameters {
+    pub instance: u16,
+    pub device_cycle_hz: u32,
+    pub sample_period_cycles: u64,
+    pub maximum_observation_latency_cycles: u64,
+    pub maximum_trackable_velocity: Q30,
+    pub maximum_admitted_velocity: Q30,
+    pub maximum_velocity_estimation_error: Q30,
+    pub maximum_position_interval_width_ulps: u64,
+    pub maximum_velocity_interval_width_ulps: u32,
+    pub evidence: FactEvidence,
+}
+
+impl FocEncoderPolicyParameters {
+    pub(crate) fn validate_shape(self) -> Result<(), ConfigurationError> {
+        if usize::from(self.instance) >= MAX_EXECUTABLE_FOC_AXES
+            || self.device_cycle_hz == 0
+            || self.sample_period_cycles == 0
+            || self.maximum_observation_latency_cycles > self.sample_period_cycles
+            || self.maximum_trackable_velocity.bits() <= 0
+            || self.maximum_trackable_velocity.bits() > Q30::ONE.bits()
+            || self.maximum_admitted_velocity.bits() <= 0
+            || self.maximum_admitted_velocity.bits() > self.maximum_trackable_velocity.bits()
+            || self.maximum_velocity_estimation_error.bits() <= 0
+            || self.maximum_velocity_estimation_error.bits() > self.maximum_admitted_velocity.bits()
+            || self.maximum_position_interval_width_ulps == 0
+            || self.maximum_velocity_interval_width_ulps == 0
+            || self.evidence != FactEvidence::Qualified
+        {
+            return Err(ConfigurationError::FocEncoder);
+        }
+        Ok(())
+    }
+}
+
 /// Complete controller-facing result derived from one validated configuration digest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LoweredFocAxisConfiguration {
@@ -302,6 +390,12 @@ pub struct LoweredFocAxisConfiguration {
     pub adc_channel1: FocAdcFrontendParameters,
     pub pwm_hardware: FocPwmHardwareParameters,
     pub pwm_compare: PwmCompareContract,
+    pub servo_parameters: FocServoParameters,
+    pub encoder_scale_parameters: FocEncoderScaleParameters,
+    pub encoder_policy_parameters: FocEncoderPolicyParameters,
+    pub servo_grid: ServoLoopGrid,
+    pub servo: ServoCascadeConfig,
+    pub encoder: ServoEncoderProfile,
 }
 
 impl LoweredFocAxisConfiguration {
@@ -315,6 +409,9 @@ impl LoweredFocAxisConfiguration {
         if self.instance != self.adc_channel0.instance
             || self.instance != self.adc_channel1.instance
             || self.instance != self.pwm_hardware.instance
+            || self.instance != self.servo_parameters.instance
+            || self.instance != self.encoder_scale_parameters.instance
+            || self.instance != self.encoder_policy_parameters.instance
             || self.adc_channel0.channel != FocCurrentChannel::Channel0
             || self.adc_channel1.channel != FocCurrentChannel::Channel1
         {
@@ -323,6 +420,9 @@ impl LoweredFocAxisConfiguration {
         self.adc_channel0.validate_shape()?;
         self.adc_channel1.validate_shape()?;
         self.pwm_hardware.validate_shape()?;
+        self.servo_parameters.validate_shape()?;
+        self.encoder_scale_parameters.validate_shape()?;
+        self.encoder_policy_parameters.validate_shape()?;
         self.parameters
             .validate()
             .map_err(|_| ConfigurationError::FocRuntime)?;
@@ -367,8 +467,89 @@ impl LoweredFocAxisConfiguration {
         {
             return Err(ConfigurationError::FocHardware);
         }
+        let (servo_grid, servo, encoder) = lower_servo_profiles(
+            self.parameters,
+            self.rotor,
+            synchronization,
+            self.servo_parameters,
+            self.encoder_scale_parameters,
+            self.encoder_policy_parameters,
+        )?;
+        if self.servo_grid != servo_grid || self.servo != servo {
+            return Err(ConfigurationError::FocServo);
+        }
+        if self.encoder != encoder {
+            return Err(ConfigurationError::FocEncoder);
+        }
         Ok(())
     }
+}
+
+fn lower_servo_profiles(
+    parameters: FocParameterSnapshot,
+    rotor: RotorCalibration,
+    synchronization: PwmAdcSynchronization,
+    servo_parameters: FocServoParameters,
+    encoder_scale: FocEncoderScaleParameters,
+    encoder_policy: FocEncoderPolicyParameters,
+) -> Result<(ServoLoopGrid, ServoCascadeConfig, ServoEncoderProfile), ConfigurationError> {
+    servo_parameters.validate_shape()?;
+    encoder_scale.validate_shape()?;
+    encoder_policy.validate_shape()?;
+    if servo_parameters.instance != encoder_scale.instance
+        || servo_parameters.instance != encoder_policy.instance
+        || encoder_policy.device_cycle_hz != synchronization.device_cycle_hz
+    {
+        return Err(ConfigurationError::FocEncoder);
+    }
+    let servo_grid = ServoLoopGrid::new(
+        DeviceCycle(0),
+        encoder_policy.device_cycle_hz,
+        parameters.timing,
+    )
+    .map_err(|_| ConfigurationError::FocServo)?;
+    if encoder_policy.sample_period_cycles != servo_grid.velocity_period_cycles() {
+        return Err(ConfigurationError::FocEncoder);
+    }
+    let servo = ServoCascadeConfig {
+        configuration_digest: parameters.configuration_digest,
+        position_proportional_gain: servo_parameters.position_proportional_gain,
+        velocity_controller: servo_parameters.velocity_controller,
+        maximum_velocity: servo_parameters.maximum_velocity,
+        maximum_current: servo_parameters.maximum_current,
+        direct_current_target: servo_parameters.direct_current_target,
+        maximum_following_error_bits: servo_parameters.maximum_following_error_bits,
+        maximum_sample_age_cycles: servo_parameters.maximum_sample_age_cycles,
+    };
+    servo
+        .validate_for(servo_grid, &parameters)
+        .map_err(|_| ConfigurationError::FocServo)?;
+    if encoder_policy.maximum_admitted_velocity != servo.maximum_velocity
+        || servo.maximum_sample_age_cycles < encoder_policy.maximum_observation_latency_cycles
+    {
+        return Err(ConfigurationError::FocServo);
+    }
+    let encoder = ServoEncoderProfile {
+        configuration_digest: parameters.configuration_digest,
+        counts_per_mechanical_turn: rotor.counts_per_mechanical_turn,
+        count_at_reference: rotor.count_at_reference,
+        direction: rotor.direction,
+        maximum_count_error: rotor.maximum_count_error,
+        position_at_reference: encoder_scale.position_at_reference,
+        scale: encoder_scale.scale,
+        device_cycle_hz: encoder_policy.device_cycle_hz,
+        sample_period_cycles: encoder_policy.sample_period_cycles,
+        maximum_observation_latency_cycles: encoder_policy.maximum_observation_latency_cycles,
+        maximum_trackable_velocity: encoder_policy.maximum_trackable_velocity,
+        maximum_admitted_velocity: encoder_policy.maximum_admitted_velocity,
+        maximum_velocity_estimation_error: encoder_policy.maximum_velocity_estimation_error,
+        maximum_position_interval_width_ulps: encoder_policy.maximum_position_interval_width_ulps,
+        maximum_velocity_interval_width_ulps: encoder_policy.maximum_velocity_interval_width_ulps,
+    };
+    encoder
+        .validate()
+        .map_err(|_| ConfigurationError::FocEncoder)?;
+    Ok((servo_grid, servo, encoder))
 }
 
 impl RealtimeConfiguration {
@@ -412,6 +593,9 @@ fn lower_profile(
         profile.adc_channel0.instance,
         profile.adc_channel1.instance,
         profile.pwm_hardware.instance,
+        profile.servo.instance,
+        profile.encoder_scale.instance,
+        profile.encoder_policy.instance,
     ]
     .iter()
     .any(|record_instance| *record_instance != instance)
@@ -510,6 +694,15 @@ fn lower_profile(
         return Err(ConfigurationError::FocHardware);
     }
 
+    let (servo_grid, servo, encoder) = lower_servo_profiles(
+        parameters,
+        rotor,
+        synchronization,
+        profile.servo,
+        profile.encoder_scale,
+        profile.encoder_policy,
+    )?;
+
     let lowered = LoweredFocAxisConfiguration {
         instance,
         parameters,
@@ -521,6 +714,12 @@ fn lower_profile(
         adc_channel1: profile.adc_channel1,
         pwm_hardware: profile.pwm_hardware,
         pwm_compare,
+        servo_parameters: profile.servo,
+        encoder_scale_parameters: profile.encoder_scale,
+        encoder_policy_parameters: profile.encoder_policy,
+        servo_grid,
+        servo,
+        encoder,
     };
     lowered.validate()?;
     Ok(lowered)

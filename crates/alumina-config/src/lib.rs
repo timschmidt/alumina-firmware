@@ -12,8 +12,8 @@ use alumina_capability::{
 };
 use alumina_foc::{
     CountUncertainty, CurrentChannelCalibration, CurrentPolarity, ElectricalPhase,
-    FocTimingProfile, PiConfig, Q30, Q30Interval, RotationPrecision, RotorCountDirection,
-    TwoShuntPhasePair,
+    FocTimingProfile, PiConfig, Q30, Q30_SCALE, Q30Interval, RotationPrecision,
+    RotorCountDirection, SERVO_POSITION_SCALE, ServoEncoderScale, ServoPosition, TwoShuntPhasePair,
 };
 use alumina_protocol::Digest;
 use alumina_safety::{
@@ -28,16 +28,16 @@ mod foc;
 
 pub use foc::{
     FocAdcAttenuation, FocAdcFrontendParameters, FocControllerAxis, FocControllerParameters,
-    FocCurrentChannel, FocCurrentChannelParameters, FocPwmAdcTimingParameters,
-    FocPwmHardwareParameters, FocRotorParameters, FocRuntimeParameters,
-    LoweredFocAxisConfiguration,
+    FocCurrentChannel, FocCurrentChannelParameters, FocEncoderPolicyParameters,
+    FocEncoderScaleParameters, FocPwmAdcTimingParameters, FocPwmHardwareParameters,
+    FocRotorParameters, FocRuntimeParameters, FocServoParameters, LoweredFocAxisConfiguration,
 };
 
 /// Exact machine-configuration schema version.
-pub const CONFIGURATION_VERSION: u16 = 5;
+pub const CONFIGURATION_VERSION: u16 = 6;
 /// Bytes in the fixed canonical document header.
 pub const CONFIGURATION_HEADER_BYTES: usize = 80;
-/// Bytes in every V5 configuration record.
+/// Bytes in every V6 configuration record.
 pub const CONFIGURATION_RECORD_BYTES: usize = 64;
 /// Schema-wide bound independent of a board's smaller admission budget.
 pub const MAX_CONFIGURATION_RECORDS: usize = 256;
@@ -47,8 +47,10 @@ pub const MAX_AXIS_INSTANCES: usize = 16;
 pub const MAX_EXECUTABLE_STEPPER_AXES: usize = 8;
 /// Maximum FOC axes whose complete hardware contract is retained on core 1.
 pub const MAX_EXECUTABLE_FOC_AXES: usize = 4;
+/// Compile-time ceiling for the allocation-free core-1 configuration profile.
+pub const MAX_REALTIME_CONFIGURATION_PROFILE_BYTES: usize = 4_608;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG05";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCFG06";
 const RECORD_KIND_BINDING: u16 = 1;
 const RECORD_KIND_SCALAR: u16 = 2;
 const RECORD_KIND_FOC_SHUTDOWN: u16 = 3;
@@ -59,6 +61,9 @@ const RECORD_KIND_FOC_CURRENT_CHANNEL: u16 = 7;
 const RECORD_KIND_FOC_PWM_ADC_TIMING: u16 = 8;
 const RECORD_KIND_FOC_ADC_FRONTEND: u16 = 9;
 const RECORD_KIND_FOC_PWM_HARDWARE: u16 = 10;
+const RECORD_KIND_FOC_SERVO: u16 = 11;
+const RECORD_KIND_FOC_ENCODER_SCALE: u16 = 12;
+const RECORD_KIND_FOC_ENCODER_POLICY: u16 = 13;
 const PUBLICATION_MAGIC: [u8; 8] = *b"ALMCFQ01";
 const SELECTION_MAGIC: [u8; 8] = *b"ALMCFS01";
 const COORDINATOR_STATUS_MAGIC: [u8; 8] = *b"ALMCST01";
@@ -100,7 +105,7 @@ impl ConfigurationPublication {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V5 SHA-256/configuration representation.
+    /// Decodes only the exact V6 SHA-256/configuration representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationRequestError> {
         if encoded.len() != CONFIGURATION_PUBLICATION_BYTES {
             return Err(ConfigurationRequestError::Length);
@@ -261,7 +266,7 @@ impl ConfigurationFlags {
     pub const FIELD_ORIENTED_CONTROL: u32 = 1 << 2;
     /// Configuration contains non-motion laboratory/control resources.
     pub const LAB_CONTROL: u32 = 1 << 3;
-    /// All V5 flags.
+    /// All V6 flags.
     pub const ALLOWED: u32 =
         Self::MOTION | Self::CACHED_AUTONOMOUS | Self::FIELD_ORIENTED_CONTROL | Self::LAB_CONTROL;
 
@@ -299,7 +304,7 @@ impl ConfigurationHeader {
             .ok_or(ConfigurationError::Length)
     }
 
-    /// Encodes the exact V5 header.
+    /// Encodes the exact V6 header.
     pub fn encode(self) -> Result<[u8; CONFIGURATION_HEADER_BYTES], ConfigurationError> {
         self.validate()?;
         let mut encoded = [0_u8; CONFIGURATION_HEADER_BYTES];
@@ -319,7 +324,7 @@ impl ConfigurationHeader {
         Ok(encoded)
     }
 
-    /// Decodes only the exact canonical V5 header.
+    /// Decodes only the exact canonical V6 header.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_HEADER_BYTES {
             return Err(ConfigurationError::Length);
@@ -880,6 +885,9 @@ pub enum ConfigurationRecord {
     FocPwmAdcTiming(FocPwmAdcTimingParameters),
     FocAdcFrontend(FocAdcFrontendParameters),
     FocPwmHardware(FocPwmHardwareParameters),
+    FocServo(FocServoParameters),
+    FocEncoderScale(FocEncoderScaleParameters),
+    FocEncoderPolicy(FocEncoderPolicyParameters),
 }
 
 impl ConfigurationRecord {
@@ -1052,11 +1060,105 @@ impl ConfigurationRecord {
                 encoded[26] = hardware.evidence as u8;
                 // Bytes 27..64 are reserved zero.
             }
+            Self::FocServo(servo) => {
+                encoded[8..12]
+                    .copy_from_slice(&servo.position_proportional_gain.bits().to_le_bytes());
+                encoded[12..16].copy_from_slice(
+                    &servo
+                        .velocity_controller
+                        .proportional_gain
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[16..20].copy_from_slice(
+                    &servo
+                        .velocity_controller
+                        .integral_gain_per_update
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[20..24].copy_from_slice(
+                    &servo
+                        .velocity_controller
+                        .integral_minimum
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[24..28].copy_from_slice(
+                    &servo
+                        .velocity_controller
+                        .integral_maximum
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[28..32].copy_from_slice(
+                    &servo
+                        .velocity_controller
+                        .output_minimum
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[32..36].copy_from_slice(
+                    &servo
+                        .velocity_controller
+                        .output_maximum
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[36..40].copy_from_slice(&servo.maximum_velocity.bits().to_le_bytes());
+                encoded[40..44].copy_from_slice(&servo.maximum_current.bits().to_le_bytes());
+                encoded[44..48].copy_from_slice(&servo.direct_current_target.bits().to_le_bytes());
+                encoded[48..56].copy_from_slice(&servo.maximum_following_error_bits.to_le_bytes());
+                encoded[56..64].copy_from_slice(&servo.maximum_sample_age_cycles.to_le_bytes());
+            }
+            Self::FocEncoderScale(parameters) => {
+                let scale = parameters.scale;
+                encoded[8..16]
+                    .copy_from_slice(&parameters.position_at_reference.bits().to_le_bytes());
+                encoded[16..24]
+                    .copy_from_slice(&scale.position_bits_per_turn_numerator().to_le_bytes());
+                encoded[24..32]
+                    .copy_from_slice(&scale.position_bits_per_turn_denominator().to_le_bytes());
+                encoded[32..40].copy_from_slice(
+                    &scale
+                        .counts_per_second_at_velocity_one_numerator()
+                        .to_le_bytes(),
+                );
+                encoded[40..48].copy_from_slice(
+                    &scale
+                        .counts_per_second_at_velocity_one_denominator()
+                        .to_le_bytes(),
+                );
+                encoded[48] = parameters.evidence as u8;
+                // Bytes 49..64 are reserved zero.
+            }
+            Self::FocEncoderPolicy(policy) => {
+                encoded[8..12].copy_from_slice(&policy.device_cycle_hz.to_le_bytes());
+                encoded[12..20].copy_from_slice(&policy.sample_period_cycles.to_le_bytes());
+                encoded[20..28]
+                    .copy_from_slice(&policy.maximum_observation_latency_cycles.to_le_bytes());
+                encoded[28..32]
+                    .copy_from_slice(&policy.maximum_trackable_velocity.bits().to_le_bytes());
+                encoded[32..36]
+                    .copy_from_slice(&policy.maximum_admitted_velocity.bits().to_le_bytes());
+                encoded[36..40].copy_from_slice(
+                    &policy
+                        .maximum_velocity_estimation_error
+                        .bits()
+                        .to_le_bytes(),
+                );
+                encoded[40..48]
+                    .copy_from_slice(&policy.maximum_position_interval_width_ulps.to_le_bytes());
+                encoded[48..52]
+                    .copy_from_slice(&policy.maximum_velocity_interval_width_ulps.to_le_bytes());
+                encoded[52] = policy.evidence as u8;
+                // Bytes 53..64 are reserved zero.
+            }
         }
         Ok(encoded)
     }
 
-    /// Decodes only an exact fixed-width V5 record.
+    /// Decodes only an exact fixed-width V6 record.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationError> {
         if encoded.len() != CONFIGURATION_RECORD_BYTES
             || usize::from(read_u16(encoded, 2)) != CONFIGURATION_RECORD_BYTES
@@ -1289,6 +1391,70 @@ impl ConfigurationRecord {
                         .ok_or(ConfigurationError::Evidence)?,
                 })
             }
+            RECORD_KIND_FOC_SERVO => {
+                if selector != 0 {
+                    return Err(ConfigurationError::Selector);
+                }
+                Self::FocServo(FocServoParameters {
+                    instance,
+                    position_proportional_gain: Q30::from_bits(read_i32(encoded, 8)),
+                    velocity_controller: PiConfig {
+                        proportional_gain: Q30::from_bits(read_i32(encoded, 12)),
+                        integral_gain_per_update: Q30::from_bits(read_i32(encoded, 16)),
+                        integral_minimum: Q30::from_bits(read_i32(encoded, 20)),
+                        integral_maximum: Q30::from_bits(read_i32(encoded, 24)),
+                        output_minimum: Q30::from_bits(read_i32(encoded, 28)),
+                        output_maximum: Q30::from_bits(read_i32(encoded, 32)),
+                    },
+                    maximum_velocity: Q30::from_bits(read_i32(encoded, 36)),
+                    maximum_current: Q30::from_bits(read_i32(encoded, 40)),
+                    direct_current_target: Q30::from_bits(read_i32(encoded, 44)),
+                    maximum_following_error_bits: read_u64(encoded, 48),
+                    maximum_sample_age_cycles: read_u64(encoded, 56),
+                })
+            }
+            RECORD_KIND_FOC_ENCODER_SCALE => {
+                if selector != 0 {
+                    return Err(ConfigurationError::Selector);
+                }
+                if encoded[49..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocEncoderScale(FocEncoderScaleParameters {
+                    instance,
+                    position_at_reference: ServoPosition::from_bits(read_i64(encoded, 8)),
+                    scale: ServoEncoderScale::new(
+                        read_u64(encoded, 16),
+                        read_u64(encoded, 24),
+                        read_u64(encoded, 32),
+                        read_u64(encoded, 40),
+                    )
+                    .map_err(|_| ConfigurationError::FocEncoder)?,
+                    evidence: FactEvidence::from_wire(encoded[48])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
+            RECORD_KIND_FOC_ENCODER_POLICY => {
+                if selector != 0 {
+                    return Err(ConfigurationError::Selector);
+                }
+                if encoded[53..64].iter().any(|byte| *byte != 0) {
+                    return Err(ConfigurationError::Reserved);
+                }
+                Self::FocEncoderPolicy(FocEncoderPolicyParameters {
+                    instance,
+                    device_cycle_hz: read_u32(encoded, 8),
+                    sample_period_cycles: read_u64(encoded, 12),
+                    maximum_observation_latency_cycles: read_u64(encoded, 20),
+                    maximum_trackable_velocity: Q30::from_bits(read_i32(encoded, 28)),
+                    maximum_admitted_velocity: Q30::from_bits(read_i32(encoded, 32)),
+                    maximum_velocity_estimation_error: Q30::from_bits(read_i32(encoded, 36)),
+                    maximum_position_interval_width_ulps: read_u64(encoded, 40),
+                    maximum_velocity_interval_width_ulps: read_u32(encoded, 48),
+                    evidence: FactEvidence::from_wire(encoded[52])
+                        .ok_or(ConfigurationError::Evidence)?,
+                })
+            }
             _ => return Err(ConfigurationError::RecordKind),
         };
         record.validate_shape()?;
@@ -1319,7 +1485,10 @@ impl ConfigurationRecord {
             | Self::FocCurrentChannel(_)
             | Self::FocPwmAdcTiming(_)
             | Self::FocAdcFrontend(_)
-            | Self::FocPwmHardware(_) => true,
+            | Self::FocPwmHardware(_)
+            | Self::FocServo(_)
+            | Self::FocEncoderScale(_)
+            | Self::FocEncoderPolicy(_) => true,
         }
     }
 
@@ -1361,6 +1530,9 @@ impl ConfigurationRecord {
                 frontend.channel as u16,
             ),
             Self::FocPwmHardware(hardware) => (RECORD_KIND_FOC_PWM_HARDWARE, hardware.instance, 0),
+            Self::FocServo(servo) => (RECORD_KIND_FOC_SERVO, servo.instance, 0),
+            Self::FocEncoderScale(scale) => (RECORD_KIND_FOC_ENCODER_SCALE, scale.instance, 0),
+            Self::FocEncoderPolicy(policy) => (RECORD_KIND_FOC_ENCODER_POLICY, policy.instance, 0),
         }
     }
 
@@ -1490,6 +1662,9 @@ impl ConfigurationRecord {
             Self::FocPwmAdcTiming(timing) => timing.validate_shape()?,
             Self::FocAdcFrontend(frontend) => frontend.validate_shape()?,
             Self::FocPwmHardware(hardware) => hardware.validate_shape()?,
+            Self::FocServo(servo) => servo.validate_shape()?,
+            Self::FocEncoderScale(scale) => scale.validate_shape()?,
+            Self::FocEncoderPolicy(policy) => policy.validate_shape()?,
         }
         Ok(())
     }
@@ -1551,11 +1726,20 @@ struct FocProfileState {
     adc_channel0: Option<FocAdcFrontendParameters>,
     adc_channel1: Option<FocAdcFrontendParameters>,
     pwm_hardware: Option<FocPwmHardwareParameters>,
+    servo: Option<FocServoParameters>,
+    encoder_scale: Option<FocEncoderScaleParameters>,
+    encoder_policy: Option<FocEncoderPolicyParameters>,
     encoder_counts_per_turn: Option<Rational>,
     pole_pairs: Option<Rational>,
     pwm_carrier_hz: Option<Rational>,
     pwm_dead_time_seconds: Option<Rational>,
     control_rate_hz: Option<Rational>,
+    motor_turns_per_output_turn: Option<ExactScalar>,
+    travel_metres_per_output_turn: Option<ExactScalar>,
+    calibration_scale: Option<ExactScalar>,
+    velocity_limit: Option<ExactScalar>,
+    acceleration_limit: Option<ExactScalar>,
+    following_error: Option<ExactScalar>,
 }
 
 impl FocProfileState {
@@ -1580,11 +1764,20 @@ impl FocProfileState {
         adc_channel0: None,
         adc_channel1: None,
         pwm_hardware: None,
+        servo: None,
+        encoder_scale: None,
+        encoder_policy: None,
         encoder_counts_per_turn: None,
         pole_pairs: None,
         pwm_carrier_hz: None,
         pwm_dead_time_seconds: None,
         control_rate_hz: None,
+        motor_turns_per_output_turn: None,
+        travel_metres_per_output_turn: None,
+        calibration_scale: None,
+        velocity_limit: None,
+        acceleration_limit: None,
+        following_error: None,
     };
 
     const fn has_configuration(self) -> bool {
@@ -1599,6 +1792,9 @@ impl FocProfileState {
             || self.adc_channel0.is_some()
             || self.adc_channel1.is_some()
             || self.pwm_hardware.is_some()
+            || self.servo.is_some()
+            || self.encoder_scale.is_some()
+            || self.encoder_policy.is_some()
     }
 }
 
@@ -1614,7 +1810,7 @@ pub enum AxisDriverControl {
 /// For `step`, the active/inactive fields are pulse-high and pulse-low time.
 /// For `direction` and `driver_control`, they are setup-before-step and
 /// hold-after-step time. This role-specific interpretation is part of
-/// configuration V5.
+/// configuration V6.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StepperAxisProfile {
     pub instance: u16,
@@ -1647,6 +1843,9 @@ pub struct FocAxisProfile {
     pub adc_channel0: FocAdcFrontendParameters,
     pub adc_channel1: FocAdcFrontendParameters,
     pub pwm_hardware: FocPwmHardwareParameters,
+    pub servo: FocServoParameters,
+    pub encoder_scale: FocEncoderScaleParameters,
+    pub encoder_policy: FocEncoderPolicyParameters,
 }
 
 /// Allocation-free executable facts retained from the exact configuration.
@@ -1820,6 +2019,13 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             ConfigurationRecord::FocPwmHardware(hardware) => {
                 self.retain_foc_pwm_hardware(hardware)?;
             }
+            ConfigurationRecord::FocServo(servo) => self.retain_foc_servo(servo)?,
+            ConfigurationRecord::FocEncoderScale(scale) => {
+                self.retain_foc_encoder_scale(scale)?;
+            }
+            ConfigurationRecord::FocEncoderPolicy(policy) => {
+                self.retain_foc_encoder_policy(policy)?;
+            }
         }
         self.last_key = Some(key);
         self.seen_records += 1;
@@ -1929,6 +2135,15 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     | role_bit(BindingRole::FocPhaseW)
                     | role_bit(BindingRole::FocEncoder);
                 let scalars = fact_bit(ScalarFact::AxisEncoderCountsPerTurn)
+                    | fact_bit(ScalarFact::AxisMotorTurnsPerOutputTurn)
+                    | fact_bit(ScalarFact::AxisTravelMetresPerOutputTurn)
+                    | fact_bit(ScalarFact::AxisCalibrationScale)
+                    | fact_bit(ScalarFact::AxisPositionMinimumMetres)
+                    | fact_bit(ScalarFact::AxisPositionMaximumMetres)
+                    | fact_bit(ScalarFact::AxisVelocityLimitMetresPerSecond)
+                    | fact_bit(ScalarFact::AxisAccelerationLimitMetresPerSecondSquared)
+                    | fact_bit(ScalarFact::AxisJerkLimitMetresPerSecondCubed)
+                    | fact_bit(ScalarFact::AxisFollowingErrorMetres)
                     | fact_bit(ScalarFact::MotorPolePairs)
                     | fact_bit(ScalarFact::MotorCurrentLimitAmperes)
                     | fact_bit(ScalarFact::MotorVoltageLimitVolts)
@@ -1974,6 +2189,13 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     .ok_or(ConfigurationError::IncompleteAxis)?;
                 let pwm_hardware = retained
                     .pwm_hardware
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let servo = retained.servo.ok_or(ConfigurationError::IncompleteAxis)?;
+                let encoder_scale = retained
+                    .encoder_scale
+                    .ok_or(ConfigurationError::IncompleteAxis)?;
+                let encoder_policy = retained
+                    .encoder_policy
                     .ok_or(ConfigurationError::IncompleteAxis)?;
                 let current_mask = role_bit(BindingRole::FocCurrentA)
                     | role_bit(BindingRole::FocCurrentB)
@@ -2056,6 +2278,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                 {
                     return Err(ConfigurationError::FocRuntime);
                 }
+                validate_foc_servo_scalars(retained, servo, encoder_scale, encoder_policy)?;
                 let foc_profile = FocAxisProfile {
                     instance: u16::try_from(instance).map_err(|_| ConfigurationError::AxisCount)?,
                     phase_u,
@@ -2077,6 +2300,9 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                     adc_channel0,
                     adc_channel1,
                     pwm_hardware,
+                    servo,
+                    encoder_scale,
+                    encoder_policy,
                 };
                 foc::validate_profile(foc_profile)?;
                 profile.foc_axes[usize::from(foc_axes)] = Some(foc_profile);
@@ -2365,6 +2591,45 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         Ok(())
     }
 
+    fn retain_foc_servo(&mut self, servo: FocServoParameters) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(servo.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.servo.replace(servo).is_some() {
+            return Err(ConfigurationError::FocServo);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_encoder_scale(
+        &mut self,
+        scale: FocEncoderScaleParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(scale.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.encoder_scale.replace(scale).is_some() {
+            return Err(ConfigurationError::FocEncoder);
+        }
+        Ok(())
+    }
+
+    fn retain_foc_encoder_policy(
+        &mut self,
+        policy: FocEncoderPolicyParameters,
+    ) -> Result<(), ConfigurationError> {
+        let state = self
+            .foc
+            .get_mut(usize::from(policy.instance))
+            .ok_or(ConfigurationError::AxisCount)?;
+        if state.encoder_policy.replace(policy).is_some() {
+            return Err(ConfigurationError::FocEncoder);
+        }
+        Ok(())
+    }
+
     fn validate_foc_shutdown(
         &mut self,
         shutdown: FocShutdownContract,
@@ -2597,11 +2862,213 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
                         foc.pwm_dead_time_seconds = Some(scalar.value);
                     }
                     ScalarFact::ControlRateHertz => foc.control_rate_hz = Some(scalar.value),
+                    ScalarFact::AxisMotorTurnsPerOutputTurn => {
+                        foc.motor_turns_per_output_turn = Some(scalar);
+                    }
+                    ScalarFact::AxisTravelMetresPerOutputTurn => {
+                        foc.travel_metres_per_output_turn = Some(scalar);
+                    }
+                    ScalarFact::AxisCalibrationScale => foc.calibration_scale = Some(scalar),
+                    ScalarFact::AxisVelocityLimitMetresPerSecond => {
+                        foc.velocity_limit = Some(scalar);
+                    }
+                    ScalarFact::AxisAccelerationLimitMetresPerSecondSquared => {
+                        foc.acceleration_limit = Some(scalar);
+                    }
+                    ScalarFact::AxisFollowingErrorMetres => {
+                        foc.following_error = Some(scalar);
+                    }
                     _ => {}
                 }
             }
         }
         Ok(())
+    }
+}
+
+fn validate_foc_servo_scalars(
+    retained: FocProfileState,
+    servo: FocServoParameters,
+    encoder_scale: FocEncoderScaleParameters,
+    encoder_policy: FocEncoderPolicyParameters,
+) -> Result<(), ConfigurationError> {
+    let motor_turns = retained
+        .motor_turns_per_output_turn
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+    let travel = retained
+        .travel_metres_per_output_turn
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+    let calibration = retained
+        .calibration_scale
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+    let velocity = retained
+        .velocity_limit
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+    let acceleration = retained
+        .acceleration_limit
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+    let following = retained
+        .following_error
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+    let counts_per_turn = retained
+        .encoder_counts_per_turn
+        .ok_or(ConfigurationError::IncompleteAxis)?;
+
+    let (motor_numerator, motor_denominator) = positive_rational(motor_turns.value)?;
+    let (travel_numerator, travel_denominator) = positive_rational(travel.value)?;
+    let (calibration_numerator, calibration_denominator) = positive_rational(calibration.value)?;
+    let scale = encoder_scale.scale;
+    let scale_left = checked_product(&[
+        u128::from(scale.position_bits_per_turn_numerator()),
+        travel_denominator,
+        motor_numerator,
+        calibration_numerator,
+    ])?;
+    let position_scale =
+        u128::try_from(SERVO_POSITION_SCALE).map_err(|_| ConfigurationError::FocEncoder)?;
+    let scale_right = checked_product(&[
+        u128::from(scale.position_bits_per_turn_denominator()),
+        position_scale,
+        travel_numerator,
+        motor_denominator,
+        calibration_denominator,
+    ])?;
+    if scale_left != scale_right {
+        return Err(ConfigurationError::FocEncoder);
+    }
+
+    let (velocity_numerator, velocity_denominator) = positive_rational(velocity.value)?;
+    let (counts_numerator, counts_denominator) = positive_rational(counts_per_turn)?;
+    if counts_denominator != 1 {
+        return Err(ConfigurationError::FocEncoder);
+    }
+    let rate_left = checked_product(&[
+        u128::from(scale.counts_per_second_at_velocity_one_numerator()),
+        velocity_denominator,
+        motor_denominator,
+        calibration_denominator,
+        travel_numerator,
+    ])?;
+    let rate_right = checked_product(&[
+        u128::from(scale.counts_per_second_at_velocity_one_denominator()),
+        velocity_numerator,
+        counts_numerator,
+        motor_numerator,
+        calibration_numerator,
+        travel_denominator,
+    ])?;
+    if rate_left != rate_right {
+        return Err(ConfigurationError::FocEncoder);
+    }
+
+    let (following_lower_numerator, following_lower_denominator) =
+        positive_lower_endpoint(following)?;
+    let following_bits = following_lower_numerator
+        .checked_mul(position_scale)
+        .ok_or(ConfigurationError::FocServo)?
+        / following_lower_denominator;
+    if u128::from(servo.maximum_following_error_bits) != following_bits
+        || encoder_policy.maximum_position_interval_width_ulps > servo.maximum_following_error_bits
+    {
+        return Err(ConfigurationError::FocServo);
+    }
+
+    let (acceleration_upper_numerator, acceleration_upper_denominator) =
+        positive_upper_endpoint(acceleration)?;
+    let (velocity_lower_numerator, velocity_lower_denominator) = positive_lower_endpoint(velocity)?;
+    let q30_scale = u128::try_from(Q30_SCALE).map_err(|_| ConfigurationError::FocServo)?;
+    let required_estimation_numerator = checked_product(&[
+        acceleration_upper_numerator,
+        u128::from(encoder_policy.sample_period_cycles),
+        q30_scale,
+        velocity_lower_denominator,
+    ])?;
+    let required_estimation_denominator = checked_product(&[
+        acceleration_upper_denominator,
+        2,
+        u128::from(encoder_policy.device_cycle_hz),
+        velocity_lower_numerator,
+    ])?;
+    let required_estimation_bits = div_ceil_u128_checked(
+        required_estimation_numerator,
+        required_estimation_denominator,
+    )?;
+    let retained_estimation_bits =
+        u128::try_from(encoder_policy.maximum_velocity_estimation_error.bits())
+            .map_err(|_| ConfigurationError::FocEncoder)?;
+    if retained_estimation_bits < required_estimation_bits {
+        return Err(ConfigurationError::FocEncoder);
+    }
+    Ok(())
+}
+
+fn positive_rational(value: Rational) -> Result<(u128, u128), ConfigurationError> {
+    let numerator = u128::try_from(value.numerator).map_err(|_| ConfigurationError::Scalar)?;
+    if numerator == 0 || value.denominator == 0 {
+        return Err(ConfigurationError::Scalar);
+    }
+    Ok((numerator, u128::from(value.denominator)))
+}
+
+fn positive_lower_endpoint(scalar: ExactScalar) -> Result<(u128, u128), ConfigurationError> {
+    let (value_numerator, value_denominator) = positive_rational(scalar.value)?;
+    let uncertainty_numerator =
+        u128::try_from(scalar.uncertainty.numerator).map_err(|_| ConfigurationError::Scalar)?;
+    let uncertainty_denominator = u128::from(scalar.uncertainty.denominator);
+    let left = value_numerator
+        .checked_mul(uncertainty_denominator)
+        .ok_or(ConfigurationError::Scalar)?;
+    let right = uncertainty_numerator
+        .checked_mul(value_denominator)
+        .ok_or(ConfigurationError::Scalar)?;
+    let numerator = left.checked_sub(right).ok_or(ConfigurationError::Scalar)?;
+    if numerator == 0 {
+        return Err(ConfigurationError::Scalar);
+    }
+    let denominator = value_denominator
+        .checked_mul(uncertainty_denominator)
+        .ok_or(ConfigurationError::Scalar)?;
+    Ok((numerator, denominator))
+}
+
+fn positive_upper_endpoint(scalar: ExactScalar) -> Result<(u128, u128), ConfigurationError> {
+    let (value_numerator, value_denominator) = positive_rational(scalar.value)?;
+    let uncertainty_numerator =
+        u128::try_from(scalar.uncertainty.numerator).map_err(|_| ConfigurationError::Scalar)?;
+    let uncertainty_denominator = u128::from(scalar.uncertainty.denominator);
+    let numerator = value_numerator
+        .checked_mul(uncertainty_denominator)
+        .and_then(|value| {
+            uncertainty_numerator
+                .checked_mul(value_denominator)
+                .and_then(|uncertainty| value.checked_add(uncertainty))
+        })
+        .ok_or(ConfigurationError::Scalar)?;
+    let denominator = value_denominator
+        .checked_mul(uncertainty_denominator)
+        .ok_or(ConfigurationError::Scalar)?;
+    Ok((numerator, denominator))
+}
+
+fn checked_product(values: &[u128]) -> Result<u128, ConfigurationError> {
+    values.iter().try_fold(1_u128, |product, value| {
+        product
+            .checked_mul(*value)
+            .ok_or(ConfigurationError::FocEncoder)
+    })
+}
+
+fn div_ceil_u128_checked(numerator: u128, denominator: u128) -> Result<u128, ConfigurationError> {
+    if denominator == 0 {
+        return Err(ConfigurationError::FocEncoder);
+    }
+    let quotient = numerator / denominator;
+    if numerator.is_multiple_of(denominator) {
+        Ok(quotient)
+    } else {
+        quotient
+            .checked_add(1)
+            .ok_or(ConfigurationError::FocEncoder)
     }
 }
 
@@ -3227,7 +3694,9 @@ impl ConfigurationFaultCode {
             | ConfigurationError::FocRuntime
             | ConfigurationError::FocRotor
             | ConfigurationError::FocCurrent
-            | ConfigurationError::FocHardware => Self::ExactFact,
+            | ConfigurationError::FocHardware
+            | ConfigurationError::FocServo
+            | ConfigurationError::FocEncoder => Self::ExactFact,
             ConfigurationError::IncompleteAxis
             | ConfigurationError::AxisKind
             | ConfigurationError::AxisCount
@@ -3586,7 +4055,7 @@ pub struct ConfigurationCoordinatorStatus {
 }
 
 impl ConfigurationCoordinatorStatus {
-    /// Encodes the exact 264-byte V5 status body.
+    /// Encodes the exact 264-byte V6 status body.
     pub fn encode(
         self,
     ) -> Result<[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES], ConfigurationCoordinatorStatusError>
@@ -3626,7 +4095,7 @@ impl ConfigurationCoordinatorStatus {
         Ok(encoded)
     }
 
-    /// Decodes and re-encodes to require the unique V5 representation.
+    /// Decodes and re-encodes to require the unique V6 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, ConfigurationCoordinatorStatusError> {
         if encoded.len() != CONFIGURATION_COORDINATOR_STATUS_BYTES {
             return Err(ConfigurationCoordinatorStatusError::Length);
@@ -4558,6 +5027,8 @@ pub enum ConfigurationError {
     FocRotor,
     FocCurrent,
     FocHardware,
+    FocServo,
+    FocEncoder,
     MotionPolicy,
     Internal,
 }
@@ -5037,6 +5508,31 @@ mod tests {
             shutdown,
         ]);
         records.extend([
+            scalar(0, ScalarFact::AxisMotorTurnsPerOutputTurn, rational(1, 1)),
+            scalar(
+                0,
+                ScalarFact::AxisTravelMetresPerOutputTurn,
+                rational(1, 100),
+            ),
+            scalar(0, ScalarFact::AxisCalibrationScale, rational(1, 1)),
+            scalar(0, ScalarFact::AxisPositionMinimumMetres, rational(-1, 1)),
+            scalar(0, ScalarFact::AxisPositionMaximumMetres, rational(1, 1)),
+            scalar(
+                0,
+                ScalarFact::AxisVelocityLimitMetresPerSecond,
+                rational(1, 10),
+            ),
+            scalar(
+                0,
+                ScalarFact::AxisAccelerationLimitMetresPerSecondSquared,
+                rational(1, 1),
+            ),
+            scalar(
+                0,
+                ScalarFact::AxisJerkLimitMetresPerSecondCubed,
+                rational(10, 1),
+            ),
+            scalar(0, ScalarFact::AxisFollowingErrorMetres, rational(1, 1_000)),
             scalar(0, ScalarFact::AxisEncoderCountsPerTurn, rational(4_096, 1)),
             scalar(0, ScalarFact::MotorPolePairs, rational(7, 1)),
             scalar(0, ScalarFact::MotorCurrentLimitAmperes, rational(1, 2)),
@@ -5136,6 +5632,34 @@ mod tests {
                 timer_prescaler: 0,
                 evidence: FactEvidence::Qualified,
             }),
+            ConfigurationRecord::FocServo(FocServoParameters {
+                instance: 0,
+                position_proportional_gain: Q30::ONE,
+                velocity_controller: controller,
+                maximum_velocity: Q30::ONE,
+                maximum_current: Q30::ONE,
+                direct_current_target: Q30::ZERO,
+                maximum_following_error_bits: 4_294_967,
+                maximum_sample_age_cycles: 80_000,
+            }),
+            ConfigurationRecord::FocEncoderScale(FocEncoderScaleParameters {
+                instance: 0,
+                position_at_reference: ServoPosition::ZERO,
+                scale: ServoEncoderScale::new(1_073_741_824, 25, 40_960, 1).unwrap(),
+                evidence: FactEvidence::Measured,
+            }),
+            ConfigurationRecord::FocEncoderPolicy(FocEncoderPolicyParameters {
+                instance: 0,
+                device_cycle_hz: 80_000_000,
+                sample_period_cycles: 80_000,
+                maximum_observation_latency_cycles: 20_000,
+                maximum_trackable_velocity: Q30::ONE,
+                maximum_admitted_velocity: Q30::ONE,
+                maximum_velocity_estimation_error: Q30::from_bits(1 << 24),
+                maximum_position_interval_width_ulps: 20_000,
+                maximum_velocity_interval_width_ulps: 100_000_000,
+                evidence: FactEvidence::Qualified,
+            }),
         ]);
         records.sort_by_key(|record| record.canonical_order_key());
         records
@@ -5148,6 +5672,23 @@ mod tests {
             devices,
             ..board_mks_esp32_foc_v1::PACKAGE
         })
+    }
+
+    fn validate_foc_records(
+        package: &BoardPackage<'_>,
+        records: &[ConfigurationRecord],
+    ) -> Result<ConfigurationIdentity, ConfigurationError> {
+        let flags = ConfigurationFlags(
+            ConfigurationFlags::MOTION | ConfigurationFlags::FIELD_ORIENTED_CONTROL,
+        );
+        let (bytes, digest) = document(package, records, flags);
+        let mut validator = ConfigurationStreamValidator::<32>::new(
+            package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )?;
+        validator.push(&bytes)?;
+        validator.finish()
     }
 
     fn reidentified_package(mut package: BoardPackage<'_>) -> BoardPackage<'_> {
@@ -5521,7 +6062,7 @@ mod tests {
     }
 
     #[test]
-    fn foc_v5_records_have_unique_canonical_fixed_width_encodings() {
+    fn foc_v6_records_have_unique_canonical_fixed_width_encodings() {
         let records = mks_foc_records(foc_shutdown(
             FocShutdownStrategy::PhaseHighImpedance,
             None,
@@ -5537,24 +6078,38 @@ mod tests {
             assert_eq!(encoded.len(), CONFIGURATION_RECORD_BYTES);
             assert_eq!(ConfigurationRecord::decode(&encoded), Ok(record));
 
-            let reserved_offset = match kind {
-                RECORD_KIND_FOC_RUNTIME => 10,
-                RECORD_KIND_FOC_CONTROLLER | RECORD_KIND_FOC_ROTOR => 63,
-                RECORD_KIND_FOC_CURRENT_CHANNEL => 18,
-                RECORD_KIND_FOC_PWM_ADC_TIMING => 63,
-                RECORD_KIND_FOC_ADC_FRONTEND => 63,
-                RECORD_KIND_FOC_PWM_HARDWARE => 63,
+            let mut noncanonical = encoded;
+            let expected = match kind {
+                RECORD_KIND_FOC_RUNTIME => {
+                    noncanonical[10] = 1;
+                    ConfigurationError::Reserved
+                }
+                RECORD_KIND_FOC_CONTROLLER | RECORD_KIND_FOC_ROTOR => {
+                    noncanonical[63] = 1;
+                    ConfigurationError::Reserved
+                }
+                RECORD_KIND_FOC_CURRENT_CHANNEL => {
+                    noncanonical[18] = 1;
+                    ConfigurationError::Reserved
+                }
+                RECORD_KIND_FOC_PWM_ADC_TIMING
+                | RECORD_KIND_FOC_ADC_FRONTEND
+                | RECORD_KIND_FOC_PWM_HARDWARE
+                | RECORD_KIND_FOC_ENCODER_SCALE
+                | RECORD_KIND_FOC_ENCODER_POLICY => {
+                    noncanonical[63] = 1;
+                    ConfigurationError::Reserved
+                }
+                RECORD_KIND_FOC_SERVO => {
+                    noncanonical[6] = 1;
+                    ConfigurationError::Selector
+                }
                 _ => unreachable!(),
             };
-            let mut noncanonical = encoded;
-            noncanonical[reserved_offset] = 1;
-            assert_eq!(
-                ConfigurationRecord::decode(&noncanonical),
-                Err(ConfigurationError::Reserved)
-            );
+            assert_eq!(ConfigurationRecord::decode(&noncanonical), Err(expected));
             checked += 1;
         }
-        assert_eq!(checked, 10);
+        assert_eq!(checked, 13);
 
         let frontend = mks_foc_records(foc_shutdown(
             FocShutdownStrategy::PhaseHighImpedance,
@@ -5626,6 +6181,43 @@ mod tests {
             Err(ConfigurationError::Selector)
         );
 
+        let encoder_scale = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ))
+        .into_iter()
+        .find(|record| matches!(record, ConfigurationRecord::FocEncoderScale(_)))
+        .unwrap();
+        let mut unreduced_scale = encoder_scale.encode().unwrap();
+        unreduced_scale[16..24].copy_from_slice(&2_u64.to_le_bytes());
+        unreduced_scale[24..32].copy_from_slice(&2_u64.to_le_bytes());
+        assert_eq!(
+            ConfigurationRecord::decode(&unreduced_scale),
+            Err(ConfigurationError::FocEncoder)
+        );
+        let mut declared_scale = encoder_scale.encode().unwrap();
+        declared_scale[48] = FactEvidence::Declared as u8;
+        assert_eq!(
+            ConfigurationRecord::decode(&declared_scale),
+            Err(ConfigurationError::FocEncoder)
+        );
+
+        let encoder_policy = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ))
+        .into_iter()
+        .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+        .unwrap();
+        let mut measured_policy = encoder_policy.encode().unwrap();
+        measured_policy[52] = FactEvidence::Measured as u8;
+        assert_eq!(
+            ConfigurationRecord::decode(&measured_policy),
+            Err(ConfigurationError::FocEncoder)
+        );
+
         let header = ConfigurationHeader {
             capability_digest: board_mks_esp32_foc_v1::CAPABILITY_DIGEST,
             record_count: 1,
@@ -5633,8 +6225,8 @@ mod tests {
             flags: ConfigurationFlags::default(),
         };
         let mut old_header = header.encode().unwrap();
-        old_header[0..8].copy_from_slice(b"ALMCFG04");
-        old_header[8..10].copy_from_slice(&4_u16.to_le_bytes());
+        old_header[0..8].copy_from_slice(b"ALMCFG05");
+        old_header[8..10].copy_from_slice(&5_u16.to_le_bytes());
         assert_eq!(
             ConfigurationHeader::decode(&old_header),
             Err(ConfigurationError::Magic)
@@ -5811,11 +6403,44 @@ mod tests {
         assert_eq!(lowered.pwm_compare.configuration_digest(), digest);
         assert_eq!(lowered.pwm_compare.counter_clock_hz(), 80_000_000);
         assert_eq!(lowered.pwm_compare.timer_peak_ticks(), 2_000);
+        assert_eq!(lowered.servo_grid.device_cycle_hz(), 80_000_000);
+        assert_eq!(lowered.servo_grid.current_period_cycles(), 4_000);
+        assert_eq!(lowered.servo_grid.velocity_period_cycles(), 80_000);
+        assert_eq!(lowered.servo_grid.position_period_cycles(), 800_000);
+        assert_eq!(lowered.servo.configuration_digest, digest);
+        assert_eq!(lowered.servo.maximum_following_error_bits, 4_294_967);
+        assert_eq!(lowered.encoder.configuration_digest, digest);
+        assert_eq!(lowered.encoder.sample_period_cycles, 80_000);
+        assert_eq!(lowered.encoder.position_at_reference, ServoPosition::ZERO);
+        assert_eq!(
+            lowered.encoder.scale.position_bits_per_turn_numerator(),
+            1_073_741_824
+        );
+        assert_eq!(
+            lowered.encoder.scale.position_bits_per_turn_denominator(),
+            25
+        );
+        assert_eq!(
+            lowered
+                .encoder
+                .scale
+                .counts_per_second_at_velocity_one_numerator(),
+            40_960
+        );
         let mut forged_lowering = lowered;
         forged_lowering.pwm_hardware.timer_peak_ticks = 1_999;
         assert_eq!(
             forged_lowering.validate(),
             Err(ConfigurationError::FocHardware)
+        );
+        let mut forged_servo = lowered;
+        forged_servo.servo.maximum_following_error_bits += 1;
+        assert_eq!(forged_servo.validate(), Err(ConfigurationError::FocServo));
+        let mut forged_encoder = lowered;
+        forged_encoder.encoder.maximum_position_interval_width_ulps += 1;
+        assert_eq!(
+            forged_encoder.validate(),
+            Err(ConfigurationError::FocEncoder)
         );
         assert_eq!(
             configuration
@@ -5995,6 +6620,225 @@ mod tests {
     }
 
     #[test]
+    fn foc_v6_requires_one_coherent_servo_encoder_contract_per_axis() {
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        for device in &mut devices[..2] {
+            device.support = SupportLevel::Qualified;
+        }
+        let package = qualified_mks_package(&devices);
+        let records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+
+        for missing_kind in [
+            RECORD_KIND_FOC_SERVO,
+            RECORD_KIND_FOC_ENCODER_SCALE,
+            RECORD_KIND_FOC_ENCODER_POLICY,
+        ] {
+            let mut missing = records.clone();
+            missing.retain(|record| record.canonical_order_key().0 != missing_kind);
+            assert_eq!(
+                validate_foc_records(&package, &missing),
+                Err(ConfigurationError::IncompleteAxis)
+            );
+        }
+
+        let mut wrong_clock = records.clone();
+        let ConfigurationRecord::FocEncoderPolicy(policy) = wrong_clock
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        policy.device_cycle_hz = 79_999_999;
+        assert_eq!(
+            validate_foc_records(&package, &wrong_clock),
+            Err(ConfigurationError::FocEncoder)
+        );
+
+        let mut wrong_period = records.clone();
+        let ConfigurationRecord::FocEncoderPolicy(policy) = wrong_period
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        policy.sample_period_cycles = 79_999;
+        assert_eq!(
+            validate_foc_records(&package, &wrong_period),
+            Err(ConfigurationError::FocEncoder)
+        );
+
+        let mut wrong_velocity = records.clone();
+        let ConfigurationRecord::FocEncoderPolicy(policy) = wrong_velocity
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        policy.maximum_admitted_velocity = Q30::HALF;
+        assert_eq!(
+            validate_foc_records(&package, &wrong_velocity),
+            Err(ConfigurationError::FocServo)
+        );
+
+        let mut stale_before_available = records;
+        let ConfigurationRecord::FocServo(servo) = stale_before_available
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocServo(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        servo.maximum_sample_age_cycles = 19_999;
+        assert_eq!(
+            validate_foc_records(&package, &stale_before_available),
+            Err(ConfigurationError::FocServo)
+        );
+    }
+
+    #[test]
+    fn foc_v6_exact_machine_scalars_bind_servo_and_encoder_lattices() {
+        let mut devices = Vec::from(board_mks_esp32_foc_v1::PACKAGE.devices);
+        for device in &mut devices[..2] {
+            device.support = SupportLevel::Qualified;
+        }
+        let package = qualified_mks_package(&devices);
+        let records = mks_foc_records(foc_shutdown(
+            FocShutdownStrategy::PhaseHighImpedance,
+            None,
+            SignalPolarity::NotApplicable,
+        ));
+
+        let mut wrong_position_scale = records.clone();
+        let ConfigurationRecord::FocEncoderScale(scale) = wrong_position_scale
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderScale(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        scale.scale = ServoEncoderScale::new(1_073_741_826, 25, 40_960, 1).unwrap();
+        assert_eq!(
+            validate_foc_records(&package, &wrong_position_scale),
+            Err(ConfigurationError::FocEncoder)
+        );
+
+        let mut wrong_rate_scale = records.clone();
+        let ConfigurationRecord::FocEncoderScale(scale) = wrong_rate_scale
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderScale(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        scale.scale = ServoEncoderScale::new(1_073_741_824, 25, 40_961, 1).unwrap();
+        assert_eq!(
+            validate_foc_records(&package, &wrong_rate_scale),
+            Err(ConfigurationError::FocEncoder)
+        );
+
+        let mut noncanonical_following_limit = records.clone();
+        let ConfigurationRecord::FocServo(servo) = noncanonical_following_limit
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocServo(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        servo.maximum_following_error_bits += 1;
+        assert_eq!(
+            validate_foc_records(&package, &noncanonical_following_limit),
+            Err(ConfigurationError::FocServo)
+        );
+
+        let mut observation_wider_than_following = records.clone();
+        let ConfigurationRecord::FocEncoderPolicy(policy) = observation_wider_than_following
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        policy.maximum_position_interval_width_ulps = 4_294_968;
+        assert_eq!(
+            validate_foc_records(&package, &observation_wider_than_following),
+            Err(ConfigurationError::FocServo)
+        );
+
+        let mut insufficient_estimator_error = records.clone();
+        let ConfigurationRecord::FocEncoderPolicy(policy) = insufficient_estimator_error
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        policy.maximum_velocity_estimation_error = Q30::from_bits(5_368_709);
+        assert_eq!(
+            validate_foc_records(&package, &insufficient_estimator_error),
+            Err(ConfigurationError::FocEncoder)
+        );
+
+        let mut uncertain = records;
+        for record in &mut uncertain {
+            if let ConfigurationRecord::Scalar(scalar) = record {
+                match scalar.fact {
+                    ScalarFact::AxisVelocityLimitMetresPerSecond => {
+                        scalar.uncertainty = rational(1, 100);
+                    }
+                    ScalarFact::AxisAccelerationLimitMetresPerSecondSquared => {
+                        scalar.uncertainty = rational(1, 10);
+                    }
+                    ScalarFact::AxisFollowingErrorMetres => {
+                        scalar.uncertainty = rational(1, 10_000);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let ConfigurationRecord::FocServo(servo) = uncertain
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocServo(_)))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        servo.maximum_following_error_bits = 3_865_470;
+        if let ConfigurationRecord::FocEncoderPolicy(policy) = uncertain
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        {
+            policy.maximum_velocity_estimation_error = Q30::from_bits(6_561_756);
+        }
+        assert_eq!(
+            validate_foc_records(&package, &uncertain)
+                .unwrap()
+                .summary
+                .foc_axes,
+            1
+        );
+
+        if let ConfigurationRecord::FocEncoderPolicy(policy) = uncertain
+            .iter_mut()
+            .find(|record| matches!(record, ConfigurationRecord::FocEncoderPolicy(_)))
+            .unwrap()
+        {
+            policy.maximum_velocity_estimation_error = Q30::from_bits(6_561_755);
+        }
+        assert_eq!(
+            validate_foc_records(&package, &uncertain),
+            Err(ConfigurationError::FocEncoder)
+        );
+    }
+
+    #[test]
     fn dedicated_shutdown_polarity_must_match_the_board_safe_level() {
         let control = ResourceId::Gpio(21);
         let mut resources = Vec::from(board_mks_esp32_foc_v1::PACKAGE.board.resources);
@@ -6089,8 +6933,14 @@ mod tests {
     #[test]
     fn tinybee_motion_document_validates_at_every_chunk_split() {
         assert!(
-            core::mem::size_of::<RealtimeConfigurationProfile>() <= 4_096,
-            "executable profiles are retained transactionally on core 1"
+            core::mem::size_of::<RealtimeConfigurationProfile>()
+                <= MAX_REALTIME_CONFIGURATION_PROFILE_BYTES,
+            "executable profiles are retained transactionally on core 1: {} bytes; FOC axis {}, servo {}, encoder scale {}, encoder policy {}",
+            core::mem::size_of::<RealtimeConfigurationProfile>(),
+            core::mem::size_of::<FocAxisProfile>(),
+            core::mem::size_of::<FocServoParameters>(),
+            core::mem::size_of::<FocEncoderScaleParameters>(),
+            core::mem::size_of::<FocEncoderPolicyParameters>()
         );
         let records = tinybee_motion_records();
         let flags = ConfigurationFlags(ConfigurationFlags::MOTION);
@@ -6229,7 +7079,10 @@ mod tests {
                 | ConfigurationRecord::FocCurrentChannel(_)
                 | ConfigurationRecord::FocPwmAdcTiming(_)
                 | ConfigurationRecord::FocAdcFrontend(_)
-                | ConfigurationRecord::FocPwmHardware(_) => {}
+                | ConfigurationRecord::FocPwmHardware(_)
+                | ConfigurationRecord::FocServo(_)
+                | ConfigurationRecord::FocEncoderScale(_)
+                | ConfigurationRecord::FocEncoderPolicy(_) => {}
             }
         }
         records.sort_by_key(|record| record.canonical_order_key());
