@@ -312,6 +312,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   admission, allocation-free two-block setpoint ownership, terminal hold,
   complete-axis simulation, frozen moving-Hyper verification, and renewed ESP
   artifacts with every peripheral and energization claim closed.
+- [`M10-PERMANENT-SERVO-LIFECYCLE.md`](M10-PERMANENT-SERVO-LIFECYCLE.md) —
+  independently derived dual-core typed admission, fixed-memory distributed
+  servo lifecycle, transactional complete-axis simulation join, static-memory
+  correction, and renewed ESP artifacts with every physical gate closed.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,

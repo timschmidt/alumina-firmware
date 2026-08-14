@@ -429,7 +429,8 @@ through distributed prime/start, block return, finish, cancellation, and fault.
 A virtual transactional mailbox joins it to the complete FOC-axis owner. Target
 PWM/ADC/encoder mailbox implementation, safe shutdown integration, WCET, and
 physical qualification remain later gates; every board still rejects servo
-arming and this structural milestone cannot energize hardware.
+arming and this structural milestone cannot energize hardware. See
+[`M10-PERMANENT-SERVO-LIFECYCLE.md`](evidence/M10-PERMANENT-SERVO-LIFECYCLE.md).
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

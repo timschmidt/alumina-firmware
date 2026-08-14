@@ -135,3 +135,5 @@ transactional unavailable result. `SERVO_OUTPUT_IMPLEMENTED`,
 lead all remain closed for TinyBee, T-Deck Pro, and MKS ESP32 FOC. The job is
 therefore rejected before cache ownership or arming; no target PWM, ADC,
 encoder, shutdown, timing, or energization claim follows from this milestone.
+The exact commands, artifacts, memory correction, and closed gates are recorded
+in `docs/evidence/M10-PERMANENT-SERVO-LIFECYCLE.md`.
