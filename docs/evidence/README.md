@@ -332,6 +332,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](M10-FAIL-CLOSED-PWM-TARGET-OWNER.md)
   — unique aggregate backend ownership, automatic all-stage safe handling,
   recoverable unsafe-fault state, and canonical dual-axis simulator replay.
+- [`M10-CLOSED-MKS-PWM-BACKEND.md`](M10-CLOSED-MKS-PWM-BACKEND.md) — a linked
+  MKS dual-stage aggregate backend whose only successful operation is the
+  complete closed safe transaction, plus safe-first permanent mailbox rejection.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,
