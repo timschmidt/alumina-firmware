@@ -17,8 +17,9 @@ pub use angle::{
 };
 pub use axis::{
     MAX_PREPARED_SERVO_FOC_AXIS_ACTIVATION_BYTES, MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES,
-    MAX_SERVO_FOC_AXIS_CONTROLLER_BYTES, MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES,
-    MAX_SERVO_FOC_BANK_AXES, PreparedServoFocAxisActivation, PreparedServoFocAxisTransition,
+    MAX_PREPARED_SERVO_FOC_BANK_ACTIVATION_BYTES, MAX_SERVO_FOC_AXIS_CONTROLLER_BYTES,
+    MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES, MAX_SERVO_FOC_BANK_AXES,
+    PreparedServoFocAxisActivation, PreparedServoFocAxisTransition, PreparedServoFocBankActivation,
     PreparedServoFocBankTransition, ServoFocAxisController, ServoFocAxisError,
     ServoFocAxisPeriodInput, ServoFocAxisPreparedUpdate, ServoFocAxisProfile, ServoFocAxisUpdate,
     ServoFocBank, ServoFocBankError,

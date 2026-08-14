@@ -524,12 +524,18 @@ pub enum PwmCommitBarrierError {
 /// Complete simultaneous physical acknowledgement released exactly once.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PwmCommitBankCompletion<const AXES: usize> {
+    configuration_digest: Digest,
     period_sequence: u64,
     observed_at: DeviceCycle,
     commits: [PowerStageCommit; AXES],
 }
 
 impl<const AXES: usize> PwmCommitBankCompletion<AXES> {
+    /// Immutable configuration identity admitted by the barrier.
+    pub const fn configuration_digest(self) -> Digest {
+        self.configuration_digest
+    }
+
     /// Common physical-period sequence accepted by this barrier.
     pub const fn period_sequence(self) -> u64 {
         self.period_sequence
@@ -675,6 +681,7 @@ impl<const AXES: usize> PwmCommitBankBarrier<AXES> {
         let observations = core::mem::replace(&mut self.observations, [None; AXES]);
         let commits = observations.map(|commit| commit.expect("complete PWM commit bank"));
         let completion = PwmCommitBankCompletion {
+            configuration_digest: self.configuration_digest,
             period_sequence: self.next_period_sequence,
             observed_at,
             commits,
@@ -1025,6 +1032,7 @@ mod tests {
         barrier.record_latch(0, commits[0]).unwrap();
         assert!(barrier.ready());
         let completion = barrier.finish_boundary(DeviceCycle(8_000)).unwrap();
+        assert_eq!(completion.configuration_digest(), DIGEST);
         assert_eq!(completion.period_sequence(), 7);
         assert_eq!(completion.observed_at(), DeviceCycle(8_000));
         assert_eq!(completion.commits(), commits);

@@ -10,13 +10,13 @@ use alumina_protocol::{DeviceCycle, Digest};
 use crate::{
     AlphaBeta, CascadedServoController, CurrentSample, DqControlUpdate, DqCurrentController,
     DqInterval, DqPoint, FocCurrentCommand, FocError, FocParameterSnapshot, ModulationResult,
-    PowerStageCommit, PwmAdcSampleStamp, PwmCompareContract, PwmCompareError, PwmCompareImage,
-    PwmCompareLatch, PwmCompareLatchError, PwmCompareLatchOwner, Q30Interval, RotationPrecision,
-    RotorCalibration, RotorSample, ServoCascadeConfig, ServoCascadeError, ServoCascadeProfileError,
-    ServoCascadeUpdate, ServoEncoderError, ServoEncoderEstimate, ServoEncoderEstimator,
-    ServoEncoderObservation, ServoEncoderProfile, ServoEncoderProfileError, ServoEncoderSeed,
-    ServoLoopGrid, ServoLoopGridError, ServoSetpoint, ValidatedTwoShuntCurrentCalibration,
-    inverse_park, park, space_vector_modulate,
+    PowerStageCommit, PwmAdcSampleStamp, PwmCommitBankCompletion, PwmCompareContract,
+    PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError, PwmCompareLatchOwner,
+    Q30Interval, RotationPrecision, RotorCalibration, RotorSample, ServoCascadeConfig,
+    ServoCascadeError, ServoCascadeProfileError, ServoCascadeUpdate, ServoEncoderError,
+    ServoEncoderEstimate, ServoEncoderEstimator, ServoEncoderObservation, ServoEncoderProfile,
+    ServoEncoderProfileError, ServoEncoderSeed, ServoLoopGrid, ServoLoopGridError, ServoSetpoint,
+    ValidatedTwoShuntCurrentCalibration, inverse_park, park, space_vector_modulate,
 };
 
 const INITIAL_DUTY_TOKEN: u32 = 1;
@@ -32,6 +32,9 @@ pub const MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES: usize = 2_304;
 pub const MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES: usize = 1_024;
 /// Maximum complete axes joined by one simultaneous portable FOC owner.
 pub const MAX_SERVO_FOC_BANK_AXES: usize = 4;
+/// Portable upper bound for one complete four-axis activation candidate.
+pub const MAX_PREPARED_SERVO_FOC_BANK_ACTIVATION_BYTES: usize =
+    MAX_SERVO_FOC_BANK_AXES * MAX_PREPARED_SERVO_FOC_AXIS_ACTIVATION_BYTES + 256;
 
 /// Immutable, fully normalized inputs for one portable servo/FOC owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -202,6 +205,54 @@ impl PreparedServoFocAxisActivation {
     /// Complete neutral image the target must stage before activation.
     pub const fn initial_image(&self) -> PwmCompareImage {
         self.initial_image
+    }
+}
+
+/// Opaque complete-axis bank awaiting one simultaneous neutral-image commit.
+///
+/// Every axis profile, seed, and boot-local identity is validated before this
+/// value is returned. No live controller exists until [`ServoFocBank::activate`]
+/// consumes the complete physical acknowledgement vector.
+#[derive(Debug, Eq, PartialEq)]
+pub struct PreparedServoFocBankActivation<const AXES: usize> {
+    configuration_digest: Digest,
+    first_boundary: DeviceCycle,
+    pwm_period_cycles: u32,
+    prepared: [Option<PreparedServoFocAxisActivation>; AXES],
+}
+
+impl<const AXES: usize> PreparedServoFocBankActivation<AXES> {
+    /// Immutable configuration identity shared by every prepared axis.
+    pub const fn configuration_digest(&self) -> Digest {
+        self.configuration_digest
+    }
+
+    /// Sole first physical timer-zero accepted by this activation.
+    pub const fn first_boundary(&self) -> DeviceCycle {
+        self.first_boundary
+    }
+
+    /// Common exact PWM period in device cycles.
+    pub const fn pwm_period_cycles(&self) -> u32 {
+        self.pwm_period_cycles
+    }
+
+    /// One initial neutral image in physical-axis order.
+    pub fn initial_image(&self, axis: usize) -> Option<PwmCompareImage> {
+        self.prepared
+            .get(axis)
+            .and_then(Option::as_ref)
+            .map(PreparedServoFocAxisActivation::initial_image)
+    }
+
+    /// Complete initial neutral-image vector in physical-axis order.
+    pub fn initial_images(&self) -> [PwmCompareImage; AXES] {
+        core::array::from_fn(|axis| {
+            self.prepared[axis]
+                .as_ref()
+                .expect("complete prepared FOC bank activation")
+                .initial_image()
+        })
     }
 }
 
@@ -676,9 +727,113 @@ impl ServoFocAxisController {
 }
 
 impl<const AXES: usize> ServoFocBank<AXES> {
-    /// Joins already activated axes only when their identities and exact nested
-    /// loop grids admit one simultaneous current-period transaction.
-    pub fn new(axes: [ServoFocAxisController; AXES]) -> Result<Self, ServoFocBankError> {
+    /// Validates a complete bank before any initial neutral image is staged.
+    pub fn prepare_activation(
+        profiles: [ServoFocAxisProfile; AXES],
+        activation_ids: [u64; AXES],
+        seeds: [ServoEncoderSeed; AXES],
+        first_boundary: DeviceCycle,
+    ) -> Result<PreparedServoFocBankActivation<AXES>, ServoFocBankError> {
+        if AXES == 0 || AXES > MAX_SERVO_FOC_BANK_AXES {
+            return Err(ServoFocBankError::AxisCount);
+        }
+        for axis in 0..AXES {
+            if activation_ids[axis] == 0 {
+                return Err(ServoFocBankError::Axis {
+                    axis,
+                    error: ServoFocAxisError::ActivationIdentity,
+                });
+            }
+            if activation_ids
+                .iter()
+                .take(axis)
+                .any(|prior| *prior == activation_ids[axis])
+            {
+                return Err(ServoFocBankError::Profile);
+            }
+        }
+
+        let mut prepared = core::array::from_fn(|_| None);
+        for axis in 0..AXES {
+            let candidate = ServoFocAxisController::prepare_activation(
+                profiles[axis],
+                activation_ids[axis],
+                seeds[axis],
+                first_boundary,
+            )
+            .map_err(|error| ServoFocBankError::Axis { axis, error })?;
+            prepared[axis] = Some(candidate);
+        }
+
+        let first = prepared[0]
+            .as_ref()
+            .expect("nonempty prepared FOC bank activation");
+        let configuration_digest = first.profile.configuration_digest();
+        let grid = first.cascade.grid();
+        let pwm_period_cycles = first.profile.pwm_compare.pwm_period_device_cycles();
+        for candidate in prepared
+            .iter()
+            .map(|candidate| candidate.as_ref().expect("complete FOC bank activation"))
+        {
+            if candidate.profile.configuration_digest() != configuration_digest
+                || candidate.first_boundary != first_boundary
+                || candidate.cascade.grid() != grid
+                || candidate.profile.pwm_compare.pwm_period_device_cycles() != pwm_period_cycles
+                || candidate.initial_image.configuration_digest() != configuration_digest
+                || candidate.initial_image.scheduled_at() != first_boundary
+            {
+                return Err(ServoFocBankError::Profile);
+            }
+        }
+
+        Ok(PreparedServoFocBankActivation {
+            configuration_digest,
+            first_boundary,
+            pwm_period_cycles,
+            prepared,
+        })
+    }
+
+    /// Creates one live bank only after every prepared neutral image committed.
+    pub fn activate(
+        mut prepared: PreparedServoFocBankActivation<AXES>,
+        completion: PwmCommitBankCompletion<AXES>,
+    ) -> Result<Self, ServoFocBankError> {
+        if completion.configuration_digest() != prepared.configuration_digest {
+            return Err(ServoFocBankError::Profile);
+        }
+        if completion.period_sequence() != 0 || completion.observed_at() != prepared.first_boundary
+        {
+            return Err(ServoFocBankError::Schedule);
+        }
+        let commits = completion.commits();
+        for (axis, commit) in commits.iter().copied().enumerate() {
+            let image = prepared
+                .prepared
+                .get(axis)
+                .and_then(Option::as_ref)
+                .ok_or(ServoFocBankError::Schedule)?
+                .initial_image();
+            validate_power_stage_commit(commit, image)
+                .map_err(|error| ServoFocBankError::Axis { axis, error })?;
+        }
+
+        let mut axes = core::array::from_fn(|_| None);
+        for (axis, commit) in commits.iter().copied().enumerate() {
+            let axis_prepared = prepared.prepared[axis]
+                .take()
+                .ok_or(ServoFocBankError::Schedule)?;
+            let controller = ServoFocAxisController::activate(axis_prepared, commit)
+                .map_err(|error| ServoFocBankError::Axis { axis, error })?;
+            axes[axis] = Some(controller);
+        }
+        Self::from_activated_axes(axes.map(|axis| axis.expect("complete activated FOC bank")))
+    }
+
+    /// Internal final validation after the complete activation commit succeeds.
+    fn from_activated_axes(
+        axes: [ServoFocAxisController; AXES],
+    ) -> Result<Self, ServoFocBankError> {
         if AXES == 0 || AXES > MAX_SERVO_FOC_BANK_AXES {
             return Err(ServoFocBankError::AxisCount);
         }
@@ -779,7 +934,7 @@ impl<const AXES: usize> ServoFocBank<AXES> {
     pub fn commit(
         &mut self,
         mut prepared: PreparedServoFocBankTransition<AXES>,
-        commits: [PowerStageCommit; AXES],
+        completion: PwmCommitBankCompletion<AXES>,
     ) -> Result<[ServoFocAxisUpdate; AXES], ServoFocBankError> {
         if self.fault.is_some() {
             return Err(ServoFocBankError::FaultLatched);
@@ -789,6 +944,14 @@ impl<const AXES: usize> ServoFocBank<AXES> {
         {
             return self.latch(ServoFocBankError::Schedule);
         }
+        let expected_sequence = u64::from(self.period_sequence) + 1;
+        if completion.configuration_digest() != self.configuration_digest {
+            return self.latch(ServoFocBankError::Profile);
+        }
+        if completion.period_sequence() != expected_sequence {
+            return self.latch(ServoFocBankError::Schedule);
+        }
+        let commits = completion.commits();
 
         let mut next_axes = core::array::from_fn(|_| None);
         let mut updates = core::array::from_fn(|_| None);
@@ -919,8 +1082,9 @@ mod tests {
     use super::*;
     use crate::{
         CountUncertainty, CurrentChannelCalibration, CurrentPolarity, ElectricalPhase,
-        FocTimingProfile, PiConfig, PwmAdcSynchronization, Q30, RotorCountDirection,
-        ServoEncoderScale, ServoPosition, TwoShuntCurrentCalibration, TwoShuntPhasePair,
+        FocTimingProfile, PiConfig, PwmAdcSynchronization, PwmCommitBankBarrier, Q30,
+        RotorCountDirection, ServoEncoderScale, ServoPosition, TwoShuntCurrentCalibration,
+        TwoShuntPhasePair,
     };
 
     const CONFIGURATION: Digest = Digest([0x6a; 32]);
@@ -945,8 +1109,12 @@ mod tests {
     }
 
     fn profile() -> ServoFocAxisProfile {
+        profile_with_digest(CONFIGURATION)
+    }
+
+    fn profile_with_digest(configuration_digest: Digest) -> ServoFocAxisProfile {
         let parameters = FocParameterSnapshot {
-            configuration_digest: CONFIGURATION,
+            configuration_digest,
             pole_pairs: 7,
             timing: FocTimingProfile {
                 pwm_hz: 10_000,
@@ -960,7 +1128,7 @@ mod tests {
             q_current: pi(Q30::HALF),
         };
         let synchronization = PwmAdcSynchronization {
-            configuration_digest: CONFIGURATION,
+            configuration_digest,
             device_cycle_hz: 1_000_000,
             pwm_period_cycles: 100,
             nominal_acquisition_offset_cycles: 50,
@@ -981,7 +1149,7 @@ mod tests {
             maximum_interval_width_ulps: 1 << 17,
         };
         let current = TwoShuntCurrentCalibration {
-            configuration_digest: CONFIGURATION,
+            configuration_digest,
             phase_pair: TwoShuntPhasePair::Ab,
             channel0: channel,
             channel1: channel,
@@ -994,7 +1162,7 @@ mod tests {
         .validated()
         .unwrap();
         let rotor = RotorCalibration {
-            configuration_digest: CONFIGURATION,
+            configuration_digest,
             counts_per_mechanical_turn: 4_096,
             count_at_reference: 0,
             electrical_phase_at_reference: ElectricalPhase::ZERO,
@@ -1007,11 +1175,18 @@ mod tests {
             maximum_component_width_ulps: 12_000_000,
             maximum_norm_error_ulps: 12_000_000,
         };
-        let pwm_compare =
-            PwmCompareContract::new(CONFIGURATION, 1_000_000, 100, 1_000_000, 50, 2, u32::MAX)
-                .unwrap();
+        let pwm_compare = PwmCompareContract::new(
+            configuration_digest,
+            1_000_000,
+            100,
+            1_000_000,
+            50,
+            2,
+            u32::MAX,
+        )
+        .unwrap();
         let servo = ServoCascadeConfig {
-            configuration_digest: CONFIGURATION,
+            configuration_digest,
             position_proportional_gain: Q30::ONE,
             velocity_controller: pi(Q30::HALF),
             maximum_velocity: Q30::ONE,
@@ -1021,7 +1196,7 @@ mod tests {
             maximum_sample_age_cycles: 200,
         };
         let encoder = ServoEncoderProfile {
-            configuration_digest: CONFIGURATION,
+            configuration_digest,
             counts_per_mechanical_turn: 4_096,
             count_at_reference: 0,
             direction: RotorCountDirection::Increasing,
@@ -1049,9 +1224,13 @@ mod tests {
     }
 
     fn seed() -> ServoEncoderSeed {
+        seed_with_digest(CONFIGURATION)
+    }
+
+    fn seed_with_digest(configuration_digest: Digest) -> ServoEncoderSeed {
         ServoEncoderSeed {
             observation: ServoEncoderObservation {
-                configuration_digest: CONFIGURATION,
+                configuration_digest,
                 raw_count: 0,
                 sampled_at: DeviceCycle(800),
                 available_at: DeviceCycle(800),
@@ -1066,6 +1245,35 @@ mod tests {
             scheduled_at: FIRST_BOUNDARY,
             observed_at: FIRST_BOUNDARY,
         }
+    }
+
+    fn bank_completion<const AXES: usize>(
+        images: [PwmCompareImage; AXES],
+        pwm_period_cycles: u32,
+        period_sequence: u64,
+    ) -> PwmCommitBankCompletion<AXES> {
+        let boundary = images[0].scheduled_at();
+        let mut barrier = PwmCommitBankBarrier::new(
+            images[0].configuration_digest(),
+            pwm_period_cycles,
+            boundary,
+            period_sequence,
+        )
+        .unwrap();
+        barrier.stage(images).unwrap();
+        for (axis, image) in images.iter().copied().enumerate() {
+            barrier
+                .record_latch(
+                    axis,
+                    PowerStageCommit {
+                        token: image.token(),
+                        scheduled_at: image.scheduled_at(),
+                        observed_at: boundary,
+                    },
+                )
+                .unwrap();
+        }
+        barrier.finish_boundary(boundary).unwrap()
     }
 
     fn controller() -> ServoFocAxisController {
@@ -1236,6 +1444,138 @@ mod tests {
     }
 
     #[test]
+    fn complete_bank_activation_publishes_no_live_partial_owner() {
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            [profile(), profile()],
+            [ACTIVATION, ACTIVATION + 1],
+            [seed(), seed()],
+            FIRST_BOUNDARY,
+        )
+        .unwrap();
+        assert_eq!(prepared.configuration_digest(), CONFIGURATION);
+        assert_eq!(prepared.first_boundary(), FIRST_BOUNDARY);
+        assert_eq!(prepared.pwm_period_cycles(), 100);
+        let images = prepared.initial_images();
+        assert_eq!(prepared.initial_image(2), None);
+        assert!(images.iter().all(|image| {
+            image.configuration_digest() == CONFIGURATION
+                && image.scheduled_at() == FIRST_BOUNDARY
+                && image.token() == INITIAL_DUTY_TOKEN
+                && image
+                    .comparisons()
+                    .iter()
+                    .all(|comparison| comparison.compare_ticks() == 25)
+        }));
+
+        let mut late = PwmCommitBankBarrier::new(CONFIGURATION, 100, FIRST_BOUNDARY, 0).unwrap();
+        late.stage(images).unwrap();
+        late.record_latch(0, initial_commit()).unwrap();
+        assert_eq!(
+            late.record_latch(
+                1,
+                PowerStageCommit {
+                    observed_at: DeviceCycle(FIRST_BOUNDARY.0 + 1),
+                    ..initial_commit()
+                }
+            ),
+            Err(crate::PwmCommitBarrierError::Observation { axis: 1 })
+        );
+        let wrong_sequence = bank_completion(images, 100, 1);
+        assert_eq!(
+            ServoFocBank::activate(prepared, wrong_sequence),
+            Err(ServoFocBankError::Schedule)
+        );
+
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            [profile(), profile()],
+            [ACTIVATION, ACTIVATION + 1],
+            [seed(), seed()],
+            FIRST_BOUNDARY,
+        )
+        .unwrap();
+        let foreign = Digest([0x6b; 32]);
+        let foreign_prepared = ServoFocBank::<2>::prepare_activation(
+            [profile_with_digest(foreign); 2],
+            [ACTIVATION + 2, ACTIVATION + 3],
+            [seed_with_digest(foreign); 2],
+            FIRST_BOUNDARY,
+        )
+        .unwrap();
+        let foreign_completion = bank_completion(foreign_prepared.initial_images(), 100, 0);
+        assert_eq!(
+            ServoFocBank::activate(prepared, foreign_completion),
+            Err(ServoFocBankError::Profile)
+        );
+
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            [profile(), profile()],
+            [ACTIVATION, ACTIVATION + 1],
+            [seed(), seed()],
+            FIRST_BOUNDARY,
+        )
+        .unwrap();
+        let completion = bank_completion(prepared.initial_images(), 100, 0);
+        let bank = ServoFocBank::activate(prepared, completion).unwrap();
+        assert_eq!(bank.configuration_digest(), CONFIGURATION);
+        assert_eq!(bank.period_started_at(), FIRST_BOUNDARY);
+        assert_eq!(bank.period_sequence(), 0);
+        for (axis, image) in images.iter().copied().enumerate() {
+            let controller = bank.axis(axis).unwrap();
+            assert_eq!(controller.activation_id(), ACTIVATION + axis as u64);
+            assert_eq!(controller.active_image(), Some(image));
+        }
+    }
+
+    #[test]
+    fn bank_activation_rejects_width_identity_and_axis_substitution_before_staging() {
+        assert_eq!(
+            ServoFocBank::<0>::prepare_activation([], [], [], FIRST_BOUNDARY),
+            Err(ServoFocBankError::AxisCount)
+        );
+        assert_eq!(
+            ServoFocBank::<5>::prepare_activation(
+                [profile(); 5],
+                core::array::from_fn(|axis| ACTIVATION + axis as u64),
+                [seed(); 5],
+                FIRST_BOUNDARY,
+            ),
+            Err(ServoFocBankError::AxisCount)
+        );
+        assert_eq!(
+            ServoFocBank::<2>::prepare_activation(
+                [profile(), profile()],
+                [ACTIVATION, ACTIVATION],
+                [seed(), seed()],
+                FIRST_BOUNDARY,
+            ),
+            Err(ServoFocBankError::Profile)
+        );
+        assert_eq!(
+            ServoFocBank::<2>::prepare_activation(
+                [profile(), profile()],
+                [0, ACTIVATION + 1],
+                [seed(), seed()],
+                FIRST_BOUNDARY,
+            ),
+            Err(ServoFocBankError::Axis {
+                axis: 0,
+                error: ServoFocAxisError::ActivationIdentity,
+            })
+        );
+
+        let foreign = Digest([0x6b; 32]);
+        assert_eq!(
+            ServoFocBank::<2>::prepare_activation(
+                [profile(), profile_with_digest(foreign)],
+                [ACTIVATION, ACTIVATION + 1],
+                [seed(), seed_with_digest(foreign)],
+                FIRST_BOUNDARY,
+            ),
+            Err(ServoFocBankError::Profile)
+        );
+    }
+
+    #[test]
     fn exact_nested_axis_transition_advances_only_after_physical_commit() {
         let mut controller = controller();
         let first_input = input(
@@ -1305,7 +1645,7 @@ mod tests {
     #[test]
     fn two_axis_bank_installs_only_a_complete_commit_set() {
         fn bank() -> ServoFocBank<2> {
-            ServoFocBank::new([
+            ServoFocBank::from_activated_axes([
                 controller_with_activation(ACTIVATION),
                 controller_with_activation(ACTIVATION + 1),
             ])
@@ -1327,28 +1667,22 @@ mod tests {
             })
         }
 
-        fn exact_commits(prepared: &PreparedServoFocBankTransition<2>) -> [PowerStageCommit; 2] {
-            core::array::from_fn(|axis| {
-                let image = prepared.axis_update(axis).unwrap().staged_image;
-                PowerStageCommit {
-                    token: image.token(),
-                    scheduled_at: image.scheduled_at(),
-                    observed_at: image.scheduled_at(),
-                }
-            })
+        fn completion(
+            prepared: &PreparedServoFocBankTransition<2>,
+            period_sequence: u64,
+        ) -> PwmCommitBankCompletion<2> {
+            let images =
+                core::array::from_fn(|axis| prepared.axis_update(axis).unwrap().staged_image);
+            bank_completion(images, 100, period_sequence)
         }
 
         let mut rejected = bank();
         let prepared = rejected.prepare(first_inputs(&rejected)).unwrap();
         assert_eq!(prepared.period_started_at(), FIRST_BOUNDARY);
-        let mut commits = exact_commits(&prepared);
-        commits[1].observed_at = DeviceCycle(commits[1].observed_at.0 + 1);
+        let wrong_sequence = completion(&prepared, 2);
         assert_eq!(
-            rejected.commit(prepared, commits),
-            Err(ServoFocBankError::Axis {
-                axis: 1,
-                error: ServoFocAxisError::PowerStageCommit,
-            })
+            rejected.commit(prepared, wrong_sequence),
+            Err(ServoFocBankError::Schedule)
         );
         assert_eq!(rejected.period_started_at(), FIRST_BOUNDARY);
         assert_eq!(rejected.period_sequence(), 0);
@@ -1359,13 +1693,7 @@ mod tests {
             assert_eq!(controller.encoder().estimate_sequence(), 0);
             assert_eq!(controller.cascade().last_current_index(), None);
         }
-        assert_eq!(
-            rejected.fault(),
-            Some(ServoFocBankError::Axis {
-                axis: 1,
-                error: ServoFocAxisError::PowerStageCommit,
-            })
-        );
+        assert_eq!(rejected.fault(), Some(ServoFocBankError::Schedule));
         assert_eq!(
             rejected.prepare(first_inputs(&rejected)),
             Err(ServoFocBankError::FaultLatched)
@@ -1373,8 +1701,8 @@ mod tests {
 
         let mut accepted = bank();
         let prepared = accepted.prepare(first_inputs(&accepted)).unwrap();
-        let commits = exact_commits(&prepared);
-        let updates = accepted.commit(prepared, commits).unwrap();
+        let completion = completion(&prepared, 1);
+        let updates = accepted.commit(prepared, completion).unwrap();
         assert_eq!(accepted.period_started_at(), DeviceCycle(1_100));
         assert_eq!(accepted.period_sequence(), 1);
         for (axis, update) in updates.iter().enumerate() {
@@ -1394,11 +1722,11 @@ mod tests {
     #[test]
     fn bank_rejects_empty_and_duplicate_activation_ownership() {
         assert_eq!(
-            ServoFocBank::<0>::new([]),
+            ServoFocBank::<0>::from_activated_axes([]),
             Err(ServoFocBankError::AxisCount)
         );
         assert_eq!(
-            ServoFocBank::new([controller(), controller()]),
+            ServoFocBank::from_activated_axes([controller(), controller()]),
             Err(ServoFocBankError::Profile)
         );
     }
@@ -1566,6 +1894,18 @@ mod tests {
             "update bytes: {update}"
         );
         let two_axis_bank = core::mem::size_of::<ServoFocBank<2>>();
+        let four_axis_activation = ServoFocBank::<MAX_SERVO_FOC_BANK_AXES>::prepare_activation(
+            [profile(); MAX_SERVO_FOC_BANK_AXES],
+            core::array::from_fn(|axis| ACTIVATION + axis as u64),
+            [seed(); MAX_SERVO_FOC_BANK_AXES],
+            FIRST_BOUNDARY,
+        )
+        .unwrap();
+        assert_eq!(
+            four_axis_activation.initial_images().len(),
+            MAX_SERVO_FOC_BANK_AXES
+        );
+        let four_axis_activation = core::mem::size_of_val(&four_axis_activation);
         let two_axis_transition = core::mem::size_of::<PreparedServoFocBankTransition<2>>();
         assert!(
             two_axis_bank <= 2 * MAX_SERVO_FOC_AXIS_CONTROLLER_BYTES + 128,
@@ -1574,6 +1914,10 @@ mod tests {
         assert!(
             two_axis_transition <= 2 * MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES + 32,
             "two-axis transition bytes: {two_axis_transition}"
+        );
+        assert!(
+            four_axis_activation <= MAX_PREPARED_SERVO_FOC_BANK_ACTIVATION_BYTES,
+            "four-axis activation bytes: {four_axis_activation}"
         );
     }
 }

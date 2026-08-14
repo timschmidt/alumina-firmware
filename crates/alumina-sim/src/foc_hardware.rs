@@ -8,12 +8,13 @@
 use alumina_config::{ConfigurationError, LoweredFocAxisConfiguration, RealtimeConfiguration};
 use alumina_foc::{
     AlphaBeta, CurrentSample, DqControlUpdate, DqCurrentController, DqInterval, DqPoint,
-    FocCurrentCommand, FocError, ModulationResult, PowerStageCommit, PwmAdcSampleStamp,
-    PwmAdcSynchronization, PwmCommitBankBarrier, PwmCommitBarrierError, PwmCompareError,
-    PwmCompareImage, PwmCompareLatch, PwmCompareLatchError, PwmCompareLatchOwner, Q30Interval,
-    RotorSample, ServoEncoderObservation, ServoEncoderSeed, ServoFocAxisController,
-    ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisUpdate, ServoFocBank,
-    ServoFocBankError, ServoSetpoint, inverse_park, park, space_vector_modulate,
+    FocCurrentCommand, FocError, ModulationResult, PowerStageCommit,
+    PreparedServoFocBankActivation, PwmAdcSampleStamp, PwmAdcSynchronization, PwmCommitBankBarrier,
+    PwmCommitBarrierError, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
+    PwmCompareLatchOwner, Q30Interval, RotorSample, ServoEncoderObservation, ServoEncoderSeed,
+    ServoFocAxisController, ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisProfile,
+    ServoFocAxisUpdate, ServoFocBank, ServoFocBankError, ServoSetpoint, inverse_park, park,
+    space_vector_modulate,
 };
 use alumina_motion::{PreparedServoSetpoints, ServoSetpointOutput, ServoSetpointOutputCommit};
 use alumina_protocol::DeviceCycle;
@@ -254,22 +255,19 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
         seeds: [ServoEncoderSeed; AXES],
         first_boundary: DeviceCycle,
     ) -> Result<Self, FocHardwareLoopError> {
-        let mut axes = core::array::from_fn(|_| None);
+        let mut profiles = core::array::from_fn(|_| None);
         for axis in 0..AXES {
             if slots.iter().take(axis).any(|slot| *slot == slots[axis]) {
                 return Err(FocHardwareLoopError::Bank(ServoFocBankError::Profile));
             }
-            let configured = ConfiguredServoFocHardwareLoop::from_configuration(
-                configuration,
-                slots[axis],
-                activation_ids[axis],
-                seeds[axis],
-                first_boundary,
-            )?;
-            axes[axis] = Some(configured.controller);
+            profiles[axis] = Some(
+                configuration
+                    .lower_foc_axis(slots[axis])?
+                    .servo_foc_axis_profile()?,
+            );
         }
-        let axes = axes.map(|axis| axis.expect("complete configured FOC bank"));
-        Self::from_controllers(axes)
+        let profiles = profiles.map(|profile| profile.expect("complete configured FOC bank"));
+        Self::from_profiles(profiles, activation_ids, seeds, first_boundary)
     }
 
     #[cfg(test)]
@@ -279,7 +277,7 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
         seeds: [ServoEncoderSeed; AXES],
         first_boundary: DeviceCycle,
     ) -> Result<Self, FocHardwareLoopError> {
-        let mut axes = core::array::from_fn(|_| None);
+        let mut profiles = core::array::from_fn(|_| None);
         for axis in 0..AXES {
             if lowered
                 .iter()
@@ -288,40 +286,54 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
             {
                 return Err(FocHardwareLoopError::Bank(ServoFocBankError::Profile));
             }
-            let configured = ConfiguredServoFocHardwareLoop::from_lowered(
-                lowered[axis],
-                activation_ids[axis],
-                seeds[axis],
-                first_boundary,
-            )?;
-            axes[axis] = Some(configured.controller);
+            profiles[axis] = Some(lowered[axis].servo_foc_axis_profile()?);
         }
-        let axes = axes.map(|axis| axis.expect("complete lowered FOC bank"));
-        Self::from_controllers(axes)
+        let profiles = profiles.map(|profile| profile.expect("complete lowered FOC bank"));
+        Self::from_profiles(profiles, activation_ids, seeds, first_boundary)
     }
 
-    fn from_controllers(
-        axes: [ServoFocAxisController; AXES],
+    fn from_profiles(
+        profiles: [ServoFocAxisProfile; AXES],
+        activation_ids: [u64; AXES],
+        seeds: [ServoEncoderSeed; AXES],
+        first_boundary: DeviceCycle,
     ) -> Result<Self, FocHardwareLoopError> {
-        let controller = ServoFocBank::new(axes)?;
-        let first = controller.axis(0).ok_or(FocHardwareLoopError::Sequence)?;
-        let pwm_period_cycles = first.profile().pwm_compare.pwm_period_device_cycles();
+        let prepared =
+            ServoFocBank::prepare_activation(profiles, activation_ids, seeds, first_boundary)?;
+        Self::activate_prepared(prepared, [first_boundary; AXES])
+    }
+
+    fn activate_prepared(
+        prepared: PreparedServoFocBankActivation<AXES>,
+        observed_timer_zero: [DeviceCycle; AXES],
+    ) -> Result<Self, FocHardwareLoopError> {
+        let configuration_digest = prepared.configuration_digest();
+        let pwm_period_cycles = prepared.pwm_period_cycles();
+        let first_boundary = prepared.first_boundary();
+        let images = prepared.initial_images();
+        let mut activation_barrier =
+            PwmCommitBankBarrier::new(configuration_digest, pwm_period_cycles, first_boundary, 0)?;
+        activation_barrier.stage(images)?;
+        for axis in 0..AXES {
+            activation_barrier.record_latch(
+                axis,
+                PowerStageCommit {
+                    token: images[axis].token(),
+                    scheduled_at: images[axis].scheduled_at(),
+                    observed_at: observed_timer_zero[axis],
+                },
+            )?;
+        }
+        let activation = activation_barrier.finish_boundary(first_boundary)?;
+        let controller = ServoFocBank::activate(prepared, activation)?;
         let next_boundary = DeviceCycle(
-            controller
-                .period_started_at()
+            first_boundary
                 .0
                 .checked_add(u64::from(pwm_period_cycles))
                 .ok_or(FocHardwareLoopError::Overflow)?,
         );
-        let next_period_sequence = u64::from(controller.period_sequence())
-            .checked_add(1)
-            .ok_or(FocHardwareLoopError::Overflow)?;
-        let commit_barrier = PwmCommitBankBarrier::new(
-            controller.configuration_digest(),
-            pwm_period_cycles,
-            next_boundary,
-            next_period_sequence,
-        )?;
+        let commit_barrier =
+            PwmCommitBankBarrier::new(configuration_digest, pwm_period_cycles, next_boundary, 1)?;
         Ok(Self {
             controller,
             commit_barrier,
@@ -430,7 +442,7 @@ impl<const AXES: usize> ConfiguredServoFocHardwareBank<AXES> {
             .commit_barrier
             .finish_boundary(images[0].scheduled_at())?;
         self.controller
-            .commit(prepared, completion.commits())
+            .commit(prepared, completion)
             .map_err(FocHardwareLoopError::Bank)
     }
 
@@ -2175,6 +2187,17 @@ mod tests {
             DeviceCycle(80_000),
         )
         .unwrap();
+        assert_eq!(
+            hardware.controller().period_started_at(),
+            DeviceCycle(80_000)
+        );
+        assert_eq!(hardware.controller().period_sequence(), 0);
+        assert_eq!(hardware.commit_barrier().staged_images(), None);
+        assert_eq!(
+            hardware.commit_barrier().next_boundary(),
+            DeviceCycle(84_000)
+        );
+        assert_eq!(hardware.commit_barrier().next_period_sequence(), 1);
         for axis in 0..2 {
             let controller = hardware.controller().axis(axis).unwrap();
             assert_eq!(
@@ -2223,6 +2246,101 @@ mod tests {
         );
         assert_eq!(hardware.commit_barrier().next_period_sequence(), 2);
         assert_eq!(hardware.commit_barrier().fault(), None);
+    }
+
+    #[test]
+    fn complete_bank_activation_requires_every_exact_initial_latch() {
+        let lowered = servo_lowered_bank_fixture();
+        let profiles = lowered.map(|axis| axis.servo_foc_axis_profile().unwrap());
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            profiles,
+            [0x55ca, 0x55cb],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let images = prepared.initial_images();
+        let mut missing =
+            PwmCommitBankBarrier::<2>::new(DIGEST, 4_000, DeviceCycle(80_000), 0).unwrap();
+        missing.stage(images).unwrap();
+        missing
+            .record_latch(
+                0,
+                PowerStageCommit {
+                    token: images[0].token(),
+                    scheduled_at: images[0].scheduled_at(),
+                    observed_at: DeviceCycle(80_000),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            missing.finish_boundary(DeviceCycle(80_000)),
+            Err(PwmCommitBarrierError::MissingObservation { axis: 1 })
+        );
+        assert_eq!(missing.staged_images(), None);
+
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            profiles,
+            [0x55da, 0x55db],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        assert_eq!(
+            ConfiguredServoFocHardwareBank::activate_prepared(
+                prepared,
+                [DeviceCycle(80_000), DeviceCycle(80_001)],
+            ),
+            Err(FocHardwareLoopError::CommitBarrier(
+                PwmCommitBarrierError::Observation { axis: 1 }
+            ))
+        );
+
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            profiles,
+            [0x55ea, 0x55eb],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let images = prepared.initial_images();
+        let mut duplicate =
+            PwmCommitBankBarrier::<2>::new(DIGEST, 4_000, DeviceCycle(80_000), 0).unwrap();
+        duplicate.stage(images).unwrap();
+        let axis0 = PowerStageCommit {
+            token: images[0].token(),
+            scheduled_at: images[0].scheduled_at(),
+            observed_at: DeviceCycle(80_000),
+        };
+        duplicate.record_latch(0, axis0).unwrap();
+        assert_eq!(
+            duplicate.record_latch(0, axis0),
+            Err(PwmCommitBarrierError::DuplicateObservation { axis: 0 })
+        );
+        assert_eq!(duplicate.staged_images(), None);
+
+        let prepared = ServoFocBank::<2>::prepare_activation(
+            profiles,
+            [0x55fa, 0x55fb],
+            [servo_seed(); 2],
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let images = prepared.initial_images();
+        let mut substituted =
+            PwmCommitBankBarrier::<2>::new(DIGEST, 4_000, DeviceCycle(80_000), 0).unwrap();
+        substituted.stage(images).unwrap();
+        assert_eq!(
+            substituted.record_latch(
+                1,
+                PowerStageCommit {
+                    token: images[1].token() + 1,
+                    scheduled_at: images[1].scheduled_at(),
+                    observed_at: DeviceCycle(80_000),
+                },
+            ),
+            Err(PwmCommitBarrierError::Observation { axis: 1 })
+        );
     }
 
     #[test]
