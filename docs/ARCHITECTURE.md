@@ -121,14 +121,49 @@ handlers for the innermost pulse/current loops, while retaining Embassy tasks fo
 slower real-time coordination. “Embassy-based” does not mean every sample is an
 ordinary cooperative task: the hardware-timed ISR/DMA layer remains explicit.
 
+### Executor-stack watermark boundary
+
+Core 0 executes on the linker-owned `_stack_end_cpu0.._stack_start_cpu0`
+region. Core 1 executes on a separate permanent 32 KiB ESP-HAL `Stack`
+allocated from reclaimed internal RAM before the ordinary heap is registered.
+The two ranges therefore have different construction and ownership, but the
+measurement rule is identical: each core alone paints and scans its own
+downward-growing unused prefix with interrupts masked. No core reads the other
+core's live stack and no mutable stack reference crosses the telemetry boundary.
+
+The unsafe linker/volatile operations are isolated in the target-only
+`alumina-xtensa-stack-watermark` crate. Firmware and every portable crate retain
+the workspace-wide `forbid(unsafe_code)` policy. The safe target API can obtain
+core-0 bounds only from linker symbols. Its core-1 start wrapper captures bounds
+only while transferring one permanent ESP-HAL `Stack` to ESP-RTOS, then
+delivers a one-shot initializer inside that core's entry function.
+Initialization also rejects a live stack pointer outside the claimed range.
+The canary begins 256 bytes above the low boundary, preserving
+ESP-HAL 1.0's byte-60 guard, and ends at least 2 KiB below the initialization
+stack pointer. Both excluded and unpainted bytes are conservatively counted as
+used, so the result never treats pre-epoch startup as measured free space.
+
+Core 1 reads at most 16 words per 1 ms management pass and publishes at most one
+lossy `Health` frame per second. Core 0 reads at most 64 words per service pass,
+validates monotonic core-1 layout/counters/headroom, and serves the combined
+authenticated snapshot. Health frames are passive: rejecting malformed, stale,
+or substituted instrumentation changes only health visibility and has no
+safety, clock, storage, job, or output-authority transition. The bounded scan
+converges on persistent canary damage rather than discovering every transient
+depth synchronously, so sizing requires a sufficiently long representative
+load after complete sweeps. This covers the two Embassy executor stacks, not
+allocator low-water marks or separate vendor-radio RTOS task stacks, and
+remains compile evidence until exercised under physical load.
+
 ### Implemented M3 network foundation
 
 The initial adapter initializes the radio and its scheduler-backed allocation on
 core 0 before starting core 1. It keeps the Wi-Fi controller, AP device, station
 device, `embassy-net` stack, DHCP server, HTTP server, and all socket buffers on
-the service side. Firmware reserves a 64 KiB reclaimed-memory heap plus a 36 KiB
-ordinary heap for the vendor radio/runtime; the real-time core still performs no
-general allocation after arming.
+the service side. Firmware registers a 64 KiB reclaimed-memory region first,
+permanently reserves the 32 KiB core-1 stack from it, and then adds a 4 KiB
+ordinary heap; the real-time core still performs no general allocation after
+arming.
 
 The recovery AP is `192.168.4.1/24`, admits at most four clients, and offers only
 `.100` through `.103`. HTTP starts with two handlers, exact route matching,

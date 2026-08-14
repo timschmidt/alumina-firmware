@@ -65,9 +65,11 @@ use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind};
 use alumina_runtime::graph::{
     GraphRuntimeAuthority, RealtimeGraphExecutionReport, RealtimeGraphReport,
 };
+use alumina_runtime::stack::StackWatermarkSnapshot;
 use alumina_runtime::{
-    APP_CORE_STACK_BYTES, APP_CORE_STACK_WORDS, DeadlineProbe, DefaultBoundary,
-    DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, UrgentKind,
+    APP_CORE_STACK_BYTES, APP_CORE_STACK_WORDS, COMMAND_QUEUE_DEPTH, DeadlineProbe,
+    DefaultBoundary, DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame,
+    RuntimeBudget, TELEMETRY_QUEUE_DEPTH, UrgentKind, WORK_QUEUE_DEPTH,
 };
 use alumina_safety::{
     Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE,
@@ -87,6 +89,11 @@ use panic_rtt_target as _;
 use static_cell::StaticCell;
 
 use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
+use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
+use alumina_xtensa_stack_watermark::{
+    REALTIME_SCAN_WORDS, SERVICE_SCAN_WORDS, STACK_LOW_EXCLUSION_BYTES, TargetStackWatermark,
+    initialize_service_current, start_second_core_with_watermark,
+};
 use capability::CapabilityService;
 use clock::ClockService;
 use configuration::ConfigurationService;
@@ -110,6 +117,7 @@ type TargetDiagnosticService = DiagnosticServiceState<0, 0, 0, 0>;
 static DIAGNOSTIC_SERVICE: StaticCell<TargetDiagnosticService> = StaticCell::new();
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
+const RUNTIME_HEALTH_MAX_AGE_CYCLES: u64 = Duration::from_secs(2).as_ticks();
 /// Small general internal heap retained alongside the separate 64 KiB reclaimed region.
 ///
 /// The permanent split-core graph actors now reserve both package images and
@@ -166,16 +174,32 @@ async fn main(spawner: Spawner) -> ! {
     let timer_group0 = TimerGroup::new(split.runtime.timer_group0);
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
     esp_rtos::start(timer_group0.timer0);
+    let service_stack = match initialize_service_current(DeviceCycle(Instant::now().as_ticks())) {
+        Ok(stack) => Some(stack),
+        Err(_) => {
+            error!("service stack watermark unavailable");
+            None
+        }
+    };
 
     let boundary = BOUNDARY.init(DefaultBoundary::new());
     let graph_bridge: &'static GraphBridge = GRAPH_BRIDGE.init(GraphBridge::new());
     let (mut service_endpoint, realtime_endpoint) = boundary.split();
-    esp_rtos::start_second_core(
+    start_second_core_with_watermark(
         split.runtime.cpu_control,
         software_interrupt.software_interrupt0,
         software_interrupt.software_interrupt1,
         app_stack,
-        move || {
+        move |stack_initializer| {
+            let realtime_stack = match stack_initializer
+                .initialize_current(DeviceCycle(Instant::now().as_ticks()))
+            {
+                Ok(stack) => Some(stack),
+                Err(_) => {
+                    error!("realtime stack watermark unavailable");
+                    None
+                }
+            };
             let app_executor = APP_CORE_EXECUTOR.init(esp_rtos::embassy::Executor::new());
             app_executor.run(move |realtime_spawner| {
                 realtime_spawner.must_spawn(realtime_task(
@@ -183,6 +207,7 @@ async fn main(spawner: Spawner) -> ! {
                     realtime_endpoint,
                     device_id,
                     graph_bridge,
+                    realtime_stack,
                 ));
             });
         },
@@ -207,6 +232,7 @@ async fn main(spawner: Spawner) -> ! {
         network,
         service_bridge,
         graph_bridge,
+        service_stack,
     ));
     info!(
         "Alumina dual-core runtime started for {}",
@@ -225,6 +251,11 @@ async fn await_initial_safe_snapshot(endpoint: &mut DefaultServiceEndpoint) {
     });
     loop {
         let frame = endpoint.receive_telemetry().await;
+        if frame.header().kind == FrameKind::Health {
+            // Passive instrumentation can race initial service startup but can
+            // never participate in safe-output establishment.
+            continue;
+        }
         let now = DeviceCycle(Instant::now().as_ticks());
         if frame.validate(FrameKind::Telemetry).is_err() {
             observer.invalidate();
@@ -272,6 +303,7 @@ async fn service_task(
     network: network::NetworkControl,
     service_bridge: &'static ServiceBridge,
     graph_bridge: &'static GraphBridge,
+    mut stack_watermark: Option<TargetStackWatermark>,
 ) {
     if Cpu::current() != Cpu::ProCpu {
         panic!("service executor started on the wrong core");
@@ -290,6 +322,7 @@ async fn service_task(
     let mut jobs = JobService::new(boot_id);
     let mut configurations = ConfigurationService::new();
     let mut graphs = GraphService::new(network.device_id(), graph_bridge);
+    let mut health = RuntimeHealthService::new(RUNTIME_HEALTH_MAX_AGE_CYCLES);
     let diagnostics = DIAGNOSTIC_SERVICE.init(TargetDiagnosticService::new(
         DiagnosticContext {
             device_id: network.device_id(),
@@ -304,6 +337,16 @@ async fn service_task(
     ));
     let mut last_fault_generation = 0_u16;
     loop {
+        let sample_cycle = DeviceCycle(Instant::now().as_ticks());
+        let stack_sample_failed = stack_watermark.as_mut().is_some_and(|stack| {
+            stack
+                .sample_current(SERVICE_SCAN_WORDS, sample_cycle)
+                .is_err()
+        });
+        if stack_sample_failed {
+            stack_watermark = None;
+            error!("service stack watermark sampling stopped");
+        }
         while let Ok(frame) = endpoint.try_receive_telemetry() {
             let now = DeviceCycle(Instant::now().as_ticks());
             let valid = match frame.header().kind {
@@ -379,11 +422,41 @@ async fn service_task(
                             }
                         })
                 }
+                FrameKind::Health => {
+                    let accepted = frame.validate(FrameKind::Health).is_ok()
+                        && frame.header().config_digest.is_zero()
+                        && frame.payload().is_ok_and(|payload| {
+                            StackWatermarkSnapshot::decode(payload).is_ok_and(|report| {
+                                report.allocated_bytes
+                                    == u32::try_from(APP_CORE_STACK_BYTES)
+                                        .expect("app stack size fits health report")
+                                    && report.excluded_low_bytes
+                                        == u32::try_from(STACK_LOW_EXCLUSION_BYTES)
+                                            .expect("stack exclusion fits health report")
+                                    && health
+                                        .observe_realtime(
+                                            frame.header().sequence,
+                                            frame.header().cycle,
+                                            now,
+                                            report,
+                                        )
+                                        .is_ok()
+                            })
+                        });
+                    if !accepted {
+                        health.invalidate_realtime();
+                    }
+                    // Health is deliberately passive: rejecting malformed or
+                    // stale instrumentation revokes only health data and makes
+                    // no safety, timing, storage, or output-authority transition.
+                    true
+                }
                 _ => false,
             };
             if !valid {
                 storage.invalidate_safety_observation();
                 clocks.invalidate_realtime();
+                health.invalidate_realtime();
                 endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
             }
         }
@@ -391,6 +464,7 @@ async fn service_task(
             last_fault_generation = fault.generation;
             storage.invalidate_safety_observation();
             clocks.invalidate_realtime();
+            health.invalidate_realtime();
             error!("RT fault code={} detail={}", fault.code, fault.detail);
         }
 
@@ -496,6 +570,26 @@ async fn service_task(
                 .await
             } else if TargetDiagnosticService::handles(request.request()) {
                 diagnostics.dispatch(request.request(), now)
+            } else if RuntimeHealthService::handles(request.request()) {
+                health.dispatch(
+                    request.request(),
+                    now,
+                    RuntimeQueueHealth {
+                        command_depth: u16::try_from(endpoint.command_depth())
+                            .expect("command queue depth fits u16"),
+                        command_capacity: u16::try_from(COMMAND_QUEUE_DEPTH)
+                            .expect("command queue capacity fits u16"),
+                        work_depth: u16::try_from(endpoint.work_depth())
+                            .expect("work queue depth fits u16"),
+                        work_capacity: u16::try_from(WORK_QUEUE_DEPTH)
+                            .expect("work queue capacity fits u16"),
+                        telemetry_depth: u16::try_from(endpoint.telemetry_depth())
+                            .expect("telemetry queue depth fits u16"),
+                        telemetry_capacity: u16::try_from(TELEMETRY_QUEUE_DEPTH)
+                            .expect("telemetry queue capacity fits u16"),
+                    },
+                    stack_watermark.as_ref().map(TargetStackWatermark::snapshot),
+                )
             } else {
                 storage
                     .dispatch(&mut storage_backend, request.request(), now)
@@ -538,6 +632,7 @@ async fn realtime_task(
     mut endpoint: DefaultRealtimeEndpoint,
     device_id: DeviceId,
     graph_bridge: &'static GraphBridge,
+    mut stack_watermark: Option<TargetStackWatermark>,
 ) {
     if Cpu::current() != Cpu::AppCpu {
         endpoint.publish_fault(1, 0);
@@ -585,6 +680,8 @@ async fn realtime_task(
     let mut configuration_sequence = 0_u32;
     let mut graph_sequence = 0_u32;
     let mut clock_sequence = 0_u32;
+    let mut health_sequence = 0_u32;
+    let mut next_health_report = Instant::now() + Duration::from_secs(1);
 
     publish_safety_snapshot(
         &mut endpoint,
@@ -1117,6 +1214,30 @@ async fn realtime_task(
                     DeviceCycle(observed.as_ticks()),
                     probe,
                 );
+            }
+
+            let stack_sample_failed = stack_watermark
+                .as_mut()
+                .is_some_and(|stack| stack.sample_current(REALTIME_SCAN_WORDS, now).is_err());
+            if stack_sample_failed {
+                stack_watermark = None;
+                error!("realtime stack watermark sampling stopped");
+            }
+            if observed >= next_health_report {
+                loop {
+                    next_health_report += Duration::from_secs(1);
+                    if next_health_report > observed {
+                        break;
+                    }
+                }
+                if let Some(stack_watermark) = stack_watermark.as_ref() {
+                    let _ = publish_stack_watermark_report(
+                        &mut endpoint,
+                        &mut health_sequence,
+                        now,
+                        stack_watermark.snapshot(),
+                    );
+                }
             }
         }
 
@@ -1747,6 +1868,22 @@ fn publish_clock_report(
         &payload,
     )
     .map_err(|_| ())?;
+    if endpoint.try_publish_telemetry(frame).is_ok() {
+        *report_sequence = sequence;
+    }
+    Ok(())
+}
+
+fn publish_stack_watermark_report(
+    endpoint: &mut DefaultRealtimeEndpoint,
+    report_sequence: &mut u32,
+    now: DeviceCycle,
+    report: StackWatermarkSnapshot,
+) -> Result<(), ()> {
+    let payload = report.encode().map_err(|_| ())?;
+    let sequence = next_nonzero(*report_sequence);
+    let frame = IntercoreFrame::new(FrameKind::Health, sequence, now, Digest::ZERO, &payload)
+        .map_err(|_| ())?;
     if endpoint.try_publish_telemetry(frame).is_ok() {
         *report_sequence = sequence;
     }

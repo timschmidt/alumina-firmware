@@ -180,6 +180,18 @@ two-connection limits while reclaiming 4,000 bytes of permanent task storage.
 See the [HTTP phase-storage
 evidence](docs/evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
 
+Both executor stacks now have a conservative, allocation-free watermark epoch.
+Each core paints and incrementally scans only its own unused stack prefix; a
+256-byte low exclusion preserves the RTOS guard and a 2 KiB current-stack
+reserve is always charged as used. Core 1 publishes one lossy passive report per
+second, while the authenticated native `HealthSnapshot` response combines it
+with the service-core report and exact command/work/telemetry queue occupancy.
+Health parsing has no motion or safety authority, and an unavailable probe
+makes health explicitly unsupported. Canary discovery is incremental, so this
+mechanism still requires a loaded physical run before any reported headroom is
+usable as a sizing claim. See the [stack-watermark compile
+evidence](docs/evidence/M10-RUNTIME-STACK-WATERMARKS.md).
+
 The cache backend itself is now concrete: `alumina-storage` implements a bounded
 asynchronous 512-byte block-device contract, an explicitly provisioned raw SD
 region, alternating SHA-256 anchors, and a hash-chained append-only record log.

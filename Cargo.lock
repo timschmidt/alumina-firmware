@@ -92,6 +92,7 @@ dependencies = [
  "alumina-service",
  "alumina-shift-register",
  "alumina-storage",
+ "alumina-xtensa-stack-watermark",
  "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "board-t-deck-pro",
@@ -224,6 +225,7 @@ dependencies = [
  "alumina-diagnostics",
  "alumina-net",
  "alumina-protocol",
+ "alumina-runtime",
  "alumina-safety",
  "alumina-storage",
  "embassy-futures",
@@ -270,6 +272,16 @@ dependencies = [
  "alumina-protocol",
  "embassy-futures",
  "sha2",
+]
+
+[[package]]
+name = "alumina-xtensa-stack-watermark"
+version = "0.1.0"
+dependencies = [
+ "alumina-protocol",
+ "alumina-runtime",
+ "esp-hal",
+ "esp-rtos",
 ]
 
 [[package]]

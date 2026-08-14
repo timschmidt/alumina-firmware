@@ -25,6 +25,7 @@ members = [
     "drivers/alumina-as5600",
     "drivers/alumina-shift-register",
     "drivers/alumina-sd-spi",
+    "drivers/alumina-xtensa-stack-watermark",
     "drivers/sx126x-async-rs",
     "drivers/t-deck-pro-battery-async",
     "drivers/t-deck-pro-epd-async",
@@ -94,6 +95,7 @@ alumina-storage = { path = "crates/alumina-storage" }
 alumina-as5600 = { path = "drivers/alumina-as5600" }
 alumina-sd-spi = { path = "drivers/alumina-sd-spi" }
 alumina-shift-register = { path = "drivers/alumina-shift-register" }
+alumina-xtensa-stack-watermark = { path = "drivers/alumina-xtensa-stack-watermark" }
 board-mks-tinybee = { path = "boards/mks-tinybee" }
 board-mks-esp32-foc-v1 = { path = "boards/mks-esp32-foc-v1" }
 board-t-deck-pro = { path = "boards/t-deck-pro" }

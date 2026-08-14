@@ -12,6 +12,7 @@ publish.workspace = true
 alumina-diagnostics.workspace = true
 alumina-net.workspace = true
 alumina-protocol.workspace = true
+alumina-runtime.workspace = true
 alumina-safety.workspace = true
 alumina-storage.workspace = true
 heapless.workspace = true

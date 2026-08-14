@@ -33,6 +33,7 @@ required-features = ["hil-mks-tinybee-graph-input-timing-safe"]
 default = []
 board-mks-tinybee = [
     "dep:board-mks-tinybee",
+    "alumina-xtensa-stack-watermark/esp32",
     "esp-alloc/esp32",
     "esp-bootloader-esp-idf/esp32",
     "esp-hal/esp32",
@@ -43,6 +44,7 @@ board-mks-tinybee = [
 ]
 board-mks-tinybee-4mb = [
     "dep:board-mks-tinybee",
+    "alumina-xtensa-stack-watermark/esp32",
     "esp-alloc/esp32",
     "esp-bootloader-esp-idf/esp32",
     "esp-hal/esp32",
@@ -53,6 +55,7 @@ board-mks-tinybee-4mb = [
 ]
 board-mks-esp32-foc-v1 = [
     "dep:board-mks-esp32-foc-v1",
+    "alumina-xtensa-stack-watermark/esp32",
     "esp-alloc/esp32",
     "esp-bootloader-esp-idf/esp32",
     "esp-hal/esp32",
@@ -63,6 +66,7 @@ board-mks-esp32-foc-v1 = [
 ]
 board-t-deck-pro = [
     "dep:board-t-deck-pro",
+    "alumina-xtensa-stack-watermark/esp32s3",
     "esp-alloc/esp32s3",
     "esp-bootloader-esp-idf/esp32s3",
     "esp-hal/esp32s3",
@@ -94,6 +98,7 @@ alumina-sd-spi.workspace = true
 alumina-shift-register.workspace = true
 alumina-service.workspace = true
 alumina-storage.workspace = true
+alumina-xtensa-stack-watermark.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }
 board-mks-esp32-foc-v1 = { workspace = true, optional = true }
 board-t-deck-pro = { workspace = true, optional = true }

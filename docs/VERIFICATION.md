@@ -273,6 +273,17 @@ Common tests:
   and
 - long-running memory/queue/stack high-water marks.
 
+The firmware now supplies a compile-verified measurement mechanism for the two
+Embassy executor stacks: same-core address-dependent canaries, a conservative
+current-SP reserve/bound, bounded incrementally converging scans, monotonic
+core-1 observation, and
+an authenticated combined queue/stack response. Host tests cover exact wire
+images, partial sweeps, transient low-water discovery, stale/substituted report
+rejection, queue bounds, and unavailable probes. This is not itself a measured
+high-water result: bench promotion still requires representative Wi-Fi, HTTP,
+SD, graph, stepper, servo, interrupt, and fault load over time, and separate
+allocator and vendor-radio-task measurements remain open.
+
 T-Deck-specific tests cover every imported battery, keyboard, touch, EPD, GPS,
 and LoRa driver plus coalesced display updates under network load.
 

@@ -126,6 +126,61 @@ non-faulted. The firmware retains only the most recently returned healthy probe
 for 500 ms; `JobCommit` must cite it exactly. Core 1 independently checks its
 own deadline health again when applying commit and confirm.
 
+## Runtime health snapshot
+
+`HealthSnapshot` (`0x0a01`) is an authenticated, bodyless request in the
+zero-configuration `Health` family. It is passive: neither the request nor
+real-time health telemetry can authorize, inhibit, fault, or reset machine
+output. If the service-core probe was unavailable, firmware returns
+`Unsupported` with no body.
+
+The successful fixed 124-byte `AHLT` V1 response body is:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 4 | magic `AHLT` |
+| 4 | 1 | exact version (`1`) |
+| 5 | 1 | bit 0 real-time report present; bit 1 present report fresh |
+| 6 | 2 | reserved zero |
+| 8 | 8 | service response cycle |
+| 16 | 2 | ordered command queue depth |
+| 18 | 2 | ordered command queue capacity |
+| 20 | 2 | deterministic work queue depth |
+| 22 | 2 | deterministic work queue capacity |
+| 24 | 2 | lossy telemetry queue depth |
+| 26 | 2 | lossy telemetry queue capacity |
+| 28 | 48 | service-core `ASWM` V1 stack report |
+| 76 | 48 | real-time-core `ASWM` V1 report or canonical absence marker |
+
+Each 48-byte stack report is:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 4 | magic `ASWM` |
+| 4 | 1 | exact version (`1`) |
+| 5 | 1 | domain (`0` service, `1` real time) |
+| 6 | 2 | initialized, complete-sweep, partial-boot-epoch, and current-SP-bound flags |
+| 8 | 4 | complete stack allocation bytes |
+| 12 | 4 | excluded low bytes, including the RTOS guard margin |
+| 16 | 4 | initialization-time painted bytes |
+| 20 | 4 | monotonic minimum confirmed headroom bytes |
+| 24 | 4 | saturating bounded-sample count |
+| 28 | 4 | saturating complete-sweep count |
+| 32 | 8 | partial epoch start cycle |
+| 40 | 8 | newest sample cycle |
+
+All byte counts are multiples of four. `painted <= allocated - excluded`,
+`headroom <= painted`, timestamps are ordered, and complete-sweep state agrees
+with its count. Observed maximum use excluding the low guard is
+`allocated - excluded - minimum_headroom`. Canary scans are bounded and
+incremental: persistent damage is retained, but a newly reached transient depth
+may not reduce the reported headroom until a later scan window reaches it. A
+missing real-time report is one
+canonical `ASWM` image with domain `1` and every flag, count, cycle, and size
+zero. Core-1 reports must retain one epoch/layout, advance serial frame and
+sample time, never increase headroom, and arrive within the service freshness
+window; otherwise only the cached health observation is revoked.
+
 ## Safety telemetry
 
 Core 1 publishes the fixed 72-byte `ALMS` V2 payload inside a `Telemetry` frame.

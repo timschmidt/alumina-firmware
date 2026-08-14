@@ -26,6 +26,8 @@ use heapless::String as FixedString;
 
 /// Bounded telemetry and waveform session ownership for the service core.
 pub mod diagnostics;
+/// Passive runtime-health observation and authenticated snapshot service.
+pub mod health;
 
 /// Initial bounded protocol/cache policy; free SD capacity remains a runtime limit.
 pub const CACHE_LIMITS: CacheLimits = CacheLimits {

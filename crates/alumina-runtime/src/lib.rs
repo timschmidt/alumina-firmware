@@ -11,6 +11,10 @@ use embassy_sync::channel::{Channel, Receiver, Sender, TryReceiveError, TrySendE
 
 /// Fixed deployed-graph package ownership and split-core execution.
 pub mod graph;
+/// Canonical bounded device-health snapshots.
+pub mod health;
+/// Conservative same-core stack-watermark accounting.
+pub mod stack;
 
 /// Default number of admitted service-to-realtime commands.
 pub const COMMAND_QUEUE_DEPTH: usize = 8;
@@ -454,6 +458,11 @@ impl<
     /// Current ordered-command depth for admission telemetry.
     pub fn command_depth(&self) -> usize {
         self.command_tx.len()
+    }
+
+    /// Lossy telemetry frames waiting for the service coordinator.
+    pub fn telemetry_depth(&self) -> usize {
+        self.telemetry_rx.len()
     }
 }
 

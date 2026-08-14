@@ -633,5 +633,5 @@ injected write/sync cut. Both current board packages remain explicitly
 non-armable pending physical qualification, so a successfully committed
 configuration still cannot make `JobPrepare` executable on any image. No
 physical-board lifecycle, multi-turn seed/homing owner, encoder transport task,
-closed cascaded-current target task, runtime stack watermark, or Wi-Fi/SD
-concurrency claim is made by this software checkpoint.
+closed cascaded-current target task, physical runtime stack-watermark result,
+or Wi-Fi/SD concurrency claim is made by this software checkpoint.

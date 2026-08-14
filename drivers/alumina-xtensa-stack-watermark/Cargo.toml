@@ -1,0 +1,30 @@
+[package]
+name = "alumina-xtensa-stack-watermark"
+description = "Audited same-core Xtensa stack watermark access for Alumina"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+esp32 = ["esp-hal/esp32", "esp-rtos/esp32"]
+esp32s3 = ["esp-hal/esp32s3", "esp-rtos/esp32s3"]
+
+[dependencies]
+alumina-protocol.workspace = true
+alumina-runtime.workspace = true
+esp-hal.workspace = true
+esp-rtos.workspace = true
+
+# This is the one reviewed hardware-bound crate that performs volatile access
+# to an unused prefix of the currently executing Xtensa stack. Every caller of
+# the firmware and portable crates remains under the workspace-wide forbid.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+alloc_instead_of_core = "warn"
+std_instead_of_core = "warn"

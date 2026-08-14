@@ -1031,6 +1031,16 @@ clear behavior while returning another 3,288 TinyBee bytes, 2,952 MKS FOC
 bytes, or 2,616 T-Deck Pro bytes to the linker residual. See
 [`M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
 
+The next production-hardening checkpoint adds the measurement mechanism needed
+to decide whether those linker residuals are usable stack headroom. Core 0 and
+core 1 establish independent conservative canary epochs, scan only bounded
+same-core prefixes, exchange passive fixed health reports, and expose exact
+queue occupancy through authenticated `HealthSnapshot`. Unsafe target access is
+isolated from the otherwise unsafe-forbidden firmware workspace. This is
+compile/contract evidence only; physical loaded watermarks remain an M10 exit
+gate. See
+[`M10-RUNTIME-STACK-WATERMARKS.md`](evidence/M10-RUNTIME-STACK-WATERMARKS.md).
+
 Exit gate:
 
 - PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,
