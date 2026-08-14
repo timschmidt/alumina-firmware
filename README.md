@@ -463,9 +463,29 @@ fresh-sample, overspeed, following-error, and current-circle substitutions latch
 transactionally before controller state advances. A dimensionless ideal-current
 mechanical fixture replays 12,000 current ticks identically and converges while
 preserving the exact 240 position and 1,200 velocity updates. Configuration V5
-does not yet store or lower this outer profile, and no firmware task, encoder
-unwrap, inner-loop composition, target adapter, or energizing path selects it.
+does not yet store or lower this outer profile, and no firmware task,
+inner-loop composition, target adapter, or energizing path selects it.
 See the [portable cascaded-servo evidence](docs/evidence/M8-PORTABLE-CASCADED-SERVO.md).
+
+The adjacent portable encoder checkpoint now turns truthful raw absolute counts
+into those conservative servo observations without hiding multi-turn state or
+measurement error. An explicit boot-local turn seed establishes the otherwise
+unknowable wrap branch. Reduced rational scales define Q31.32 position per turn
+and raw-count rate at normalized velocity one. Exact sample cadence, bounded
+availability latency, and a configured trackable speed plus both samples' count
+error derive an integer wrap window; profiles are rejected unless that window
+is strictly narrower than half a turn. Accepted counts map outward to position
+and two-sample velocity intervals. A required symmetric estimator-error term
+keeps bounded acceleration/secant-to-endpoint, timestamp, and model uncertainty
+from disappearing when that average becomes a newest-sample velocity enclosure;
+separate ULP and admitted-speed gates then apply. All state changes are
+transactional and latch first cause. An independent
+1,600-sample simulator repeatedly crosses the wrap in both configured
+directions and reproduces the same multi-turn truth byte for byte. Configuration
+V5 has no estimator records, no AS5600 target owner creates the required stamps
+or seed, and no physical timestamp, speed, homing, or sensor-accuracy fact is
+claimed. See the
+[portable encoder-estimator evidence](docs/evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 
 The MKS ESP32 FOC V1.0 now also has an independently authored typed board
 package and linked `xtensa-esp32-none-elf` safe target. The revision schematic,

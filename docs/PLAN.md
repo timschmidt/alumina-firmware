@@ -782,10 +782,26 @@ age/time, digest, cycle, identity, and current-circle gates are transactional
 and latch first cause. A synthetic ideal-current mechanical plant produces an
 identical 12,000-tick replay with exactly 240 position and 1,200 velocity
 updates and converges within fixed lattice assertions. Configuration V5
-lowering, encoder unwrap/estimation, cached servo commands, inner-current-loop
-composition, core-1 execution, WCET, safety integration, and every physical
-claim remain open. See
+lowering, cached servo commands, inner-current-loop composition, core-1
+execution, WCET, safety integration, and every physical claim remain open. See
 [`M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
+
+The portable absolute-encoder checkpoint now requires an explicit multi-turn
+seed and uses reduced exact count/position/rate scales, exact sample cadence,
+complete two-sample count uncertainty, and separate trackable/admitted speed
+bounds. A required additive estimator-error bound preserves the distinction
+between interval-average and newest-sample velocity under configured
+acceleration/timestamp/model uncertainty. It derives and statically rejects any
+modular-delta window that is not strictly narrower than half a turn, then maps
+the unique candidate outward into the cascade's Q31.32 position and Q2.30
+velocity intervals. Precision, range,
+identity, latency, cadence, wrap, and overflow failures are transactional and
+latch first cause. An independent 1,600-step replay crosses repeated forward
+and reverse wraps in both sensor directions and recovers its known multi-turn
+truth deterministically. Configuration records/lowering, homing and turn-seed
+authority, truthful AS5600 timestamps/aperture, physical speed/error
+qualification, target scheduling, and controller composition remain open. See
+[`M8-PORTABLE-ENCODER-ESTIMATOR.md`](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 
 Exit gate:
 

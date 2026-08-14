@@ -6,7 +6,8 @@
 
 use alumina_foc::{
     CascadedServoController, DqControlUpdate, DqCurrentController, DqPoint, FocError, Q30,
-    Q30Interval, ServoCascadeError, ServoCascadeUpdate, ServoKinematicSample, ServoPosition,
+    Q30Interval, RotorCountDirection, ServoCascadeError, ServoCascadeUpdate, ServoEncoderError,
+    ServoEncoderEstimate, ServoEncoderEstimator, ServoKinematicSample, ServoPosition,
     ServoPositionInterval, ServoSetpoint,
 };
 use alumina_protocol::DeviceCycle;
@@ -50,6 +51,23 @@ impl From<FocError> for ServoPlantError {
 impl From<ServoCascadeError> for ServoPlantError {
     fn from(error: ServoCascadeError) -> Self {
         Self::Cascade(error)
+    }
+}
+
+/// Deterministic absolute-encoder truth replay rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EncoderReplayError {
+    /// A trace index, count, or device-cycle calculation overflowed.
+    Arithmetic,
+    /// The portable estimator rejected one generated observation.
+    Estimator(ServoEncoderError),
+    /// The estimator's retained multi-turn count differed from simulator truth.
+    TruthMismatch { expected: i64, received: i64 },
+}
+
+impl From<ServoEncoderError> for EncoderReplayError {
+    fn from(error: ServoEncoderError) -> Self {
+        Self::Estimator(error)
     }
 }
 
@@ -117,6 +135,19 @@ pub struct ServoLoopSample {
     pub position_after: ServoPosition,
     /// Plant velocity after applying the held q-current target.
     pub velocity_after: Q30,
+}
+
+/// One independent wrapping-count truth and estimator result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EncoderReplaySample {
+    /// Zero-based replay index.
+    pub index: u64,
+    /// Known directed multi-turn count after the requested truth delta.
+    pub true_unwrapped_count: i64,
+    /// Independently wrapped raw count supplied to the estimator.
+    pub raw_count: u32,
+    /// Complete portable estimator result.
+    pub estimate: ServoEncoderEstimate,
 }
 
 impl FirstOrderDqPlant {
@@ -402,6 +433,85 @@ pub fn simulate_cascaded_servo(
     Ok(trace)
 }
 
+/// Replays directed truth deltas through an independently wrapped raw sensor.
+///
+/// The simulator inverts the configured reference and direction itself, emits
+/// observations at the exact configured cadence, and requires the estimator to
+/// recover the known multi-turn count after every step.
+pub fn simulate_servo_encoder(
+    mut estimator: ServoEncoderEstimator,
+    truth_deltas: &[i32],
+    availability_latency_cycles: u64,
+) -> Result<Vec<EncoderReplaySample>, EncoderReplayError> {
+    let profile = estimator.profile();
+    let mut true_unwrapped_count = estimator.seed().unwrapped_count;
+    let mut trace = Vec::with_capacity(truth_deltas.len());
+    for (index, delta) in truth_deltas.iter().copied().enumerate() {
+        true_unwrapped_count = true_unwrapped_count
+            .checked_add(i64::from(delta))
+            .ok_or(EncoderReplayError::Arithmetic)?;
+        let index = u64::try_from(index).map_err(|_| EncoderReplayError::Arithmetic)?;
+        let sample_number = index.checked_add(1).ok_or(EncoderReplayError::Arithmetic)?;
+        let sampled_at = estimator
+            .seed()
+            .sampled_at
+            .0
+            .checked_add(
+                sample_number
+                    .checked_mul(profile.sample_period_cycles)
+                    .ok_or(EncoderReplayError::Arithmetic)?,
+            )
+            .ok_or(EncoderReplayError::Arithmetic)?;
+        let available_at = sampled_at
+            .checked_add(availability_latency_cycles)
+            .ok_or(EncoderReplayError::Arithmetic)?;
+        let raw_count = raw_count_from_directed_truth(
+            true_unwrapped_count,
+            profile.counts_per_mechanical_turn,
+            profile.count_at_reference,
+            profile.direction,
+        )?;
+        let estimate = estimator.observe(alumina_foc::ServoEncoderObservation {
+            configuration_digest: profile.configuration_digest,
+            raw_count,
+            sampled_at: DeviceCycle(sampled_at),
+            available_at: DeviceCycle(available_at),
+        })?;
+        if estimate.unwrapped_count != true_unwrapped_count {
+            return Err(EncoderReplayError::TruthMismatch {
+                expected: true_unwrapped_count,
+                received: estimate.unwrapped_count,
+            });
+        }
+        trace.push(EncoderReplaySample {
+            index,
+            true_unwrapped_count,
+            raw_count,
+            estimate,
+        });
+    }
+    Ok(trace)
+}
+
+fn raw_count_from_directed_truth(
+    unwrapped_count: i64,
+    modulus: u32,
+    count_at_reference: u32,
+    direction: RotorCountDirection,
+) -> Result<u32, EncoderReplayError> {
+    let modulus_i64 = i64::from(modulus);
+    if modulus_i64 < 2 {
+        return Err(EncoderReplayError::Arithmetic);
+    }
+    let directed = unwrapped_count.rem_euclid(modulus_i64);
+    let increasing = match direction {
+        RotorCountDirection::Increasing => directed,
+        RotorCountDirection::Decreasing => (modulus_i64 - directed) % modulus_i64,
+    };
+    let raw = (i64::from(count_at_reference) + increasing) % modulus_i64;
+    u32::try_from(raw).map_err(|_| EncoderReplayError::Arithmetic)
+}
+
 fn convex_update(current: Q30, drive: Q30, retained: Q30, response: Q30) -> Result<Q30, FocError> {
     current
         .checked_mul(retained)?
@@ -418,7 +528,9 @@ const fn within_unit_circle(value: DqPoint) -> bool {
 #[cfg(test)]
 mod tests {
     use alumina_foc::{
-        FocParameterSnapshot, FocTimingProfile, PiConfig, ServoCascadeConfig, ServoLoopGrid,
+        CountUncertainty, FocParameterSnapshot, FocTimingProfile, PiConfig, ServoCascadeConfig,
+        ServoEncoderObservation, ServoEncoderProfile, ServoEncoderScale, ServoEncoderSeed,
+        ServoLoopGrid,
     };
     use alumina_protocol::Digest;
 
@@ -489,6 +601,44 @@ mod tests {
             FirstOrderServoPlant::new(point(1, 16), point(1, 2_048)).unwrap(),
             CascadedServoController::new(grid, outer, &snapshot).unwrap(),
         )
+    }
+
+    fn encoder_fixture(direction: RotorCountDirection) -> ServoEncoderEstimator {
+        let digest = Digest([0x72; 32]);
+        let profile = ServoEncoderProfile {
+            configuration_digest: digest,
+            counts_per_mechanical_turn: 4_096,
+            count_at_reference: 0,
+            direction,
+            maximum_count_error: CountUncertainty::new(1, 2).unwrap(),
+            position_at_reference: ServoPosition::ZERO,
+            scale: ServoEncoderScale::new(1_u64 << 32, 1, 8_192, 1).unwrap(),
+            device_cycle_hz: 1_000_000,
+            sample_period_cycles: 1_000,
+            maximum_observation_latency_cycles: 100,
+            maximum_trackable_velocity: Q30::ONE,
+            maximum_admitted_velocity: Q30::ONE,
+            maximum_velocity_estimation_error: Q30::from_bits(1 << 20),
+            maximum_position_interval_width_ulps: 1_u64 << 20,
+            maximum_velocity_interval_width_ulps: 264_241_152,
+        };
+        let raw_count = match direction {
+            RotorCountDirection::Increasing => 4_090,
+            RotorCountDirection::Decreasing => 6,
+        };
+        ServoEncoderEstimator::new(
+            profile,
+            ServoEncoderSeed {
+                observation: ServoEncoderObservation {
+                    configuration_digest: digest,
+                    raw_count,
+                    sampled_at: DeviceCycle(10_000),
+                    available_at: DeviceCycle(10_050),
+                },
+                turn_index: 0,
+            },
+        )
+        .unwrap()
     }
 
     #[test]
@@ -628,5 +778,40 @@ mod tests {
         assert_eq!(plant.position(), ServoPosition::ZERO);
         assert_eq!(plant.velocity(), Q30::ZERO);
         assert_eq!(plant.updates(), 0);
+    }
+
+    #[test]
+    fn wrapping_encoder_truth_replays_deterministically_in_both_directions() {
+        let mut deltas = vec![7_i32; 700];
+        deltas.extend(vec![-7_i32; 900]);
+        for direction in [
+            RotorCountDirection::Increasing,
+            RotorCountDirection::Decreasing,
+        ] {
+            let first = simulate_servo_encoder(encoder_fixture(direction), &deltas, 50).unwrap();
+            let replay = simulate_servo_encoder(encoder_fixture(direction), &deltas, 50).unwrap();
+            assert_eq!(first, replay);
+            assert_eq!(first.len(), 1_600);
+            assert_eq!(first.last().unwrap().true_unwrapped_count, 2_690);
+            assert!(first.iter().all(|sample| {
+                sample.estimate.unwrapped_count == sample.true_unwrapped_count
+                    && sample.estimate.sample.sequence == (sample.index + 1) as u32
+            }));
+            assert!(first.windows(2).any(|pair| {
+                let left = pair[0].raw_count;
+                let right = pair[1].raw_count;
+                left.abs_diff(right) > 4_000
+            }));
+        }
+    }
+
+    #[test]
+    fn encoder_truth_outside_the_proven_wrap_window_is_visible() {
+        assert!(matches!(
+            simulate_servo_encoder(encoder_fixture(RotorCountDirection::Increasing), &[11], 50,),
+            Err(EncoderReplayError::Estimator(
+                ServoEncoderError::CountDelta { .. }
+            ))
+        ));
     }
 }

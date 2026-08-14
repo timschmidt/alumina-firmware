@@ -89,6 +89,11 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   device-cycle grid, including Q31.32 position uncertainty, widened velocity
   error, setpoint/sample sequencing, stale/overspeed/following limits,
   transactionality, held current targets, and deterministic plant convergence;
+- absolute-count estimator replay across repeated forward/reverse wraps in both
+  sensor directions, including explicit multi-turn seeding, unique modular
+  candidate proof, exact cadence/latency, outward position/velocity intervals,
+  required secant-to-endpoint estimator widening, precision/range rejection,
+  transactionality, and known-truth comparison;
 - bounded cross-block ownership: two independently validated tokens, successor
   prefill before predecessor release, per-block commit-count/terminal-cycle
   barriers, strict acknowledgement order, and a gap-free dense wire trace;
@@ -359,6 +364,13 @@ The current [portable FOC checkpoint](evidence/M8-PORTABLE-FOC-FOUNDATION.md)
 proves fixed-point interval arithmetic, transforms/modulation, dq PI state, and
 deterministic functional-plant replay only. It satisfies none of the physical
 progression steps or measurements below.
+
+The portable
+[encoder-estimator checkpoint](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md)
+proves modular unwrapping and interval conversion only under supplied exact
+timestamps, a supplied multi-turn seed, and declared motion/error bounds. It
+does not qualify AS5600 sample timing, alignment, homing, achievable speed,
+dropout behavior, or any target scheduling path.
 
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.

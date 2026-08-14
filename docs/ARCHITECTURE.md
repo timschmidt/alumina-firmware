@@ -1027,12 +1027,42 @@ endpoints must fit the validated current circle. Digest, schedule, sequence,
 sample time/age, overspeed, following-error, and arithmetic failures latch a
 first cause without partially advancing PI or accepted identities.
 
-This portable cascade does not yet have canonical Configuration V5 records,
-encoder unwrapping/velocity estimation, a cached command schema, current-loop
-composition, a core-1 task, MCPWM/ADC attachment, WCET, or motor evidence. Its
+This portable cascade does not yet have canonical Configuration V5 records, a
+cached command schema, current-loop composition, a core-1 task, MCPWM/ADC
+attachment, WCET, or motor evidence. Its
 dimensionless simulator assumes ideal q-current availability and exists only to
 replay grid, controller, limit, and numerical behavior. See
 [`evidence/M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
+
+`ServoEncoderEstimator` now supplies the portable raw-count-to-kinematics seam.
+Its profile carries a count modulus/reference/direction, complete rational count
+error, exact Q31.32 position reference, reduced rational position-per-turn and
+count-rate scales, device clock and exact sample period, maximum availability
+latency, separate trackable/admitted normalized speeds, and explicit position
+and velocity ULP budgets. A required symmetric velocity-estimation term must
+include bounded acceleration's secant-to-newest-sample difference plus any
+timestamp/model uncertainty not already in the raw-count error. A boot-local
+signed turn index seeds the multi-turn branch; the seed yields position but
+deliberately withholds velocity until a second physical sample exists.
+
+For every adjacent pair, the estimator adds the two complete count-error bounds
+to maximum trackable motion over the exact period and rounds upward to an
+integer modular-delta window. Twice that window must be strictly smaller than
+the modulus. Thus at most one of the positive and negative wrap candidates can
+be accepted; no nearest-wrap guess or half-turn tie is permitted. Position and
+two-sample normalized velocity are then evaluated as exact rationals with
+outward endpoint rounding into Q31.32 and Q2.30, after which the required
+estimation term widens both velocity endpoints. Digest, raw range, exact cadence,
+latency, wrap, representability, precision, admitted-speed, and sequence
+failures retain the last accepted estimate and latch first cause.
+
+This contract begins after a transport supplies a truthful raw count and exact
+represented/available device cycles. It does not home the axis, establish the
+turn seed, prove the physical speed bound, model sample aperture or AS5600
+internal latency, or attach an encoder task. Configuration V5 is unchanged. An
+independent host replay inverts reference/direction, crosses repeated wraps in
+both directions, and requires exact recovery of its known multi-turn truth. See
+[`evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md`](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 
 The first power profile is MKS ESP32 FOC V1.0, not TinyBee. Its V1.0 schematic
 establishes dual 3-PWM stages on GPIOs `32/33/25` and `26/27/14`, AS5600 buses

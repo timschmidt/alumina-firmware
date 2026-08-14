@@ -134,6 +134,11 @@ a hardware qualification: board promotion still follows the evidence ladder in
   Q31.32 position intervals, integer nested loop grids, transactional
   position/velocity-to-q-current cascade, first-cause limits, and deterministic
   ideal-current mechanical replay without target or configuration attachment.
+- [`M8-PORTABLE-ENCODER-ESTIMATOR.md`](M8-PORTABLE-ENCODER-ESTIMATOR.md) —
+  explicit multi-turn seeding, exact unique-window absolute-count unwrapping,
+  outward position/velocity observations with required estimator widening,
+  first-cause precision gates, and deterministic repeated-wrap truth replay
+  without target attachment.
 - [`M8-MKS-FOC-SAFE-TARGET.md`](M8-MKS-FOC-SAFE-TARGET.md) — reconciled V1.0
   schematic facts, typed resources and canonical capability identity, explicit
   absent enable/storage capabilities, six-phase-high-impedance boot composition,

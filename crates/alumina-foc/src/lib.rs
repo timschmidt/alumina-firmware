@@ -5,6 +5,7 @@ use alumina_protocol::{DeviceCycle, Digest};
 
 mod angle;
 mod current;
+mod encoder;
 mod pwm;
 mod servo;
 
@@ -18,6 +19,11 @@ pub use current::{
     PwmAdcSynchronization, SequentialAdcAcquisition, SequentialAdcAcquisitionError,
     SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest, TwoShuntCurrentCalibration,
     TwoShuntPhasePair, ValidatedTwoShuntCurrentCalibration,
+};
+pub use encoder::{
+    ServoEncoderError, ServoEncoderEstimate, ServoEncoderEstimator, ServoEncoderObservation,
+    ServoEncoderProfile, ServoEncoderProfileError, ServoEncoderScale, ServoEncoderScaleError,
+    ServoEncoderSeed, ServoEncoderSeedState,
 };
 pub use pwm::{
     PwmCompareContract, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
