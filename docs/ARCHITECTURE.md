@@ -160,6 +160,17 @@ initial mutation surface; transaction IDs prevent a response produced after
 HTTP timeout cancellation from satisfying a later request. These same-executor
 locks do not mask interrupts on core 1.
 
+The bounded HTTP adapter now makes its sequential authenticated phases explicit.
+`read_and_authorize_request` alone owns the full 1,148-byte body scratch array;
+after exact read, HMAC/counter/origin/rate admission, and route decode return an
+owned `ServiceRequest`, that future ends before `ServiceBridge::transact` can
+wait. Rejection mapping, authentication state mutation, body and connection
+limits, request bytes, response signing, two-handler concurrency, and timeouts
+are unchanged. This lets the compiler reuse async-state storage: one concrete
+handler falls from 5,456 to 4,456 bytes and the permanent two-connection HTTP
+task pool falls from 29,480 to 25,480 bytes. See
+[`evidence/M10-HTTP-PHASE-STORAGE-REUSE.md`](evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
+
 `GET /api/v1/storage` returns an authenticated, response-signed JSON status. An
 identified but unprovisioned card is `detached`; failed identification is
 `faulted`. Status distinguishes physical blocks, selected raw-region blocks,

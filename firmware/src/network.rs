@@ -400,60 +400,7 @@ impl Handler for AluminaHttpHandler {
         };
 
         if route.requires_authentication() {
-            let metadata = match authenticated_metadata(connection.headers()?, method, route) {
-                Ok(metadata) => metadata,
-                Err(rejection) => {
-                    reject_request(connection, rejection, request_origin).await?;
-                    return Ok(());
-                }
-            };
-            let mut body = [0_u8; MAX_AUTHENTICATED_BODY_BYTES];
-            read_body_exact(connection, &mut body[..metadata.body_len]).await?;
-            let body = &body[..metadata.body_len];
-            let auth_result = self.auth_state.lock(|state| {
-                state.borrow_mut().authorize(
-                    AP_PASSPHRASE.as_bytes(),
-                    metadata,
-                    body,
-                    Instant::now().as_millis(),
-                )
-            });
-            if let Err(error) = auth_result {
-                reject_request(
-                    connection,
-                    if error == AuthError::RateLimited {
-                        RequestRejection::RateLimited
-                    } else {
-                        RequestRejection::Unauthorized
-                    },
-                    request_origin,
-                )
-                .await?;
-                return Ok(());
-            }
-
-            let request = match route {
-                Route::StorageStatus => ServiceRequest::storage_status(),
-                Route::ControlCommand => match ServiceRequest::native(body) {
-                    Ok(request) => request,
-                    Err(_) => {
-                        reject_request(connection, RequestRejection::BodyTooLarge, request_origin)
-                            .await?;
-                        return Ok(());
-                    }
-                },
-                _ => unreachable!(),
-            };
-            let response = self.service_bridge.transact(request).await;
-            write_authenticated_response(
-                connection,
-                AP_PASSPHRASE.as_bytes(),
-                self.auth_nonce,
-                metadata.proof.counter,
-                metadata.origin,
-                &response,
-            )
-            .await?;
+            handle_authenticated_route(self, connection, request_origin, method, route).await?;
             return Ok(());
         }
 
@@ -584,6 +531,89 @@ impl Handler for AluminaHttpHandler {
 
         Ok(())
     }
+}
+
+type AuthenticatedRequestAdmission =
+    Result<(AuthenticatedRequestMetadata, ServiceRequest), RequestRejection>;
+
+/// Complete an authenticated route without retaining its body scratch space
+/// during the later inter-core transaction.
+async fn handle_authenticated_route<T, const N: usize>(
+    handler: &AluminaHttpHandler,
+    connection: &mut Connection<'_, T, N>,
+    request_origin: Option<CorsOrigin>,
+    method: HttpMethod,
+    route: Route,
+) -> Result<(), HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let (metadata, request) =
+        match read_and_authorize_request(handler, connection, method, route).await? {
+            Ok(admitted) => admitted,
+            Err(rejection) => {
+                reject_request(connection, rejection, request_origin).await?;
+                return Ok(());
+            }
+        };
+    let response = handler.service_bridge.transact(request).await;
+    write_authenticated_response(
+        connection,
+        AP_PASSPHRASE.as_bytes(),
+        handler.auth_nonce,
+        metadata.proof.counter,
+        metadata.origin,
+        &response,
+    )
+    .await
+}
+
+/// Read, authenticate, and decode one bounded request as a complete phase.
+///
+/// Returning the owned service request ends the body-array lifetime before the
+/// bridge can await. Embassy can therefore reuse this phase's fixed storage
+/// while preserving the exact route and authentication limits.
+async fn read_and_authorize_request<T, const N: usize>(
+    handler: &AluminaHttpHandler,
+    connection: &mut Connection<'_, T, N>,
+    method: HttpMethod,
+    route: Route,
+) -> Result<AuthenticatedRequestAdmission, HttpError<T::Error>>
+where
+    T: Read + Write,
+{
+    let metadata = match authenticated_metadata(connection.headers()?, method, route) {
+        Ok(metadata) => metadata,
+        Err(rejection) => return Ok(Err(rejection)),
+    };
+    let mut body = [0_u8; MAX_AUTHENTICATED_BODY_BYTES];
+    read_body_exact(connection, &mut body[..metadata.body_len]).await?;
+    let body = &body[..metadata.body_len];
+    let auth_result = handler.auth_state.lock(|state| {
+        state.borrow_mut().authorize(
+            AP_PASSPHRASE.as_bytes(),
+            metadata,
+            body,
+            Instant::now().as_millis(),
+        )
+    });
+    if let Err(error) = auth_result {
+        return Ok(Err(if error == AuthError::RateLimited {
+            RequestRejection::RateLimited
+        } else {
+            RequestRejection::Unauthorized
+        }));
+    }
+
+    let request = match route {
+        Route::StorageStatus => ServiceRequest::storage_status(),
+        Route::ControlCommand => match ServiceRequest::native(body) {
+            Ok(request) => request,
+            Err(_) => return Ok(Err(RequestRejection::BodyTooLarge)),
+        },
+        _ => unreachable!(),
+    };
+    Ok(Ok((metadata, request)))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

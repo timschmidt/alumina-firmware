@@ -199,6 +199,13 @@ Work:
 - Add signed/recoverable firmware+UI update packaging, per-device credentials,
   request size/rate limits, origin policy, and no direct-Internet claim.
 
+Static-memory checkpoint: the authenticated HTTP adapter now completes body
+read, HMAC/counter/origin/rate admission, and native request decode in one
+bounded async phase before awaiting the service bridge. All limits and two-way
+connection concurrency remain unchanged, while the permanent HTTP task pool
+falls by exactly 4,000 bytes on every current board. See
+[`M10-HTTP-PHASE-STORAGE-REUSE.md`](evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
+
 Exit gate:
 
 - A fresh device AP serves the UI, scans/joins a WLAN, and remains recoverable
