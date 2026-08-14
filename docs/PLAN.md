@@ -530,6 +530,18 @@ equal the independent VCD result. Failed-start logs remain valid non-pass
 evidence without inventing a post-stop record. This changes no production path
 or physical claim. See
 [`M10-PCM-SOFTWARE-ATTESTATION.md`](evidence/M10-PCM-SOFTWARE-ATTESTATION.md).
+The bounded-refill checkpoint moves the safe HIL loop's preview/push/accept
+handshake into a reusable fixed-memory transaction. One call reconciles target
+whole-frame availability and accepts at most the caller budget, with the
+compile-time ring shape providing a second hard bound. Its result carries exact
+partial progress, remaining credit, and sealed horizon. Target push uncertainty
+invalidates stream ownership immediately, while phase-labelled model errors
+retain first cause and ordered stop/rewrite recovery. The HIL target now passes
+the exact remaining portion of its 50,000-frame objective to that transaction;
+it no longer owns a nested per-frame loop. Interrupt wake policy, core-1 actor
+integration, target WCET/deadline measurement, and physical qualification stay
+open. Production remains on the static writer and non-armable. See
+[`M10-BOUNDED-DMA-REFILL.md`](evidence/M10-BOUNDED-DMA-REFILL.md).
 
 Exit gate:
 

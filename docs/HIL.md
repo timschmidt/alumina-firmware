@@ -85,8 +85,9 @@ the circular transfer is live:
 1. `HIL_STATIC_SAFE`: the blocking bootstrap transaction has installed image
    `0x001249`, then BCLK and WS remain low for 50 ms;
 2. a 256-frame safe-prefilled circular transfer starts and exactly 50,000
-   four-byte safe refills are accepted, nominally 200 ms at
-   250 kHz, with a two-second fail-closed timeout;
+   four-byte safe refills are accepted through repeated portable bounded batch
+   transactions, nominally 200 ms at 250 kHz, with a two-second fail-closed
+   timeout;
 3. `HIL_PCM_ATTEST_V2`: after DMA stop, the marker report, and two further safe
    samples, one ordered numeric record reports the hypothesized model epoch,
    start/stop/rewrite brackets, exact refill horizon, lifecycle state/fault,
@@ -108,6 +109,15 @@ The model epoch is the cycle read immediately before the HAL start call and is
 required to lie inside its reported return interval. It remains a hypothesis,
 not a physical timestamp. Correlate it with the captured first WS edge; do not
 promote it merely because the refill loop completed.
+
+Each target availability sample is reconciled once by the portable stream
+owner. The batch admits no more frames than the exact remaining capture target,
+and target availability can never exceed the compile-time 256-frame ring.
+Every accepted frame crosses preview, complete four-byte target push, and model
+acceptance before the software horizon advances. A failed target push
+invalidates the owner and forces the existing stop/rewrite recovery path. These
+bounds replace the fixture's former nested hand loop, but do not prove an
+interrupt wake policy, refill WCET, or physical underrun margin.
 
 A successful safe-only software run reports owner state `SafeRewriteIssued`, no
 owner fault, and `safe_reclaimed=false`. That false value is required: the two

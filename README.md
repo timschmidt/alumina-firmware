@@ -415,6 +415,16 @@ windows and the unfaulted software-only lifecycle state, and correlates its
 marker code with the VCD decoder. Missing attestation remains valid only for
 non-pass evidence such as a failed start. See the
 [software-attestation evidence](docs/evidence/M10-PCM-SOFTWARE-ATTESTATION.md).
+The live refill path now uses one portable fixed-memory batch transaction per
+target availability sample. The caller supplies a maximum frame budget, the
+ring shape limits every call to at most its compile-time frame count, and each
+frame crosses preview, exact target acceptance, and model acceptance in order.
+The result reports exact partial progress, retained credit, and sealed horizon;
+an uncertain target write invalidates the owner before recovery. The TinyBee
+HIL target passes its remaining 50,000-frame budget through this transaction,
+so the exact endpoint no longer depends on a target-specific inner refill loop.
+This is not an interrupt actor, deadline/WCET result, or physical qualification.
+See the [bounded-refill evidence](docs/evidence/M10-BOUNDED-DMA-REFILL.md).
 
 The first M8 portable FOC slice is also implemented without creating a hardware
 drive path. A new no-std crate carries exact Q2.30 points and outward intervals,

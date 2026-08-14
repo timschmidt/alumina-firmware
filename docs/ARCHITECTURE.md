@@ -893,16 +893,33 @@ this observed-safe transition. This remains portable ownership evidence, not a
 qualified target observation source. See
 [`evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md`](evidence/M10-STATIC-SAFE-STREAM-HANDOFF.md).
 
+`refill_batch_with` is the portable, allocation-free boundary for one bounded
+target service turn. It first reconciles a whole-frame availability report,
+then performs no more than the caller's budget and no more than the
+compile-time ring capacity. Each iteration previews one exact dense frame,
+asks the target closure to confirm complete four-byte acceptance, and only then
+extends the sealed model horizon. Success reports exact accepted frames,
+retained credits, and the resulting horizon. Model failures name availability,
+preview, acceptance, or final reporting and retain prior progress. A false
+target result invalidates the complete stream owner because it cannot prove
+whether no bytes or a partial frame reached the peripheral. Ordered stop and
+safe-rewrite recovery remains available without erasing that first cause. This
+transaction supplies bounded work for a future core-1 refill actor; it does not
+yet supply an interrupt/wake policy, measured deadline, or physical-latch
+observation. See
+[`evidence/M10-BOUNDED-DMA-REFILL.md`](evidence/M10-BOUNDED-DMA-REFILL.md).
+
 The first target-facing fixture is a separate TinyBee safe-image-only binary,
 not a feature path through production firmware. It establishes the static safe
 transaction first, never initializes Wi-Fi/storage/motion/the second core,
 brackets the I²S start call in the local cycle domain, refills 50,000 exact safe
-frames through the lifecycle while it remains `StartIssued`, explicitly stops
-the transfer, records two safe samples as `SafeRewriteIssued`, and parks. It
-cannot call either physical-observation transition. Its `xtask` command is
-build-only. Because the unknown first-frame and reclaim phase are the subject
-of the capture, disconnected loads and manual waveform review remain mandatory;
-a successful software report cannot promote the board.
+frames through repeated compile-time-ring-bounded transactions while it remains
+`StartIssued`, explicitly stops the transfer, records two safe samples as
+`SafeRewriteIssued`, and parks. It cannot call either physical-observation
+transition. Its `xtask` command is build-only. Because the unknown first-frame
+and reclaim phase are the subject of the capture, disconnected loads and manual
+waveform review remain mandatory; a successful software report cannot promote
+the board.
 
 The HIL evidence boundary now keeps human logs out of machine semantics. After
 all I²S and marker activity, the fixture emits one ordered numeric

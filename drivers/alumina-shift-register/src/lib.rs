@@ -972,6 +972,52 @@ pub enum PcmShortDmaStreamError {
     FaultLatched,
 }
 
+/// Model phase that rejected a bounded DMA refill batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaRefillPhase {
+    /// The target's whole-frame availability report was inconsistent.
+    Availability,
+    /// The next exact dense frame could not be previewed.
+    Preview,
+    /// The target-accepted frame could not be committed to the model.
+    Acceptance,
+    /// Final credit or sealed-horizon reporting was internally inconsistent.
+    Finalize,
+}
+
+/// Failure from one bounded preview/push/accept refill transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaRefillBatchError {
+    /// The portable owner rejected one exact model phase.
+    Model {
+        phase: PcmShortDmaRefillPhase,
+        accepted_frames: usize,
+        error: PcmShortDmaStreamError,
+    },
+    /// The target did not confirm exact acceptance of the named frame. The
+    /// owner is invalidated because a partial or otherwise uncertain write may
+    /// have reached the peripheral.
+    TargetPush {
+        accepted_frames: usize,
+        frame: PlannedPcmShortFrame,
+    },
+}
+
+/// Exact outcome of one CPU-bounded DMA refill transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortDmaRefillBatch {
+    /// Whole-frame slots reported by the target at batch entry.
+    pub reported_available_frames: usize,
+    /// Maximum number of target pushes admitted for this invocation.
+    pub maximum_frames: usize,
+    /// Exact frames pushed and acknowledged by the portable owner.
+    pub accepted_frames: usize,
+    /// Retained released slots not consumed by this invocation.
+    pub remaining_credit_frames: usize,
+    /// Latest exact latch boundary represented by target-owned dense frames.
+    pub sealed_horizon: u64,
+}
+
 /// Fixed-memory owner that joins static-safe handoff, a continuous dense DMA
 /// horizon, physical start authority, and post-stop safe reclaim.
 ///
@@ -1242,6 +1288,90 @@ where
             None => return self.fail(PcmShortDmaStreamError::InternalState),
         };
         result.map_err(|error| self.latch(PcmShortDmaStreamError::Horizon(error)))
+    }
+
+    /// Services at most `maximum_frames` released slots through one exact
+    /// preview/target-push/model-accept transaction per frame.
+    ///
+    /// `push` must return true only when the target accepted the complete four-
+    /// byte frame. A false result invalidates the owner immediately: it cannot
+    /// distinguish no write from a partial or otherwise uncertain write. A
+    /// zero budget still reconciles target availability but performs no push.
+    /// Availability validation also limits work to the compile-time `FRAMES`
+    /// ring capacity even when the caller supplies a larger maximum.
+    pub fn refill_batch_with(
+        &mut self,
+        reported_available_frames: usize,
+        maximum_frames: usize,
+        mut push: impl FnMut(PlannedPcmShortFrame) -> bool,
+    ) -> Result<PcmShortDmaRefillBatch, PcmShortDmaRefillBatchError> {
+        if let Err(error) = self.synchronize_refill_availability(reported_available_frames) {
+            return Err(PcmShortDmaRefillBatchError::Model {
+                phase: PcmShortDmaRefillPhase::Availability,
+                accepted_frames: 0,
+                error,
+            });
+        }
+
+        let mut accepted_frames = 0;
+        while accepted_frames < maximum_frames {
+            let frame = match self.next_refill_frame() {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(error) => {
+                    return Err(PcmShortDmaRefillBatchError::Model {
+                        phase: PcmShortDmaRefillPhase::Preview,
+                        accepted_frames,
+                        error,
+                    });
+                }
+            };
+            if !push(frame) {
+                self.invalidate();
+                return Err(PcmShortDmaRefillBatchError::TargetPush {
+                    accepted_frames,
+                    frame,
+                });
+            }
+            if let Err(error) = self.accept_refill(frame) {
+                return Err(PcmShortDmaRefillBatchError::Model {
+                    phase: PcmShortDmaRefillPhase::Acceptance,
+                    accepted_frames,
+                    error,
+                });
+            }
+            accepted_frames += 1;
+        }
+
+        let remaining_credit_frames = match self.refill_credit_frames() {
+            Ok(frames) => frames,
+            Err(error) => {
+                let error = self.latch(error);
+                return Err(PcmShortDmaRefillBatchError::Model {
+                    phase: PcmShortDmaRefillPhase::Finalize,
+                    accepted_frames,
+                    error,
+                });
+            }
+        };
+        let sealed_horizon = match self.sealed_horizon() {
+            Ok(horizon) => horizon,
+            Err(error) => {
+                let error = self.latch(error);
+                return Err(PcmShortDmaRefillBatchError::Model {
+                    phase: PcmShortDmaRefillPhase::Finalize,
+                    accepted_frames,
+                    error,
+                });
+            }
+        };
+        Ok(PcmShortDmaRefillBatch {
+            reported_available_frames,
+            maximum_frames,
+            accepted_frames,
+            remaining_credit_frames,
+            sealed_horizon,
+        })
     }
 
     /// Installs a monotonic physical latch observation after the safe first
@@ -2257,6 +2387,238 @@ mod tests {
         assert_eq!(owner.state(), PcmShortDmaStreamState::PeripheralSafe);
         assert!(owner.safe_reclaimed());
         assert_eq!(owner.fault(), None);
+    }
+
+    #[test]
+    fn dma_stream_refill_batch_is_budgeted_and_retains_exact_credit() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let update = image(0x1269, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 2, 4>::new(safe, 90).unwrap();
+        owner.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+
+        let mut pushed = Vec::new();
+        let batch = owner
+            .refill_batch_with(3, 2, |frame| {
+                pushed.push(frame);
+                true
+            })
+            .unwrap();
+        assert_eq!(batch.reported_available_frames, 3);
+        assert_eq!(batch.maximum_frames, 2);
+        assert_eq!(batch.accepted_frames, 2);
+        assert_eq!(batch.remaining_credit_frames, 1);
+        assert_eq!(batch.sealed_horizon, 124);
+        assert_eq!(pushed.len(), 2);
+        assert_eq!(pushed[0].transmit_index, 4);
+        assert_eq!(pushed[0].commits_at, 120);
+        assert_eq!(pushed[1].transmit_index, 5);
+        assert_eq!(pushed[1].commits_at, 124);
+        assert!(
+            pushed
+                .iter()
+                .all(|frame| frame.frame.commits_image() == safe)
+        );
+
+        let no_push = owner
+            .refill_batch_with(1, 0, |_| panic!("zero budget pushed a frame"))
+            .unwrap();
+        assert_eq!(no_push.accepted_frames, 0);
+        assert_eq!(no_push.remaining_credit_frames, 1);
+        assert_eq!(no_push.sealed_horizon, 124);
+
+        let last_safe = owner.refill_batch_with(1, 1, |_| true).unwrap();
+        assert_eq!(last_safe.accepted_frames, 1);
+        assert_eq!(last_safe.remaining_credit_frames, 0);
+        assert_eq!(last_safe.sealed_horizon, 128);
+
+        owner.observe_first_stream_latch(104, safe).unwrap();
+        owner
+            .stage(TaggedScheduledCompleteImage {
+                tag: 7,
+                commit_cycle: 132,
+                image: update,
+            })
+            .unwrap();
+        let mut update_frame = None;
+        let motion = owner
+            .refill_batch_with(1, usize::MAX, |frame| {
+                update_frame = Some(frame);
+                true
+            })
+            .unwrap();
+        assert_eq!(motion.accepted_frames, 1);
+        assert_eq!(motion.remaining_credit_frames, 0);
+        assert_eq!(motion.sealed_horizon, 132);
+        let update_frame = update_frame.unwrap();
+        assert_eq!(update_frame.transmit_index, 7);
+        assert_eq!(update_frame.frame.commits_image(), update);
+    }
+
+    #[test]
+    fn dma_stream_refill_batch_invalidates_an_uncertain_target_push() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        owner.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+
+        let mut attempts = 0;
+        let error = owner
+            .refill_batch_with(2, 2, |_| {
+                attempts += 1;
+                attempts == 1
+            })
+            .unwrap_err();
+        let failed_frame = match error {
+            PcmShortDmaRefillBatchError::TargetPush {
+                accepted_frames,
+                frame,
+            } => {
+                assert_eq!(accepted_frames, 1);
+                frame
+            }
+            other => panic!("unexpected refill error: {other:?}"),
+        };
+        assert_eq!(attempts, 2);
+        assert_eq!(failed_frame.transmit_index, 5);
+        assert_eq!(failed_frame.commits_at, 124);
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+        assert!(owner.stop_required());
+        assert_eq!(
+            owner.refill_batch_with(0, 0, |_| true),
+            Err(PcmShortDmaRefillBatchError::Model {
+                phase: PcmShortDmaRefillPhase::Availability,
+                accepted_frames: 0,
+                error: PcmShortDmaStreamError::FaultLatched,
+            })
+        );
+
+        owner
+            .record_stop_call(
+                PcmShortOperationWindow {
+                    began_at: 125,
+                    returned_at: 126,
+                },
+                true,
+            )
+            .unwrap();
+        owner
+            .record_safe_rewrite(
+                PcmShortOperationWindow {
+                    began_at: 127,
+                    returned_at: 128,
+                },
+                safe,
+                2,
+                true,
+            )
+            .unwrap();
+        owner.observe_safe_reclaim(129, safe).unwrap();
+        assert!(owner.safe_reclaimed());
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+    }
+
+    #[test]
+    fn dma_stream_refill_batch_names_availability_model_failures() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 250_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        owner.prepare_safe_ring(grid, safe, 4, 95).unwrap();
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+        owner.refill_batch_with(2, 0, |_| true).unwrap();
+
+        assert_eq!(
+            owner.refill_batch_with(1, 1, |_| true),
+            Err(PcmShortDmaRefillBatchError::Model {
+                phase: PcmShortDmaRefillPhase::Availability,
+                accepted_frames: 0,
+                error: PcmShortDmaStreamError::Horizon(PcmShortDmaHorizonError::Availability {
+                    reported: 1,
+                    retained: 2,
+                    ring_frames: 4,
+                }),
+            })
+        );
+        assert_eq!(
+            owner.fault(),
+            Some(PcmShortDmaStreamError::Horizon(
+                PcmShortDmaHorizonError::Availability {
+                    reported: 1,
+                    retained: 2,
+                    ring_frames: 4,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn dma_stream_refill_batch_retains_progress_before_preview_overflow() {
+        let epoch = u64::MAX - 3;
+        let grid = PcmShortFrameGrid::new(epoch, 1, 1).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::<u8, 1, 2>::new(safe, 0).unwrap();
+        owner.prepare_safe_ring(grid, safe, 2, 0).unwrap();
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: epoch,
+                    returned_at: epoch,
+                },
+                true,
+            )
+            .unwrap();
+
+        let mut pushed = Vec::new();
+        assert_eq!(
+            owner.refill_batch_with(2, 2, |frame| {
+                pushed.push(frame);
+                true
+            }),
+            Err(PcmShortDmaRefillBatchError::Model {
+                phase: PcmShortDmaRefillPhase::Preview,
+                accepted_frames: 1,
+                error: PcmShortDmaStreamError::Horizon(PcmShortDmaHorizonError::Timeline(
+                    PcmShortTimelineError::Grid(PcmShortGridError::Arithmetic),
+                )),
+            })
+        );
+        assert_eq!(pushed.len(), 1);
+        assert_eq!(pushed[0].transmit_index, 2);
+        assert_eq!(pushed[0].commits_at, u64::MAX);
+        assert_eq!(
+            owner.fault(),
+            Some(PcmShortDmaStreamError::Horizon(
+                PcmShortDmaHorizonError::Timeline(PcmShortTimelineError::Grid(
+                    PcmShortGridError::Arithmetic,
+                )),
+            ))
+        );
     }
 
     #[test]

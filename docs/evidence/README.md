@@ -315,3 +315,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   post-stop numeric lifecycle attestation, bounded RTT-log parsing, exact
   software-horizon replay, and schema-v2 correlation with the independent
   TinyBee VCD marker result.
+- [`M10-BOUNDED-DMA-REFILL.md`](M10-BOUNDED-DMA-REFILL.md) — allocation-free
+  fixed-budget preview/push/accept transactions, exact partial progress and
+  retained credit, fail-closed uncertain-write recovery, and TinyBee safe-HIL
+  adoption without a production or physical claim.

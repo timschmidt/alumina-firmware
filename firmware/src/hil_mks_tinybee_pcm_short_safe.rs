@@ -19,7 +19,10 @@ mod hardware;
 mod storage;
 
 use alumina_protocol::DeviceCycle;
-use alumina_shift_register::{PcmShortDmaStreamState, PcmShortOperationWindow};
+use alumina_shift_register::{
+    PcmShortDmaRefillBatchError, PcmShortDmaRefillPhase, PcmShortDmaStreamState,
+    PcmShortOperationWindow,
+};
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
@@ -227,40 +230,40 @@ async fn main(_spawner: Spawner) -> ! {
                 Ok(available) => available,
                 Err(_) => break 'capture CaptureExit::Availability,
             };
-        if owner.synchronize_refill_availability(available).is_err() {
-            break 'capture CaptureExit::AvailabilityModel;
-        }
-        loop {
-            if accepted_refills >= TARGET_REFILLS {
-                break;
-            }
-            let credit = match owner.refill_credit_frames() {
-                Ok(credit) => credit,
-                Err(_) => break 'capture CaptureExit::AvailabilityModel,
-            };
-            if credit == 0 {
-                break;
-            }
-            let frame = match owner.next_refill_frame() {
-                Ok(Some(frame)) => frame,
-                Ok(None) | Err(_) => break 'capture CaptureExit::FrameModel,
-            };
-            if mks_tinybee::pcm_short::UnqualifiedPcmShortResources::push_planned_frame(
+        let remaining = TARGET_REFILLS - accepted_refills;
+        let maximum_frames = match usize::try_from(remaining) {
+            Ok(maximum_frames) => maximum_frames,
+            Err(_) => break 'capture CaptureExit::AcceptanceModel,
+        };
+        let batch = match owner.refill_batch_with(available, maximum_frames, |frame| {
+            mks_tinybee::pcm_short::UnqualifiedPcmShortResources::push_planned_frame(
                 &mut transfer,
                 frame,
             )
-            .is_err()
-            {
+            .is_ok()
+        }) {
+            Ok(batch) => batch,
+            Err(PcmShortDmaRefillBatchError::TargetPush { .. }) => {
                 break 'capture CaptureExit::TargetPush;
             }
-            if owner.accept_refill(frame).is_err() {
-                break 'capture CaptureExit::AcceptanceModel;
+            Err(PcmShortDmaRefillBatchError::Model { phase, .. }) => {
+                break 'capture match phase {
+                    PcmShortDmaRefillPhase::Availability => CaptureExit::AvailabilityModel,
+                    PcmShortDmaRefillPhase::Preview => CaptureExit::FrameModel,
+                    PcmShortDmaRefillPhase::Acceptance | PcmShortDmaRefillPhase::Finalize => {
+                        CaptureExit::AcceptanceModel
+                    }
+                };
             }
-            accepted_refills = match accepted_refills.checked_add(1) {
-                Some(refills) => refills,
-                None => break 'capture CaptureExit::AcceptanceModel,
-            };
-        }
+        };
+        let accepted = match u32::try_from(batch.accepted_frames) {
+            Ok(accepted) => accepted,
+            Err(_) => break 'capture CaptureExit::AcceptanceModel,
+        };
+        accepted_refills = match accepted_refills.checked_add(accepted) {
+            Some(refills) => refills,
+            None => break 'capture CaptureExit::AcceptanceModel,
+        };
     };
 
     let sealed_horizon = owner.sealed_horizon().unwrap_or(0);

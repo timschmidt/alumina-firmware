@@ -72,6 +72,11 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   observed first latch, motion-authority gating, stop-time tag invalidation,
   two-sample safe rewrite, separately observed physical reclaim, and retained
   first cause;
+- fixed-budget refill transactions: availability reconciliation, a strict
+  preview/target-push/model-accept order, caller and compile-time ring bounds,
+  exact partial progress and retained credits, zero-budget behavior, and
+  fail-closed invalidation plus recoverable stop/rewrite after uncertain target
+  acceptance;
 - configuration-derived FOC hardware-loop replay from active integer compare
   edges through synchronized raw ADC/current/rotor observations, dq control,
   interval SVPWM, complete-image staging, and the next exact timer-zero, with
@@ -264,7 +269,10 @@ decoded edge facts to the retained capture. Run-record schema V2 separately
 hashes and parses the bounded plain RTT log, recomputes the software lifecycle
 horizon, and requires its outcome marker to equal the decoded physical marker.
 The strict validator replays both domains, but their build or software
-completion is not itself a HIL pass.
+completion is not itself a HIL pass. The safe fixture services every target
+availability sample through the same portable bounded transaction and caps its
+last call by the exact remaining refill count; this proves software endpoint
+accounting, not interrupt latency or deadline margin.
 
 ### 6. Core-isolation and load tests
 
