@@ -24,6 +24,8 @@ use alumina_storage::{
 };
 use heapless::String as FixedString;
 
+/// Authenticated bounded reads from one immutable canonical board document.
+pub mod capability;
 /// Bounded telemetry and waveform session ownership for the service core.
 pub mod diagnostics;
 /// Passive runtime-health observation and authenticated snapshot service.

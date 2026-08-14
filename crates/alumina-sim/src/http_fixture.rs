@@ -17,6 +17,7 @@ use alumina_net::{
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind, Operation, StatusCode};
 use alumina_runtime::stack::{StackDomain, StackWatermarkFlags, StackWatermarkSnapshot};
+use alumina_service::capability::CapabilityDocumentService;
 use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
@@ -322,7 +323,14 @@ impl ClockHttpFixture {
     }
 
     fn identity(&self, request: &FixtureHttpRequest) -> FixtureHttpResponse {
-        let body = b"{\"protocol_version\":1,\"board_id\":\"sim-clock\",\"credential_source\":\"development-fallback\",\"production_armable\":false}".to_vec();
+        let context = self.diagnostics.context();
+        let device_id = lower_hex(&context.device_id.0);
+        let capability_digest = lower_hex(&context.capability.digest.0);
+        let body = format!(
+            "{{\"protocol_version\":1,\"board_id\":\"mks-tinybee-v1\",\"credential_source\":\"development-fallback\",\"production_armable\":false,\"device_id\":\"{device_id}\",\"capability_digest\":\"{capability_digest}\",\"capability_document_bytes\":{}}}",
+            context.capability.byte_len
+        )
+        .into_bytes();
         let response = FixtureHttpResponse::new(200, "OK", Some(JSON_MEDIA_TYPE), body);
         public_origin(request).map_or(response.clone(), |origin| response.with_cors(origin))
     }
@@ -391,6 +399,16 @@ impl ClockHttpFixture {
                 return ServiceResponse::invalid_native();
             };
             return self.diagnostics.dispatch(&request, transmit_cycle);
+        }
+        if native.frame.kind == FrameKind::Capabilities {
+            let Ok(request) = ServiceRequest::native(bytes) else {
+                return ServiceResponse::invalid_native();
+            };
+            return CapabilityDocumentService::dispatch(
+                &board_mks_tinybee::PACKAGE,
+                &request,
+                transmit_cycle,
+            );
         }
         if native.frame.kind == FrameKind::Health {
             let valid_snapshot_request = native.message.operation == Operation::HealthSnapshot
@@ -654,6 +672,10 @@ impl core::error::Error for ClockFixtureError {}
 
 #[cfg(test)]
 mod tests {
+    use alumina_capability::{
+        CapabilityReadRequest, CapabilityReadResponse, MAX_CAPABILITY_CHUNK_BYTES,
+        calculate_identity,
+    };
     use alumina_net::{
         AUTH_PROOF_HEADER, AUTH_TAG_HEX_BYTES, CORS_REQUEST_HEADERS_HEADER,
         CORS_REQUEST_METHOD_HEADER, HttpMethod, RequestProof, parse_request_proof, sign_request,
@@ -693,6 +715,26 @@ mod tests {
 
     fn native_health_request(counter: u64) -> FixtureHttpRequest {
         native_request(counter, FrameKind::Health, Operation::HealthSnapshot, &[])
+    }
+
+    fn native_capability_request(
+        counter: u64,
+        expected_digest: Digest,
+        offset: u32,
+    ) -> FixtureHttpRequest {
+        let body = CapabilityReadRequest {
+            expected_digest,
+            offset,
+            maximum_bytes: u16::try_from(MAX_CAPABILITY_CHUNK_BYTES).unwrap(),
+        }
+        .encode()
+        .unwrap();
+        native_request(
+            counter,
+            FrameKind::Capabilities,
+            Operation::CapabilitiesGet,
+            &body,
+        )
     }
 
     fn native_request(
@@ -779,6 +821,31 @@ mod tests {
                 .windows(32)
                 .any(|window| window == b"31313131313131313131313131313131")
         );
+
+        let identity_request = FixtureHttpRequest {
+            method: HttpMethod::Get,
+            path: "/api/v1/identity".to_owned(),
+            headers: vec![(
+                CORS_ORIGIN_HEADER.as_bytes().to_vec(),
+                ORIGIN.as_bytes().to_vec(),
+            )],
+            body: Vec::new(),
+        };
+        let identity_response =
+            fixture.handle(&identity_request, 0, DeviceCycle(0), DeviceCycle(0));
+        let identity_text = core::str::from_utf8(&identity_response.body).unwrap();
+        let capability = calculate_identity(&board_mks_tinybee::PACKAGE).unwrap();
+        assert_eq!(identity_response.status, 200);
+        assert!(identity_text.contains("\"board_id\":\"mks-tinybee-v1\""));
+        assert!(identity_text.contains("\"device_id\":\"414c554d2d53494d3a54494e59424545\""));
+        assert!(identity_text.contains(&format!(
+            "\"capability_digest\":\"{}\"",
+            lower_hex(&capability.digest.0)
+        )));
+        assert!(identity_text.contains(&format!(
+            "\"capability_document_bytes\":{}",
+            capability.byte_len
+        )));
 
         let preflight = FixtureHttpRequest {
             method: HttpMethod::Options,
@@ -945,6 +1012,49 @@ mod tests {
         assert!(
             second_snapshot.realtime_stack.sampled_at > first_snapshot.realtime_stack.sampled_at
         );
+    }
+
+    #[test]
+    fn authenticated_capability_ranges_use_the_shared_production_dispatcher() {
+        let mut fixture = fixture();
+        let identity = calculate_identity(&board_mks_tinybee::PACKAGE).unwrap();
+        let first = fixture.handle(
+            &native_capability_request(74, Digest::ZERO, 0),
+            10,
+            DeviceCycle(1_020_000),
+            DeviceCycle(1_020_100),
+        );
+        assert_eq!(first.status, 200);
+        let frame = FrameHeader::decode(&first.body[..FrameHeader::WIRE_LEN], 1_024).unwrap();
+        assert_eq!(frame.kind, FrameKind::Capabilities);
+        let message_end = FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN;
+        let message = MessageHeader::decode_and_validate(
+            &first.body[FrameHeader::WIRE_LEN..message_end],
+            frame.kind,
+            frame.payload_len,
+        )
+        .unwrap();
+        assert_eq!(message.direction, MessageDirection::Response);
+        assert_eq!(message.operation, Operation::CapabilitiesGet);
+        assert_eq!(message.status, StatusCode::Ok);
+        let (metadata, chunk) = CapabilityReadResponse::decode_body(&first.body[message_end..])
+            .expect("shared service emits a canonical range body");
+        assert_eq!(metadata.identity, identity);
+        assert_eq!(metadata.offset, 0);
+        assert_eq!(chunk.len(), MAX_CAPABILITY_CHUNK_BYTES);
+        assert!(!metadata.complete);
+
+        let second = fixture.handle(
+            &native_capability_request(75, identity.digest, metadata.chunk_len.into()),
+            11,
+            DeviceCycle(1_030_000),
+            DeviceCycle(1_030_100),
+        );
+        assert_eq!(second.status, 200);
+        let (second_metadata, _) =
+            CapabilityReadResponse::decode_body(&second.body[message_end..]).unwrap();
+        assert_eq!(second_metadata.identity, identity);
+        assert_eq!(second_metadata.offset, u32::from(metadata.chunk_len));
     }
 
     #[test]

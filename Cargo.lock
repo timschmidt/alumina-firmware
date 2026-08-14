@@ -222,6 +222,8 @@ dependencies = [
 name = "alumina-service"
 version = "0.1.0"
 dependencies = [
+ "alumina-board",
+ "alumina-capability",
  "alumina-diagnostics",
  "alumina-net",
  "alumina-protocol",
