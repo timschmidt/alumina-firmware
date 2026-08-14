@@ -4271,12 +4271,11 @@ pub enum ConfigurationCoordinatorStatusError {
 /// Core-1 owner of candidate bytes, independent semantic validation, and active identity.
 pub struct RealtimeConfigurationService<'a, const MAX_BINDINGS: usize> {
     package: &'a BoardPackage<'a>,
-    receiving: Option<ConfigurationStreamValidator<'a, MAX_BINDINGS>>,
+    payload: ConfigurationValidationPayload<'a, MAX_BINDINGS>,
     transaction_id: u64,
     digest: Digest,
     total_bytes: u32,
     consumed_bytes: u32,
-    candidate: Option<RealtimeConfiguration>,
     active: Option<RealtimeConfiguration>,
     active_authorized: bool,
     cleared: bool,
@@ -4288,12 +4287,11 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
     pub const fn new(package: &'a BoardPackage<'a>) -> Self {
         Self {
             package,
-            receiving: None,
+            payload: ConfigurationValidationPayload::Empty,
             transaction_id: 0,
             digest: Digest::ZERO,
             total_bytes: 0,
             consumed_bytes: 0,
-            candidate: None,
             active: None,
             active_authorized: false,
             cleared: false,
@@ -4325,12 +4323,11 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                         );
                     }
                 };
-                self.receiving = Some(validator);
+                self.payload = ConfigurationValidationPayload::Validating(validator);
                 self.transaction_id = command.transaction_id;
                 self.digest = command.digest;
                 self.total_bytes = command.total_bytes;
                 self.consumed_bytes = 0;
-                self.candidate = None;
                 self.cleared = false;
                 self.last_fault = ConfigurationFaultCode::None;
                 self.report()
@@ -4339,11 +4336,13 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 if !self.matches(command) || command.offset != self.consumed_bytes {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
-                let result = self
-                    .receiving
-                    .as_mut()
-                    .ok_or(ConfigurationError::Internal)
-                    .and_then(|validator| validator.push(command.data_bytes()));
+                let result = match &mut self.payload {
+                    ConfigurationValidationPayload::Validating(validator) => {
+                        validator.push(command.data_bytes())
+                    }
+                    ConfigurationValidationPayload::Complete(_)
+                    | ConfigurationValidationPayload::Empty => Err(ConfigurationError::Internal),
+                };
                 if let Err(error) = result {
                     return self.reject(
                         command,
@@ -4361,12 +4360,18 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 if !self.matches(command) || self.consumed_bytes != self.total_bytes {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
-                let Some(validator) = self.receiving.take() else {
+                let payload =
+                    core::mem::replace(&mut self.payload, ConfigurationValidationPayload::Empty);
+                let ConfigurationValidationPayload::Validating(validator) = payload else {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 };
                 match validator.finish_with_profile() {
                     Ok((identity, profile)) => {
-                        self.candidate = Some(RealtimeConfiguration { identity, profile });
+                        self.payload =
+                            ConfigurationValidationPayload::Complete(RealtimeConfiguration {
+                                identity,
+                                profile,
+                            });
                         self.last_fault = ConfigurationFaultCode::None;
                         self.report()
                     }
@@ -4378,17 +4383,22 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
             }
             CoreConfigurationAction::Activate => {
                 if !self.matches(command)
-                    || self
-                        .candidate
-                        .as_ref()
-                        .is_none_or(|candidate| !identity_matches(candidate.identity, command))
+                    || !matches!(
+                        &self.payload,
+                        ConfigurationValidationPayload::Complete(candidate)
+                            if identity_matches(candidate.identity, command)
+                    )
                 {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
-                self.active = self.candidate.take();
+                let payload =
+                    core::mem::replace(&mut self.payload, ConfigurationValidationPayload::Empty);
+                let ConfigurationValidationPayload::Complete(candidate) = payload else {
+                    return self.reject(command, ConfigurationFaultCode::Sequence);
+                };
+                self.active = Some(candidate);
                 self.active_authorized = false;
                 self.cleared = false;
-                self.receiving = None;
                 self.last_fault = ConfigurationFaultCode::None;
                 self.report()
             }
@@ -4412,8 +4422,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                     active_bytes: 0,
                     active_authorized: false,
                 };
-                self.receiving = None;
-                self.candidate = None;
+                self.payload = ConfigurationValidationPayload::Empty;
                 self.active = None;
                 self.active_authorized = false;
                 self.transaction_id = command.transaction_id;
@@ -4428,8 +4437,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 if !self.matches(command) {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
-                self.receiving = None;
-                self.candidate = None;
+                self.payload = ConfigurationValidationPayload::Empty;
                 self.cleared = false;
                 self.last_fault = ConfigurationFaultCode::Identity;
                 self.report()
@@ -4439,8 +4447,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                     .active
                     .as_ref()
                     .is_none_or(|active| !identity_matches(active.identity, command))
-                    || self.candidate.is_some()
-                    || self.receiving.is_some()
+                    || !matches!(self.payload, ConfigurationValidationPayload::Empty)
                 {
                     return self.reject(command, ConfigurationFaultCode::Sequence);
                 }
@@ -4453,7 +4460,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
 
     /// Latest state suitable for periodic replay after lossy telemetry.
     pub fn report(&self) -> RealtimeConfigurationReport {
-        if let Some(candidate) = self.candidate.as_ref() {
+        if let ConfigurationValidationPayload::Complete(candidate) = &self.payload {
             return identity_report(
                 RealtimeConfigurationState::CandidateValid,
                 self.transaction_id,
@@ -4477,7 +4484,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
                 active_authorized: false,
             };
         }
-        if self.receiving.is_some() {
+        if matches!(self.payload, ConfigurationValidationPayload::Validating(_)) {
             return RealtimeConfigurationReport {
                 state: RealtimeConfigurationState::Receiving,
                 transaction_id: self.transaction_id,
@@ -4566,8 +4573,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
         if !mutation_allowed
             || command.action != CoreConfigurationAction::Authorize
             || !self.matches(command)
-            || self.candidate.is_some()
-            || self.receiving.is_some()
+            || !matches!(self.payload, ConfigurationValidationPayload::Empty)
         {
             return None;
         }
@@ -4578,9 +4584,11 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
 
     /// Exact independently validated but inactive candidate.
     pub fn candidate_identity(&self) -> Option<ConfigurationIdentity> {
-        self.candidate
-            .as_ref()
-            .map(|configuration| configuration.identity)
+        match &self.payload {
+            ConfigurationValidationPayload::Complete(configuration) => Some(configuration.identity),
+            ConfigurationValidationPayload::Validating(_)
+            | ConfigurationValidationPayload::Empty => None,
+        }
     }
 
     fn matches(&self, command: CoreConfigurationCommand) -> bool {
@@ -4594,8 +4602,7 @@ impl<'a, const MAX_BINDINGS: usize> RealtimeConfigurationService<'a, MAX_BINDING
         command: CoreConfigurationCommand,
         fault: ConfigurationFaultCode,
     ) -> RealtimeConfigurationReport {
-        self.receiving = None;
-        self.candidate = None;
+        self.payload = ConfigurationValidationPayload::Empty;
         self.transaction_id = command.transaction_id;
         self.digest = command.digest;
         self.total_bytes = command.total_bytes;
@@ -4820,11 +4827,15 @@ pub struct ServiceConfigurationStatus {
 }
 
 /// Mutually exclusive working validator or completed compact profile.
+///
+/// Both core-local validation actors use this inline state so a completed
+/// candidate reuses the larger streaming validator's storage. Their separately
+/// retained active configuration remains outside this value.
 #[allow(
     clippy::large_enum_variant,
-    reason = "no-allocation core-0 validation deliberately reuses one static inline region"
+    reason = "no-allocation validation deliberately reuses one static inline region"
 )]
-enum ServiceConfigurationPayload<'a, const MAX_BINDINGS: usize> {
+enum ConfigurationValidationPayload<'a, const MAX_BINDINGS: usize> {
     Validating(ConfigurationStreamValidator<'a, MAX_BINDINGS>),
     Complete(RealtimeConfiguration),
     Empty,
@@ -4835,7 +4846,7 @@ pub struct ServiceConfigurationValidation<'a, const MAX_BINDINGS: usize> {
     publication: ConfigurationPublication,
     total_bytes: u32,
     reader: PublishedReader,
-    payload: ServiceConfigurationPayload<'a, MAX_BINDINGS>,
+    payload: ConfigurationValidationPayload<'a, MAX_BINDINGS>,
     storage: [u8; MAX_MEDIA_CHUNK_BYTES],
     storage_offset: usize,
     storage_len: usize,
@@ -4872,7 +4883,7 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
             publication,
             total_bytes,
             reader,
-            payload: ServiceConfigurationPayload::Validating(validator),
+            payload: ConfigurationValidationPayload::Validating(validator),
             storage: [0; MAX_MEDIA_CHUNK_BYTES],
             storage_offset: 0,
             storage_len: 0,
@@ -4894,7 +4905,7 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
         let result = self.next_inner(cache).await;
         if result.is_err() {
             self.state = ServiceConfigurationState::Faulted;
-            self.payload = ServiceConfigurationPayload::Empty;
+            self.payload = ConfigurationValidationPayload::Empty;
             self.identity = None;
             self.storage.fill(0);
             self.storage_offset = 0;
@@ -4924,8 +4935,9 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
     /// publication and its content digest have been validated.
     pub const fn validated_configuration(&self) -> Option<&RealtimeConfiguration> {
         match &self.payload {
-            ServiceConfigurationPayload::Complete(configuration) => Some(configuration),
-            ServiceConfigurationPayload::Validating(_) | ServiceConfigurationPayload::Empty => None,
+            ConfigurationValidationPayload::Complete(configuration) => Some(configuration),
+            ConfigurationValidationPayload::Validating(_)
+            | ConfigurationValidationPayload::Empty => None,
         }
     }
 
@@ -4957,7 +4969,8 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
                             .checked_add(count)
                             .ok_or(ConfigurationTransferError::State)?;
                         let bytes = &self.storage[self.storage_offset..end];
-                        let ServiceConfigurationPayload::Validating(validator) = &mut self.payload
+                        let ConfigurationValidationPayload::Validating(validator) =
+                            &mut self.payload
                         else {
                             return Err(ConfigurationTransferError::State);
                         };
@@ -4992,16 +5005,16 @@ impl<'a, const MAX_BINDINGS: usize> ServiceConfigurationValidation<'a, MAX_BINDI
                         }
                         let payload = core::mem::replace(
                             &mut self.payload,
-                            ServiceConfigurationPayload::Empty,
+                            ConfigurationValidationPayload::Empty,
                         );
-                        let ServiceConfigurationPayload::Validating(validator) = payload else {
+                        let ConfigurationValidationPayload::Validating(validator) = payload else {
                             return Err(ConfigurationTransferError::State);
                         };
                         let (identity, profile) = validator
                             .finish_with_profile()
                             .map_err(ConfigurationTransferError::Configuration)?;
                         self.payload =
-                            ServiceConfigurationPayload::Complete(RealtimeConfiguration {
+                            ConfigurationValidationPayload::Complete(RealtimeConfiguration {
                                 identity,
                                 profile,
                             });
@@ -5963,6 +5976,34 @@ mod tests {
         let mut digest = [0_u8; 32];
         digest.copy_from_slice(&hasher.finalize());
         (bytes, Digest(digest))
+    }
+
+    fn stream_realtime_configuration<const MAX_BINDINGS: usize>(
+        service: &mut RealtimeConfigurationService<'_, MAX_BINDINGS>,
+        transaction_id: u64,
+        bytes: &[u8],
+        digest: Digest,
+    ) -> RealtimeConfigurationReport {
+        let total = u32::try_from(bytes.len()).unwrap();
+        let mut report = service.apply(
+            CoreConfigurationCommand::begin(transaction_id, digest, total).unwrap(),
+            true,
+        );
+        assert_eq!(report.state, RealtimeConfigurationState::Receiving);
+        let mut offset = 0_u32;
+        for chunk in bytes.chunks(137) {
+            report = service.apply(
+                CoreConfigurationCommand::data(transaction_id, digest, total, offset, chunk)
+                    .unwrap(),
+                true,
+            );
+            offset += u32::try_from(chunk.len()).unwrap();
+            assert_ne!(report.state, RealtimeConfigurationState::Rejected);
+        }
+        service.apply(
+            CoreConfigurationCommand::finish(transaction_id, digest, total).unwrap(),
+            true,
+        )
     }
 
     fn upload_plan(bytes: &[u8], chunk_bytes: usize) -> UploadPlan {
@@ -8095,12 +8136,88 @@ mod tests {
     }
 
     #[test]
-    fn service_validation_reuses_working_profile_storage_after_finish() {
+    fn validation_actors_reuse_working_profile_storage_after_finish() {
         type Stream = ConfigurationStreamValidator<'static, 32>;
-        type Payload = ServiceConfigurationPayload<'static, 32>;
+        type Payload = ConfigurationValidationPayload<'static, 32>;
+        type Realtime = RealtimeConfigurationService<'static, 32>;
         let split_layout = core::mem::size_of::<Option<Stream>>()
             + core::mem::size_of::<Option<RealtimeConfiguration>>();
         assert!(core::mem::size_of::<Payload>() < split_layout);
+        let legacy_realtime_payloads = split_layout
+            .checked_add(core::mem::size_of::<Option<RealtimeConfiguration>>())
+            .unwrap();
+        assert!(core::mem::size_of::<Realtime>() < legacy_realtime_payloads);
+    }
+
+    #[test]
+    fn realtime_payload_reuse_retains_active_while_a_distinct_candidate_streams() {
+        let active_records = tinybee_motion_records();
+        let (active_bytes, active_digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &active_records,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        let active_total = u32::try_from(active_bytes.len()).unwrap();
+
+        let mut candidate_records = tinybee_motion_records();
+        let velocity = candidate_records
+            .iter_mut()
+            .find_map(|record| match record {
+                ConfigurationRecord::Scalar(scalar)
+                    if scalar.fact == ScalarFact::AxisVelocityLimitMetresPerSecond =>
+                {
+                    Some(scalar)
+                }
+                _ => None,
+            })
+            .unwrap();
+        velocity.value = rational(1, 25);
+        let (candidate_bytes, candidate_digest) = document(
+            &board_mks_tinybee::PACKAGE,
+            &candidate_records,
+            ConfigurationFlags(ConfigurationFlags::MOTION),
+        );
+        assert_ne!(candidate_digest, active_digest);
+        let candidate_total = u32::try_from(candidate_bytes.len()).unwrap();
+
+        let mut service = RealtimeConfigurationService::<32>::new(&board_mks_tinybee::PACKAGE);
+        let active_candidate =
+            stream_realtime_configuration(&mut service, 61, &active_bytes, active_digest);
+        assert_eq!(
+            active_candidate.state,
+            RealtimeConfigurationState::CandidateValid
+        );
+        service.apply(
+            CoreConfigurationCommand::activate(61, active_digest, active_total).unwrap(),
+            true,
+        );
+        service.apply(
+            CoreConfigurationCommand::authorize(61, active_digest, active_total).unwrap(),
+            true,
+        );
+        assert_eq!(service.authorized_identity().unwrap().digest, active_digest);
+
+        let candidate =
+            stream_realtime_configuration(&mut service, 62, &candidate_bytes, candidate_digest);
+        assert_eq!(candidate.state, RealtimeConfigurationState::CandidateValid);
+        assert_eq!(candidate.digest, candidate_digest);
+        assert_eq!(candidate.active_digest, active_digest);
+        assert!(candidate.active_authorized);
+        assert_eq!(service.authorized_identity().unwrap().digest, active_digest);
+        assert_eq!(
+            service.candidate_identity().unwrap().digest,
+            candidate_digest
+        );
+
+        let activated = service.apply(
+            CoreConfigurationCommand::activate(62, candidate_digest, candidate_total).unwrap(),
+            true,
+        );
+        assert_eq!(activated.state, RealtimeConfigurationState::Active);
+        assert_eq!(activated.active_digest, candidate_digest);
+        assert!(!activated.active_authorized);
+        assert!(service.candidate_identity().is_none());
+        assert_eq!(service.active_identity().unwrap().digest, candidate_digest);
     }
 
     #[test]

@@ -512,6 +512,16 @@ authorization. TinyBee and T-Deck Pro add no second fact layer. All peripheral
 and output gates remain closed. See
 [`M10-SELECTED-BOARD-AUTHORIZATION.md`](evidence/M10-SELECTED-BOARD-AUTHORIZATION.md).
 
+The following static-memory checkpoint removes a redundant core-1 candidate
+allocation without reducing any bound. The streaming validator and completed
+candidate now occupy one mutually exclusive inline payload, while the prior
+active configuration remains independently retained during receipt and
+validation of a distinct candidate. A regression replays that complete state
+sequence and activation still clears authorization. Classic-ESP32 compiler
+layout falls by exactly 4,344 bytes in both the configuration service and
+permanent real-time task pool. See
+[`M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md`](evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
+
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
@@ -990,6 +1000,12 @@ the full MKS selection before the authorization state change and requires its
 digest during every arm reconciliation, without activating a peripheral or
 changing any target gate. See
 [`M10-SELECTED-BOARD-AUTHORIZATION.md`](evidence/M10-SELECTED-BOARD-AUTHORIZATION.md).
+
+The next memory-hardening checkpoint reuses the mutually exclusive validator
+and completed-candidate region inside the core-1 configuration actor. It keeps
+the separately active document and all exact protocol/configuration bounds,
+but returns 4,344 bytes to the classic-ESP32 linker residual. See
+[`M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md`](evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
 
 Exit gate:
 

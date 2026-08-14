@@ -1336,6 +1336,19 @@ their complete target fact layer. No peripheral transition or output gate is
 added. See
 [`evidence/M10-SELECTED-BOARD-AUTHORIZATION.md`](evidence/M10-SELECTED-BOARD-AUTHORIZATION.md).
 
+Core-1 configuration storage now follows the same mutually exclusive payload
+ownership already used by core 0. One inline `ConfigurationValidationPayload`
+is either the 7,512-byte streaming validator, the 4,344-byte completed
+candidate, or empty; it cannot reserve both working states simultaneously. The
+separate active configuration remains present, so a distinct candidate can be
+received and validated while the prior active identity and authorization stay
+intact. Activation alone replaces that active value and clears authorization.
+This changes no wire byte, binding limit, document profile, lifecycle state, or
+validation rule. On the classic ESP32 release layout it reduces
+`RealtimeConfigurationService<64>` and the permanent real-time task pool by
+exactly 4,344 bytes. See
+[`evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md`](evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage
