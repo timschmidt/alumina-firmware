@@ -1,21 +1,24 @@
 //! Canonical global identity and participant map for cached multi-MCU jobs.
 
-use alumina_machine_ir::{EXECUTION_BLOCK_BYTES, MAX_EXECUTION_AXES, StreamId, StreamTick};
+use alumina_machine_ir::{
+    EXECUTION_BLOCK_BYTES, ExecutionKind, MAX_EXECUTION_AXES, MAX_SERVO_EXECUTION_AXES, StreamId,
+    StreamTick,
+};
 use alumina_protocol::{DeviceId, Digest};
 use alumina_storage::{ContentHasher, sha256};
 
 use crate::JobNetworkPolicy;
 
-/// Maximum participants admitted by global job-manifest schema V1.
+/// Maximum participants admitted by the global job-manifest schema.
 pub const MAX_JOB_PARTICIPANTS: usize = 16;
 /// Fixed bytes preceding participant records.
 pub const MACHINE_JOB_MANIFEST_HEADER_BYTES: usize = 320;
 /// Fixed bytes in one canonical participant record.
 pub const MACHINE_JOB_PARTICIPANT_BYTES: usize = 496;
 
-const MANIFEST_MAGIC: [u8; 8] = *b"ALMJMF01";
-const MANIFEST_VERSION: u16 = 1;
-const PARTICIPANT_SET_DOMAIN: [u8; 16] = *b"ALM-PARTSET-V1!\0";
+const MANIFEST_MAGIC: [u8; 8] = *b"ALMJMF02";
+const MANIFEST_VERSION: u16 = 2;
+const PARTICIPANT_SET_DOMAIN: [u8; 16] = *b"ALM-PARTSET-V2!\0";
 
 /// Global compile, coordinate, timing, and safety facts shared by every
 /// participant partition.
@@ -76,6 +79,12 @@ pub struct MachineJobParticipant {
     pub block_count: u32,
     /// Active coordinate axes in each local motion record.
     pub axis_count: u8,
+    /// Exact execution-record family in every local partition block.
+    pub execution_kind: ExecutionKind,
+    /// Exact local timer ticks between dense updates, or zero for ordinary motion.
+    pub dense_update_period_ticks: u32,
+    /// Maximum dense updates in one recurrence record, or zero for ordinary motion.
+    pub maximum_dense_updates: u32,
     /// Exact local stream timer ticks per second.
     pub local_timer_hz: u64,
     /// First local stream-relative tick; V1 requires zero.
@@ -395,6 +404,31 @@ fn validate_participant(
             received: participant.axis_count,
         });
     }
+    match participant.execution_kind {
+        ExecutionKind::Motion
+            if participant.dense_update_period_ticks != 0
+                || participant.maximum_dense_updates != 0 =>
+        {
+            return Err(MachineJobManifestError::DenseUpdatePolicy { index });
+        }
+        ExecutionKind::FiniteDifference | ExecutionKind::ServoFiniteDifference
+            if participant.dense_update_period_ticks == 0
+                || participant.maximum_dense_updates == 0 =>
+        {
+            return Err(MachineJobManifestError::DenseUpdatePolicy { index });
+        }
+        ExecutionKind::ServoFiniteDifference
+            if usize::from(participant.axis_count) > MAX_SERVO_EXECUTION_AXES =>
+        {
+            return Err(MachineJobManifestError::AxisCount {
+                index,
+                received: participant.axis_count,
+            });
+        }
+        ExecutionKind::Motion
+        | ExecutionKind::FiniteDifference
+        | ExecutionKind::ServoFiniteDifference => {}
+    }
     let block_bytes =
         u64::try_from(EXECUTION_BLOCK_BYTES).map_err(|_| MachineJobManifestError::Arithmetic)?;
     let expected_bytes = u64::from(participant.block_count)
@@ -511,7 +545,8 @@ fn encode_participant(participant: MachineJobParticipant) -> [u8; MACHINE_JOB_PA
     encoded[320..328].copy_from_slice(&participant.partition_byte_len.to_le_bytes());
     encoded[328..332].copy_from_slice(&participant.block_count.to_le_bytes());
     encoded[332] = participant.axis_count;
-    // Bytes 333..336 are reserved zero.
+    encoded[333] = participant.execution_kind as u8;
+    // Bytes 334..336 are reserved zero.
     encoded[336..344].copy_from_slice(&participant.local_timer_hz.to_le_bytes());
     encoded[344..352].copy_from_slice(&participant.first_tick.0.to_le_bytes());
     encoded[352..360].copy_from_slice(&participant.end_tick.0.to_le_bytes());
@@ -523,7 +558,8 @@ fn encode_participant(participant: MachineJobParticipant) -> [u8; MACHINE_JOB_PA
         let offset = 424 + axis * 8;
         encoded[offset..offset + 8].copy_from_slice(&position.to_le_bytes());
     }
-    // Bytes 488..496 are reserved zero.
+    encoded[488..492].copy_from_slice(&participant.dense_update_period_ticks.to_le_bytes());
+    encoded[492..496].copy_from_slice(&participant.maximum_dense_updates.to_le_bytes());
     encoded
 }
 
@@ -534,11 +570,11 @@ fn decode_participant(encoded: &[u8]) -> Result<MachineJobParticipant, MachineJo
             expected: MACHINE_JOB_PARTICIPANT_BYTES,
         });
     }
-    if encoded[333..336].iter().any(|byte| *byte != 0)
-        || encoded[488..496].iter().any(|byte| *byte != 0)
-    {
+    if encoded[334..336].iter().any(|byte| *byte != 0) {
         return Err(MachineJobManifestError::Reserved);
     }
+    let execution_kind =
+        ExecutionKind::from_wire(encoded[333]).ok_or(MachineJobManifestError::ExecutionKind)?;
     let mut device_id = [0_u8; 16];
     device_id.copy_from_slice(&encoded[0..16]);
     let mut stream_id = [0_u8; 16];
@@ -564,6 +600,9 @@ fn decode_participant(encoded: &[u8]) -> Result<MachineJobParticipant, MachineJo
         partition_byte_len: read_u64(encoded, 320),
         block_count: read_u32(encoded, 328),
         axis_count: encoded[332],
+        execution_kind,
+        dense_update_period_ticks: read_u32(encoded, 488),
+        maximum_dense_updates: read_u32(encoded, 492),
         local_timer_hz: read_u64(encoded, 336),
         first_tick: StreamTick(read_u64(encoded, 344)),
         end_tick: StreamTick(read_u64(encoded, 352)),
@@ -633,7 +672,7 @@ pub enum MachineJobManifestError {
         /// Required bytes.
         expected: usize,
     },
-    /// Manifest magic did not match schema V1.
+    /// Manifest magic did not match the current schema.
     Magic,
     /// Manifest schema version did not match exactly.
     Version {
@@ -642,6 +681,8 @@ pub enum MachineJobManifestError {
     },
     /// Network policy discriminant was unassigned.
     NetworkPolicy,
+    /// A participant execution-kind discriminant was unassigned.
+    ExecutionKind,
     /// A reserved byte was nonzero.
     Reserved,
     /// Participant count was zero, too large, or unrepresentable.
@@ -683,6 +724,11 @@ pub enum MachineJobManifestError {
         index: usize,
         /// Received width.
         received: u8,
+    },
+    /// Execution kind and dense update cadence/count disagreed.
+    DenseUpdatePolicy {
+        /// Participant index.
+        index: usize,
     },
     /// Partition bytes and block count did not agree exactly.
     PartitionLayout {
@@ -759,6 +805,9 @@ mod tests {
             partition_byte_len: 1_024,
             block_count: 2,
             axis_count: 2,
+            execution_kind: ExecutionKind::Motion,
+            dense_update_period_ticks: 0,
+            maximum_dense_updates: 0,
             local_timer_hz,
             first_tick: StreamTick(0),
             end_tick: StreamTick(local_timer_hz * 2),
@@ -859,7 +908,7 @@ mod tests {
         );
 
         let mut reserved = encoded;
-        reserved[MACHINE_JOB_MANIFEST_HEADER_BYTES + 495] = 1;
+        reserved[MACHINE_JOB_MANIFEST_HEADER_BYTES + 335] = 1;
         assert_eq!(
             DecodedMachineJobManifest::decode(&reserved),
             Err(MachineJobManifestError::Reserved)

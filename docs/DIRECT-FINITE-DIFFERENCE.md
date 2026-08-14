@@ -9,7 +9,7 @@ composition, WCET qualification, and physical motion evidence remain open.
 
 ## Numerical contract
 
-Machine-block schema V2 execution kind `2` represents a piecewise cubic
+Machine-block schema V3 execution kind `2` represents a piecewise cubic
 position sequence directly in the motor command lattice. Every coefficient is
 a signed Q31.32 number of command steps. With `S = 2^32`, one axis record stores
 
@@ -187,7 +187,7 @@ rebuilds their symmetric jerk phases on the device output grid, reruns
 Hyperpath/Hypersolve certification, projects exact Newton forward differences
 through certified Hyperreal intervals to Q31.32 with ties to even, adaptively
 splits near zero velocity to preserve monotonic fixed-point records, propagates
-an exact positional-error bound, packages `ALMBLK02` partitions, and replays
+an exact positional-error bound, packages `ALMBLK03` partitions, and replays
 them through the production cached executor. `ALMDFE01`/`ALMDFT01` evidence
 binds source/planner identities, every interval and coefficient, propagated
 error, electrical preflight, and immutable cache identity.
@@ -203,7 +203,7 @@ The remaining lowering stages must:
 3. split at every required direction change, coefficient-range boundary,
    physical timing boundary, and error-budget boundary;
 4. preserve the shared multi-MCU time model and independently replay every
-   resulting `ALMBLK02` partition through production firmware validators; and
+   resulting `ALMBLK03` partition through production firmware validators; and
 5. cache only complete content-addressed partitions plus their evidence before
    deterministic schedule commit.
 

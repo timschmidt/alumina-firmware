@@ -104,7 +104,7 @@ transcript binds the ordered candidate outcomes, exact upstream source/metric/
 planner/lowering identities, selected ticks/segments/preflights, and final
 partition identities. The `ALMSYN01` digest becomes both the global
 `synchronization_digest` and each participant's timing/error evidence digest
-before `ALMJMF01` is encoded.
+before `ALMJMF02` is encoded.
 
 The compiler derives global timer frequency and duration from the selected
 streams; its shared-policy input requires those and the synchronization digest

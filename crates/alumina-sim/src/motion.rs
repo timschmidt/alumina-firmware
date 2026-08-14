@@ -281,7 +281,7 @@ pub fn replay_cached_finite_difference_partition<const AXES: usize>(
         .map_err(|_| CachedFiniteDifferenceReplayError::Descriptor)?;
     let limits = FiniteDifferenceExecutionLimits {
         maximum_segment_ticks: descriptor.limits.segment.maximum_segment_ticks,
-        maximum_update_count: descriptor.maximum_finite_difference_updates,
+        maximum_update_count: descriptor.maximum_dense_updates,
         maximum_steps_per_segment: descriptor.limits.segment.maximum_steps_per_segment,
     };
     let mut job = RealtimeJob::<AXES>::prepare(descriptor)
@@ -567,7 +567,8 @@ mod tests {
             config_digest,
             axis_count: 2,
             execution_kind: ExecutionKind::FiniteDifference,
-            maximum_finite_difference_updates: 100,
+            maximum_dense_updates: 100,
+            dense_update_period_ticks: 1,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [20, -20, 0, 0, 0, 0, 0, 0],
@@ -646,7 +647,8 @@ mod tests {
             config_digest,
             axis_count: 2,
             execution_kind: ExecutionKind::FiniteDifference,
-            maximum_finite_difference_updates: 3,
+            maximum_dense_updates: 3,
+            dense_update_period_ticks: 1,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [20, -20, 0, 0, 0, 0, 0, 0],

@@ -737,7 +737,7 @@ released only after the immediate safe logical transaction has been issued;
 physical application remains a separate backend fact.
 
 The parallel direct path is now implemented without weakening that ownership
-model. `JobDescriptor` V3 binds one execution kind and a nonzero per-record
+model. `JobDescriptor` V4 binds one execution kind plus a nonzero per-record
 update bound only for direct streams; both core-0 prefetch and core-1 admission
 select the matching validator, and a kind substitution faults before progress
 is admitted. `FiniteDifferenceStepperExecutor` consumes each declared Q31.32
@@ -755,7 +755,7 @@ requires agreement on terminal tick, integer position, and the separately
 retained Q31.32 state. Normal job finish remains illegal until every pending
 fall has been emitted and the configured enable-hold interval has elapsed.
 
-`alumina-sim::motion` now replays immutable `ALMBLK02` direct partitions through
+`alumina-sim::motion` now replays immutable `ALMBLK03` direct partitions through
 real `RealtimeJob` admission and this dense cached executor. It counts empty and
 edge-producing updates separately, acknowledges each token in order, drains a
 terminal cross-block pulse, and compares both terminal lattices.
@@ -775,7 +775,7 @@ peripheral adapter or target timing/WCET claim, and every board remains
 non-armable for this path.
 
 The permanent core-1 motion actor now selects one fixed-memory
-`ScheduledShiftedExecution` from the independently validated `ALMJOBD3`
+`ScheduledShiftedExecution` from the independently validated `ALMJOBD4`
 descriptor when a job is primed. It constructs only the declared ordinary or
 direct executor and rejects a block from the other family without changing
 live state. Ordinary block horizons are reported as sealed. A direct horizon
@@ -1278,7 +1278,7 @@ jointly across every participant and records the complete predecessor outcome
 vector. Mixed clocks remain an explicit-event-grid contract rather than a
 tolerance shortcut.
 
-Machine-block schema V2 is canonical and hashed. Kind `1` retains coordinated
+Machine-block schema V3 is canonical and hashed. Kind `1` retains coordinated
 integer displacement records. Kind `2` adds direct third-order Newton forward
 differences in a common signed Q31.32 step lattice: `p0`, `d1`, `d2`, and `d3`
 per axis plus one exact update period/count. Nearest-integer ties-to-even is the
@@ -1288,6 +1288,19 @@ displacement, and a strict first-difference ceiling before any dense recurrence
 is installed. Native line/arc/Bezier opcodes remain excluded unless an integer
 interpolator can carry a verified error envelope and preserve planner
 constraints. A global job is partitioned into one local stream per MCU.
+
+Kind `3` is a distinct FOC-servo command family. Each record carries cubic
+Newton-forward Q31.32 absolute position plus Q2.30 normalized velocity and
+quadrature-current feed-forward for one to four axes on a single exact
+position-loop cadence. Every half-open record emits its first `update_count`
+states and hands its exact terminal state to its successor; the complete stream
+must end with both feed-forward channels at zero, after which the runner emits
+one separately owned terminal hold. Firmware derives position increment,
+velocity, and current bounds from complete digest-bound FOC axis profiles and
+requires typed servo admission on both cores. The portable two-block runner is
+allocation-free and uses transactional prepare/commit setpoints, but it is not
+yet selected by the permanent ESP motion actor and therefore makes no target
+timing, peripheral, or energization claim.
 
 The firmware validates structure and machine constraints; it does not trust a
 browser-provided “certificate” blindly. The host certificate gives a stronger

@@ -407,14 +407,25 @@ and
 [`M10-CANONICAL-PLANNER-EVIDENCE-V3.md`](evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md).
 The same-grid shared compiler/evidence boundary is recorded in
 [`M10-SHARED-MCU-TIMER-RETIMING.md`](evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
-Firmware machine-block schema V2 now adds a separately kind-bound direct
+Firmware machine-block schema V3 retains the separately kind-bound direct
 third-order Q31.32 record, exact cross-record continuity, logarithmic sparse
 electrical admission, dense allocation-free recurrence execution, and cached
 token retention through integer plus fixed-point terminal agreement. The
-descriptor break is explicit `ALMJOBD3`; no V1/V2 shim is accepted. Browser/WASM
-lowering from exact Hyperpath schedules into these records remains the next
-coordinated step. See
+descriptor break is now explicit `ALMJOBD4`; no compatibility shim is accepted.
+Browser/WASM lowering from exact Hyperpath schedules into these records is
+implemented with interval-certified projection, exact error evidence, immutable
+cache packaging, and production-validator replay. See
 [`M10-DIRECT-FINITE-DIFFERENCE-IR.md`](evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md).
+
+Schema V3 kind `3` adds the greenfield FOC-servo stream: up to four Q31.32
+position recurrences with Q2.30 velocity and quadrature-current feed-forward on
+one exact configured cadence. Typed firmware validation derives bounds from
+complete FOC profiles, and an allocation-free two-block runner owns half-open
+records, transactional simultaneous setpoints, and the sole terminal hold. The
+authoritative browser/WASM compiler emits and content-addresses this stream from
+certified Hyperreal intervals. Permanent ESP actor dispatch, target peripherals,
+and physical qualification remain later gates; the portable milestone does not
+energize hardware.
 
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted

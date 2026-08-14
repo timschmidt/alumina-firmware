@@ -251,7 +251,7 @@ bytes are recognizable but no valid prior generation can be trusted.
 
 ## Machine execution blocks
 
-A V2 per-MCU machine partition is a nonempty concatenation of exact 512-byte
+A V3 per-MCU machine partition is a nonempty concatenation of exact 512-byte
 blocks. The storage object's byte length determines the block count and its
 SHA-256 identity commits the complete concatenation, so the stream does not
 embed a circular copy of its own object digest. Storage upload chunks may split
@@ -261,9 +261,9 @@ Each block has this canonical layout:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMBLK02` |
-| 8 | 2 | exact machine-IR version (`2`) |
-| 10 | 1 | execution kind (`1` coordinated motion, `2` direct finite difference) |
+| 0 | 8 | ASCII `ALMBLK03` |
+| 8 | 2 | exact machine-IR version (`3`) |
+| 10 | 1 | execution kind (`1` coordinated motion, `2` direct-step finite difference, `3` servo finite difference) |
 | 11 | 1 | axis count (`1..=8`) |
 | 12 | 4 | contiguous block sequence, beginning at zero |
 | 16 | 4 | nonzero canonical-record count |
@@ -282,7 +282,7 @@ One coordinated-motion record is `duration_ticks: u64`, zero flags `u32`, reserv
 `u32`, then one signed little-endian `i64` lattice displacement per axis. The
 payload length must equal `segment_count * (16 + 8 * axis_count)`. Thus one block
 holds exactly eight 3-axis records or four 8-axis records at maximum capacity.
-One direct finite-difference record is `update_period_ticks: u32`, nonzero
+One direct-step finite-difference record is `update_period_ticks: u32`, nonzero
 `update_count: u32`, zero flags `u32`, reserved zero `u32`, then four signed
 little-endian `i64` Q31.32 values per axis: initial position and first, second,
 and third Newton forward differences. Its payload length is
@@ -291,10 +291,26 @@ or one 8-axis record. For update index `k`, firmware requires
 `p(k) = p0 + k*d1 + C(k,2)*d2 + C(k,3)*d3` to remain checked and rounds only
 through exact nearest-integer ties-to-even projection.
 
-Every duration must be nonzero and sum exactly to the block interval. Direct
-records additionally require exact Q31.32 continuity, bounded update count and
-displacement, monotonic direction within each record, and a caller-owned bound
-on every discrete first difference. Stream ticks are not absolute
+One servo finite-difference record has the same 16-byte cadence/count/flags/
+reserved prefix, followed for every axis by three cubic Newton-forward
+recurrences: Q31.32 absolute configured-axis position as four `i64` values,
+Q2.30 normalized velocity feed-forward as four `i32` values, and Q2.30
+normalized quadrature-current feed-forward as four `i32` values. The record is
+therefore `16 + 64 * axis_count` bytes. Servo streams admit one to four axes,
+so one block holds four, two, one, or one records respectively. A record emits
+updates `k = 0..update_count - 1`; its exact state at `k = update_count` belongs
+to the following record. A complete stream adds one separate terminal at-rest
+hold at the exclusive end tick, and both feed-forward channels must be exactly
+zero there.
+
+Every duration must be nonzero and sum exactly to the block interval. Both
+finite-difference families require one descriptor-bound exact cadence, exact
+cross-record and cross-block continuity, bounded update counts, checked cubic
+state, and monotonic signals within each compiler-split record. Direct-step
+records additionally require bounded rounded displacement and a strict
+first-difference ceiling. Servo records require per-axis Q31.32 position-delta
+and first-difference bounds plus symmetric Q2.30 velocity/current bounds
+derived by replaying the complete active FOC profile. Stream ticks are not absolute
 device-counter values: deterministic commit supplies a future local
 `DeviceCycle` epoch, and firmware uses checked addition when scheduling. This
 keeps one cached partition independent of its eventual synchronized start.
@@ -307,22 +323,28 @@ identity changes, skipped/duplicate/wrapped sequences, time gaps, digest-chain
 changes, limit violations, and cumulative position overflow fail closed.
 Before either portable step executor accepts that ownership token, it
 analytically preflights every record against current electrical, integer, and
-output-lattice state. Direct admission finds first and last rounded crossings by
+output-lattice state. Direct-step admission finds first and last rounded crossings by
 exact monotonic binary search and therefore remains proportional to record count
 times axis count times `log2(update_count)`, while live execution still consumes
 every declared dense update. A block token returns only after the emitted trace
 reaches the same terminal tick, cumulative integer position, and (for direct
 records) Q31.32 state; rejection returns it unchanged, and a mid-execution fault
-makes it unacknowledgeable.
+makes it unacknowledgeable. Servo publications have a separate typed open/
+prepare path because generic limits are insufficient: the service and realtime
+validators must receive the same independently derived FOC-bound profile.
+The allocation-free two-block servo runner then preserves half-open record
+ownership and emits simultaneous axis setpoints only through a two-phase
+prepare/commit boundary. The permanent ESP motion actor does not select that
+runner yet, so this wire family alone does not create a target execution path.
 
 ## Cached global job manifest
 
 The immutable `MachineJobManifest` object is canonical binary data stored under
 `ObjectKind::MachineJobManifest`. It is not an HTTP/JSON alternative to the
-native protocol. Schema V1 is exactly `320 + participant_count * 496` bytes and
+native protocol. Schema V2 is exactly `320 + participant_count * 496` bytes and
 admits 1–16 participants.
 
-The 320-byte `ALMJMF01` header contains version/policy/count, an exact global
+The 320-byte `ALMJMF02` header contains version/policy/count, an exact global
 integer timebase and duration, eight SHA-256 identities for source, compiler,
 interface build, compile policy, machine, coordinate epoch, safety policy, and
 synchronization markers, followed by a domain-separated digest of all ordered
@@ -331,8 +353,11 @@ participant records. Records are strictly sorted by stable 16-byte device ID.
 Each 496-byte record contains device and stream IDs; board, capability,
 configuration, partition object, partition chunk-manifest, terminal block,
 resource-set, error-evidence, and safety-envelope digests; partition byte/block
-counts; axis width; exact local timer and stream span; and eight signed `i64`
-initial and terminal lattice positions. Reserved and unused-axis bytes are zero.
+counts; axis width; exact execution kind; exact local timer and stream span;
+eight signed `i64` initial and terminal lattice positions; and the dense update
+period/count policy for either finite-difference family. Coordinated motion
+requires both dense fields to be zero; kinds `2` and `3` require both nonzero.
+Reserved and unused-axis bytes are zero.
 Partition bytes must equal `block_count * 512`, streams begin at tick zero, and
 each local rational duration must equal the global rational duration exactly.
 
@@ -345,35 +370,37 @@ metadata.
 
 ## Cached-job preparation bodies
 
-`JobPrepare` has one exact 312-byte, self-hashed descriptor. The descriptor is
+`JobPrepare` has one exact 320-byte, self-hashed descriptor. The descriptor is
 the UI compiler's claim about one already published per-MCU partition; it does
 not contain a start epoch or permission to energize outputs.
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMJOBD3` |
-| 8 | 2 | exact descriptor version (`3`) |
-| 10 | 1 | exact execution kind (`1` coordinated motion, `2` direct finite difference) |
+| 0 | 8 | ASCII `ALMJOBD4` |
+| 8 | 2 | exact descriptor version (`4`) |
+| 10 | 1 | exact execution kind (`1` coordinated motion, `2` direct-step finite difference, `3` servo finite difference) |
 | 11 | 1 | reserved zero |
-| 12 | 4 | maximum updates per finite-difference record; nonzero only for kind `2` |
-| 16 | 8 | nonzero boot-local prepare ID |
-| 24 | 1 | fixed `MachineJobPartition` object kind |
-| 25 | 1 | fixed SHA-256 object algorithm |
-| 26 | 1 | fixed SHA-256 manifest algorithm |
-| 27 | 1 | exact compile-time executor axis count |
-| 28 | 4 | nonzero execution-block count |
-| 32 | 8 | partition byte length, exactly `count * 512` |
-| 40 | 8 | first relative stream tick, zero in V3 |
-| 48 | 8 | nonzero maximum block ticks |
-| 56 | 8 | nonzero maximum segment ticks |
-| 64 | 8 | nonzero maximum lattice steps per segment |
-| 72 | 16 | nonzero prepared stream ID |
-| 88 | 32 | partition object SHA-256 digest |
-| 120 | 32 | canonical publication-manifest SHA-256 digest |
-| 152 | 32 | exact board-capability digest |
-| 184 | 32 | exact active-configuration digest |
-| 216 | 64 | eight signed `i64` absolute machine-lattice starting positions; slots at or above the axis count are zero |
-| 280 | 32 | SHA-256 over bytes `0..280` |
+| 12 | 4 | maximum dense updates per recurrence record; zero only for kind `1` |
+| 16 | 4 | exact dense update period in device ticks; zero only for kind `1` |
+| 20 | 4 | reserved zero |
+| 24 | 8 | nonzero boot-local prepare ID |
+| 32 | 1 | fixed `MachineJobPartition` object kind |
+| 33 | 1 | fixed SHA-256 object algorithm |
+| 34 | 1 | fixed SHA-256 manifest algorithm |
+| 35 | 1 | exact compile-time executor axis count |
+| 36 | 4 | nonzero execution-block count |
+| 40 | 8 | partition byte length, exactly `count * 512` |
+| 48 | 8 | first relative stream tick, zero in V4 |
+| 56 | 8 | nonzero maximum block ticks |
+| 64 | 8 | nonzero maximum segment ticks |
+| 72 | 8 | maximum segment displacement; steps for kinds `1`/`2`, Q31.32 position delta for kind `3` |
+| 80 | 16 | nonzero prepared stream ID |
+| 96 | 32 | partition object SHA-256 digest |
+| 128 | 32 | canonical publication-manifest SHA-256 digest |
+| 160 | 32 | exact board-capability digest |
+| 192 | 32 | exact active-configuration digest |
+| 224 | 64 | eight signed `i64` starting positions; integer lattice for kinds `1`/`2`, Q31.32 for kind `3`; unused slots are zero |
+| 288 | 32 | SHA-256 over bytes `0..288` |
 
 Decoding re-encodes the value and rejects every alternate representation. Core 0
 also requires the outer frame configuration identity to equal the descriptor,
@@ -386,14 +413,14 @@ requires an exact nonzero active-configuration identity and an armable board.
 Neither first board currently satisfies those later gates, so target
 `JobPrepare` still returns `Unsupported` before storage is opened.
 
-The 336-byte intercore command begins with `ALJC`, version `1`, a one-byte action,
+The 344-byte intercore command begins with `ALJC`, version `2`, a one-byte action,
 and one reserved zero byte. Action `1` carries the 16-byte authentication boot ID
-at `8..24` and the complete descriptor at `24..336`. Action `2` contains only the
+at `8..24` and the complete descriptor at `24..344`. Action `2` contains only the
 nonzero prepare ID at `8..16`. Actions `3`, `4`, and `5` carry commit, confirm,
 and abort bodies beginning at byte 8. Every unused byte is zero. `JobCancel`
 uses the same bare eight-byte prepare ID as its native body. The reviewed default
-runtime boundary occupies 13,120 bytes; together with the core-1 stack its
-45,888-byte requirement remains below the 64 KiB internal-memory budget.
+runtime boundary occupies 13,184 bytes; together with the core-1 stack its
+45,952-byte requirement remains below the 64 KiB internal-memory budget.
 
 `JobCommit` is an exact 240-byte `ALMJCOM2` body. Commit and reference version 2
 are intentional greenfield breaks: version-1 bodies are rejected rather than

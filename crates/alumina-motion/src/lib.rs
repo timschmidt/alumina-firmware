@@ -1,6 +1,10 @@
 #![no_std]
 #![doc = "Allocation-free exact integer event execution for Alumina motion streams."]
 
+mod servo;
+
+pub use servo::*;
+
 use alumina_board::ResourceId;
 use alumina_config::{
     AxisDriverControl, ConfigurationIdentity, RealtimeConfigurationProfile, SignalPolarity,
@@ -1623,6 +1627,7 @@ fn finite_difference_record_limits<const AXES: usize>(
     Ok(FiniteDifferenceValidationLimits {
         maximum_segment_ticks: limits.maximum_segment_ticks,
         maximum_update_count: limits.maximum_update_count,
+        required_update_period_ticks: segment.update_period_ticks,
         maximum_steps_per_segment: limits.maximum_steps_per_segment,
         maximum_absolute_first_difference,
     })
@@ -5582,9 +5587,12 @@ pub fn scheduled_execution_mode_from_descriptor<const AXES: usize>(
         ExecutionKind::FiniteDifference => {
             ScheduledExecutionMode::FiniteDifference(FiniteDifferenceExecutionLimits {
                 maximum_segment_ticks: descriptor.limits.segment.maximum_segment_ticks,
-                maximum_update_count: descriptor.maximum_finite_difference_updates,
+                maximum_update_count: descriptor.maximum_dense_updates,
                 maximum_steps_per_segment: descriptor.limits.segment.maximum_steps_per_segment,
             })
+        }
+        ExecutionKind::ServoFiniteDifference => {
+            return Err(alumina_job::DescriptorError::ExecutionKind);
         }
     })
 }
@@ -7042,7 +7050,8 @@ mod tests {
             config_digest,
             axis_count: 2,
             execution_kind: alumina_machine_ir::ExecutionKind::FiniteDifference,
-            maximum_finite_difference_updates: 100,
+            maximum_dense_updates: 100,
+            dense_update_period_ticks: 1,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [20, -20, 0, 0, 0, 0, 0, 0],
@@ -7094,7 +7103,8 @@ mod tests {
             config_digest,
             axis_count: 2,
             execution_kind: alumina_machine_ir::ExecutionKind::Motion,
-            maximum_finite_difference_updates: 0,
+            maximum_dense_updates: 0,
+            dense_update_period_ticks: 0,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
@@ -7156,7 +7166,8 @@ mod tests {
             config_digest,
             axis_count: 2,
             execution_kind: alumina_machine_ir::ExecutionKind::FiniteDifference,
-            maximum_finite_difference_updates: 100,
+            maximum_dense_updates: 100,
+            dense_update_period_ticks: 1,
             block_count: 2,
             first_tick: StreamTick(0),
             initial_position: [20, -20, 0, 0, 0, 0, 0, 0],
@@ -7216,7 +7227,8 @@ mod tests {
             config_digest,
             axis_count: 3,
             execution_kind: alumina_machine_ir::ExecutionKind::Motion,
-            maximum_finite_difference_updates: 0,
+            maximum_dense_updates: 0,
+            dense_update_period_ticks: 0,
             block_count: 1,
             first_tick: StreamTick(0),
             initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],
@@ -7278,7 +7290,8 @@ mod tests {
             config_digest,
             axis_count: 3,
             execution_kind: alumina_machine_ir::ExecutionKind::Motion,
-            maximum_finite_difference_updates: 0,
+            maximum_dense_updates: 0,
+            dense_update_period_ticks: 0,
             block_count: 2,
             first_tick: StreamTick(0),
             initial_position: [0; alumina_machine_ir::MAX_EXECUTION_AXES],

@@ -17,7 +17,7 @@ pub const COMMAND_QUEUE_DEPTH: usize = 8;
 /// Default number of lossy realtime-to-service telemetry samples.
 pub const TELEMETRY_QUEUE_DEPTH: usize = 32;
 /// Fixed payload capacity of one cross-core command.
-pub const COMMAND_PAYLOAD_BYTES: usize = 336;
+pub const COMMAND_PAYLOAD_BYTES: usize = 344;
 /// Fixed payload capacity of one cross-core telemetry sample.
 pub const TELEMETRY_PAYLOAD_BYTES: usize = 128;
 /// Initial number of canonical 512-byte work units owned by the RT horizon queue.
@@ -929,8 +929,8 @@ mod tests {
                 TELEMETRY_PAYLOAD_BYTES,
             >()
             .unwrap();
-        assert_eq!(DefaultBoundary::payload_storage_bytes(), 13_120);
-        assert_eq!(required, 45_888);
+        assert_eq!(DefaultBoundary::payload_storage_bytes(), 13_184);
+        assert_eq!(required, 45_952);
         assert_eq!(APP_CORE_STACK_BYTES, 32 * 1_024);
         assert_eq!(
             required,

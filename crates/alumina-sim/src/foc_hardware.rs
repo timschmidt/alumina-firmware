@@ -517,7 +517,18 @@ mod tests {
         ServoCascadeConfig, ServoEncoderProfile, ServoEncoderScale, ServoLoopGrid, ServoPosition,
         TwoShuntCurrentCalibration, TwoShuntPhasePair,
     };
+    use alumina_job::{JobDescriptor, RealtimeJob, RealtimeJobState, RealtimePoll, WorkSource};
+    use alumina_machine_ir::{
+        BlockValidationLimits, ExecutionBlock, ExecutionKind, FiniteDifferenceAxis,
+        ServoFiniteDifferenceAxis, ServoFiniteDifferenceSegment, ServoQ30FiniteDifferenceAxis,
+        StreamId, StreamTick, ValidationLimits,
+    };
+    use alumina_motion::{
+        CachedServoSetpointRunner, CachedServoStreamPolicy, ServoSetpointAxisAdmissionProfile,
+        ServoSetpointPlan, cached_servo_admission_profile,
+    };
     use alumina_protocol::Digest;
+    use alumina_storage::{ContentId, ObjectKind, PublishedObject, StoredObject};
 
     use super::*;
 
@@ -899,6 +910,169 @@ mod tests {
         assert_eq!(first.controller().period_sequence(), 401);
         assert!(nonneutral_images > 0);
         assert_eq!(first, replay);
+    }
+
+    #[test]
+    fn cached_two_block_stream_drives_the_complete_axis_for_401_periods() {
+        struct Blocks {
+            first: Option<ExecutionBlock>,
+            second: Option<ExecutionBlock>,
+        }
+
+        impl WorkSource for Blocks {
+            fn try_receive(&mut self) -> Option<ExecutionBlock> {
+                self.first.take().or_else(|| self.second.take())
+            }
+
+            fn depth(&self) -> usize {
+                usize::from(self.first.is_some()) + usize::from(self.second.is_some())
+            }
+        }
+
+        let lowered = servo_lowered_fixture();
+        let foc_profile = lowered.servo_foc_axis_profile().unwrap();
+        let axis = ServoSetpointAxisAdmissionProfile::from_foc_axis(foc_profile).unwrap();
+        let admission = cached_servo_admission_profile(
+            [axis],
+            CachedServoStreamPolicy {
+                maximum_block_ticks: 800_000,
+                maximum_segment_ticks: 800_000,
+                maximum_update_count: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(admission.setpoints.update_period_ticks, 800_000);
+
+        let stationary = ServoFiniteDifferenceAxis {
+            position: FiniteDifferenceAxis {
+                initial_position: 1 << 28,
+                first_difference: 0,
+                second_difference: 0,
+                third_difference: 0,
+            },
+            velocity_feed_forward: ServoQ30FiniteDifferenceAxis::default(),
+            quadrature_current_feed_forward: ServoQ30FiniteDifferenceAxis::default(),
+        };
+        let first_segment = ServoFiniteDifferenceSegment {
+            start_tick: StreamTick(0),
+            end_tick: StreamTick(800_000),
+            update_period_ticks: 800_000,
+            update_count: 1,
+            axes: [stationary],
+            flags: 0,
+        };
+        let second_segment = ServoFiniteDifferenceSegment {
+            start_tick: StreamTick(800_000),
+            end_tick: StreamTick(1_600_000),
+            ..first_segment
+        };
+        let stream_id = StreamId::new([0x81; 16]).unwrap();
+        let capability_digest = Digest([0x82; 32]);
+        let first = ExecutionBlock::encode_servo_finite_difference(
+            stream_id,
+            capability_digest,
+            DIGEST,
+            0,
+            Digest::ZERO,
+            &[first_segment],
+        )
+        .unwrap();
+        let second = ExecutionBlock::encode_servo_finite_difference(
+            stream_id,
+            capability_digest,
+            DIGEST,
+            1,
+            first.header().block_digest,
+            &[second_segment],
+        )
+        .unwrap();
+        let descriptor = JobDescriptor {
+            prepare_id: 71,
+            partition: PublishedObject {
+                object: StoredObject {
+                    kind: ObjectKind::MachineJobPartition,
+                    content: ContentId::from_sha256(Digest([0x83; 32])),
+                    byte_len: 1_024,
+                },
+                manifest: ContentId::from_sha256(Digest([0x84; 32])),
+            },
+            stream_id,
+            capability_digest,
+            config_digest: DIGEST,
+            axis_count: 1,
+            execution_kind: ExecutionKind::ServoFiniteDifference,
+            maximum_dense_updates: 1,
+            dense_update_period_ticks: 800_000,
+            block_count: 2,
+            first_tick: StreamTick(0),
+            initial_position: [1 << 28, 0, 0, 0, 0, 0, 0, 0],
+            limits: BlockValidationLimits {
+                maximum_block_ticks: admission.limits.maximum_block_ticks,
+                segment: ValidationLimits {
+                    maximum_segment_ticks: admission.limits.segment.maximum_segment_ticks,
+                    maximum_steps_per_segment: admission.limits.segment.maximum_position_delta_bits
+                        [0],
+                },
+            },
+        };
+        let mut source = Blocks {
+            first: Some(first),
+            second: Some(second),
+        };
+        let mut job = RealtimeJob::<1>::prepare_servo(descriptor, admission.limits).unwrap();
+        let first = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(block) => block,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("first block"),
+        };
+        let second = match job.poll(&mut source).unwrap() {
+            RealtimePoll::Block(block) => block,
+            RealtimePoll::Empty | RealtimePoll::Outstanding => panic!("second block"),
+        };
+        let mut runner =
+            CachedServoSetpointRunner::new(admission.setpoints, DeviceCycle(80_000)).unwrap();
+        runner.admit_block(first).unwrap();
+        runner.admit_block(second).unwrap();
+        let mut hardware = ConfiguredServoFocHardwareLoop::from_lowered(
+            lowered,
+            0x55aa,
+            servo_seed(),
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut command_ids = [0_u32; 3];
+        let mut command_count = 0_usize;
+
+        for current_index in 0_u64..=400 {
+            let at = hardware.controller().period_started_at();
+            let prepared = if runner.next_deadline() == Some(at) {
+                match runner.prepare_next().unwrap() {
+                    ServoSetpointPlan::Setpoints(prepared) => Some(prepared),
+                    ServoSetpointPlan::NeedBlock { .. }
+                    | ServoSetpointPlan::CompletionPending
+                    | ServoSetpointPlan::Complete => panic!("boundary setpoint"),
+                }
+            } else {
+                None
+            };
+            let mut input = servo_input(&hardware, current_index);
+            input.setpoint = prepared.map(|batch| batch.setpoints()[0]);
+            hardware.step(input).unwrap();
+            if let Some(prepared) = prepared {
+                command_ids[command_count] = prepared.command_id();
+                command_count += 1;
+                runner.commit(prepared.token(), at).unwrap();
+                if let Some(completed) = runner.take_completed_block() {
+                    job.acknowledge(completed).unwrap();
+                }
+            }
+        }
+
+        assert_eq!(command_ids, [1, 2, 3]);
+        assert_eq!(runner.committed_setpoints(), 3);
+        assert!(runner.is_complete());
+        assert_eq!(hardware.controller().period_sequence(), 401);
+        assert_eq!(hardware.controller().cascade().position_updates(), 3);
+        assert_eq!(job.status().state, RealtimeJobState::Complete);
     }
 
     #[test]

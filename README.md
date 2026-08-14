@@ -64,7 +64,7 @@ candidate is replayed for every MCU; selected streams are checked against their
 retained exact point carriers, independently partitioned, and committed by
 compact `ALMSYN01` over a streamed `ALMSRT01` transcript. That evidence digest
 becomes both the global synchronization identity and each participant's
-timing/error evidence in `ALMJMF01`. Firmware still parses none of these
+timing/error evidence in `ALMJMF02`. Firmware still parses none of these
 Hyper/browser audit formats.
 Native and WASM tests, strict lint, sibling-source and license policy, and the
 compressed production bundle pass. This remains a development checkpoint, not
@@ -337,8 +337,8 @@ qualification, so both packages remain non-armable. See the
 [portable safety-input evidence](docs/evidence/M6-SAFETY-INPUT-CORE.md), plus the
 [target safety-input evidence](docs/evidence/M6-TARGET-SAFETY-INPUTS.md) and
 [target motion-commit evidence](docs/evidence/M6-TARGET-MOTION-COMMIT.md). The
-greenfield machine boundary now also has canonical `ALMBLK02` direct
-third-order finite-difference records and `ALMJOBD3` kind-bound preparation.
+greenfield machine boundary now also has canonical `ALMBLK03` direct
+third-order finite-difference records and `ALMJOBD4` kind-bound preparation.
 Signed Q31.32 Newton-forward state remains exact across records and blocks,
 nearest-integer ties-to-even is the only step projection, and sparse electrical
 admission is logarithmic in each record's update count. The allocation-free
@@ -367,6 +367,21 @@ lowering evidence](docs/evidence/M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md), plus
 the [scheduled direct PCM
 evidence](docs/evidence/M10-SCHEDULED-DIRECT-PCM.md) and [target direct-dispatch
 evidence](docs/evidence/M10-TARGET-DIRECT-DISPATCH.md).
+
+Machine-block V3 also introduces a separate servo recurrence family: up to four
+axes of Q31.32 absolute position plus Q2.30 normalized velocity and
+quadrature-current feed-forward, all on one exact configuration-derived
+position-loop cadence. Browser/WASM projection uses certified Hyperreal dyadic
+intervals, exact ties-to-even quantization, discrete-extremum splitting, forced
+encoded continuity, and explicit approximation evidence before packaging
+content-addressed blocks and an `ALMJMF02` global job. Firmware independently
+checks those blocks using limits rebuilt from complete FOC axis profiles. Its
+allocation-free two-block runner retains half-open recurrence ownership,
+prepares every simultaneous setpoint transactionally, and appends exactly one
+terminal at-rest hold. Simulation replays a two-block stream through 401 current
+periods. The portable path is deliberately not selected by the permanent ESP
+motion actor yet; no peripheral, energization, or hardware claim follows from
+this checkpoint. See the [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md).
 
 The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;

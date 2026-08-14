@@ -165,6 +165,7 @@ version = "0.1.0"
 dependencies = [
  "alumina-board",
  "alumina-config",
+ "alumina-foc",
  "alumina-job",
  "alumina-machine-ir",
  "alumina-protocol",

@@ -6,11 +6,15 @@ use core::fmt;
 use alumina_protocol::{DeviceCycle, Digest};
 use sha2::{Digest as _, Sha256};
 
+mod servo;
+
+pub use servo::*;
+
 /// Magic identifying a per-MCU Alumina machine-IR partition.
 pub const JOB_MAGIC: [u8; 4] = *b"AJOB";
 
 /// Exact machine-IR schema implemented here.
-pub const MACHINE_IR_VERSION: u16 = 2;
+pub const MACHINE_IR_VERSION: u16 = 3;
 
 /// Exact bytes in one independently owned core-0-to-core-1 work block.
 pub const EXECUTION_BLOCK_BYTES: usize = 512;
@@ -21,10 +25,10 @@ pub const EXECUTION_BLOCK_DIGEST_OFFSET: usize = EXECUTION_BLOCK_BYTES - 32;
 /// Maximum canonical record bytes after the header and before the digest.
 pub const EXECUTION_BLOCK_PAYLOAD_BYTES: usize =
     EXECUTION_BLOCK_DIGEST_OFFSET - EXECUTION_BLOCK_HEADER_BYTES;
-/// Largest axis vector admitted by execution-block schema V2.
+/// Largest axis vector admitted by execution-block schema V3.
 pub const MAX_EXECUTION_AXES: usize = 8;
 
-const BLOCK_MAGIC: [u8; 8] = *b"ALMBLK02";
+const BLOCK_MAGIC: [u8; 8] = *b"ALMBLK03";
 const MOTION_RECORD_PREFIX_BYTES: usize = 16;
 const FINITE_DIFFERENCE_RECORD_PREFIX_BYTES: usize = 16;
 const FINITE_DIFFERENCE_AXIS_BYTES: usize = 32;
@@ -315,6 +319,8 @@ pub struct FiniteDifferenceValidationLimits<const AXES: usize> {
     pub maximum_segment_ticks: u64,
     /// Largest accepted dense update count in one segment.
     pub maximum_update_count: u32,
+    /// Exact device ticks between dense updates for this prepared stream.
+    pub required_update_period_ticks: u32,
     /// Largest absolute command-step displacement on any axis.
     pub maximum_steps_per_segment: u64,
     /// Per-axis absolute first-difference ceiling in Q31.32 steps/update.
@@ -392,7 +398,7 @@ impl<const AXES: usize> FiniteDifferenceSegment<AXES> {
                 expected: expected_start_tick,
             });
         }
-        if self.update_period_ticks == 0
+        if self.update_period_ticks != limits.required_update_period_ticks
             || self.update_count == 0
             || self.update_count > limits.maximum_update_count
         {
@@ -573,6 +579,7 @@ fn validate_finite_difference_limits<const AXES: usize>(
         || AXES > MAX_EXECUTION_AXES
         || limits.maximum_segment_ticks == 0
         || limits.maximum_update_count == 0
+        || limits.required_update_period_ticks == 0
         || limits.maximum_steps_per_segment == 0
         || limits
             .maximum_absolute_first_difference
@@ -708,7 +715,7 @@ fn i64_from_finite_difference(value: i128) -> Result<i64, FiniteDifferenceError>
     i64::try_from(value).map_err(|_| FiniteDifferenceError::Arithmetic)
 }
 
-/// Exact execution payload family admitted by machine-block schema V2.
+/// Exact execution payload family admitted by the machine-block schema.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum ExecutionKind {
@@ -716,6 +723,8 @@ pub enum ExecutionKind {
     Motion = 1,
     /// Direct Q31.32 third-order finite-difference step segments.
     FiniteDifference = 2,
+    /// Fixed-cadence Q31.32/Q2.30 servo-setpoint recurrences.
+    ServoFiniteDifference = 3,
 }
 
 impl ExecutionKind {
@@ -724,6 +733,7 @@ impl ExecutionKind {
         match value {
             1 => Some(Self::Motion),
             2 => Some(Self::FiniteDifference),
+            3 => Some(Self::ServoFiniteDifference),
             _ => None,
         }
     }
@@ -1831,7 +1841,7 @@ pub enum AssembleOutcome {
 /// Canonical block construction, decode, or independent-admission failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockError {
-    /// Fixed block magic did not match schema V2.
+    /// Fixed block magic did not match schema V3.
     Magic,
     /// Block schema version did not match exactly.
     Version {
@@ -1866,7 +1876,7 @@ pub enum BlockError {
     Reserved,
     /// Block digest was zero or failed SHA-256 verification.
     BlockDigest,
-    /// One segment set flags not assigned by schema V2.
+    /// One segment set flags not assigned by schema V3.
     SegmentFlags {
         /// Segment index.
         index: usize,
@@ -1885,6 +1895,19 @@ pub enum BlockError {
         /// Exact coefficient/continuity/bound failure.
         error: FiniteDifferenceError,
     },
+    /// Servo finite-difference semantic validation failed at one record.
+    ServoFiniteDifference {
+        /// Record index.
+        index: usize,
+        /// Exact cadence, coefficient, continuity, or configured-limit failure.
+        error: ServoFiniteDifferenceError,
+    },
+    /// A complete servo stream did not return both feed-forward channels to zero.
+    ServoTerminalFeedForward,
+    /// Servo execution was requested without an exact configuration-derived profile.
+    ServoProfileRequired,
+    /// Servo setpoint count could not retain contiguous nonzero `u32` command IDs.
+    ServoCommandCountOverflow,
     /// Block end did not equal the exact sum of segment durations.
     BlockTime,
     /// Prepared stream identity did not match.
@@ -1998,6 +2021,17 @@ fn finite_difference_record_bytes<const AXES: usize>() -> Result<usize, BlockErr
         .ok_or(BlockError::Arithmetic)
 }
 
+pub(crate) fn servo_finite_difference_record_bytes<const AXES: usize>() -> Result<usize, BlockError>
+{
+    servo::validate_servo_axis_count::<AXES>().map_err(|_| BlockError::AxisCount {
+        encoded: u8::try_from(AXES).unwrap_or(u8::MAX),
+        expected: MAX_SERVO_EXECUTION_AXES,
+    })?;
+    AXES.checked_mul(SERVO_FINITE_DIFFERENCE_AXIS_BYTES)
+        .and_then(|axes| axes.checked_add(SERVO_FINITE_DIFFERENCE_RECORD_PREFIX_BYTES))
+        .ok_or(BlockError::Arithmetic)
+}
+
 fn validate_chain_origin(sequence: u32, previous_digest: Digest) -> Result<(), BlockError> {
     if (sequence == 0) != previous_digest.is_zero() {
         return Err(BlockError::ChainOrigin);
@@ -2099,13 +2133,25 @@ fn validate_block_structure(
     if header.segment_count == 0 {
         return Err(BlockError::SegmentCount);
     }
-    let (record_prefix_bytes, axis_bytes) = match header.kind {
-        ExecutionKind::Motion => (MOTION_RECORD_PREFIX_BYTES, 8),
+    let (record_prefix_bytes, axis_bytes, maximum_axes) = match header.kind {
+        ExecutionKind::Motion => (MOTION_RECORD_PREFIX_BYTES, 8, MAX_EXECUTION_AXES),
         ExecutionKind::FiniteDifference => (
             FINITE_DIFFERENCE_RECORD_PREFIX_BYTES,
             FINITE_DIFFERENCE_AXIS_BYTES,
+            MAX_EXECUTION_AXES,
+        ),
+        ExecutionKind::ServoFiniteDifference => (
+            SERVO_FINITE_DIFFERENCE_RECORD_PREFIX_BYTES,
+            SERVO_FINITE_DIFFERENCE_AXIS_BYTES,
+            MAX_SERVO_EXECUTION_AXES,
         ),
     };
+    if axes > maximum_axes {
+        return Err(BlockError::AxisCount {
+            encoded: header.axis_count,
+            expected: maximum_axes,
+        });
+    }
     let record_bytes = axes
         .checked_mul(axis_bytes)
         .and_then(|bytes| bytes.checked_add(record_prefix_bytes))
@@ -2142,7 +2188,7 @@ fn validate_block_structure(
             .ok_or(BlockError::Arithmetic)?;
         let duration = match header.kind {
             ExecutionKind::Motion => read_u64(bytes, offset),
-            ExecutionKind::FiniteDifference => {
+            ExecutionKind::FiniteDifference | ExecutionKind::ServoFiniteDifference => {
                 let update_period = read_u32(bytes, offset);
                 let update_count = read_u32(bytes, offset + 4);
                 if update_period == 0 || update_count == 0 {
@@ -2484,8 +2530,8 @@ mod tests {
         assert_eq!(
             header.block_digest.0,
             [
-                254, 164, 153, 245, 140, 66, 61, 107, 240, 55, 20, 127, 238, 213, 99, 157, 11, 244,
-                205, 122, 199, 120, 41, 143, 0, 172, 94, 242, 247, 104, 157, 229,
+                237, 68, 7, 124, 40, 87, 219, 249, 130, 203, 84, 169, 51, 95, 197, 150, 206, 124,
+                144, 31, 183, 233, 47, 56, 24, 126, 244, 212, 81, 24, 232, 172,
             ]
         );
         assert_eq!(&block.as_bytes()[152..160], &[0; 8]);
@@ -2736,10 +2782,13 @@ mod tests {
         );
     }
 
-    fn finite_difference_limits<const AXES: usize>() -> FiniteDifferenceValidationLimits<AXES> {
+    fn finite_difference_limits<const AXES: usize>(
+        required_update_period_ticks: u32,
+    ) -> FiniteDifferenceValidationLimits<AXES> {
         FiniteDifferenceValidationLimits {
             maximum_segment_ticks: 10_000,
             maximum_update_count: 1_000,
+            required_update_period_ticks,
             maximum_steps_per_segment: 1_000,
             maximum_absolute_first_difference: [FINITE_DIFFERENCE_ONE_STEP.unsigned_abs() - 1;
                 AXES],
@@ -2776,7 +2825,7 @@ mod tests {
             flags: 0,
         };
         let summary = segment
-            .validate(StreamTick(20), [0; 2], finite_difference_limits())
+            .validate(StreamTick(20), [0; 2], finite_difference_limits(10))
             .unwrap();
         assert_eq!(summary.end_tick, StreamTick(100));
         assert_eq!(summary.start_steps, [0, 0]);
@@ -2818,7 +2867,7 @@ mod tests {
             flags: 0,
         };
         let summary = segment
-            .validate(StreamTick(0), [0], finite_difference_limits())
+            .validate(StreamTick(0), [0], finite_difference_limits(1))
             .unwrap();
         assert_eq!(summary.minimum_first_difference, [step * 3 / 32]);
         assert_eq!(summary.maximum_first_difference, [step / 4]);
@@ -2843,7 +2892,7 @@ mod tests {
             flags: 0,
         };
         assert_eq!(
-            reversing.validate(StreamTick(0), [0], finite_difference_limits()),
+            reversing.validate(StreamTick(0), [0], finite_difference_limits(1)),
             Err(FiniteDifferenceError::DirectionReversal { axis: 0 })
         );
 
@@ -2860,7 +2909,7 @@ mod tests {
             }],
             flags: 0,
         };
-        let mut limits = finite_difference_limits();
+        let mut limits = finite_difference_limits(1);
         limits.maximum_absolute_first_difference = [(step / 4 - 1).unsigned_abs()];
         assert_eq!(
             constant.validate(StreamTick(0), [0], limits),
@@ -2871,7 +2920,7 @@ mod tests {
             })
         );
         assert_eq!(
-            constant.validate(StreamTick(0), [1], finite_difference_limits()),
+            constant.validate(StreamTick(0), [1], finite_difference_limits(1)),
             Err(FiniteDifferenceError::PositionContinuity { axis: 0 })
         );
     }
@@ -2892,7 +2941,7 @@ mod tests {
             flags: 0,
         };
         assert_eq!(
-            overflowing.validate(StreamTick(0), [i64::MAX - 1], finite_difference_limits(),),
+            overflowing.validate(StreamTick(0), [i64::MAX - 1], finite_difference_limits(1),),
             Err(FiniteDifferenceError::CoefficientOverflow { axis: 0 })
         );
 
@@ -2901,7 +2950,7 @@ mod tests {
             ..overflowing
         };
         assert_eq!(
-            wrong_end.validate(StreamTick(0), [i64::MAX - 1], finite_difference_limits(),),
+            wrong_end.validate(StreamTick(0), [i64::MAX - 1], finite_difference_limits(1),),
             Err(FiniteDifferenceError::Time)
         );
     }
@@ -2909,7 +2958,7 @@ mod tests {
     fn finite_block_limits<const AXES: usize>() -> FiniteDifferenceBlockValidationLimits<AXES> {
         FiniteDifferenceBlockValidationLimits {
             maximum_block_ticks: 10_000,
-            segment: finite_difference_limits(),
+            segment: finite_difference_limits(1),
         }
     }
 
@@ -2964,8 +3013,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(block, repeated);
-        assert_eq!(&block.as_bytes()[0..8], b"ALMBLK02");
-        assert_eq!(&block.as_bytes()[8..10], &2_u16.to_le_bytes());
+        assert_eq!(&block.as_bytes()[0..8], b"ALMBLK03");
+        assert_eq!(&block.as_bytes()[8..10], &3_u16.to_le_bytes());
         assert_eq!(block.header().kind, ExecutionKind::FiniteDifference);
         assert_eq!(block.header().payload_len, 160);
         assert_eq!(maximum_finite_difference_segments_per_block::<2>(), Ok(4));
@@ -3070,7 +3119,7 @@ mod tests {
     }
 
     #[test]
-    fn execution_block_v2_rejects_the_retired_v1_wire_identity() {
+    fn execution_block_v3_rejects_the_retired_v2_wire_identity() {
         let segments = [ExecutionSegment {
             start_tick: StreamTick(0),
             end_tick: StreamTick(10),
@@ -3087,7 +3136,7 @@ mod tests {
         )
         .unwrap();
         let mut retired = block.into_bytes();
-        retired[0..8].copy_from_slice(b"ALMBLK01");
+        retired[0..8].copy_from_slice(b"ALMBLK02");
         assert!(matches!(
             ExecutionBlock::decode(retired),
             Err(BlockError::Magic)
