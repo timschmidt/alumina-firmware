@@ -381,7 +381,8 @@ prepares every simultaneous setpoint transactionally, and appends exactly one
 terminal at-rest hold. Simulation replays a two-block stream through 401 current
 periods. The portable path is deliberately not selected by the permanent ESP
 motion actor yet; no peripheral, energization, or hardware claim follows from
-this checkpoint. See the [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md).
+this checkpoint. See the [servo finite-difference contract](docs/SERVO-FINITE-DIFFERENCE.md)
+and [exact cached-servo evidence](docs/evidence/M10-EXACT-CACHED-SERVO-STREAM.md).
 
 The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;

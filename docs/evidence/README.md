@@ -307,6 +307,11 @@ a hardware qualification: board promotion still follows the evidence ladder in
   electrical admission, allocation-free dense execution, exact cached-token
   ownership, and immutable-partition simulation with every physical claim kept
   closed.
+- [`M10-EXACT-CACHED-SERVO-STREAM.md`](M10-EXACT-CACHED-SERVO-STREAM.md) —
+  certified browser Q31.32/Q2.30 servo recurrence projection, typed FOC-profile
+  admission, allocation-free two-block setpoint ownership, terminal hold,
+  complete-axis simulation, frozen moving-Hyper verification, and renewed ESP
+  artifacts with every peripheral and energization claim closed.
 - [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
   — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
   differences, adaptive monotonic splitting, immutable direct cache packaging,
