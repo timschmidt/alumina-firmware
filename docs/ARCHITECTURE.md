@@ -1356,10 +1356,10 @@ The current composition has always rejected mixed stepper/FOC configurations;
 tag. Reconfiguration still prepares a complete replacement before atomically
 replacing the prior idle owner. Prime, start, admit, poll, finish, fault, clear,
 deadline, and arm-readiness operations dispatch only to the selected variant,
-and wrong-family jobs remain fail-closed. On classic ESP32,
-`MotionService` falls from 10,288 to 7,000 bytes and the permanent real-time
-task pool falls by 3,288 bytes. No target implementation or qualification gate
-changes. See
+and wrong-family jobs remain fail-closed. The `MotionService` and permanent
+real-time task pool fall by the exact omitted servo payload: 3,288 bytes on
+three-axis TinyBee, 2,952 on two-axis MKS ESP32 FOC, and 2,616 on one-axis
+T-Deck Pro. No target implementation or qualification gate changes. See
 [`evidence/M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
 
 `ALMCFG06` joins these portable contracts at the only executable boundary. One

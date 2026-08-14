@@ -526,8 +526,9 @@ The next static-memory checkpoint makes the existing exclusive motion-family
 policy structural. One inline owner now contains either the complete stepper
 executor or complete servo executor, never both, while configuration
 replacement remains transactional and every wrong-family operation remains
-closed. The classic-ESP32 `MotionService` and permanent real-time task pool
-fall by 3,288 bytes without reducing an axis, block, horizon, or output bound.
+closed. The `MotionService` and permanent real-time task pool fall by 3,288
+bytes on three-axis TinyBee, 2,952 on two-axis MKS ESP32 FOC, and 2,616 on
+one-axis T-Deck Pro without reducing an axis, block, horizon, or output bound.
 See
 [`M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
 
@@ -1019,8 +1020,8 @@ but returns 4,344 bytes to the classic-ESP32 linker residual. See
 The following memory-hardening checkpoint replaces the simultaneously retained
 stepper and servo actors with one configuration-exclusive inline motion owner.
 It preserves transactional reconfiguration, job-family binding, and fault/
-clear behavior while returning another 3,288 bytes to the classic-ESP32 linker
-residual. See
+clear behavior while returning another 3,288 TinyBee bytes, 2,952 MKS FOC
+bytes, or 2,616 T-Deck Pro bytes to the linker residual. See
 [`M10-EXCLUSIVE-MOTION-OWNER.md`](evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
 
 Exit gate:

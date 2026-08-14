@@ -321,6 +321,11 @@ candidate region while retaining the separately active document, returning
 4,344 bytes of live static storage on every current target without changing a
 wire or configuration bound. See the [real-time configuration storage
 evidence](docs/evidence/M10-REALTIME-CONFIGURATION-STORAGE-REUSE.md).
+The core-1 motion selector now also retains only the configuration-selected
+stepper or servo actor, reclaiming 2,616--3,288 further bytes across current
+board widths while leaving both complete implementations and every output gate
+intact. See the [exclusive motion-owner
+evidence](docs/evidence/M10-EXCLUSIVE-MOTION-OWNER.md).
 
 The first portable M6 execution slice now binds cached ownership to an exact
 integer step-event trace: whole blocks are preflighted without work proportional
