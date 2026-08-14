@@ -4,8 +4,8 @@ use alumina_foc::{
     CountUncertainty, CurrentChannelCalibration, ElectricalPhase, FocParameterSnapshot,
     FocTimingProfile, PiConfig, PwmAdcSynchronization, PwmCompareContract, Q30, RotationPrecision,
     RotorCalibration, RotorCountDirection, ServoCascadeConfig, ServoEncoderProfile,
-    ServoEncoderScale, ServoLoopGrid, ServoPosition, TwoShuntCurrentCalibration, TwoShuntPhasePair,
-    ValidatedTwoShuntCurrentCalibration,
+    ServoEncoderScale, ServoFocAxisProfile, ServoLoopGrid, ServoPosition,
+    TwoShuntCurrentCalibration, TwoShuntPhasePair, ValidatedTwoShuntCurrentCalibration,
 };
 use alumina_protocol::{DeviceCycle, Digest};
 
@@ -482,6 +482,23 @@ impl LoweredFocAxisConfiguration {
             return Err(ConfigurationError::FocEncoder);
         }
         Ok(())
+    }
+
+    /// Returns the portable complete-axis profile only after replaying this
+    /// entire lowered bundle. Boot-local activation identity, encoder turn
+    /// seed, grid epoch, and physical neutral-image acknowledgement remain the
+    /// caller's explicit inputs to `ServoFocAxisController`.
+    pub fn servo_foc_axis_profile(self) -> Result<ServoFocAxisProfile, ConfigurationError> {
+        self.validate()?;
+        Ok(ServoFocAxisProfile {
+            parameters: self.parameters,
+            rotor: self.rotor,
+            rotation_precision: self.rotation_precision,
+            current: self.current,
+            pwm_compare: self.pwm_compare,
+            servo: self.servo,
+            encoder: self.encoder,
+        })
     }
 }
 

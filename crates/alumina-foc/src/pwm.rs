@@ -353,7 +353,7 @@ pub struct PwmCompareLatch {
 /// boundary, or arithmetic failure. Missing images are permitted so a prior
 /// comparison can remain active; a higher-level control-rate policy may require
 /// one image per period.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PwmCompareLatchOwner {
     contract: PwmCompareContract,
     next_boundary: DeviceCycle,

@@ -506,6 +506,13 @@ derived servo/encoder state is rejected. Lowering does not initialize ADC,
 attach an MCPWM operator to a pin, establish the multi-turn seed, or create a
 power stage.
 
+After that complete replay, lowering can expose a `ServoFocAxisProfile` that
+joins the same digest-bound inner and outer objects for the portable
+complete-axis owner. This does not manufacture boot-local facts: the target
+must still select the grid epoch, nonzero activation identity and turn seed,
+stage the returned neutral image, and acknowledge its exact timer-zero commit
+before the owner can become active.
+
 MKS ESP32 FOC V1.0 target lowering additionally requires the configuration's
 capability digest to equal the compiled package, matches U/V/W and both ADC
 bindings to one exact schematic motor, requires the AB two-shunt pair and the

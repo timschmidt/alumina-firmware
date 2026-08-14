@@ -783,8 +783,8 @@ and latch first cause. A synthetic ideal-current mechanical plant produces an
 identical 12,000-tick replay with exactly 240 position and 1,200 velocity
 updates and converges within fixed lattice assertions. Configuration V6 now
 stores and digest-binds the cascade and exact nested loop grid. Cached servo
-commands, inner-current-loop composition, core-1 execution, WCET, safety
-integration, and every physical claim remain open. See
+commands, core-1 execution, WCET, safety integration, and every physical claim
+remain open. See
 [`M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
 
 The portable absolute-encoder checkpoint now requires an explicit multi-turn
@@ -802,12 +802,28 @@ and reverse wraps in both sensor directions and recovers its known multi-turn
 truth deterministically. Configuration V6 now stores and digest-binds the exact
 scale, cadence, latency, speed, estimator-error, and precision policy. Homing
 and turn-seed authority, truthful AS5600 timestamps/aperture, physical
-speed/error qualification, target scheduling, and controller composition remain
-open. See
+speed/error qualification, target scheduling, and hardware controller
+attachment remain open. See
 [`M8-PORTABLE-ENCODER-ESTIMATOR.md`](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
 The combined canonical records, exact machine-scalar cross-checks, and
 full-digest lowering are sealed in
 [`M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md`](evidence/M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md).
+
+The portable complete-axis checkpoint now joins that validated V6 profile into
+one allocation-free encoder/cascade/current/angle/SVPWM/compare owner. Its
+activation is conditional on exact neutral-image acknowledgement. Every live
+period calculates entirely against copied candidate state and exposes an opaque
+future-image transition; only an exact timer-zero commit advances all nested
+controllers, counters, and the active compare image together. Identity,
+current-sample, encoder cadence, candidate-prefix, and commit substitution
+faults preserve the prior logical state and latch first cause. A
+configuration-derived simulator replays 401 current periods with exactly 21
+velocity/encoder and three position updates, then proves late-commit and
+missing-observation rejection. The target remains non-armable: cached servo
+command encoding, the core-1 actor/task and HAL observation sources, qualified
+shutdown invocation, physical compare readback, WCET, and bench evidence remain
+open. See
+[`M8-PORTABLE-SERVO-FOC-AXIS.md`](evidence/M8-PORTABLE-SERVO-FOC-AXIS.md).
 
 Exit gate:
 

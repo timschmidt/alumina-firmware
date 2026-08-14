@@ -8,9 +8,11 @@
 use alumina_config::{ConfigurationError, LoweredFocAxisConfiguration, RealtimeConfiguration};
 use alumina_foc::{
     AlphaBeta, CurrentSample, DqControlUpdate, DqCurrentController, DqInterval, DqPoint,
-    FocCurrentCommand, FocError, ModulationResult, PwmAdcSampleStamp, PwmAdcSynchronization,
-    PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError, PwmCompareLatchOwner,
-    Q30Interval, RotorSample, inverse_park, park, space_vector_modulate,
+    FocCurrentCommand, FocError, ModulationResult, PowerStageCommit, PwmAdcSampleStamp,
+    PwmAdcSynchronization, PwmCompareError, PwmCompareImage, PwmCompareLatch, PwmCompareLatchError,
+    PwmCompareLatchOwner, Q30Interval, RotorSample, ServoEncoderObservation, ServoEncoderSeed,
+    ServoFocAxisController, ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisUpdate,
+    ServoSetpoint, inverse_park, park, space_vector_modulate,
 };
 use alumina_protocol::DeviceCycle;
 
@@ -24,6 +26,8 @@ pub enum FocHardwareLoopError {
     Foc(FocError),
     Compare(PwmCompareError),
     Latch(PwmCompareLatchError),
+    /// The complete estimator/servo/current/PWM actor rejected.
+    Axis(ServoFocAxisError),
     /// The first simulator supports one current update per PWM period.
     Rate,
     /// Command identity, time, token, or sequence was not the sole expected value.
@@ -60,6 +64,12 @@ impl From<PwmCompareLatchError> for FocHardwareLoopError {
     }
 }
 
+impl From<ServoFocAxisError> for FocHardwareLoopError {
+    fn from(error: ServoFocAxisError) -> Self {
+        Self::Axis(error)
+    }
+}
+
 /// One exact command plus the integer sensor observations for its PWM period.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FocHardwareLoopInput {
@@ -80,6 +90,128 @@ pub struct FocHardwareLoopSample {
     pub control: DqControlUpdate,
     pub modulation: ModulationResult,
     pub committed: PwmCompareLatch,
+}
+
+/// One exact outer-loop command/observation plus raw inner-loop observations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FocServoHardwareLoopInput {
+    pub setpoint: Option<ServoSetpoint>,
+    pub encoder_observation: Option<ServoEncoderObservation>,
+    pub raw_current_counts: [u16; 2],
+    pub raw_rotor_count: u32,
+}
+
+/// Configuration-derived virtual owner for the complete servo/FOC chain.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ConfiguredServoFocHardwareLoop {
+    controller: ServoFocAxisController,
+}
+
+impl ConfiguredServoFocHardwareLoop {
+    /// Constructs through the private independently validated configuration.
+    pub fn from_configuration(
+        configuration: &RealtimeConfiguration,
+        slot: usize,
+        activation_id: u64,
+        seed: ServoEncoderSeed,
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        let lowered = configuration.lower_foc_axis(slot)?;
+        Self::from_lowered(lowered, activation_id, seed, first_boundary)
+    }
+
+    fn from_lowered(
+        lowered: LoweredFocAxisConfiguration,
+        activation_id: u64,
+        seed: ServoEncoderSeed,
+        first_boundary: DeviceCycle,
+    ) -> Result<Self, FocHardwareLoopError> {
+        let profile = lowered.servo_foc_axis_profile()?;
+        let prepared = ServoFocAxisController::prepare_activation(
+            profile,
+            activation_id,
+            seed,
+            first_boundary,
+        )?;
+        let initial_image = prepared.initial_image();
+        let controller = ServoFocAxisController::activate(
+            prepared,
+            PowerStageCommit {
+                token: initial_image.token(),
+                scheduled_at: initial_image.scheduled_at(),
+                observed_at: initial_image.scheduled_at(),
+            },
+        )?;
+        Ok(Self { controller })
+    }
+
+    /// Complete portable actor state retained by this virtual hardware owner.
+    pub const fn controller(&self) -> &ServoFocAxisController {
+        &self.controller
+    }
+
+    /// Replays one complete current period and exact next timer-zero commit.
+    pub fn step(
+        &mut self,
+        input: FocServoHardwareLoopInput,
+    ) -> Result<ServoFocAxisUpdate, FocHardwareLoopError> {
+        let observed = DeviceCycle(
+            self.controller
+                .period_started_at()
+                .0
+                .checked_add(u64::from(
+                    self.controller
+                        .profile()
+                        .current
+                        .snapshot()
+                        .synchronization
+                        .pwm_period_cycles,
+                ))
+                .ok_or(FocHardwareLoopError::Overflow)?,
+        );
+        self.step_with_timer_zero(input, observed)
+    }
+
+    /// Replays one period with an explicit physical-boundary fault injection.
+    pub fn step_with_timer_zero(
+        &mut self,
+        input: FocServoHardwareLoopInput,
+        observed_timer_zero: DeviceCycle,
+    ) -> Result<ServoFocAxisUpdate, FocHardwareLoopError> {
+        let profile = self.controller.profile();
+        let active_image = self
+            .controller
+            .active_image()
+            .ok_or(FocHardwareLoopError::Sequence)?;
+        let at = self.controller.period_started_at();
+        let stamp = exact_sample_stamp(
+            profile.pwm_compare,
+            &profile.parameters,
+            profile.current.snapshot().synchronization,
+            active_image,
+            self.controller.period_sequence(),
+            at,
+        )?;
+        let prepared = self.controller.prepare(ServoFocAxisPeriodInput {
+            at,
+            setpoint: input.setpoint,
+            encoder_observation: input.encoder_observation,
+            raw_current_counts: input.raw_current_counts,
+            current_stamp: stamp,
+            raw_rotor_count: input.raw_rotor_count,
+        })?;
+        let staged = prepared.staged_image();
+        self.controller
+            .commit(
+                prepared,
+                PowerStageCommit {
+                    token: staged.token(),
+                    scheduled_at: staged.scheduled_at(),
+                    observed_at: observed_timer_zero,
+                },
+            )
+            .map_err(FocHardwareLoopError::Axis)
+    }
 }
 
 /// Allocation-free virtual owner for one configuration-derived FOC axis.
@@ -643,6 +775,189 @@ mod tests {
             raw_current_counts: [2_000, 2_000],
             raw_rotor_count: 0,
         }
+    }
+
+    fn servo_lowered_fixture() -> LoweredFocAxisConfiguration {
+        let mut lowered = lowered_fixture();
+        let scale = ServoEncoderScale::new(1, 1, 4_096, 1).unwrap();
+        lowered.encoder_scale_parameters.scale = scale;
+        lowered.encoder.scale = scale;
+        lowered.servo_parameters.position_proportional_gain = Q30::HALF;
+        lowered.servo.position_proportional_gain = Q30::HALF;
+        lowered.pwm_hardware.maximum_quantization_error_ulps = u32::MAX;
+        lowered.pwm_compare = PwmCompareContract::new(
+            DIGEST,
+            lowered.pwm_compare.device_cycle_hz(),
+            lowered.pwm_compare.pwm_period_device_cycles(),
+            lowered.pwm_compare.counter_clock_hz(),
+            lowered.pwm_compare.timer_peak_ticks(),
+            lowered.pwm_compare.minimum_active_ticks(),
+            u32::MAX,
+        )
+        .unwrap();
+        lowered.validate().unwrap();
+        lowered
+    }
+
+    fn servo_seed() -> ServoEncoderSeed {
+        ServoEncoderSeed {
+            observation: ServoEncoderObservation {
+                configuration_digest: DIGEST,
+                raw_count: 0,
+                sampled_at: DeviceCycle(0),
+                available_at: DeviceCycle(0),
+            },
+            turn_index: 0,
+        }
+    }
+
+    fn servo_input(
+        loop_owner: &ConfiguredServoFocHardwareLoop,
+        current_index: u64,
+    ) -> FocServoHardwareLoopInput {
+        let at = loop_owner.controller().period_started_at();
+        let velocity_due = current_index.is_multiple_of(20);
+        let position_due = current_index.is_multiple_of(200);
+        let encoder_observation = velocity_due.then_some(ServoEncoderObservation {
+            configuration_digest: DIGEST,
+            raw_count: 0,
+            sampled_at: DeviceCycle(80_000 + current_index / 20 * 80_000),
+            available_at: at,
+        });
+        let setpoint = position_due.then_some(ServoSetpoint {
+            command_id: u32::try_from(current_index / 200 + 1).unwrap(),
+            scheduled_at: at,
+            configuration_digest: DIGEST,
+            position: ServoPosition::from_bits(1 << 28),
+            velocity_feed_forward: Q30::ZERO,
+            quadrature_current_feed_forward: Q30::ZERO,
+        });
+        FocServoHardwareLoopInput {
+            setpoint,
+            encoder_observation,
+            raw_current_counts: [2_000, 2_000],
+            raw_rotor_count: 0,
+        }
+    }
+
+    #[test]
+    fn configuration_derived_complete_axis_replays_every_nested_loop_and_commit() {
+        let lowered = servo_lowered_fixture();
+        let mut first = ConfiguredServoFocHardwareLoop::from_lowered(
+            lowered,
+            0x55aa,
+            servo_seed(),
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut replay = ConfiguredServoFocHardwareLoop::from_lowered(
+            lowered,
+            0x55aa,
+            servo_seed(),
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut nonneutral_images = 0_u32;
+
+        for current_index in 0_u64..=400 {
+            let input = servo_input(&first, current_index);
+            let update = first.step(input).unwrap();
+            let replayed = replay.step(input).unwrap();
+            assert_eq!(update, replayed);
+            assert_eq!(update.prepared.cascade.current_index, current_index);
+            assert_eq!(
+                update.prepared.current_command.command_id,
+                u32::try_from(current_index + 1).unwrap()
+            );
+            assert_eq!(
+                update.latch.period_sequence,
+                current_index.checked_add(1).unwrap()
+            );
+            assert_eq!(
+                update.prepared.encoder.is_some(),
+                current_index.is_multiple_of(20)
+            );
+            assert_eq!(
+                update.prepared.cascade.position_updated,
+                current_index.is_multiple_of(200)
+            );
+            if update
+                .prepared
+                .staged_image
+                .comparisons()
+                .iter()
+                .any(|comparison| comparison.compare_ticks() != 1_000)
+            {
+                nonneutral_images += 1;
+            }
+        }
+
+        assert_eq!(first.controller().cascade().last_current_index(), Some(400));
+        assert_eq!(first.controller().cascade().position_updates(), 3);
+        assert_eq!(first.controller().cascade().velocity_updates(), 21);
+        assert_eq!(first.controller().encoder().estimate_sequence(), 21);
+        assert_eq!(first.controller().period_sequence(), 401);
+        assert!(nonneutral_images > 0);
+        assert_eq!(first, replay);
+    }
+
+    #[test]
+    fn complete_axis_commit_and_encoder_schedule_fail_without_partial_advance() {
+        let lowered = servo_lowered_fixture();
+        let mut late_commit = ConfiguredServoFocHardwareLoop::from_lowered(
+            lowered,
+            0x55aa,
+            servo_seed(),
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let input = servo_input(&late_commit, 0);
+        assert_eq!(
+            late_commit.step_with_timer_zero(input, DeviceCycle(84_001)),
+            Err(FocHardwareLoopError::Axis(
+                ServoFocAxisError::PowerStageCommit
+            ))
+        );
+        assert_eq!(
+            late_commit.controller().period_started_at(),
+            DeviceCycle(80_000)
+        );
+        assert_eq!(late_commit.controller().encoder().estimate_sequence(), 0);
+        assert_eq!(
+            late_commit.controller().cascade().last_current_index(),
+            None
+        );
+        assert_eq!(
+            late_commit.step(input),
+            Err(FocHardwareLoopError::Axis(ServoFocAxisError::FaultLatched))
+        );
+
+        let mut missing_encoder = ConfiguredServoFocHardwareLoop::from_lowered(
+            lowered,
+            0x55ab,
+            servo_seed(),
+            DeviceCycle(80_000),
+        )
+        .unwrap();
+        let mut input = servo_input(&missing_encoder, 0);
+        input.encoder_observation = None;
+        assert_eq!(
+            missing_encoder.step(input),
+            Err(FocHardwareLoopError::Axis(
+                ServoFocAxisError::EncoderPresence {
+                    required: true,
+                    received: false,
+                }
+            ))
+        );
+        assert_eq!(
+            missing_encoder.controller().encoder().estimate_sequence(),
+            0
+        );
+        assert_eq!(
+            missing_encoder.controller().cascade().last_current_index(),
+            None
+        );
     }
 
     #[test]

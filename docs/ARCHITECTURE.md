@@ -1030,8 +1030,8 @@ first cause without partially advancing PI or accepted identities.
 Canonical Configuration V6 stores the complete cascade, binds its physical
 following-error and normalized-velocity authorities to exact machine scalars,
 derives its integer loop grid, and lowers it under the complete configuration
-digest. The cascade still has no cached command schema, current-loop
-composition, core-1 task, MCPWM/ADC attachment, WCET, or motor evidence. Its
+digest. The cascade still has no cached command schema, core-1 task,
+MCPWM/ADC attachment, WCET, or motor evidence. Its
 dimensionless simulator assumes ideal q-current availability and exists only to
 replay grid, controller, limit, and numerical behavior. See
 [`evidence/M8-PORTABLE-CASCADED-SERVO.md`](evidence/M8-PORTABLE-CASCADED-SERVO.md).
@@ -1173,6 +1173,36 @@ MCPWM token into a closed HAL owner: timer 0 is configured in up/down mode, then
 immediately stopped and reset to zero because the HAL exposes no
 configure-while-stopped call. No operator is attached to any pin and the owner
 exposes no controller, timer, compare write, or `PowerStage` implementation.
+
+`ServoFocAxisController` is the first portable owner of the complete control
+prefix. A validated Configuration V6 bundle supplies one immutable
+`ServoFocAxisProfile`; the boot owner must separately supply a nonzero
+activation identity, an explicit multi-turn encoder seed, and the first exact
+timer-zero boundary. Activation produces a complete neutral compare image but
+does not claim active state until a `PowerStageCommit` names that image and
+boundary exactly.
+
+For each current/PWM period, the actor requires the sole active compare token
+and period sequence, a synchronized two-shunt acquisition witness, one raw
+electrical-angle observation, and encoder/setpoint presence dictated by the
+exact nested grid. It calculates the encoder estimate, cascade output, dq
+current update, inverse Park/SVPWM result, and complete future integer compare
+image against copies of every mutable sub-owner. The opaque prepared transition
+is bound to the activation and current state prefix. Only an exact future
+timer-zero acknowledgement atomically installs all candidate state. A late,
+foreign, substituted, repeated, or stale transition latches the first cause;
+logical estimator or controller state cannot advance alone.
+
+This composition trusts the future sole-owner target adapter to stage the
+exposed image, report a truthful physical boundary, source truthful sensor
+timestamps, permit at most one hardware candidate in flight, and invoke the
+qualified shutdown transaction on any rejection. The portable acknowledgement
+is not register readback. The first actor also intentionally requires one
+current update per PWM period and derives zero voltage feed-forward from the
+held cascade target. Cached command selection, target/HAL construction,
+shutdown wiring, deadline/WCET qualification, physical encoder/current timing,
+electrical alignment, and energization all remain open. See
+[`evidence/M8-PORTABLE-SERVO-FOC-AXIS.md`](evidence/M8-PORTABLE-SERVO-FOC-AXIS.md).
 
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by

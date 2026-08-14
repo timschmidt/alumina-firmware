@@ -384,6 +384,15 @@ canonical bytes and exact machine-scalar relationships. That closes a software
 configuration seam; it does not satisfy any physical qualification step below
 or make the current MKS power-stage package armable.
 
+The [portable complete-axis checkpoint](evidence/M8-PORTABLE-SERVO-FOC-AXIS.md)
+proves transactional composition from the configured encoder and cascaded
+servo through synchronized current reconstruction, exact electrical angle, dq
+PI, interval SVPWM, and a complete future integer compare image. It also proves
+that activation and period state advance only after exact modeled timer-zero
+acknowledgements. Those acknowledgements are supplied software evidence, not
+MCPWM register readback or a physical timing measurement; target ownership,
+shutdown, WCET, and all qualification steps below remain unsatisfied.
+
 1. Validate PWM polarity, dead time, disable path, ADC triggers, phase-current
    offsets/gain, bus voltage, and sensor direction with no active torque.
 2. Low-voltage open-loop electrical rotation and sensor alignment.

@@ -464,8 +464,8 @@ transactionally before controller state advances. A dimensionless ideal-current
 mechanical fixture replays 12,000 current ticks identically and converges while
 preserving the exact 240 position and 1,200 velocity updates. Configuration V6
 stores the complete cascade and exact loop-grid policy and lowers both under the
-full configuration digest. No firmware task, inner-loop composition, target
-adapter, or energizing path selects it.
+full configuration digest. No firmware task, target adapter, deadline proof,
+or energizing path selects it.
 See the [portable cascaded-servo evidence](docs/evidence/M8-PORTABLE-CASCADED-SERVO.md).
 
 The adjacent portable encoder checkpoint now turns truthful raw absolute counts
@@ -602,6 +602,23 @@ identical complete results and deliberately demonstrates that a
 1,200,000-ULP test policy. This is virtual timing evidence, not an electrical,
 WCET, ADC, PWM, or energization claim. See the
 [configured FOC-loop evidence](docs/evidence/M8-CONFIGURED-FOC-HARDWARE-LOOP.md).
+
+The portable complete-axis checkpoint now composes the Configuration V6
+encoder estimator, nested position/velocity cascade, calibrated synchronized
+current observation, certified electrical angle, dq PI, interval SVPWM, and
+integer compare lowering behind one allocation-free owner. Activation first
+returns a complete neutral image and becomes live only after the target reports
+that exact image at the selected timer zero. Each live period is likewise a
+two-phase transition: calculation advances only copied candidate state, and
+the estimator, outer loops, current controller, counters, and active PWM image
+advance together only after the exact future image is acknowledged. Wrong
+identity, sample, schedule, prefix, or physical-commit evidence latches the
+first cause without partial logical advance. A configuration-derived simulator
+replays 401 complete periods twice and injects late-commit and missing-encoder
+failures. This is portable software composition: no target constructs the
+actor, no HAL writes or reads back a compare image, no shutdown transaction is
+invoked, and no WCET or physical timing is claimed. See the
+[portable complete-axis evidence](docs/evidence/M8-PORTABLE-SERVO-FOC-AXIS.md).
 
 ## Developer checks
 

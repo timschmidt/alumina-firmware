@@ -6427,6 +6427,13 @@ mod tests {
                 .counts_per_second_at_velocity_one_numerator(),
             40_960
         );
+        let actor_profile = lowered.servo_foc_axis_profile().unwrap();
+        let rebased = actor_profile
+            .validate_at(alumina_protocol::DeviceCycle(12_000_000))
+            .unwrap();
+        assert_eq!(rebased.epoch(), alumina_protocol::DeviceCycle(12_000_000));
+        assert_eq!(rebased.current_period_cycles(), 4_000);
+        assert_eq!(rebased.velocity_period_cycles(), 80_000);
         let mut forged_lowering = lowered;
         forged_lowering.pwm_hardware.timer_peak_ticks = 1_999;
         assert_eq!(

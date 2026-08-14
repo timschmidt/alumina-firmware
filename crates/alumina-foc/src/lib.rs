@@ -4,6 +4,7 @@
 use alumina_protocol::{DeviceCycle, Digest};
 
 mod angle;
+mod axis;
 mod current;
 mod encoder;
 mod pwm;
@@ -13,6 +14,13 @@ pub use angle::{
     CountUncertainty, ElectricalPhase, ElectricalPhaseEstimate, HALF_TURN_BITS,
     MAXIMUM_OBSERVATION_ERROR_BITS, PHASE_POINTS_PER_TURN, QUARTER_TURN_BITS, RotationPrecision,
     RotorCalibration, RotorCountDirection, rotation_from_estimate, rotation_from_phase,
+};
+pub use axis::{
+    MAX_PREPARED_SERVO_FOC_AXIS_ACTIVATION_BYTES, MAX_PREPARED_SERVO_FOC_AXIS_TRANSITION_BYTES,
+    MAX_SERVO_FOC_AXIS_CONTROLLER_BYTES, MAX_SERVO_FOC_AXIS_PREPARED_UPDATE_BYTES,
+    PreparedServoFocAxisActivation, PreparedServoFocAxisTransition, ServoFocAxisController,
+    ServoFocAxisError, ServoFocAxisPeriodInput, ServoFocAxisPreparedUpdate, ServoFocAxisProfile,
+    ServoFocAxisUpdate,
 };
 pub use current::{
     CurrentChannelCalibration, CurrentPolarity, CurrentSample, PwmAdcSampleStamp,
@@ -921,11 +929,12 @@ impl FocParameterSnapshot {
     }
 }
 
-/// Fixed-size scheduled dq-current command consumed by the real-time queue.
+/// Fixed-size scheduled dq-current command consumed by the inner controller.
 ///
-/// The browser compiler derives these normalized lattice points from exact
-/// machine configuration. The firmware accepts no raw geometry and binds every
-/// command to the complete parameter snapshot that gave the points meaning.
+/// A validated cached torque stream may supply these normalized lattice points,
+/// while the configured cascaded-servo owner derives one locally on every
+/// current tick. Both paths accept no raw geometry here and bind every command
+/// to the complete parameter snapshot that gave the points meaning.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FocCurrentCommand {
     /// Monotonic identifier within the enclosing immutable command stream.
