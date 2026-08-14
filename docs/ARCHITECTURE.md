@@ -904,10 +904,39 @@ preview, acceptance, or final reporting and retain prior progress. A false
 target result invalidates the complete stream owner because it cannot prove
 whether no bytes or a partial frame reached the peripheral. Ordered stop and
 safe-rewrite recovery remains available without erasing that first cause. This
-transaction supplies bounded work for a future core-1 refill actor; it does not
-yet supply an interrupt/wake policy, measured deadline, or physical-latch
-observation. See
+transaction supplies the bounded work unit used by the portable supervisor; it
+does not itself supply an interrupt/wake policy, measured deadline, or
+physical-latch observation. See
 [`evidence/M10-BOUNDED-DMA-REFILL.md`](evidence/M10-BOUNDED-DMA-REFILL.md).
+
+`PcmShortDmaRefillActor<FRAMES>` adds the portable scheduling boundary around
+that work unit without claiming a target interrupt. Its immutable policy names
+a maximum frame count per turn, a maximum device-cycle duration for each
+complete target push, and a nonzero completion lead before the modeled frame
+start. Construction requires the turn budget to fit the ring, one worst-case
+push to fit a frame period, and push-plus-lead reserve to fit the initial ring
+horizon. The actor is bound to the exact `PcmShortFrameGrid`; substituting a
+grid invalidates the stream.
+
+One service turn accepts a monotonic wake cycle and target availability report.
+For every planned frame it computes `latest_complete = starts_at - lead` and
+`latest_begin = latest_complete - maximum_push`. The target closure receives
+both values and returns the before/after device-cycle bracket around its exact
+four-byte call. Backward windows, incomplete acceptance, late begin/return, and
+excess duration all invalidate the stream while retaining the accepted prefix.
+If the bounded transaction leaves credit, the next decision is
+`ReserviceNow`; otherwise it is `TargetReleaseOrFallback` at the next frame's
+latest begin. Reaching that fallback with no released slot faults closed. The
+actor retains cumulative turns, accepted frames, target return, and first cause.
+
+This is a supervisor suitable for the permanent core-1 executor, not its target
+attachment. The completion lead must eventually include measured descriptor
+prefetch/FIFO behavior, and the push duration must come from target WCET under
+load. Neither the production TinyBee adapter nor the safe HIL image supplies
+those facts or an interrupt source yet. Independent simulation uses synthetic
+qualified budgets to exercise continuous ring refill and fail before a delayed
+wake becomes bit-level starvation. See
+[`evidence/M10-REFILL-WAKE-SUPERVISOR.md`](evidence/M10-REFILL-WAKE-SUPERVISOR.md).
 
 The first target-facing fixture is a separate TinyBee safe-image-only binary,
 not a feature path through production firmware. It establishes the static safe

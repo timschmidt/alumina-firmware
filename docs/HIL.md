@@ -119,6 +119,14 @@ invalidates the owner and forces the existing stop/rewrite recovery path. These
 bounds replace the fixture's former nested hand loop, but do not prove an
 interrupt wake policy, refill WCET, or physical underrun margin.
 
+The portable refill supervisor is intentionally not selected by this fixture.
+Its policy requires qualified maximum push cycles and a completion lead that
+accounts for descriptor/FIFO prefetch, plus a target release interrupt or
+equivalent wake source. None of those values is established before this
+capture. The current HIL loop remains a polling measurement fixture around the
+bounded transaction; do not use its two-second timeout or successful software
+count as supervisor timing policy.
+
 A successful safe-only software run reports owner state `SafeRewriteIssued`, no
 owner fault, and `safe_reclaimed=false`. That false value is required: the two
 one-shot samples crossed the HAL API, but software has no independent post-stop

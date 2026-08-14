@@ -273,7 +273,9 @@ mod tests {
     };
     use alumina_protocol::{DeviceCycle, Digest};
     use alumina_shift_register::{
-        BitOrder, CompleteImage, PcmShortDmaHorizon, PcmShortDmaStreamOwner,
+        BitOrder, CompleteImage, PcmShortDmaHorizon, PcmShortDmaRefillActor,
+        PcmShortDmaRefillActorError, PcmShortDmaRefillNextWake, PcmShortDmaRefillPolicy,
+        PcmShortDmaRefillPushObservation, PcmShortDmaRefillTargetError, PcmShortDmaStreamOwner,
         PcmShortDmaStreamState, PcmShortFrameGrid, PcmShortOperationWindow, PcmShortTimeline,
         ScheduledCompleteImage, TaggedScheduledCompleteImage,
     };
@@ -1019,6 +1021,155 @@ mod tests {
             RealtimeJobState::Complete
         );
         assert_eq!(dma.fault(), None);
+    }
+
+    #[test]
+    fn supervised_refill_wakes_keep_the_bit_level_ring_continuous() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut bootstrap = PcmShortTimeline::<0>::new(grid, SAFE).unwrap();
+        let mut wire = SimPcmShortLatch::new(grid, SAFE).unwrap();
+        let mut dma = PcmShortDmaStreamOwner::<u8, 4, 4>::new(SAFE, 90).unwrap();
+        dma.prepare_safe_ring(grid, SAFE, 4, 95).unwrap();
+        dma.record_start_call(
+            PcmShortOperationWindow {
+                began_at: 99,
+                returned_at: 101,
+            },
+            true,
+        )
+        .unwrap();
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        let mut physical_ring = VecDeque::new();
+        for _ in 0..4 {
+            physical_ring.push_back(bootstrap.next_frame().unwrap());
+        }
+
+        let first = wire
+            .consume_frame(physical_ring.pop_front().unwrap())
+            .unwrap();
+        dma.observe_first_stream_latch(first.latch_cycle, first.image)
+            .unwrap();
+        let motion = CompleteImage {
+            bits: SAFE.bits ^ 0x20,
+            ..SAFE
+        };
+        dma.stage(TaggedScheduledCompleteImage {
+            tag: 7,
+            commit_cycle: 150,
+            image: motion,
+        })
+        .unwrap();
+
+        let mut commit = None;
+        let mut released_at = first.latch_cycle;
+        for turn in 0..12 {
+            let wake_at = released_at + 1;
+            let mut pushed = None;
+            let report = actor
+                .service(&mut dma, wake_at, 1, |request| {
+                    assert!(request.latest_begin_at >= wake_at);
+                    pushed = Some(request.frame);
+                    PcmShortDmaRefillPushObservation {
+                        window: PcmShortOperationWindow {
+                            began_at: wake_at,
+                            returned_at: wake_at + 2,
+                        },
+                        accepted: true,
+                    }
+                })
+                .unwrap();
+            assert_eq!(report.accepted_frames, 1);
+            assert_eq!(report.remaining_credit_frames, 0);
+            assert_eq!(
+                report.next_wake,
+                PcmShortDmaRefillNextWake::TargetReleaseOrFallback {
+                    fallback_at: report.sealed_horizon - policy.begin_reserve_cycles(),
+                }
+            );
+            physical_ring.push_back(pushed.unwrap());
+
+            let observed = wire
+                .consume_frame(physical_ring.pop_front().unwrap())
+                .unwrap();
+            dma.observe_latches_through(observed.latch_cycle).unwrap();
+            if commit.is_none() {
+                commit = dma.take_commit().unwrap();
+            }
+            released_at = observed.latch_cycle;
+            if turn >= 3 {
+                assert_eq!(wire.visible_image(), motion);
+            }
+        }
+
+        assert_eq!(
+            commit,
+            Some(alumina_shift_register::PcmShortCommitObservation {
+                tag: 7,
+                commit_cycle: 150,
+            })
+        );
+        assert_eq!(actor.turns(), 12);
+        assert_eq!(actor.accepted_frames(), 12);
+        assert_eq!(actor.fault(), None);
+        assert_eq!(dma.fault(), None);
+        assert_eq!(wire.fault(), None);
+    }
+
+    #[test]
+    fn delayed_refill_wake_faults_before_bit_level_starvation() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut bootstrap = PcmShortTimeline::<0>::new(grid, SAFE).unwrap();
+        let mut wire = SimPcmShortLatch::new(grid, SAFE).unwrap();
+        let mut dma = PcmShortDmaStreamOwner::<u8, 1, 4>::new(SAFE, 90).unwrap();
+        dma.prepare_safe_ring(grid, SAFE, 4, 95).unwrap();
+        dma.record_start_call(
+            PcmShortOperationWindow {
+                began_at: 99,
+                returned_at: 101,
+            },
+            true,
+        )
+        .unwrap();
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        let mut physical_ring = VecDeque::new();
+        for _ in 0..4 {
+            physical_ring.push_back(bootstrap.next_frame().unwrap());
+        }
+        let first = wire
+            .consume_frame(physical_ring.pop_front().unwrap())
+            .unwrap();
+        dma.observe_first_stream_latch(first.latch_cycle, first.image)
+            .unwrap();
+
+        let error = actor
+            .service(&mut dma, 138, 1, |_| panic!("late wake wrote a frame"))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PcmShortDmaRefillActorError::Target {
+                accepted_frames: 0,
+                frame,
+                error: PcmShortDmaRefillTargetError::WakeLate {
+                    observed_at: 138,
+                    latest_begin_at: 137,
+                },
+            } if frame.transmit_index == 4 && frame.starts_at == 140
+        ));
+        assert!(actor.fault().is_some());
+        assert!(dma.fault().is_some());
+
+        while let Some(frame) = physical_ring.pop_front() {
+            wire.consume_frame(frame).unwrap();
+        }
+        assert_eq!(
+            wire.check_starvation_at(150),
+            Err(PcmShortWireFault::Starvation {
+                transmit_index: 4,
+                latch_cycle: 150,
+            })
+        );
     }
 
     #[test]

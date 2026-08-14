@@ -319,3 +319,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   fixed-budget preview/push/accept transactions, exact partial progress and
   retained credit, fail-closed uncertain-write recovery, and TinyBee safe-HIL
   adoption without a production or physical claim.
+- [`M10-REFILL-WAKE-SUPERVISOR.md`](M10-REFILL-WAKE-SUPERVISOR.md) — exact
+  grid/ring-bound refill policy, bracketed target-call deadlines,
+  interrupt-or-fallback scheduling, first-cause retention, and bit-level timely
+  versus delayed-wake simulation with every target attachment closed.

@@ -538,10 +538,24 @@ partial progress, remaining credit, and sealed horizon. Target push uncertainty
 invalidates stream ownership immediately, while phase-labelled model errors
 retain first cause and ordered stop/rewrite recovery. The HIL target now passes
 the exact remaining portion of its 50,000-frame objective to that transaction;
-it no longer owns a nested per-frame loop. Interrupt wake policy, core-1 actor
-integration, target WCET/deadline measurement, and physical qualification stay
-open. Production remains on the static writer and non-armable. See
+it no longer owns a nested per-frame loop. Target interrupt attachment,
+permanent core-1 integration, target WCET/deadline measurement, and physical
+qualification stay open. Production remains on the static writer and
+non-armable. See
 [`M10-BOUNDED-DMA-REFILL.md`](evidence/M10-BOUNDED-DMA-REFILL.md).
+The refill-supervisor checkpoint adds fixed core-local scheduling policy around
+that transaction without opening a target path. Its exact grid-bound policy
+limits frames per turn and cycles per complete push, requires nonzero
+completion lead, and rejects budgets that exceed one frame period or the ring's
+initial lead. Each target call returns a device-cycle bracket checked against
+the planned frame's latest begin/complete cycles. Retained credits prohibit an
+await; an empty turn waits for a target release only until an absolute fallback,
+where a still-missing slot faults. The actor retains partial progress and first
+cause. Independent bit-level simulation keeps a four-frame ring continuous
+under timely release wakes and proves a delayed wake faults before wire
+starvation. TinyBee production and HIL remain unattached pending a qualified
+descriptor interrupt, FIFO/prefetch lead, and push WCET. See
+[`M10-REFILL-WAKE-SUPERVISOR.md`](evidence/M10-REFILL-WAKE-SUPERVISOR.md).
 
 Exit gate:
 

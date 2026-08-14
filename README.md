@@ -423,8 +423,21 @@ The result reports exact partial progress, retained credit, and sealed horizon;
 an uncertain target write invalidates the owner before recovery. The TinyBee
 HIL target passes its remaining 50,000-frame budget through this transaction,
 so the exact endpoint no longer depends on a target-specific inner refill loop.
-This is not an interrupt actor, deadline/WCET result, or physical qualification.
+This transaction alone is not an interrupt actor, deadline/WCET result, or
+physical qualification.
 See the [bounded-refill evidence](docs/evidence/M10-BOUNDED-DMA-REFILL.md).
+An allocation-free refill supervisor now turns that transaction into a
+core-local scheduling contract. A fixed policy binds per-turn frames,
+worst-case target-push cycles, and required completion lead to one exact frame
+grid and ring shape. Every target push returns a bracketed device-cycle window;
+late/reversed/overlong/rejected calls invalidate stream ownership. Successful
+turns require immediate reservice while credit remains, otherwise they name an
+absolute interrupt-or-fallback wake. A missing release at the fallback faults
+before the modeled frame-start window is lost. Independent bit-level simulation
+proves both a continuous release/wake/refill stream and delayed-wake rejection
+before wire starvation. No TinyBee adapter selects this supervisor: interrupt
+source, prefetch lead, push WCET, and physical phase remain unqualified. See the
+[refill-supervisor evidence](docs/evidence/M10-REFILL-WAKE-SUPERVISOR.md).
 
 The first M8 portable FOC slice is also implemented without creating a hardware
 drive path. A new no-std crate carries exact Q2.30 points and outward intervals,

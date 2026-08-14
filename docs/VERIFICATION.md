@@ -77,6 +77,10 @@ document, machine IR, update manifest, SD manifest, and telemetry decoder.
   exact partial progress and retained credits, zero-budget behavior, and
   fail-closed invalidation plus recoverable stop/rewrite after uncertain target
   acceptance;
+- grid-bound refill supervision: fixed per-turn/per-push/completion-lead policy,
+  bracketed target-call timing, monotonic wake and target windows, immediate
+  retained-credit service, interrupt-or-absolute-fallback decisions, missing
+  release rejection, cumulative exact progress, and first-cause retention;
 - configuration-derived FOC hardware-loop replay from active integer compare
   edges through synchronized raw ADC/current/rotor observations, dq control,
   interval SVPWM, complete-image staging, and the next exact timer-zero, with

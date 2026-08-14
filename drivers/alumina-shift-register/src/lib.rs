@@ -1018,6 +1018,234 @@ pub struct PcmShortDmaRefillBatch {
     pub sealed_horizon: u64,
 }
 
+/// Fixed qualification policy for one core-local DMA refill supervisor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortDmaRefillPolicy {
+    maximum_frames_per_turn: usize,
+    maximum_push_cycles: u64,
+    minimum_complete_lead_cycles: u64,
+    begin_reserve_cycles: u64,
+}
+
+impl PcmShortDmaRefillPolicy {
+    /// Constructs one exact policy without rounding any cycle budget.
+    pub const fn new(
+        maximum_frames_per_turn: usize,
+        maximum_push_cycles: u64,
+        minimum_complete_lead_cycles: u64,
+    ) -> Result<Self, PcmShortDmaRefillPolicyError> {
+        if maximum_frames_per_turn == 0 {
+            return Err(PcmShortDmaRefillPolicyError::ZeroFrameBudget);
+        }
+        if maximum_push_cycles == 0 {
+            return Err(PcmShortDmaRefillPolicyError::ZeroPushBudget);
+        }
+        if minimum_complete_lead_cycles == 0 {
+            return Err(PcmShortDmaRefillPolicyError::ZeroCompleteLead);
+        }
+        let begin_reserve_cycles =
+            match maximum_push_cycles.checked_add(minimum_complete_lead_cycles) {
+                Some(cycles) => cycles,
+                None => return Err(PcmShortDmaRefillPolicyError::Arithmetic),
+            };
+        Ok(Self {
+            maximum_frames_per_turn,
+            maximum_push_cycles,
+            minimum_complete_lead_cycles,
+            begin_reserve_cycles,
+        })
+    }
+
+    /// Maximum complete-frame target calls made by one service turn.
+    pub const fn maximum_frames_per_turn(self) -> usize {
+        self.maximum_frames_per_turn
+    }
+
+    /// Qualified maximum duration of one complete-frame target call.
+    pub const fn maximum_push_cycles(self) -> u64 {
+        self.maximum_push_cycles
+    }
+
+    /// Required gap between target return and the modeled frame start.
+    pub const fn minimum_complete_lead_cycles(self) -> u64 {
+        self.minimum_complete_lead_cycles
+    }
+
+    /// Exact push-duration plus completion-lead reserve before frame start.
+    pub const fn begin_reserve_cycles(self) -> u64 {
+        self.begin_reserve_cycles
+    }
+}
+
+/// Rejected fixed refill-supervisor policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaRefillPolicyError {
+    /// A service turn must admit at least one frame.
+    ZeroFrameBudget,
+    /// A target push requires a nonzero qualified duration budget.
+    ZeroPushBudget,
+    /// Completion exactly at frame start is not accepted as safe authority.
+    ZeroCompleteLead,
+    /// The service budget exceeded the compile-time physical ring shape.
+    FrameBudget {
+        maximum_frames_per_turn: usize,
+        ring_frames: usize,
+    },
+    /// One worst-case push exceeded the exact interval between frame starts.
+    PushExceedsFramePeriod {
+        maximum_push_cycles: u64,
+        cycles_per_frame: u64,
+    },
+    /// The initial ring could not cover one complete begin reserve.
+    ReserveExceedsRingLead {
+        begin_reserve_cycles: u64,
+        ring_lead_cycles: u64,
+    },
+    /// Checked policy or ring arithmetic overflowed.
+    Arithmetic,
+}
+
+/// Exact target request for one frame inside a supervised refill turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortDmaRefillPushRequest {
+    /// Exact dense frame that must be accepted as one complete four-byte unit.
+    pub frame: PlannedPcmShortFrame,
+    /// Latest cycle at which the qualified target call may begin.
+    pub latest_begin_at: u64,
+    /// Latest cycle at which the complete target call may return.
+    pub latest_complete_at: u64,
+}
+
+/// Target-reported observation around one supervised complete-frame push.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortDmaRefillPushObservation {
+    /// Closed cycle interval bracketing the synchronous target call.
+    pub window: PcmShortOperationWindow,
+    /// True only when the target accepted all four bytes.
+    pub accepted: bool,
+}
+
+/// Exact target timing or acceptance failure inside a refill turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaRefillTargetError {
+    /// The frame start could not represent the required reserve.
+    DeadlineArithmetic {
+        frame_starts_at: u64,
+        begin_reserve_cycles: u64,
+    },
+    /// The actor was already beyond the qualified latest call start.
+    WakeLate {
+        observed_at: u64,
+        latest_begin_at: u64,
+    },
+    /// A target call began before its wake or the prior target return.
+    ObservationOrder { prior: u64, received: u64 },
+    /// The synchronous target interval moved backward.
+    WindowOrder { began_at: u64, returned_at: u64 },
+    /// The target did not report complete four-byte acceptance.
+    Rejected { began_at: u64, returned_at: u64 },
+    /// The target began after the qualified worst-case start boundary.
+    BeganLate { began_at: u64, latest_begin_at: u64 },
+    /// The target call exceeded its qualified per-frame duration.
+    PushDuration {
+        maximum_cycles: u64,
+        observed_cycles: u64,
+    },
+    /// The target returned too close to the modeled frame start.
+    CompletedLate {
+        returned_at: u64,
+        latest_complete_at: u64,
+    },
+}
+
+/// Next core-local wake required after one successful supervised turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaRefillNextWake {
+    /// Retained credit or an exact-boundary resample forbids an await point.
+    ReserviceNow { no_later_than: u64 },
+    /// Wait for a target release signal, with this mandatory fallback cycle.
+    TargetReleaseOrFallback { fallback_at: u64 },
+}
+
+/// Exact outcome of one supervised refill turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PcmShortDmaRefillTurn {
+    /// Cycle at which the target wake/report was observed.
+    pub observed_at: u64,
+    /// Whole frames reported available at turn entry.
+    pub reported_available_frames: usize,
+    /// Frames accepted by target and model during this turn.
+    pub accepted_frames: usize,
+    /// Released slots still retained after this turn.
+    pub remaining_credit_frames: usize,
+    /// Latest exact boundary represented by target-owned dense frames.
+    pub sealed_horizon: u64,
+    /// Latest target return, or `observed_at` when no push was needed.
+    pub completed_at: u64,
+    /// Interrupt-or-fallback scheduling decision for the next turn.
+    pub next_wake: PcmShortDmaRefillNextWake,
+}
+
+/// First-cause failure retained by the portable refill supervisor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmShortDmaRefillActorError {
+    /// The stream owner already retained an exact first cause at actor entry.
+    OwnerFault { error: PcmShortDmaStreamError },
+    /// The bound owner does not use the actor's exact frame grid.
+    Grid {
+        expected: PcmShortFrameGrid,
+        received: Option<PcmShortFrameGrid>,
+    },
+    /// A wake moved backward relative to a prior wake or target return.
+    ObservationOrder { prior: u64, received: u64 },
+    /// No descriptor was released at the mandatory fallback boundary.
+    NoReleasedSlotAtFallback {
+        observed_at: u64,
+        fallback_at: u64,
+        frame_starts_at: u64,
+    },
+    /// The next modeled frame start could not represent the begin reserve.
+    NextWindowArithmetic {
+        frame_starts_at: u64,
+        begin_reserve_cycles: u64,
+    },
+    /// A completed turn left the next worst-case begin window in the past.
+    NextWindowElapsed {
+        completed_at: u64,
+        latest_begin_at: u64,
+        frame_starts_at: u64,
+    },
+    /// One target frame failed exact timing or acceptance checks.
+    Target {
+        accepted_frames: usize,
+        frame: PlannedPcmShortFrame,
+        error: PcmShortDmaRefillTargetError,
+    },
+    /// The portable stream owner rejected one batch phase.
+    Model {
+        phase: PcmShortDmaRefillPhase,
+        accepted_frames: usize,
+        error: PcmShortDmaStreamError,
+    },
+    /// Exact turn or accepted-frame counters overflowed.
+    Arithmetic,
+    /// Batch and target-supervisor state disagreed internally.
+    InternalState,
+    /// A prior supervisor first cause remains retained.
+    FaultLatched,
+}
+
+/// Allocation-free core-local supervisor around bounded refill transactions.
+pub struct PcmShortDmaRefillActor<const FRAMES: usize> {
+    grid: PcmShortFrameGrid,
+    policy: PcmShortDmaRefillPolicy,
+    turns: u64,
+    accepted_frames: u64,
+    last_wake_at: Option<u64>,
+    last_target_returned_at: Option<u64>,
+    fault: Option<PcmShortDmaRefillActorError>,
+}
+
 /// Fixed-memory owner that joins static-safe handoff, a continuous dense DMA
 /// horizon, physical start authority, and post-stop safe reclaim.
 ///
@@ -1691,6 +1919,391 @@ where
     }
 }
 
+impl<const FRAMES: usize> PcmShortDmaRefillActor<FRAMES> {
+    /// Binds a fixed service policy to one exact stream grid.
+    pub fn new(
+        grid: PcmShortFrameGrid,
+        policy: PcmShortDmaRefillPolicy,
+    ) -> Result<Self, PcmShortDmaRefillPolicyError> {
+        if FRAMES == 0 || policy.maximum_frames_per_turn > FRAMES {
+            return Err(PcmShortDmaRefillPolicyError::FrameBudget {
+                maximum_frames_per_turn: policy.maximum_frames_per_turn,
+                ring_frames: FRAMES,
+            });
+        }
+        let cycles_per_frame = grid.cycles_per_frame();
+        if policy.maximum_push_cycles > cycles_per_frame {
+            return Err(PcmShortDmaRefillPolicyError::PushExceedsFramePeriod {
+                maximum_push_cycles: policy.maximum_push_cycles,
+                cycles_per_frame,
+            });
+        }
+        let frames = u64::try_from(FRAMES).map_err(|_| PcmShortDmaRefillPolicyError::Arithmetic)?;
+        let ring_lead_cycles = cycles_per_frame
+            .checked_mul(frames)
+            .ok_or(PcmShortDmaRefillPolicyError::Arithmetic)?;
+        if policy.begin_reserve_cycles > ring_lead_cycles {
+            return Err(PcmShortDmaRefillPolicyError::ReserveExceedsRingLead {
+                begin_reserve_cycles: policy.begin_reserve_cycles,
+                ring_lead_cycles,
+            });
+        }
+        Ok(Self {
+            grid,
+            policy,
+            turns: 0,
+            accepted_frames: 0,
+            last_wake_at: None,
+            last_target_returned_at: None,
+            fault: None,
+        })
+    }
+
+    /// Services one target wake through the portable bounded refill owner.
+    ///
+    /// `push` receives the exact latest begin and completion cycles derived
+    /// from the frame start and fixed policy. Its returned operation window is
+    /// independently checked; target success alone never extends authority.
+    /// A release interrupt may wake the caller before the returned fallback,
+    /// but retained credit requires immediate reservice without an await.
+    pub fn service<TAG, const UPDATES: usize>(
+        &mut self,
+        owner: &mut PcmShortDmaStreamOwner<TAG, UPDATES, FRAMES>,
+        observed_at: u64,
+        reported_available_frames: usize,
+        mut push: impl FnMut(PcmShortDmaRefillPushRequest) -> PcmShortDmaRefillPushObservation,
+    ) -> Result<PcmShortDmaRefillTurn, PcmShortDmaRefillActorError>
+    where
+        TAG: Copy + Eq,
+    {
+        if self.fault.is_some() {
+            owner.invalidate();
+            return Err(PcmShortDmaRefillActorError::FaultLatched);
+        }
+        if let Some(error) = owner.fault() {
+            return self.fail(owner, PcmShortDmaRefillActorError::OwnerFault { error });
+        }
+        if owner.grid() != Some(self.grid) {
+            return self.fail(
+                owner,
+                PcmShortDmaRefillActorError::Grid {
+                    expected: self.grid,
+                    received: owner.grid(),
+                },
+            );
+        }
+        let prior_observation = self
+            .last_wake_at
+            .into_iter()
+            .chain(self.last_target_returned_at)
+            .max();
+        if let Some(prior) = prior_observation
+            && observed_at < prior
+        {
+            return self.fail(
+                owner,
+                PcmShortDmaRefillActorError::ObservationOrder {
+                    prior,
+                    received: observed_at,
+                },
+            );
+        }
+        let next_turns = match self.turns.checked_add(1) {
+            Some(turns) => turns,
+            None => return self.fail(owner, PcmShortDmaRefillActorError::Arithmetic),
+        };
+        let maximum_frames = match u64::try_from(self.policy.maximum_frames_per_turn) {
+            Ok(frames) => frames,
+            Err(_) => return self.fail(owner, PcmShortDmaRefillActorError::Arithmetic),
+        };
+        if self.accepted_frames.checked_add(maximum_frames).is_none() {
+            return self.fail(owner, PcmShortDmaRefillActorError::Arithmetic);
+        }
+
+        self.turns = next_turns;
+        self.last_wake_at = Some(observed_at);
+        let policy = self.policy;
+        let mut last_target_returned_at = self.last_target_returned_at;
+        let mut target_failure = None;
+        let batch = owner.refill_batch_with(
+            reported_available_frames,
+            policy.maximum_frames_per_turn,
+            |frame| {
+                let latest_complete_at = match frame
+                    .starts_at
+                    .checked_sub(policy.minimum_complete_lead_cycles)
+                {
+                    Some(cycle) => cycle,
+                    None => {
+                        target_failure = Some((
+                            frame,
+                            PcmShortDmaRefillTargetError::DeadlineArithmetic {
+                                frame_starts_at: frame.starts_at,
+                                begin_reserve_cycles: policy.begin_reserve_cycles,
+                            },
+                        ));
+                        return false;
+                    }
+                };
+                let latest_begin_at = match frame.starts_at.checked_sub(policy.begin_reserve_cycles)
+                {
+                    Some(cycle) => cycle,
+                    None => {
+                        target_failure = Some((
+                            frame,
+                            PcmShortDmaRefillTargetError::DeadlineArithmetic {
+                                frame_starts_at: frame.starts_at,
+                                begin_reserve_cycles: policy.begin_reserve_cycles,
+                            },
+                        ));
+                        return false;
+                    }
+                };
+                let prior = last_target_returned_at
+                    .map_or(observed_at, |returned| returned.max(observed_at));
+                if prior > latest_begin_at {
+                    target_failure = Some((
+                        frame,
+                        PcmShortDmaRefillTargetError::WakeLate {
+                            observed_at: prior,
+                            latest_begin_at,
+                        },
+                    ));
+                    return false;
+                }
+                let request = PcmShortDmaRefillPushRequest {
+                    frame,
+                    latest_begin_at,
+                    latest_complete_at,
+                };
+                let observation = push(request);
+                last_target_returned_at = Some(observation.window.returned_at);
+                match Self::validate_target_observation(policy, prior, request, observation) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        target_failure = Some((frame, error));
+                        false
+                    }
+                }
+            },
+        );
+        self.last_target_returned_at = last_target_returned_at;
+
+        let batch = match batch {
+            Ok(batch) => batch,
+            Err(PcmShortDmaRefillBatchError::TargetPush {
+                accepted_frames,
+                frame,
+            }) => {
+                if self.record_accepted(accepted_frames).is_err() {
+                    return self.fail(owner, PcmShortDmaRefillActorError::Arithmetic);
+                }
+                let error = match target_failure {
+                    Some((failed_frame, error)) if failed_frame == frame => error,
+                    _ => {
+                        return self.fail(owner, PcmShortDmaRefillActorError::InternalState);
+                    }
+                };
+                return self.fail(
+                    owner,
+                    PcmShortDmaRefillActorError::Target {
+                        accepted_frames,
+                        frame,
+                        error,
+                    },
+                );
+            }
+            Err(PcmShortDmaRefillBatchError::Model {
+                phase,
+                accepted_frames,
+                error,
+            }) => {
+                if self.record_accepted(accepted_frames).is_err() {
+                    return self.fail(owner, PcmShortDmaRefillActorError::Arithmetic);
+                }
+                return self.fail(
+                    owner,
+                    PcmShortDmaRefillActorError::Model {
+                        phase,
+                        accepted_frames,
+                        error,
+                    },
+                );
+            }
+        };
+        if target_failure.is_some() {
+            return self.fail(owner, PcmShortDmaRefillActorError::InternalState);
+        }
+        if self.record_accepted(batch.accepted_frames).is_err() {
+            return self.fail(owner, PcmShortDmaRefillActorError::Arithmetic);
+        }
+
+        let completed_at = last_target_returned_at.map_or(observed_at, |at| at.max(observed_at));
+        let frame_starts_at = batch.sealed_horizon;
+        let fallback_at = match frame_starts_at.checked_sub(policy.begin_reserve_cycles) {
+            Some(cycle) => cycle,
+            None => {
+                return self.fail(
+                    owner,
+                    PcmShortDmaRefillActorError::NextWindowArithmetic {
+                        frame_starts_at,
+                        begin_reserve_cycles: policy.begin_reserve_cycles,
+                    },
+                );
+            }
+        };
+        if batch.accepted_frames == 0
+            && batch.remaining_credit_frames == 0
+            && completed_at >= fallback_at
+        {
+            return self.fail(
+                owner,
+                PcmShortDmaRefillActorError::NoReleasedSlotAtFallback {
+                    observed_at: completed_at,
+                    fallback_at,
+                    frame_starts_at,
+                },
+            );
+        }
+        if completed_at > fallback_at {
+            return self.fail(
+                owner,
+                PcmShortDmaRefillActorError::NextWindowElapsed {
+                    completed_at,
+                    latest_begin_at: fallback_at,
+                    frame_starts_at,
+                },
+            );
+        }
+        let next_wake = if batch.remaining_credit_frames != 0 || completed_at == fallback_at {
+            PcmShortDmaRefillNextWake::ReserviceNow {
+                no_later_than: fallback_at,
+            }
+        } else {
+            PcmShortDmaRefillNextWake::TargetReleaseOrFallback { fallback_at }
+        };
+        Ok(PcmShortDmaRefillTurn {
+            observed_at,
+            reported_available_frames,
+            accepted_frames: batch.accepted_frames,
+            remaining_credit_frames: batch.remaining_credit_frames,
+            sealed_horizon: batch.sealed_horizon,
+            completed_at,
+            next_wake,
+        })
+    }
+
+    /// Exact bound grid retained by this supervisor.
+    pub const fn grid(&self) -> PcmShortFrameGrid {
+        self.grid
+    }
+
+    /// Fixed service policy retained by this supervisor.
+    pub const fn policy(&self) -> PcmShortDmaRefillPolicy {
+        self.policy
+    }
+
+    /// Service turns attempted before the first retained fault.
+    pub const fn turns(&self) -> u64 {
+        self.turns
+    }
+
+    /// Complete frames accepted across successful and partial turns.
+    pub const fn accepted_frames(&self) -> u64 {
+        self.accepted_frames
+    }
+
+    /// Latest monotonic target wake observation.
+    pub const fn last_wake_at(&self) -> Option<u64> {
+        self.last_wake_at
+    }
+
+    /// Latest target-operation return observed by this supervisor.
+    pub const fn last_target_returned_at(&self) -> Option<u64> {
+        self.last_target_returned_at
+    }
+
+    /// First retained supervisor fault, if any.
+    pub const fn fault(&self) -> Option<PcmShortDmaRefillActorError> {
+        self.fault
+    }
+
+    fn validate_target_observation(
+        policy: PcmShortDmaRefillPolicy,
+        prior: u64,
+        request: PcmShortDmaRefillPushRequest,
+        observation: PcmShortDmaRefillPushObservation,
+    ) -> Result<(), PcmShortDmaRefillTargetError> {
+        let window = observation.window;
+        if window.began_at < prior {
+            return Err(PcmShortDmaRefillTargetError::ObservationOrder {
+                prior,
+                received: window.began_at,
+            });
+        }
+        if window.returned_at < window.began_at {
+            return Err(PcmShortDmaRefillTargetError::WindowOrder {
+                began_at: window.began_at,
+                returned_at: window.returned_at,
+            });
+        }
+        if !observation.accepted {
+            return Err(PcmShortDmaRefillTargetError::Rejected {
+                began_at: window.began_at,
+                returned_at: window.returned_at,
+            });
+        }
+        let observed_cycles = window.returned_at - window.began_at;
+        if window.returned_at > request.latest_complete_at {
+            return Err(PcmShortDmaRefillTargetError::CompletedLate {
+                returned_at: window.returned_at,
+                latest_complete_at: request.latest_complete_at,
+            });
+        }
+        if window.began_at > request.latest_begin_at {
+            return Err(PcmShortDmaRefillTargetError::BeganLate {
+                began_at: window.began_at,
+                latest_begin_at: request.latest_begin_at,
+            });
+        }
+        if observed_cycles > policy.maximum_push_cycles {
+            return Err(PcmShortDmaRefillTargetError::PushDuration {
+                maximum_cycles: policy.maximum_push_cycles,
+                observed_cycles,
+            });
+        }
+        Ok(())
+    }
+
+    fn record_accepted(
+        &mut self,
+        accepted_frames: usize,
+    ) -> Result<(), PcmShortDmaRefillActorError> {
+        let accepted =
+            u64::try_from(accepted_frames).map_err(|_| PcmShortDmaRefillActorError::Arithmetic)?;
+        self.accepted_frames = self
+            .accepted_frames
+            .checked_add(accepted)
+            .ok_or(PcmShortDmaRefillActorError::Arithmetic)?;
+        Ok(())
+    }
+
+    fn fail<T, TAG, const UPDATES: usize>(
+        &mut self,
+        owner: &mut PcmShortDmaStreamOwner<TAG, UPDATES, FRAMES>,
+        error: PcmShortDmaRefillActorError,
+    ) -> Result<T, PcmShortDmaRefillActorError>
+    where
+        TAG: Copy + Eq,
+    {
+        owner.invalidate();
+        if self.fault.is_none() {
+            self.fault = Some(error);
+        }
+        Err(error)
+    }
+}
+
 const fn same_image_contract(left: CompleteImage, right: CompleteImage) -> bool {
     left.width == right.width
         && left.defined_mask == right.defined_mask
@@ -1973,6 +2586,24 @@ mod tests {
             bits,
             order,
         }
+    }
+
+    fn started_stream_owner<const UPDATES: usize, const FRAMES: usize>(
+        grid: PcmShortFrameGrid,
+    ) -> PcmShortDmaStreamOwner<u8, UPDATES, FRAMES> {
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut owner = PcmShortDmaStreamOwner::new(safe, 90).unwrap();
+        owner.prepare_safe_ring(grid, safe, FRAMES, 95).unwrap();
+        owner
+            .record_start_call(
+                PcmShortOperationWindow {
+                    began_at: 99,
+                    returned_at: 101,
+                },
+                true,
+            )
+            .unwrap();
+        owner
     }
 
     #[test]
@@ -2619,6 +3250,464 @@ mod tests {
                 )),
             ))
         );
+    }
+
+    #[test]
+    fn dma_refill_actor_policy_is_exact_and_ring_bound() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        assert_eq!(
+            PcmShortDmaRefillPolicy::new(0, 2, 1),
+            Err(PcmShortDmaRefillPolicyError::ZeroFrameBudget)
+        );
+        assert_eq!(
+            PcmShortDmaRefillPolicy::new(1, 0, 1),
+            Err(PcmShortDmaRefillPolicyError::ZeroPushBudget)
+        );
+        assert_eq!(
+            PcmShortDmaRefillPolicy::new(1, 2, 0),
+            Err(PcmShortDmaRefillPolicyError::ZeroCompleteLead)
+        );
+        assert_eq!(
+            PcmShortDmaRefillPolicy::new(1, u64::MAX, 1),
+            Err(PcmShortDmaRefillPolicyError::Arithmetic)
+        );
+
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        assert_eq!(policy.maximum_frames_per_turn(), 2);
+        assert_eq!(policy.maximum_push_cycles(), 2);
+        assert_eq!(policy.minimum_complete_lead_cycles(), 1);
+        assert_eq!(policy.begin_reserve_cycles(), 3);
+        assert_eq!(
+            PcmShortDmaRefillActor::<1>::new(grid, policy).err(),
+            Some(PcmShortDmaRefillPolicyError::FrameBudget {
+                maximum_frames_per_turn: 2,
+                ring_frames: 1,
+            })
+        );
+        let slow = PcmShortDmaRefillPolicy::new(1, 11, 1).unwrap();
+        assert_eq!(
+            PcmShortDmaRefillActor::<2>::new(grid, slow).err(),
+            Some(PcmShortDmaRefillPolicyError::PushExceedsFramePeriod {
+                maximum_push_cycles: 11,
+                cycles_per_frame: 10,
+            })
+        );
+        let no_ring_lead = PcmShortDmaRefillPolicy::new(1, 10, 1).unwrap();
+        assert_eq!(
+            PcmShortDmaRefillActor::<1>::new(grid, no_ring_lead).err(),
+            Some(PcmShortDmaRefillPolicyError::ReserveExceedsRingLead {
+                begin_reserve_cycles: 11,
+                ring_lead_cycles: 10,
+            })
+        );
+    }
+
+    #[test]
+    fn dma_refill_actor_bounds_turns_and_names_interrupt_fallback() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut owner = started_stream_owner::<2, 4>(grid);
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        let mut target_at = 110;
+        let mut pushed = Vec::new();
+        let first = actor
+            .service(&mut owner, 110, 3, |request| {
+                pushed.push(request);
+                let began_at = target_at;
+                target_at += 2;
+                PcmShortDmaRefillPushObservation {
+                    window: PcmShortOperationWindow {
+                        began_at,
+                        returned_at: target_at,
+                    },
+                    accepted: true,
+                }
+            })
+            .unwrap();
+        assert_eq!(pushed.len(), 2);
+        assert_eq!(pushed[0].frame.transmit_index, 4);
+        assert_eq!(pushed[0].frame.starts_at, 140);
+        assert_eq!(pushed[0].latest_begin_at, 137);
+        assert_eq!(pushed[0].latest_complete_at, 139);
+        assert_eq!(pushed[1].frame.transmit_index, 5);
+        assert_eq!(pushed[1].latest_begin_at, 147);
+        assert_eq!(first.accepted_frames, 2);
+        assert_eq!(first.remaining_credit_frames, 1);
+        assert_eq!(first.sealed_horizon, 160);
+        assert_eq!(first.completed_at, 114);
+        assert_eq!(
+            first.next_wake,
+            PcmShortDmaRefillNextWake::ReserviceNow { no_later_than: 157 }
+        );
+
+        let second = actor
+            .service(&mut owner, target_at, 1, |request| {
+                assert_eq!(request.frame.transmit_index, 6);
+                assert_eq!(request.latest_begin_at, 157);
+                let began_at = target_at;
+                target_at += 2;
+                PcmShortDmaRefillPushObservation {
+                    window: PcmShortOperationWindow {
+                        began_at,
+                        returned_at: target_at,
+                    },
+                    accepted: true,
+                }
+            })
+            .unwrap();
+        assert_eq!(second.accepted_frames, 1);
+        assert_eq!(second.remaining_credit_frames, 0);
+        assert_eq!(second.sealed_horizon, 170);
+        assert_eq!(
+            second.next_wake,
+            PcmShortDmaRefillNextWake::TargetReleaseOrFallback { fallback_at: 167 }
+        );
+
+        let early_empty = actor
+            .service(&mut owner, 120, 0, |_| panic!("empty turn pushed"))
+            .unwrap();
+        assert_eq!(early_empty.accepted_frames, 0);
+        assert_eq!(early_empty.sealed_horizon, 170);
+        assert_eq!(
+            early_empty.next_wake,
+            PcmShortDmaRefillNextWake::TargetReleaseOrFallback { fallback_at: 167 }
+        );
+        assert_eq!(actor.grid(), grid);
+        assert_eq!(actor.policy(), policy);
+        assert_eq!(actor.turns(), 3);
+        assert_eq!(actor.accepted_frames(), 3);
+        assert_eq!(actor.last_wake_at(), Some(120));
+        assert_eq!(actor.last_target_returned_at(), Some(116));
+        assert_eq!(actor.fault(), None);
+        assert_eq!(owner.fault(), None);
+    }
+
+    #[test]
+    fn dma_refill_actor_faults_when_no_slot_exists_at_fallback() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut owner = started_stream_owner::<1, 4>(grid);
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        assert_eq!(
+            actor.service(&mut owner, 137, 0, |_| panic!("fallback pushed")),
+            Err(PcmShortDmaRefillActorError::NoReleasedSlotAtFallback {
+                observed_at: 137,
+                fallback_at: 137,
+                frame_starts_at: 140,
+            })
+        );
+        assert_eq!(actor.turns(), 1);
+        assert_eq!(actor.accepted_frames(), 0);
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+        assert!(owner.stop_required());
+        assert_eq!(
+            actor.service(&mut owner, 138, 1, |_| panic!("faulted actor pushed")),
+            Err(PcmShortDmaRefillActorError::FaultLatched)
+        );
+    }
+
+    #[test]
+    fn dma_refill_actor_retains_a_preexisting_owner_first_cause() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut owner = started_stream_owner::<1, 4>(grid);
+        owner.invalidate();
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        assert_eq!(
+            actor.service(&mut owner, 110, 0, |_| panic!("faulted owner pushed")),
+            Err(PcmShortDmaRefillActorError::OwnerFault {
+                error: PcmShortDmaStreamError::ExternalFault,
+            })
+        );
+        assert_eq!(actor.turns(), 0);
+        assert_eq!(
+            actor.fault(),
+            Some(PcmShortDmaRefillActorError::OwnerFault {
+                error: PcmShortDmaStreamError::ExternalFault,
+            })
+        );
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+    }
+
+    #[test]
+    fn dma_refill_actor_preserves_model_availability_first_cause() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut owner = started_stream_owner::<1, 4>(grid);
+        let policy = PcmShortDmaRefillPolicy::new(1, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        actor
+            .service(&mut owner, 110, 2, |_| PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 110,
+                    returned_at: 111,
+                },
+                accepted: true,
+            })
+            .unwrap();
+        let model_error = PcmShortDmaStreamError::Horizon(PcmShortDmaHorizonError::Availability {
+            reported: 0,
+            retained: 1,
+            ring_frames: 4,
+        });
+        assert_eq!(
+            actor.service(&mut owner, 111, 0, |_| panic!("shrunk credit pushed")),
+            Err(PcmShortDmaRefillActorError::Model {
+                phase: PcmShortDmaRefillPhase::Availability,
+                accepted_frames: 0,
+                error: model_error,
+            })
+        );
+        assert_eq!(actor.turns(), 2);
+        assert_eq!(actor.accepted_frames(), 1);
+        assert_eq!(
+            actor.fault(),
+            Some(PcmShortDmaRefillActorError::Model {
+                phase: PcmShortDmaRefillPhase::Availability,
+                accepted_frames: 0,
+                error: model_error,
+            })
+        );
+        assert_eq!(owner.fault(), Some(model_error));
+    }
+
+    #[test]
+    fn dma_refill_actor_rejects_grid_and_wake_time_substitution() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let other_grid = PcmShortFrameGrid::new(200, 1_000_000, 100_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let policy = PcmShortDmaRefillPolicy::new(1, 2, 1).unwrap();
+        let mut wrong_owner = PcmShortDmaStreamOwner::<u8, 1, 4>::new(safe, 90).unwrap();
+        wrong_owner
+            .prepare_safe_ring(other_grid, safe, 4, 95)
+            .unwrap();
+        let mut wrong_grid_actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        assert_eq!(
+            wrong_grid_actor.service(&mut wrong_owner, 100, 0, |_| panic!("wrong grid pushed")),
+            Err(PcmShortDmaRefillActorError::Grid {
+                expected: grid,
+                received: Some(other_grid),
+            })
+        );
+        assert_eq!(
+            wrong_owner.fault(),
+            Some(PcmShortDmaStreamError::ExternalFault)
+        );
+
+        let mut owner = started_stream_owner::<1, 4>(grid);
+        let mut time_actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        time_actor
+            .service(&mut owner, 110, 0, |_| panic!("empty turn pushed"))
+            .unwrap();
+        assert_eq!(
+            time_actor.service(&mut owner, 109, 0, |_| panic!("reversed wake pushed")),
+            Err(PcmShortDmaRefillActorError::ObservationOrder {
+                prior: 110,
+                received: 109,
+            })
+        );
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+    }
+
+    #[test]
+    fn dma_refill_actor_retains_partial_target_failure_and_allows_recovery() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let safe = image(0x1249, BitOrder::MostSignificantFirst);
+        let mut owner = started_stream_owner::<1, 4>(grid);
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        let mut target_at = 110;
+        let mut attempts = 0;
+        let error = actor
+            .service(&mut owner, 110, 2, |_| {
+                attempts += 1;
+                let began_at = target_at;
+                target_at += 1;
+                PcmShortDmaRefillPushObservation {
+                    window: PcmShortOperationWindow {
+                        began_at,
+                        returned_at: target_at,
+                    },
+                    accepted: attempts == 1,
+                }
+            })
+            .unwrap_err();
+        match error {
+            PcmShortDmaRefillActorError::Target {
+                accepted_frames,
+                frame,
+                error:
+                    PcmShortDmaRefillTargetError::Rejected {
+                        began_at,
+                        returned_at,
+                    },
+            } => {
+                assert_eq!(accepted_frames, 1);
+                assert_eq!(frame.transmit_index, 5);
+                assert_eq!((began_at, returned_at), (111, 112));
+            }
+            other => panic!("unexpected actor failure: {other:?}"),
+        }
+        assert_eq!(actor.turns(), 1);
+        assert_eq!(actor.accepted_frames(), 1);
+        assert_eq!(actor.last_target_returned_at(), Some(112));
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+
+        owner
+            .record_stop_call(
+                PcmShortOperationWindow {
+                    began_at: 140,
+                    returned_at: 141,
+                },
+                true,
+            )
+            .unwrap();
+        owner
+            .record_safe_rewrite(
+                PcmShortOperationWindow {
+                    began_at: 142,
+                    returned_at: 143,
+                },
+                safe,
+                2,
+                true,
+            )
+            .unwrap();
+        owner.observe_safe_reclaim(144, safe).unwrap();
+        assert!(owner.safe_reclaimed());
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+        assert!(matches!(
+            actor.fault(),
+            Some(PcmShortDmaRefillActorError::Target {
+                accepted_frames: 1,
+                error: PcmShortDmaRefillTargetError::Rejected { .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn dma_refill_actor_rejects_late_wake_before_target_activity() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let mut owner = started_stream_owner::<1, 4>(grid);
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+        let error = actor
+            .service(&mut owner, 138, 1, |_| panic!("late wake reached target"))
+            .unwrap_err();
+        match error {
+            PcmShortDmaRefillActorError::Target {
+                accepted_frames,
+                frame,
+                error:
+                    PcmShortDmaRefillTargetError::WakeLate {
+                        observed_at,
+                        latest_begin_at,
+                    },
+            } => {
+                assert_eq!(accepted_frames, 0);
+                assert_eq!(frame.transmit_index, 4);
+                assert_eq!((observed_at, latest_begin_at), (138, 137));
+            }
+            other => panic!("unexpected late-wake failure: {other:?}"),
+        }
+        assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+    }
+
+    #[test]
+    fn dma_refill_actor_classifies_every_target_window_failure() {
+        let grid = PcmShortFrameGrid::new(100, 1_000_000, 100_000).unwrap();
+        let policy = PcmShortDmaRefillPolicy::new(2, 2, 1).unwrap();
+        let observations = [
+            PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 109,
+                    returned_at: 110,
+                },
+                accepted: true,
+            },
+            PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 110,
+                    returned_at: 109,
+                },
+                accepted: true,
+            },
+            PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 110,
+                    returned_at: 111,
+                },
+                accepted: false,
+            },
+            PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 138,
+                    returned_at: 139,
+                },
+                accepted: true,
+            },
+            PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 110,
+                    returned_at: 113,
+                },
+                accepted: true,
+            },
+            PcmShortDmaRefillPushObservation {
+                window: PcmShortOperationWindow {
+                    began_at: 137,
+                    returned_at: 140,
+                },
+                accepted: true,
+            },
+        ];
+        let expected = [
+            PcmShortDmaRefillTargetError::ObservationOrder {
+                prior: 110,
+                received: 109,
+            },
+            PcmShortDmaRefillTargetError::WindowOrder {
+                began_at: 110,
+                returned_at: 109,
+            },
+            PcmShortDmaRefillTargetError::Rejected {
+                began_at: 110,
+                returned_at: 111,
+            },
+            PcmShortDmaRefillTargetError::BeganLate {
+                began_at: 138,
+                latest_begin_at: 137,
+            },
+            PcmShortDmaRefillTargetError::PushDuration {
+                maximum_cycles: 2,
+                observed_cycles: 3,
+            },
+            PcmShortDmaRefillTargetError::CompletedLate {
+                returned_at: 140,
+                latest_complete_at: 139,
+            },
+        ];
+
+        for (observation, expected) in observations.into_iter().zip(expected) {
+            let mut owner = started_stream_owner::<1, 4>(grid);
+            let mut actor = PcmShortDmaRefillActor::<4>::new(grid, policy).unwrap();
+            let error = actor
+                .service(&mut owner, 110, 1, |_| observation)
+                .unwrap_err();
+            match error {
+                PcmShortDmaRefillActorError::Target {
+                    accepted_frames,
+                    frame,
+                    error,
+                } => {
+                    assert_eq!(accepted_frames, 0);
+                    assert_eq!(frame.transmit_index, 4);
+                    assert_eq!(error, expected);
+                }
+                other => panic!("unexpected target-window failure: {other:?}"),
+            }
+            assert_eq!(owner.fault(), Some(PcmShortDmaStreamError::ExternalFault));
+        }
     }
 
     #[test]
