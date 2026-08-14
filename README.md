@@ -350,11 +350,17 @@ compiler now lowers exact stop-to-stop affine Hyperpath schedules through
 grid-retimed jerk recertification, interval-certified coefficient projection,
 explicit propagated error, direct cache packaging, and replayable `ALMDFE01`
 evidence. Firmware-owned pulse falls may cross contiguous direct records and
-cached blocks without a false dwell. Curved/positive-feed lowering and TinyBee
-PCM/DMA composition remain open, and no hardware qualification is claimed. See
+cached blocks without a false dwell. The direct recurrence now feeds a bounded
+scheduled complete-image owner that composes same-cycle changes, retains an
+unstageable continuation boundary, drains terminal falls, and passes a dense
+PCM-short/bit-level latch simulation. Curved/positive-feed lowering and the
+TinyBee peripheral adapter remain open, and no hardware qualification is
+claimed. See
 the [direct finite-difference IR
 evidence](docs/evidence/M10-DIRECT-FINITE-DIFFERENCE-IR.md) and [browser direct
-lowering evidence](docs/evidence/M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md).
+lowering evidence](docs/evidence/M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md), plus
+the [scheduled direct PCM
+evidence](docs/evidence/M10-SCHEDULED-DIRECT-PCM.md).
 
 The portable scheduled backend further separates future generation, immutable
 timeline acceptance, and physical latch observation on an exact output lattice;

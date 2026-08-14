@@ -758,9 +758,20 @@ fall has been emitted and the configured enable-hold interval has elapsed.
 `alumina-sim::motion` now replays immutable `ALMBLK02` direct partitions through
 real `RealtimeJob` admission and this dense cached executor. It counts empty and
 edge-producing updates separately, acknowledges each token in order, drains a
-terminal cross-block pulse, and compares both terminal lattices. This is
-portable numerical/output-state evidence. The direct event stream is not yet composed into TinyBee's qualified
-PCM/DMA owner, no target timing/WCET claim is made, and every board remains
+terminal cross-block pulse, and compares both terminal lattices.
+
+`ScheduledShiftedFiniteDifferenceStepper` then closes the portable composition
+gap to the existing complete-image owner. Dense updates allocate no image when
+outputs do not change; all logical changes at one exact cycle compose into one
+image/token. The newest same-cycle image stays unstageable across a block
+boundary until an immediate successor is admitted or the caller irrevocably
+selects and drains the terminal owner tail. Independent block barriers retain
+only their generated prefixes, while later pulse falls remain executor-owned.
+The PCM-short simulator expands the resulting sparse plan into dense frames,
+reconstructs every modeled wire bit, and commits only at observed latches,
+including two block barriers, a cross-block fall, and terminal disable. This is
+portable numerical/output-state/image/wire evidence. It is not a TinyBee
+peripheral adapter or target timing/WCET claim, and every board remains
 non-armable for this path.
 
 A separate complete-image mapper binds those logical transactions to configured

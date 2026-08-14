@@ -2,9 +2,10 @@
 
 Status: portable schema, independent admission, dense logical execution,
 deterministic cached-partition simulation, and the first browser/WASM lowering
-for exact stop-to-stop affine Hyperpath spans are implemented. Curves,
-positive-feed joins, target output-engine composition, WCET qualification, and
-physical motion evidence remain open.
+for exact stop-to-stop affine Hyperpath spans are implemented. Direct events
+also enter the allocation-free scheduled complete-image owner and independent
+PCM-short wire simulation. Curves, positive-feed joins, target peripheral
+composition, WCET qualification, and physical motion evidence remain open.
 
 ## Numerical contract
 
@@ -117,6 +118,39 @@ small fixed executor-owned deadline, so the next contiguous block can be
 admitted without losing physical ownership; final disable still waits for that
 fall and enable hold.
 
+## Scheduled complete-image ownership
+
+`ScheduledShiftedFiniteDifferenceStepper` composes the dense direct executor
+with the same complete-image mapping and generation/staging/physical-commit
+separation used by the ordinary scheduled stepper. Recurrence-only updates are
+real deadlines but allocate no sparse output slot. Every logical change at one
+exact device cycle is folded into one complete image and one commit token.
+
+The newest same-cycle image remains deliberately unstageable until that cycle
+is closed. This matters at both record and cached-block boundaries: a final
+rise in one record and a direction/enable change in the next can share one
+physical latch. On block completion the caller must either admit the immediate
+successor before planning again, or irrevocably select the terminal owner tail.
+The latter seals the boundary and drains every executor-owned fall. A later
+successor is rejected, so physical behavior cannot depend on whether a caller
+happened to stage an image early.
+
+Each completed block retains the exact generated-image prefix that existed at
+its numerical horizon. Its unique token can return once that prefix and the
+terminal cycle are physically observed; a fall generated afterward remains
+owned by the direct executor rather than being ambiguously assigned to either
+block. Final disable cannot be scheduled until the owner tail is complete and
+the enable-hold interval is satisfied. Ring exhaustion preserves the next
+recurrence deadline, while staging mismatch, token reorder, early/late commit,
+or image failure latches the whole retained window until a complete safe image
+is requested.
+
+The host PCM-short integration expands those sparse direct images into dense
+frames, independently reconstructs all 64 modeled serial bits, and commits a
+motion token only at the matching visible latch. The reproducible boundary is
+recorded in
+[`evidence/M10-SCHEDULED-DIRECT-PCM.md`](evidence/M10-SCHEDULED-DIRECT-PCM.md).
+
 ## Compiler obligations and open gates
 
 The browser/WASM compiler remains authoritative for geometry and CAM. The first
@@ -146,7 +180,8 @@ The remaining lowering stages must:
    deterministic schedule commit.
 
 The current implementation owns no ESP peripheral and makes no TinyBee timing,
-DMA, memory-bandwidth, safe-output, or energization claim. Direct events must
-still be composed into the qualified single-owner GPIO/RMT/I2S output engine,
-measured under real Wi-Fi/service load, and passed through the existing board
-armability and safety gates.
+DMA, memory-bandwidth, safe-output, or energization claim. Direct events are
+composed only into the portable single-owner image/PCM model. A target adapter
+must still bind that contract to the qualified GPIO/RMT/I2S peripheral, prove
+its dense hardware horizon and physical latch source, measure it under real
+Wi-Fi/service load, and pass the existing board armability and safety gates.

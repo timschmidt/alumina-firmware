@@ -4683,6 +4683,862 @@ impl<const AXES: usize, const OUTPUTS: usize> ScheduledShiftedStepper<AXES, OUTP
     }
 }
 
+/// Construction failure for the direct finite-difference scheduled-image
+/// owner before it accepts any cached block or output transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledFiniteDifferenceBuildError {
+    /// The exact direct executor timing or recurrence limits were invalid.
+    FiniteDifference(FiniteDifferencePreflightError),
+    /// The complete-image routing or safe image was invalid.
+    Image(ShiftImageError),
+    /// No storage was supplied for the required future-output ring.
+    HorizonCapacity,
+}
+
+/// Result of advancing a direct finite-difference image producer toward one
+/// requested future cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledFiniteDifferencePlan {
+    /// No block or executor-owned pulse tail remains.
+    Idle,
+    /// The requested planning boundary precedes the next recurrence or event.
+    Future { at: DeviceCycle },
+    /// The fixed image ring must be drained before logical generation resumes.
+    HorizonFull {
+        next_at: DeviceCycle,
+        queued: usize,
+        staged: usize,
+    },
+    /// One block reached its exact numerical horizon. Its final cycle remains
+    /// open for same-cycle composition until a successor is admitted or the
+    /// caller explicitly continues planning the terminal owner tail.
+    BlockPlanned {
+        sequence: u32,
+        completion_at: DeviceCycle,
+    },
+    /// No successor was admitted and every executor-owned pulse fall has now
+    /// entered the immutable complete-image prefix.
+    OwnerTailComplete { completion_at: DeviceCycle },
+}
+
+/// A direct cached block whose own complete-image prefix has been physically
+/// acknowledged in order.
+pub struct ScheduledFiniteDifferenceBlockCompletion<const AXES: usize> {
+    admitted: AdmittedBlock<AXES>,
+    completion: FiniteDifferenceSegmentCompletion<AXES>,
+}
+
+impl<const AXES: usize> ScheduledFiniteDifferenceBlockCompletion<AXES> {
+    /// Independently correlated integer and Q31.32 terminal facts.
+    pub const fn completion(&self) -> FiniteDifferenceSegmentCompletion<AXES> {
+        self.completion
+    }
+
+    /// Return the unique admission token to the owning job actor.
+    pub fn into_block(self) -> AdmittedBlock<AXES> {
+        self.admitted
+    }
+
+    /// Return both the unique token and its exact direct terminal facts.
+    pub fn into_parts(self) -> (AdmittedBlock<AXES>, FiniteDifferenceSegmentCompletion<AXES>) {
+        (self.admitted, self.completion)
+    }
+}
+
+impl<const AXES: usize> core::fmt::Debug for ScheduledFiniteDifferenceBlockCompletion<AXES> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ScheduledFiniteDifferenceBlockCompletion")
+            .field("header", &self.admitted.header())
+            .field("completion", &self.completion)
+            .finish()
+    }
+}
+
+struct ScheduledFiniteDifferenceBarrier<const AXES: usize> {
+    completed: ScheduledFiniteDifferenceBlockCompletion<AXES>,
+    required_committed_updates: u64,
+}
+
+/// Fail-closed direct recurrence, complete-image, or future-ordering failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScheduledFiniteDifferenceError {
+    /// Lifecycle, continuation, or unique ownership was invalid.
+    State,
+    /// Cached-block validation or correlation failed.
+    Cached(CachedFiniteDifferenceError),
+    /// Direct recurrence or electrical timing failed.
+    FiniteDifference(FiniteDifferencePreflightError),
+    /// Complete-image composition failed.
+    Image(ShiftImageError),
+    /// A logical change attempted to enter an already sealed output cycle.
+    OutputOrder {
+        previous: DeviceCycle,
+        received: DeviceCycle,
+    },
+    /// Checked ring, token, counter, or cycle arithmetic overflowed.
+    Arithmetic,
+}
+
+/// Allocation-free future complete-image owner for direct finite-difference
+/// records.
+///
+/// Dense recurrence updates are consumed at every declared cycle but occupy a
+/// ring slot only when they change a logical output. Multiple logical changes
+/// at one exact cycle are composed into one complete image and one commit
+/// token. The newest same-cycle image is deliberately not stageable until the
+/// executor proves that cycle closed. A cached-block boundary leaves it open so
+/// an immediately admitted successor can contribute a direction or enable
+/// change at that same physical latch without mutating an accepted timeline.
+/// Planning again without admitting a successor irrevocably closes the
+/// continuation and drains every executor-owned pulse fall.
+pub struct ScheduledShiftedFiniteDifferenceStepper<const AXES: usize, const OUTPUTS: usize> {
+    cached: CachedFiniteDifferenceExecutor<AXES>,
+    mapper: ShiftImageMapper<AXES>,
+    outputs: [Option<ScheduledShiftOutput>; OUTPUTS],
+    head: usize,
+    len: usize,
+    staged: usize,
+    unsealed_tail: bool,
+    completed: [Option<ScheduledFiniteDifferenceBarrier<AXES>>; REALTIME_BLOCK_WINDOW],
+    completed_head: usize,
+    completed_len: usize,
+    faulted_block: Option<AdmittedBlock<AXES>>,
+    next_token: u32,
+    output_quantum_cycles: u32,
+    last_generated_at: Option<DeviceCycle>,
+    last_block_completion_at: Option<DeviceCycle>,
+    continuation_open: bool,
+    maximum_commit_lateness_cycles: u32,
+    committed_updates: u64,
+    maximum_commit_lateness_observed: u32,
+    finish_token: Option<OutputCommitToken>,
+    job_completion_pending: bool,
+    output_faulted: bool,
+}
+
+impl<const AXES: usize, const OUTPUTS: usize>
+    ScheduledShiftedFiniteDifferenceStepper<AXES, OUTPUTS>
+{
+    /// Bind exact direct recurrence limits and one complete-image profile to a
+    /// nonempty future-output ring.
+    pub fn new(
+        profile: StepperExecutionProfile<AXES>,
+        limits: FiniteDifferenceExecutionLimits,
+        contract: ShiftImageContract,
+    ) -> Result<Self, ScheduledFiniteDifferenceBuildError> {
+        if OUTPUTS == 0 {
+            return Err(ScheduledFiniteDifferenceBuildError::HorizonCapacity);
+        }
+        let cached = CachedFiniteDifferenceExecutor::new(profile.timing, limits)
+            .map_err(ScheduledFiniteDifferenceBuildError::FiniteDifference)?;
+        let mapper = ShiftImageMapper::new(&profile, contract)
+            .map_err(ScheduledFiniteDifferenceBuildError::Image)?;
+        Ok(Self {
+            cached,
+            mapper,
+            outputs: [None; OUTPUTS],
+            head: 0,
+            len: 0,
+            staged: 0,
+            unsealed_tail: false,
+            completed: [const { None }; REALTIME_BLOCK_WINDOW],
+            completed_head: 0,
+            completed_len: 0,
+            faulted_block: None,
+            next_token: 0,
+            output_quantum_cycles: profile.timing.output_quantum_cycles,
+            last_generated_at: None,
+            last_block_completion_at: None,
+            continuation_open: false,
+            maximum_commit_lateness_cycles: profile.timing.maximum_lateness_cycles,
+            committed_updates: 0,
+            maximum_commit_lateness_observed: 0,
+            finish_token: None,
+            job_completion_pending: false,
+            output_faulted: false,
+        })
+    }
+
+    /// Install one exact future local epoch while the target remains under a
+    /// separately established safe stream.
+    pub fn start_job(
+        &mut self,
+        epoch: DeviceCycle,
+        position: [i64; AXES],
+    ) -> Result<(), ScheduledFiniteDifferenceError> {
+        if self.output_faulted
+            || self.len != 0
+            || self.unsealed_tail
+            || self.completed_len != 0
+            || self.faulted_block.is_some()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+            || self.continuation_open
+        {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        self.cached
+            .start_job(epoch, position)
+            .map_err(ScheduledFiniteDifferenceError::FiniteDifference)?;
+        self.last_generated_at = None;
+        self.last_block_completion_at = None;
+        Ok(())
+    }
+
+    /// Transfer the initial block or the one immediate successor selected
+    /// before terminal-tail planning closes the preceding boundary.
+    #[allow(
+        clippy::result_large_err,
+        reason = "rejection preserves unique inline block ownership"
+    )]
+    pub fn admit_block(
+        &mut self,
+        admitted: AdmittedBlock<AXES>,
+    ) -> Result<(), RejectedFiniteDifferenceBlock<AXES>> {
+        let initial =
+            self.last_block_completion_at.is_none() && self.cached.status().completed_segments == 0;
+        if self.output_faulted
+            || self.cached.has_admitted_block()
+            || self.completed_len == REALTIME_BLOCK_WINDOW
+            || self.faulted_block.is_some()
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+            || !(initial || self.continuation_open)
+        {
+            return Err(RejectedFiniteDifferenceBlock {
+                error: CachedFiniteDifferenceError::State,
+                admitted,
+            });
+        }
+        match self.cached.admit_block(admitted) {
+            Ok(()) => {
+                self.continuation_open = false;
+                Ok(())
+            }
+            Err(rejected) => Err(rejected),
+        }
+    }
+
+    /// Consume every exact recurrence/output deadline no later than `through`.
+    ///
+    /// Calling this while a block boundary is open and no successor is owned
+    /// is the explicit, irreversible declaration that the preceding block is
+    /// terminal. Its same-cycle image is sealed and all pending falls are then
+    /// planned through the same ring.
+    pub fn plan_through(
+        &mut self,
+        through: DeviceCycle,
+    ) -> Result<ScheduledFiniteDifferencePlan, ScheduledFiniteDifferenceError> {
+        if self.output_faulted || self.finish_token.is_some() || self.job_completion_pending {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        if !self.cached.has_admitted_block() && self.continuation_open {
+            self.continuation_open = false;
+        }
+        loop {
+            let Some(next_at) = self.cached.next_deadline() else {
+                self.seal_tail()?;
+                return Ok(self.tail_or_idle_plan());
+            };
+            if let Some(previous) = self.last_generated_at {
+                if next_at < previous {
+                    self.output_faulted = true;
+                    return Err(ScheduledFiniteDifferenceError::OutputOrder {
+                        previous,
+                        received: next_at,
+                    });
+                }
+                if next_at > previous {
+                    self.seal_tail()?;
+                }
+            }
+            if next_at > through {
+                return Ok(ScheduledFiniteDifferencePlan::Future { at: next_at });
+            }
+            let can_compose = self.unsealed_tail && self.last_generated_at == Some(next_at);
+            if self.len == OUTPUTS && !can_compose {
+                return Ok(ScheduledFiniteDifferencePlan::HorizonFull {
+                    next_at,
+                    queued: self.len,
+                    staged: self.staged,
+                });
+            }
+            let polled = match self.cached.poll(next_at) {
+                Ok(polled) => polled,
+                Err(error) => {
+                    self.output_faulted = true;
+                    return Err(ScheduledFiniteDifferenceError::Cached(error));
+                }
+            };
+            match polled {
+                CachedFiniteDifferencePoll::Idle => {
+                    self.seal_tail()?;
+                    return Ok(self.tail_or_idle_plan());
+                }
+                CachedFiniteDifferencePoll::Future { at } => {
+                    if at <= next_at {
+                        self.output_faulted = true;
+                        return Err(ScheduledFiniteDifferenceError::State);
+                    }
+                    if at > through {
+                        self.seal_before(at)?;
+                        return Ok(ScheduledFiniteDifferencePlan::Future { at });
+                    }
+                }
+                CachedFiniteDifferencePoll::Update { event, .. } => {
+                    if let Some(event) = event {
+                        self.compose_event(event)?;
+                    }
+                }
+                CachedFiniteDifferencePoll::Event { event, .. } => {
+                    self.compose_event(event)?;
+                }
+                CachedFiniteDifferencePoll::BlockComplete {
+                    admitted,
+                    completion,
+                } => {
+                    let sequence = admitted.header().sequence;
+                    let queued = match u64::try_from(self.len) {
+                        Ok(queued) => queued,
+                        Err(_) => {
+                            self.output_faulted = true;
+                            return Err(ScheduledFiniteDifferenceError::Arithmetic);
+                        }
+                    };
+                    let required_committed_updates =
+                        match self.committed_updates.checked_add(queued) {
+                            Some(required) => required,
+                            None => {
+                                self.output_faulted = true;
+                                return Err(ScheduledFiniteDifferenceError::Arithmetic);
+                            }
+                        };
+                    if let Err(error) = self.push_completed(ScheduledFiniteDifferenceBarrier {
+                        completed: ScheduledFiniteDifferenceBlockCompletion {
+                            admitted,
+                            completion,
+                        },
+                        required_committed_updates,
+                    }) {
+                        self.output_faulted = true;
+                        return Err(error);
+                    }
+                    self.last_block_completion_at = Some(completion.at);
+                    self.continuation_open = true;
+                    return Ok(ScheduledFiniteDifferencePlan::BlockPlanned {
+                        sequence,
+                        completion_at: completion.at,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Next sealed generated image not yet accepted by the hardware timeline.
+    /// An open same-cycle tail is intentionally invisible here.
+    pub fn next_unstaged_output(&self) -> Option<ScheduledShiftOutput> {
+        if self.staged >= self.sealed_outputs() {
+            return None;
+        }
+        let index = (self.head + self.staged) % OUTPUTS;
+        self.outputs[index]
+    }
+
+    /// Record exact acceptance into the sole immutable target timeline.
+    pub fn stage_output(
+        &mut self,
+        output: ScheduledShiftOutput,
+    ) -> Result<ScheduledShiftOutput, OutputStageError> {
+        if self.output_faulted || self.staged >= self.sealed_outputs() {
+            self.output_faulted = true;
+            return Err(OutputStageError::State);
+        }
+        let index = (self.head + self.staged) % OUTPUTS;
+        let expected = match self.outputs[index] {
+            Some(output) => output,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputStageError::State);
+            }
+        };
+        if output != expected {
+            self.output_faulted = true;
+            return Err(OutputStageError::Mismatch {
+                expected,
+                received: output,
+            });
+        }
+        self.staged = match self.staged.checked_add(1) {
+            Some(staged) => staged,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputStageError::Arithmetic);
+            }
+        };
+        Ok(expected)
+    }
+
+    /// Retire the oldest staged image from one exact physical-latch report.
+    pub fn commit_output(
+        &mut self,
+        token: OutputCommitToken,
+        committed_at: DeviceCycle,
+    ) -> Result<CommittedShiftOutput, OutputCommitError> {
+        if self.output_faulted || self.len == 0 || self.staged == 0 {
+            self.output_faulted = true;
+            return Err(OutputCommitError::State);
+        }
+        let pending = match self.outputs[self.head] {
+            Some(output) => output,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::State);
+            }
+        };
+        if token != pending.token {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Token {
+                expected: pending.token,
+                received: token,
+            });
+        }
+        if committed_at < pending.update.at {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Early {
+                scheduled: pending.update.at,
+                committed: committed_at,
+            });
+        }
+        let lateness = committed_at.0 - pending.update.at.0;
+        if lateness > u64::from(self.maximum_commit_lateness_cycles) {
+            self.output_faulted = true;
+            return Err(OutputCommitError::Deadline {
+                scheduled: pending.update.at,
+                committed: committed_at,
+                maximum_lateness_cycles: self.maximum_commit_lateness_cycles,
+            });
+        }
+        let lateness = match u32::try_from(lateness) {
+            Ok(lateness) => lateness,
+            Err(_) => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::Arithmetic);
+            }
+        };
+        let committed_updates = match self.committed_updates.checked_add(1) {
+            Some(updates) => updates,
+            None => {
+                self.output_faulted = true;
+                return Err(OutputCommitError::Arithmetic);
+            }
+        };
+        let next_head = if self.len == 1 {
+            0
+        } else {
+            (self.head + 1) % OUTPUTS
+        };
+        self.outputs[self.head] = None;
+        self.head = next_head;
+        self.len -= 1;
+        self.staged -= 1;
+        self.committed_updates = committed_updates;
+        self.maximum_commit_lateness_observed = self.maximum_commit_lateness_observed.max(lateness);
+        if self.finish_token == Some(token) {
+            self.finish_token = None;
+            self.job_completion_pending = true;
+        }
+        Ok(CommittedShiftOutput {
+            token,
+            update: pending.update,
+            committed_at,
+            commit_lateness_cycles: lateness,
+        })
+    }
+
+    /// Return the oldest direct block once its own composed image prefix and
+    /// exact numerical horizon have both been physically observed.
+    pub fn take_completed_block(
+        &mut self,
+        observed: DeviceCycle,
+    ) -> Option<ScheduledFiniteDifferenceBlockCompletion<AXES>> {
+        if self.output_faulted || self.completed_len == 0 {
+            return None;
+        }
+        let ready = self.completed[self.completed_head]
+            .as_ref()
+            .is_some_and(|barrier| {
+                self.committed_updates >= barrier.required_committed_updates
+                    && observed >= barrier.completed.completion.at
+            });
+        if !ready {
+            return None;
+        }
+        let barrier = self.completed[self.completed_head].take()?;
+        self.completed_head = if self.completed_len == 1 {
+            0
+        } else {
+            (self.completed_head + 1) % REALTIME_BLOCK_WINDOW
+        };
+        self.completed_len -= 1;
+        Some(barrier.completed)
+    }
+
+    /// Earliest aligned normal-disable cycle after all block/output ownership
+    /// has returned and the final direct pulse tail was drained.
+    pub fn earliest_finish_cycle(&self) -> Result<DeviceCycle, FiniteDifferencePreflightError> {
+        if self.output_faulted
+            || self.len != 0
+            || self.unsealed_tail
+            || self.completed_len != 0
+            || self.cached.has_admitted_block()
+            || self.cached.next_deadline().is_some()
+            || self.continuation_open
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        self.distinct_finish_cycle()
+    }
+
+    /// Earliest aligned disable cycle while the final block and its complete
+    /// physically uncommitted prefix remain retained.
+    pub fn planned_finish_cycle(&self) -> Result<DeviceCycle, FiniteDifferencePreflightError> {
+        if self.output_faulted
+            || self.completed_len == 0
+            || self.cached.has_admitted_block()
+            || self.cached.next_deadline().is_some()
+            || self.continuation_open
+            || self.unsealed_tail
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(FiniteDifferencePreflightError::Timing(MotionError::State));
+        }
+        self.distinct_finish_cycle()
+    }
+
+    /// Add normal terminal disable after every block and image was released.
+    pub fn schedule_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledFiniteDifferenceError> {
+        if self.output_faulted
+            || self.len != 0
+            || self.unsealed_tail
+            || self.completed_len != 0
+            || self.cached.has_admitted_block()
+            || self.cached.next_deadline().is_some()
+            || self.continuation_open
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+        {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        self.append_finish(at)
+    }
+
+    /// Add final disable to the retained direct output prefix after the owner
+    /// tail is closed but before the final block is released.
+    pub fn schedule_planned_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledFiniteDifferenceError> {
+        if self.output_faulted
+            || self.completed_len == 0
+            || self.cached.has_admitted_block()
+            || self.cached.next_deadline().is_some()
+            || self.continuation_open
+            || self.unsealed_tail
+            || self.finish_token.is_some()
+            || self.job_completion_pending
+            || self.len == OUTPUTS
+        {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        self.append_finish(at)
+    }
+
+    /// Consume the one-shot job-complete fact after terminal disable was
+    /// physically acknowledged.
+    pub fn take_job_complete(&mut self) -> bool {
+        let complete = self.job_completion_pending;
+        self.job_completion_pending = false;
+        complete
+    }
+
+    /// Invalidate every future token and return the complete safe image for an
+    /// immediate local target transaction.
+    pub fn fault(&mut self, at: DeviceCycle) -> ShiftImageUpdate {
+        self.output_faulted = true;
+        self.outputs = [None; OUTPUTS];
+        self.head = 0;
+        self.len = 0;
+        self.staged = 0;
+        self.unsealed_tail = false;
+        self.continuation_open = false;
+        self.finish_token = None;
+        self.job_completion_pending = false;
+        let _ = self.cached.fault(at);
+        let cached_block = self.cached.take_faulted_block();
+        if self.faulted_block.is_none() && self.completed_len != 0 {
+            self.faulted_block = self.completed[self.completed_head]
+                .take()
+                .map(|barrier| barrier.completed.into_block());
+        }
+        self.completed = [const { None }; REALTIME_BLOCK_WINDOW];
+        self.completed_head = 0;
+        self.completed_len = 0;
+        if self.faulted_block.is_none() {
+            self.faulted_block = cached_block;
+        }
+        self.mapper.force_safe(at)
+    }
+
+    /// Return at most one unacknowledgeable token for fault diagnostics after
+    /// the safe image was requested.
+    pub fn take_faulted_block(&mut self) -> Option<AdmittedBlock<AXES>> {
+        if self.output_faulted {
+            self.faulted_block.take()
+        } else {
+            None
+        }
+    }
+
+    /// All generated complete images, including an open same-cycle tail.
+    pub const fn queued_outputs(&self) -> usize {
+        self.len
+    }
+
+    /// Generated images whose exact cycles can no longer be composed further.
+    pub const fn sealed_outputs(&self) -> usize {
+        if self.unsealed_tail {
+            self.len - 1
+        } else {
+            self.len
+        }
+    }
+
+    /// Prefix already accepted into the target's immutable timeline.
+    pub const fn staged_outputs(&self) -> usize {
+        self.staged
+    }
+
+    /// Whether one exact completion cycle remains open for an immediate
+    /// successor block.
+    pub const fn continuation_open(&self) -> bool {
+        self.continuation_open
+    }
+
+    /// Number of retained direct block/physical-prefix barriers.
+    pub const fn retained_block_completions(&self) -> usize {
+        self.completed_len
+    }
+
+    /// Number of target-confirmed complete-image updates.
+    pub const fn committed_updates(&self) -> u64 {
+        self.committed_updates
+    }
+
+    /// Largest exact target-reported image commit lateness.
+    pub const fn maximum_commit_lateness_observed(&self) -> u32 {
+        self.maximum_commit_lateness_observed
+    }
+
+    /// Current future logical image, including an open composed cycle.
+    pub const fn image(&self) -> u32 {
+        self.mapper.image()
+    }
+
+    /// Bounded future logical executor status.
+    pub const fn planned_status(&self) -> StepperStatus<AXES> {
+        self.cached.status()
+    }
+
+    /// Exact stream-relative Q31.32 coordinate reached so far.
+    pub const fn finite_position(&self) -> [i64; AXES] {
+        self.cached.finite_position()
+    }
+
+    /// Next recurrence or executor-owned output deadline.
+    pub fn next_deadline(&self) -> Option<DeviceCycle> {
+        if self.output_faulted {
+            None
+        } else {
+            self.cached.next_deadline()
+        }
+    }
+
+    fn tail_or_idle_plan(&self) -> ScheduledFiniteDifferencePlan {
+        let Some(block_at) = self.last_block_completion_at else {
+            return ScheduledFiniteDifferencePlan::Idle;
+        };
+        let completion_at = match self.last_generated_at {
+            Some(output_at) if output_at > block_at => output_at,
+            Some(_) | None => block_at,
+        };
+        ScheduledFiniteDifferencePlan::OwnerTailComplete { completion_at }
+    }
+
+    fn seal_before(&mut self, next_at: DeviceCycle) -> Result<(), ScheduledFiniteDifferenceError> {
+        if self
+            .last_generated_at
+            .is_some_and(|previous| previous < next_at)
+        {
+            self.seal_tail()?;
+        }
+        Ok(())
+    }
+
+    fn seal_tail(&mut self) -> Result<(), ScheduledFiniteDifferenceError> {
+        if !self.unsealed_tail {
+            return Ok(());
+        }
+        if self.len == 0 || self.staged >= self.len {
+            self.output_faulted = true;
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        self.unsealed_tail = false;
+        Ok(())
+    }
+
+    fn compose_event(&mut self, event: StepperEvent) -> Result<(), ScheduledFiniteDifferenceError> {
+        let update = match self.mapper.apply(event) {
+            Ok(update) => update,
+            Err(error) => {
+                self.output_faulted = true;
+                return Err(ScheduledFiniteDifferenceError::Image(error));
+            }
+        };
+        if let Err(error) = self.compose_update(update) {
+            self.output_faulted = true;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn compose_update(
+        &mut self,
+        update: ShiftImageUpdate,
+    ) -> Result<(), ScheduledFiniteDifferenceError> {
+        if let Some(previous) = self.last_generated_at {
+            if update.at < previous {
+                return Err(ScheduledFiniteDifferenceError::OutputOrder {
+                    previous,
+                    received: update.at,
+                });
+            }
+            if update.at == previous {
+                if !self.unsealed_tail || self.len == 0 || self.staged >= self.len {
+                    return Err(ScheduledFiniteDifferenceError::OutputOrder {
+                        previous,
+                        received: update.at,
+                    });
+                }
+                let tail = (self.head + self.len - 1) % OUTPUTS;
+                let existing = self.outputs[tail].ok_or(ScheduledFiniteDifferenceError::State)?;
+                self.outputs[tail] = Some(ScheduledShiftOutput { update, ..existing });
+                return Ok(());
+            }
+        }
+        self.seal_tail()?;
+        self.push_new_output(update, false).map(|_| ())
+    }
+
+    fn push_new_output(
+        &mut self,
+        update: ShiftImageUpdate,
+        sealed: bool,
+    ) -> Result<ScheduledShiftOutput, ScheduledFiniteDifferenceError> {
+        if self.len == OUTPUTS || OUTPUTS == 0 {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        let tail = self
+            .head
+            .checked_add(self.len)
+            .ok_or(ScheduledFiniteDifferenceError::Arithmetic)?
+            % OUTPUTS;
+        if self.outputs[tail].is_some() {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        let token = OutputCommitToken(next_output_token(self.next_token));
+        let output = ScheduledShiftOutput { token, update };
+        self.outputs[tail] = Some(output);
+        self.len += 1;
+        self.unsealed_tail = !sealed;
+        self.next_token = token.0;
+        self.last_generated_at = Some(update.at);
+        Ok(output)
+    }
+
+    fn push_completed(
+        &mut self,
+        barrier: ScheduledFiniteDifferenceBarrier<AXES>,
+    ) -> Result<(), ScheduledFiniteDifferenceError> {
+        if self.completed_len == REALTIME_BLOCK_WINDOW {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        let tail = self
+            .completed_head
+            .checked_add(self.completed_len)
+            .ok_or(ScheduledFiniteDifferenceError::Arithmetic)?
+            % REALTIME_BLOCK_WINDOW;
+        if self.completed[tail].is_some() {
+            return Err(ScheduledFiniteDifferenceError::State);
+        }
+        self.completed[tail] = Some(barrier);
+        self.completed_len += 1;
+        Ok(())
+    }
+
+    fn distinct_finish_cycle(&self) -> Result<DeviceCycle, FiniteDifferencePreflightError> {
+        let ready = self.cached.earliest_finish_cycle()?;
+        let Some(previous) = self.last_generated_at else {
+            return Ok(ready);
+        };
+        let next_boundary = previous
+            .0
+            .checked_add(u64::from(self.output_quantum_cycles))
+            .ok_or(FiniteDifferencePreflightError::Arithmetic)?;
+        Ok(DeviceCycle(ready.0.max(next_boundary)))
+    }
+
+    fn append_finish(
+        &mut self,
+        at: DeviceCycle,
+    ) -> Result<ScheduledShiftOutput, ScheduledFiniteDifferenceError> {
+        if let Some(previous) = self.last_generated_at
+            && at <= previous
+        {
+            return Err(ScheduledFiniteDifferenceError::OutputOrder {
+                previous,
+                received: at,
+            });
+        }
+        let event = self
+            .cached
+            .finish_job(at)
+            .map_err(ScheduledFiniteDifferenceError::FiniteDifference)?;
+        let update = match self.mapper.apply(event) {
+            Ok(update) => update,
+            Err(error) => {
+                self.output_faulted = true;
+                return Err(ScheduledFiniteDifferenceError::Image(error));
+            }
+        };
+        let output = match self.push_new_output(update, true) {
+            Ok(output) => output,
+            Err(error) => {
+                self.output_faulted = true;
+                return Err(error);
+            }
+        };
+        self.finish_token = Some(output.token);
+        Ok(output)
+    }
+}
+
 const fn next_output_token(previous: u32) -> u32 {
     let next = previous.wrapping_add(1);
     if next == 0 { 1 } else { next }
@@ -5472,6 +6328,43 @@ mod tests {
         }
     }
 
+    fn shifted_finite_difference_profile() -> StepperExecutionProfile<2> {
+        StepperExecutionProfile {
+            axes: core::array::from_fn(|axis| {
+                let base = u8::try_from(axis * 3).unwrap();
+                StepperAxisProfile {
+                    instance: u16::try_from(axis).unwrap(),
+                    step: ResourceBinding {
+                        instance: u16::try_from(axis).unwrap(),
+                        ..shifted_binding(
+                            BindingRole::AxisStep,
+                            base + 1,
+                            SignalPolarity::ActiveHigh,
+                        )
+                    },
+                    direction: ResourceBinding {
+                        instance: u16::try_from(axis).unwrap(),
+                        ..shifted_binding(
+                            BindingRole::AxisDirection,
+                            base + 2,
+                            SignalPolarity::ActiveHigh,
+                        )
+                    },
+                    driver_control: ResourceBinding {
+                        instance: u16::try_from(axis).unwrap(),
+                        ..shifted_binding(
+                            BindingRole::AxisDisable,
+                            base,
+                            SignalPolarity::ActiveHigh,
+                        )
+                    },
+                    driver_control_action: AxisDriverControl::Disable,
+                }
+            }),
+            timing: timing(0),
+        }
+    }
+
     const fn shifted_contract() -> ShiftImageContract {
         ShiftImageContract {
             engine: 0,
@@ -6001,6 +6894,373 @@ mod tests {
             runner.finish_job(DeviceCycle(110)).unwrap().disable.bits(),
             1
         );
+    }
+
+    #[test]
+    fn scheduled_direct_composes_one_record_boundary_into_one_physical_cycle() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let terminal = [first.position_at(0, first.update_count).unwrap(), 0];
+        let second = finite_segment(3, 4, terminal, [0, first_difference]);
+        let (mut job, admitted) = admitted_finite_difference_block(&[first, second]);
+        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<2, 8>::new(
+            shifted_finite_difference_profile(),
+            finite_limits(100),
+            shifted_contract(),
+        )
+        .unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(admitted).unwrap();
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned {
+                sequence: 0,
+                completion_at: DeviceCycle(107),
+            }
+        );
+        assert!(runner.continuation_open());
+        assert_eq!(runner.queued_outputs(), 5);
+        assert_eq!(runner.sealed_outputs(), 4);
+
+        let mut outputs = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            runner.stage_output(output).unwrap();
+            outputs.push(output);
+        }
+        assert_eq!(outputs.len(), 4);
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|output| output.update.at)
+                .collect::<Vec<_>>(),
+            [
+                DeviceCycle(100),
+                DeviceCycle(103),
+                DeviceCycle(104),
+                DeviceCycle(106),
+            ]
+        );
+        let composed = outputs
+            .iter()
+            .find(|output| output.update.at == DeviceCycle(103))
+            .unwrap();
+        assert_ne!(composed.update.image & (1 << 1), 0);
+        assert_eq!(composed.update.image & (1 << 3), 0);
+        assert_ne!(composed.update.image & (1 << 5), 0);
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::OwnerTailComplete {
+                completion_at: DeviceCycle(107),
+            }
+        );
+        assert!(!runner.continuation_open());
+        assert_eq!(runner.sealed_outputs(), 5);
+        let final_output = runner.next_unstaged_output().unwrap();
+        assert_eq!(final_output.update.at, DeviceCycle(107));
+        runner.stage_output(final_output).unwrap();
+        outputs.push(final_output);
+
+        for output in outputs {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        let completed = runner.take_completed_block(DeviceCycle(107)).unwrap();
+        assert_eq!(completed.completion().end_tick, StreamTick(7));
+        assert_eq!(completed.completion().position, [21, -19]);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
+    }
+
+    #[test]
+    fn scheduled_direct_owns_cross_block_fall_and_independent_prefix_barriers() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let terminal = [first.position_at(0, first.update_count).unwrap(), 0];
+        let second = finite_segment(3, 4, terminal, [first_difference, 0]);
+        let (mut job, first_block, second_block) =
+            admitted_finite_difference_block_pair(&[first], &[second]);
+        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<2, 8>::new(
+            shifted_finite_difference_profile(),
+            finite_limits(100),
+            shifted_contract(),
+        )
+        .unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(first_block).unwrap();
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned {
+                sequence: 0,
+                completion_at: DeviceCycle(103),
+            }
+        );
+        assert_eq!(runner.queued_outputs(), 2);
+        assert_eq!(runner.sealed_outputs(), 1);
+        runner.admit_block(second_block).unwrap();
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned {
+                sequence: 1,
+                completion_at: DeviceCycle(107),
+            }
+        );
+        assert_eq!(runner.retained_block_completions(), 2);
+        assert_eq!(runner.queued_outputs(), 4);
+        assert_eq!(runner.sealed_outputs(), 3);
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::OwnerTailComplete {
+                completion_at: DeviceCycle(108),
+            }
+        );
+        assert_eq!(runner.queued_outputs(), 5);
+        assert_eq!(runner.sealed_outputs(), 5);
+        assert_eq!(runner.planned_finish_cycle(), Ok(DeviceCycle(110)));
+        let finish = runner.schedule_planned_finish(DeviceCycle(110)).unwrap();
+
+        let mut outputs = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            runner.stage_output(output).unwrap();
+            outputs.push(output);
+        }
+        assert_eq!(outputs.len(), 6);
+        assert_eq!(outputs.last().copied(), Some(finish));
+        assert_eq!(
+            outputs
+                .iter()
+                .map(|output| output.update.at)
+                .collect::<Vec<_>>(),
+            [
+                DeviceCycle(100),
+                DeviceCycle(103),
+                DeviceCycle(104),
+                DeviceCycle(107),
+                DeviceCycle(108),
+                DeviceCycle(110),
+            ]
+        );
+
+        for output in outputs.iter().take(2).copied() {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        let completed = runner.take_completed_block(DeviceCycle(103)).unwrap();
+        assert_eq!(completed.completion().position, [21, -20]);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Admitted
+        );
+        for output in outputs.iter().skip(2).take(2).copied() {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        let completed = runner.take_completed_block(DeviceCycle(107)).unwrap();
+        assert_eq!(completed.completion().position, [22, -20]);
+        assert_eq!(
+            job.acknowledge(completed.into_block()).unwrap().state,
+            RealtimeJobState::Complete
+        );
+        for output in outputs.iter().skip(4).copied() {
+            runner
+                .commit_output(output.token, output.update.at)
+                .unwrap();
+        }
+        assert!(runner.take_job_complete());
+        assert!(!runner.take_job_complete());
+        assert_eq!(runner.planned_status().state, ExecutorState::Complete);
+        assert!(runner.planned_status().enabled.is_empty());
+    }
+
+    #[test]
+    fn scheduled_direct_tail_choice_rejects_a_late_successor_without_mutation() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let terminal = [first.position_at(0, first.update_count).unwrap(), 0];
+        let second = finite_segment(3, 4, terminal, [first_difference, 0]);
+        let (mut job, first_block, second_block) =
+            admitted_finite_difference_block_pair(&[first], &[second]);
+        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<2, 8>::new(
+            shifted_finite_difference_profile(),
+            finite_limits(100),
+            shifted_contract(),
+        )
+        .unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(first_block).unwrap();
+        assert!(matches!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned { sequence: 0, .. }
+        ));
+
+        assert_eq!(
+            runner.plan_through(DeviceCycle(103)).unwrap(),
+            ScheduledFiniteDifferencePlan::Future {
+                at: DeviceCycle(104),
+            }
+        );
+        assert!(!runner.continuation_open());
+        let rejected = runner.admit_block(second_block).unwrap_err();
+        assert_eq!(rejected.error(), CachedFiniteDifferenceError::State);
+        assert_eq!(rejected.into_block().header().sequence, 1);
+        assert_eq!(runner.queued_outputs(), 2);
+        assert_eq!(runner.sealed_outputs(), 2);
+        assert_eq!(
+            runner.fault(DeviceCycle(104)).image,
+            shifted_contract().safe_image
+        );
+        assert_eq!(runner.take_faulted_block().unwrap().header().sequence, 0);
+        job.cancel();
+    }
+
+    #[test]
+    fn scheduled_direct_zero_capacity_and_open_cycle_are_fail_closed() {
+        assert!(matches!(
+            ScheduledShiftedFiniteDifferenceStepper::<2, 0>::new(
+                shifted_finite_difference_profile(),
+                finite_limits(100),
+                shifted_contract(),
+            ),
+            Err(ScheduledFiniteDifferenceBuildError::HorizonCapacity)
+        ));
+
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let (_job, admitted) = admitted_finite_difference_block(&[first]);
+        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<2, 2>::new(
+            shifted_finite_difference_profile(),
+            finite_limits(100),
+            shifted_contract(),
+        )
+        .unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert!(matches!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned { .. }
+        ));
+        assert_eq!(runner.queued_outputs(), 2);
+        assert_eq!(runner.sealed_outputs(), 1);
+        let first = runner.next_unstaged_output().unwrap();
+        runner.stage_output(first).unwrap();
+        assert!(runner.next_unstaged_output().is_none());
+        assert!(matches!(
+            runner.planned_finish_cycle(),
+            Err(FiniteDifferencePreflightError::Timing(MotionError::State))
+        ));
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::HorizonFull {
+                next_at: DeviceCycle(104),
+                queued: 2,
+                staged: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn scheduled_direct_requires_terminal_tail_before_disable_and_rejects_wrong_token() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let (mut job, admitted) = admitted_finite_difference_block(&[first]);
+        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<2, 8>::new(
+            shifted_finite_difference_profile(),
+            finite_limits(100),
+            shifted_contract(),
+        )
+        .unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert!(matches!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned { .. }
+        ));
+        assert_eq!(
+            runner.schedule_planned_finish(DeviceCycle(106)),
+            Err(ScheduledFiniteDifferenceError::State)
+        );
+        assert_eq!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::OwnerTailComplete {
+                completion_at: DeviceCycle(104),
+            }
+        );
+        let finish_at = runner.planned_finish_cycle().unwrap();
+        assert_eq!(finish_at, DeviceCycle(106));
+        runner.schedule_planned_finish(finish_at).unwrap();
+
+        let mut outputs = Vec::new();
+        while let Some(output) = runner.next_unstaged_output() {
+            runner.stage_output(output).unwrap();
+            outputs.push(output);
+        }
+        let first = outputs[0];
+        let wrong = OutputCommitToken(next_output_token(first.token.value()));
+        assert_eq!(
+            runner.commit_output(wrong, first.update.at),
+            Err(OutputCommitError::Token {
+                expected: first.token,
+                received: wrong,
+            })
+        );
+        assert!(matches!(
+            runner.plan_through(DeviceCycle(110)),
+            Err(ScheduledFiniteDifferenceError::State)
+        ));
+        assert!(runner.take_faulted_block().is_none());
+        assert_eq!(
+            runner.fault(DeviceCycle(107)),
+            ShiftImageUpdate {
+                at: DeviceCycle(107),
+                image: shifted_contract().safe_image,
+            }
+        );
+        assert_eq!(runner.take_faulted_block().unwrap().header().sequence, 0);
+        job.cancel();
+    }
+
+    #[test]
+    fn scheduled_direct_staging_mismatch_cannot_mutate_the_physical_prefix() {
+        let first_difference = (FINITE_DIFFERENCE_ONE_STEP - 1) / 4;
+        let first = finite_segment(0, 3, [0, 0], [first_difference, 0]);
+        let (_job, admitted) = admitted_finite_difference_block(&[first]);
+        let mut runner = ScheduledShiftedFiniteDifferenceStepper::<2, 8>::new(
+            shifted_finite_difference_profile(),
+            finite_limits(100),
+            shifted_contract(),
+        )
+        .unwrap();
+        runner.start_job(DeviceCycle(100), [20, -20]).unwrap();
+        runner.admit_block(admitted).unwrap();
+        assert!(matches!(
+            runner.plan_through(DeviceCycle(110)).unwrap(),
+            ScheduledFiniteDifferencePlan::BlockPlanned { .. }
+        ));
+        let expected = runner.next_unstaged_output().unwrap();
+        let received = ScheduledShiftOutput {
+            update: ShiftImageUpdate {
+                image: expected.update.image ^ (1 << 10),
+                ..expected.update
+            },
+            ..expected
+        };
+        assert_eq!(
+            runner.stage_output(received),
+            Err(OutputStageError::Mismatch { expected, received })
+        );
+        assert_eq!(runner.staged_outputs(), 0);
+        assert_eq!(
+            runner.fault(DeviceCycle(101)).image,
+            shifted_contract().safe_image
+        );
+        assert!(runner.take_faulted_block().is_some());
     }
 
     #[test]

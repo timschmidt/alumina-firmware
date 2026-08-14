@@ -294,3 +294,12 @@ a hardware qualification: board promotion still follows the evidence ladder in
   electrical admission, allocation-free dense execution, exact cached-token
   ownership, and immutable-partition simulation with every physical claim kept
   closed.
+- [`M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md`](M10-BROWSER-DIRECT-FINITE-DIFFERENCE.md)
+  — exact browser/WASM affine lowering, interval-certified Q31.32 Newton
+  differences, adaptive monotonic splitting, immutable direct cache packaging,
+  and replayable `ALMDFE01` evidence under an isolated moving-Hyper source
+  graph.
+- [`M10-SCHEDULED-DIRECT-PCM.md`](M10-SCHEDULED-DIRECT-PCM.md) — allocation-free
+  same-cycle complete-image composition, explicit successor/tail ownership,
+  independent cross-block physical prefixes, and bit-level PCM-short latch
+  simulation with every target and energization claim closed.
