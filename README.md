@@ -192,6 +192,13 @@ mechanism still requires a loaded physical run before any reported headroom is
 usable as a sizing claim. See the [stack-watermark compile
 evidence](docs/evidence/M10-RUNTIME-STACK-WATERMARKS.md).
 
+The companion headless interface client now independently decodes and
+monotonically reconciles that health response, exposes exact queue/stack facts,
+and compiles authenticated window and worker fetch adapters without depending
+on the moving Hyper geometry graph. Automatic worker polling and visible
+board-debug rendering remain open. See the [runtime-health client
+evidence](docs/evidence/M10-RUNTIME-HEALTH-CLIENT.md).
+
 The cache backend itself is now concrete: `alumina-storage` implements a bounded
 asynchronous 512-byte block-device contract, an explicitly provisioned raw SD
 region, alternating SHA-256 anchors, and a hash-chained append-only record log.

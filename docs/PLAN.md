@@ -1041,6 +1041,15 @@ compile/contract evidence only; physical loaded watermarks remain an M10 exit
 gate. See
 [`M10-RUNTIME-STACK-WATERMARKS.md`](evidence/M10-RUNTIME-STACK-WATERMARKS.md).
 
+The coordinated interface follow-up adds a session-scoped passive health model
+and authenticated window/worker fetch seam in the Hyper-independent
+`alumina-interface-client` package. It independently rejects wire,
+response-cycle, epoch/layout, counter/time, and observed-headroom regressions;
+keeps stale, missing, and unsupported evidence distinct; and exposes integer
+queue/stack facts without granting safety authority. The visible worker schema,
+poll scheduler, and board-debug panel remain open. See
+[`M10-RUNTIME-HEALTH-CLIENT.md`](evidence/M10-RUNTIME-HEALTH-CLIENT.md).
+
 Exit gate:
 
 - PWM/ADC phase, offset/gain, electrical angle, loop WCET/jitter, current ripple,
