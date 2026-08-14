@@ -13,8 +13,9 @@ use alumina_config::{
     ConfigurationError, FocAdcAttenuation, RealtimeConfiguration, RealtimeConfigurationProfile,
 };
 use alumina_foc::{
-    PwmCompareContract, PwmCompareError, SequentialAdcAcquisition, SequentialAdcAcquisitionError,
-    SequentialAdcChannel, SequentialAdcPair, SequentialAdcRequest, TwoShuntPhasePair,
+    PowerStageCommit, PwmCommitBankHardware, PwmCompareContract, PwmCompareError, PwmCompareImage,
+    SequentialAdcAcquisition, SequentialAdcAcquisitionError, SequentialAdcChannel,
+    SequentialAdcPair, SequentialAdcRequest, TwoShuntPhasePair,
 };
 use alumina_motion::{
     CachedServoConfiguration, OutputCommitToken, ScheduledShiftOutput,
@@ -510,6 +511,89 @@ impl<Pwm: 'static> ClosedMcpwmStage<Pwm> {
     /// Returns the exact validated clock/compare facts retained by this owner.
     pub const fn configuration(&self) -> ClosedMcpwmConfiguration {
         self.configuration
+    }
+}
+
+mod closed_stage_sealed {
+    pub trait Sealed {}
+}
+
+/// Sealed target operation which can only make one retained stage safer.
+///
+/// This trait grants no compare write, operator attachment, timer start, pin
+/// output, or latch-report operation. It is public only so the public generic
+/// resource method can retain its exact type bound.
+#[doc(hidden)]
+pub trait ClosedPwmStageSafe: closed_stage_sealed::Sealed {
+    fn force_closed_safe(&mut self);
+}
+
+impl<Pwm> closed_stage_sealed::Sealed for ClosedPowerStage<Pwm> {}
+
+impl<Pwm> ClosedPwmStageSafe for ClosedPowerStage<Pwm> {
+    fn force_closed_safe(&mut self) {
+        let input = InputConfig::default().with_pull(Pull::None);
+        self.phase_u.apply_config(&input);
+        self.phase_v.apply_config(&input);
+        self.phase_w.apply_config(&input);
+    }
+}
+
+impl<Pwm> closed_stage_sealed::Sealed for ClosedMcpwmStage<Pwm> where Pwm: PwmPeripheral + 'static {}
+
+impl<Pwm> ClosedPwmStageSafe for ClosedMcpwmStage<Pwm>
+where
+    Pwm: PwmPeripheral + 'static,
+{
+    fn force_closed_safe(&mut self) {
+        let input = InputConfig::default().with_pull(Pull::None);
+        self.phase_u.apply_config(&input);
+        self.phase_v.apply_config(&input);
+        self.phase_w.apply_config(&input);
+        self.controller.timer0.stop();
+        self.controller
+            .timer0
+            .set_counter(0, CounterDirection::Increasing);
+    }
+}
+
+/// Terminal result from the deliberately non-publishing MKS PWM backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ClosedPwmCommitBankError {
+    /// Physical image staging and latch truth remain unqualified.
+    Unqualified,
+}
+
+/// Exclusive aggregate view of both retained MKS power stages.
+///
+/// The view is intentionally borrowed from the permanent core-1 resource
+/// owner. It can become the hardware value of a future exact-boundary
+/// `PwmCommitBankTargetOwner`, but today it rejects staging and observation and
+/// supports only the complete six-pin/two-timer safe transaction.
+struct ClosedPwmCommitBank<'a, Stage0, Stage1> {
+    stage0: &'a mut Stage0,
+    stage1: &'a mut Stage1,
+}
+
+impl<Stage0, Stage1> PwmCommitBankHardware<JOB_AXES> for ClosedPwmCommitBank<'_, Stage0, Stage1>
+where
+    Stage0: ClosedPwmStageSafe,
+    Stage1: ClosedPwmStageSafe,
+{
+    type Error = ClosedPwmCommitBankError;
+
+    fn stage_images(&mut self, _images: &[PwmCompareImage; JOB_AXES]) -> Result<(), Self::Error> {
+        Err(ClosedPwmCommitBankError::Unqualified)
+    }
+
+    fn take_latch(&mut self, _axis: usize) -> Result<Option<PowerStageCommit>, Self::Error> {
+        Err(ClosedPwmCommitBankError::Unqualified)
+    }
+
+    fn force_safe(&mut self) -> Result<(), Self::Error> {
+        self.stage0.force_closed_safe();
+        self.stage1.force_closed_safe();
+        Ok(())
     }
 }
 
@@ -1233,9 +1317,23 @@ impl<Encoders, Current, Stage0, Stage1>
         self.safety_inputs.clear();
     }
 
-    /// Retains typed ownership of six no-pull inputs; no output operation exists.
-    pub fn force_safe_outputs(&mut self) -> Result<(), SafeOutputError> {
-        Ok(())
+    /// Reasserts the complete closed two-stage transaction synchronously.
+    ///
+    /// Raw stages reapply all six no-pull input configurations. Configured
+    /// closed stages additionally stop and reset both timers. The aggregate
+    /// backend has no successful stage or latch-report operation.
+    pub fn force_safe_outputs(&mut self) -> Result<(), SafeOutputError>
+    where
+        Stage0: ClosedPwmStageSafe,
+        Stage1: ClosedPwmStageSafe,
+    {
+        let mut backend = ClosedPwmCommitBank {
+            stage0: &mut self.stage0,
+            stage1: &mut self.stage1,
+        };
+        backend
+            .force_safe()
+            .map_err(|_| SafeOutputError::MotionUnsupported)
     }
 
     /// Rejects shifted step images on this direct-PWM target.

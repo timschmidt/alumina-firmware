@@ -1285,6 +1285,25 @@ no claim is made about MCPWM synchronization, latch readback, or physical safe
 outputs. See
 [`evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md).
 
+The classic-ESP32 MKS composition now implements the aggregate backend trait
+at its honest closed capability. `ClosedPwmCommitBank` borrows both uniquely
+retained stage owners for one scoped operation. `stage_images` and `take_latch`
+have only the terminal `Unqualified` result, so this type cannot manufacture a
+physical completion. `force_safe` reapplies all six phase pins as no-pull GPIO
+inputs. If the stages are in the configured-but-disconnected type state, it
+also stops and resets both MCPWM timers to zero. No operator or phase pin is
+attached by this path.
+
+The permanent `ServoSetpointOutput` rejection seam invokes the selected
+board's synchronous safe transaction before rejecting an attempted setpoint
+stage or commit read. This protects against an internal gate bypass without
+making the board armable. The real `PwmCommitBankTargetOwner` is deliberately
+not constructed in target resources yet: construction must coincide with the
+future exact first boundary and complete prepared FOC candidate, and the
+physical backend must then transfer permanently rather than borrow from its
+enclosing resources. See
+[`evidence/M10-CLOSED-MKS-PWM-BACKEND.md`](evidence/M10-CLOSED-MKS-PWM-BACKEND.md).
+
 `ALMCFG06` joins these portable contracts at the only executable boundary. One
 FOC axis must bind all three phase outputs, the exact two ADC channels named by
 its phase-pair selector, an encoder endpoint, and a qualified power-stage

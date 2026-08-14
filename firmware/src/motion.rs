@@ -697,12 +697,14 @@ impl ServoSetpointOutput<{ selected::JOB_AXES }> for selected::EstablishedRealti
         &mut self,
         _prepared: PreparedServoSetpoints<{ selected::JOB_AXES }>,
     ) -> Result<(), Self::Error> {
+        self.force_safe_outputs().map_err(|_| ())?;
         Err(())
     }
 
     fn take_servo_setpoint_commit(
         &mut self,
     ) -> Result<Option<ServoSetpointOutputCommit>, Self::Error> {
+        self.force_safe_outputs().map_err(|_| ())?;
         Err(())
     }
 }

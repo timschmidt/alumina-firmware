@@ -478,6 +478,18 @@ qualify real MCPWM latch truth or shutdown behavior, and all target gates remain
 closed. See
 [`M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md).
 
+The MKS target now supplies the deliberately closed first implementation of
+the aggregate hardware trait. A borrow-scoped view uniquely covers both
+retained stage owners. Its complete-image stage and latch-observation methods
+always return `Unqualified`; its sole successful operation reapplies all six
+phase pins as no-pull inputs and, for the configured-but-disconnected type
+state, stops and resets both MCPWM timers. The permanent servo mailbox seam on
+every board invokes synchronous board safety before rejecting any otherwise
+unreachable stage or commit-read attempt. No target commit owner is constructed
+yet because there is no exact activation boundary or target FOC candidate to
+own, and all arm/qualification constants remain false. See
+[`M10-CLOSED-MKS-PWM-BACKEND.md`](evidence/M10-CLOSED-MKS-PWM-BACKEND.md).
+
 Implementation checkpoint: the allocation-free exact step-event executor,
 configuration-derived role/polarity/timing profile, full TinyBee-style shifted
 image mapper, fixed canonical execution report, and cached-block simulator trace
@@ -933,6 +945,15 @@ safety. The deterministic two-axis backend exercises this contract through
 activation and 401 current periods, but no ESP implementation is attached and
 no output gate can arm. See
 [`M10-FAIL-CLOSED-PWM-TARGET-OWNER.md`](evidence/M10-FAIL-CLOSED-PWM-TARGET-OWNER.md).
+
+The following closed-target checkpoint implements the same aggregate backend
+trait over the two uniquely retained MKS stage owners but admits only the safe
+operation. Raw stages reassert six no-pull inputs; configured disconnected
+stages additionally stop and reset both timers. Image staging and latch reports
+remain impossible, and permanent servo mailbox bypass attempts run board safety
+before rejecting. Exact owner construction remains deferred to a future
+qualified activation boundary. See
+[`M10-CLOSED-MKS-PWM-BACKEND.md`](evidence/M10-CLOSED-MKS-PWM-BACKEND.md).
 
 Exit gate:
 
