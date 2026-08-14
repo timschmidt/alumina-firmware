@@ -514,7 +514,8 @@ and encoder objects; no V5 or older compatibility decoder remains.
 Board-package qualification remains the authority, so configuration cannot
 promote the MKS stages beyond `Described`;
 the real target still rejects every FOC axis and exposes no energization path.
-See the historical [configuration V4 evidence](docs/evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md)
+See the [canonical servo/encoder Configuration V6 evidence](docs/evidence/M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md),
+the historical [configuration V4 evidence](docs/evidence/M8-FOC-HARDWARE-CONFIGURATION-V4.md),
 and its [V3 predecessor](docs/evidence/M8-FOC-CONFIGURATION-V3.md).
 
 Portable rotor angles now use exact wrapping binary turns. Nearest-quadrant

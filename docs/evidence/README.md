@@ -139,6 +139,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   outward position/velocity observations with required estimator widening,
   first-cause precision gates, and deterministic repeated-wrap truth replay
   without target attachment.
+- [`M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md`](M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md)
+  — greenfield fixed-width servo/encoder records, exact machine-scalar and
+  conservative uncertainty cross-checks, full-digest outer-loop lowering, and
+  coordinated browser schema rollover without a compatibility path.
 - [`M8-MKS-FOC-SAFE-TARGET.md`](M8-MKS-FOC-SAFE-TARGET.md) — reconciled V1.0
   schematic facts, typed resources and canonical capability identity, explicit
   absent enable/storage capabilities, six-phase-high-impedance boot composition,

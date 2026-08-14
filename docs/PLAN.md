@@ -805,6 +805,9 @@ and turn-seed authority, truthful AS5600 timestamps/aperture, physical
 speed/error qualification, target scheduling, and controller composition remain
 open. See
 [`M8-PORTABLE-ENCODER-ESTIMATOR.md`](evidence/M8-PORTABLE-ENCODER-ESTIMATOR.md).
+The combined canonical records, exact machine-scalar cross-checks, and
+full-digest lowering are sealed in
+[`M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md`](evidence/M8-CANONICAL-SERVO-ENCODER-CONFIGURATION-V6.md).
 
 Exit gate:
 
