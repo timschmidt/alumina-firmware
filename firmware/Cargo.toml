@@ -75,6 +75,17 @@ board-t-deck-pro = [
     "esp-rtos/esp32s3",
     "esp-rtos/esp-radio",
 ]
+board-t-lora-pager = [
+    "dep:board-t-lora-pager",
+    "alumina-xtensa-stack-watermark/esp32s3",
+    "esp-alloc/esp32s3",
+    "esp-bootloader-esp-idf/esp32s3",
+    "esp-hal/esp32s3",
+    "esp-radio/esp32s3",
+    "esp-rtos/esp-alloc",
+    "esp-rtos/esp32s3",
+    "esp-rtos/esp-radio",
+]
 hil-mks-tinybee-pcm-short-safe = ["board-mks-tinybee"]
 hil-mks-tinybee-graph-input-timing-safe = ["board-mks-tinybee"]
 
@@ -102,6 +113,7 @@ alumina-xtensa-stack-watermark.workspace = true
 board-mks-tinybee = { workspace = true, optional = true }
 board-mks-esp32-foc-v1 = { workspace = true, optional = true }
 board-t-deck-pro = { workspace = true, optional = true }
+board-t-lora-pager = { workspace = true, optional = true }
 defmt.workspace = true
 embassy-executor.workspace = true
 embassy-futures.workspace = true

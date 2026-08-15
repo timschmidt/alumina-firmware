@@ -14,6 +14,7 @@ alumina-capability.workspace = true
 board-mks-tinybee.workspace = true
 board-mks-esp32-foc-v1.workspace = true
 board-t-deck-pro.workspace = true
+board-t-lora-pager.workspace = true
 sha2.workspace = true
 
 [lints]

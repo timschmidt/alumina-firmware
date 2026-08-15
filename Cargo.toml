@@ -4,6 +4,7 @@ members = [
     "boards/mks-esp32-foc-v1",
     "boards/mks-tinybee",
     "boards/t-deck-pro",
+    "boards/t-lora-pager",
     "crates/alumina-board",
     "crates/alumina-capability",
     "crates/alumina-clock",
@@ -42,6 +43,7 @@ default-members = [
     "boards/mks-esp32-foc-v1",
     "boards/mks-tinybee",
     "boards/t-deck-pro",
+    "boards/t-lora-pager",
     "crates/alumina-board",
     "crates/alumina-capability",
     "crates/alumina-clock",
@@ -99,6 +101,7 @@ alumina-xtensa-stack-watermark = { path = "drivers/alumina-xtensa-stack-watermar
 board-mks-tinybee = { path = "boards/mks-tinybee" }
 board-mks-esp32-foc-v1 = { path = "boards/mks-esp32-foc-v1" }
 board-t-deck-pro = { path = "boards/t-deck-pro" }
+board-t-lora-pager = { path = "boards/t-lora-pager" }
 bt-hci = "0.6.0"
 chrono = { version = "0.4.38", default-features = false, features = ["serde"] }
 critical-section = "1.2.0"

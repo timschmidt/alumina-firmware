@@ -309,7 +309,7 @@ aluminafw/
 │   │   └── src/lib.rs           # typed esp-hal resource construction
 │   ├── t-deck-pro/
 │   ├── mks-esp32-foc-v1/
-│   ├── t-lora-pager/            # late metadata/build stub first
+│   ├── t-lora-pager/            # late compile-only typed package stub
 │   └── ...
 ├── crates/
 │   ├── alumina-protocol/        # no_std shared wire types and schema versions

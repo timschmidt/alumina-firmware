@@ -201,8 +201,9 @@ Representative generated nodes:
 - supported IEEE 802.15.4 modes only on an eligible dual-core board;
 - camera/LCD/audio/parallel I²S, SDMMC, low-power/ULP workflows;
 - additional industrial/messaging protocols selected from deployments.
-- current T-LoRa Pager metadata/build stub, followed later by board-driven
-  peripheral support.
+- current T-LoRa Pager compile-selected, non-armable package with descriptive
+  resource topology and explicit unavailable peripheral/storage/visual
+  boundaries, followed later by board-driven peripheral support.
 
 Within each wave, representability and clear `unsupported` diagnostics land
 before deployment nodes; driver compile support lands before bench/qualified

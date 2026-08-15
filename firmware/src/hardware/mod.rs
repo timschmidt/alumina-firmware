@@ -26,3 +26,8 @@ pub use mks_tinybee as selected;
 pub mod t_deck_pro;
 #[cfg(feature = "board-t-deck-pro")]
 pub use t_deck_pro as selected;
+
+#[cfg(feature = "board-t-lora-pager")]
+pub mod t_lora_pager;
+#[cfg(feature = "board-t-lora-pager")]
+pub use t_lora_pager as selected;

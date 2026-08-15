@@ -1268,7 +1268,10 @@ Work:
 
 - Add a compile-only metadata/resource/image stub for the current ESP32-S3
   T-LoRa Pager, then inventory and implement its devices after first-target and
-  FOC evidence is stable.
+  FOC evidence is stable. The compile-selected typed package/resource inventory
+  is complete at a pinned LilyGoLib revision; its image slot remains
+  intentionally empty pending a licensed annotated photo of the exact fixture,
+  and all Pager-specific drivers/storage remain explicitly unavailable.
 - Add selected dual-core FluidNC-associated PCBs as new physical board packages,
   not configuration/protocol compatibility targets.
 - Add relay, industrial-I/O, and laboratory profiles only with electrical range,

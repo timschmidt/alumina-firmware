@@ -27,6 +27,11 @@ const BOARDS: &[BoardSelection] = &[
         id: "t-deck-pro",
         target: "xtensa-esp32s3-none-elf",
     },
+    BoardSelection {
+        feature_env: "CARGO_FEATURE_BOARD_T_LORA_PAGER",
+        id: "t-lora-pager-current",
+        target: "xtensa-esp32s3-none-elf",
+    },
 ];
 
 fn main() {
@@ -43,8 +48,8 @@ fn main() {
     let board = selected.next().unwrap_or_else(|| {
         panic!(
             "select exactly one board feature; use `cargo xtask build --board \
-             mks-tinybee-v1`, `mks-tinybee-v1-4mb`, `mks-esp32-foc-v1`, or \
-             `t-deck-pro`"
+             mks-tinybee-v1`, `mks-tinybee-v1-4mb`, `mks-esp32-foc-v1`, \
+             `t-deck-pro`, or `t-lora-pager-current`"
         )
     });
     if selected.next().is_some() {

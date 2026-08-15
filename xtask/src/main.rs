@@ -493,6 +493,7 @@ fn expected_feature_for(id: &str) -> Option<&'static str> {
         board_mks_tinybee::BOARD_ID => Some("board-mks-tinybee"),
         board_mks_tinybee::BOARD_ID_4_MIB => Some("board-mks-tinybee-4mb"),
         board_t_deck_pro::BOARD_ID => Some("board-t-deck-pro"),
+        board_t_lora_pager::BOARD_ID => Some("board-t-lora-pager"),
         _ => None,
     }
 }
@@ -503,6 +504,7 @@ fn package_for(id: &str) -> Option<&'static BoardPackage<'static>> {
         board_mks_tinybee::BOARD_ID => Some(&board_mks_tinybee::PACKAGE),
         board_mks_tinybee::BOARD_ID_4_MIB => Some(&board_mks_tinybee::PACKAGE_4_MIB),
         board_t_deck_pro::BOARD_ID => Some(&board_t_deck_pro::PACKAGE),
+        board_t_lora_pager::BOARD_ID => Some(&board_t_lora_pager::PACKAGE),
         _ => None,
     }
 }
@@ -512,6 +514,7 @@ fn find_board<'a>(boards: &'a [Board], id: &str) -> Result<&'a Board, String> {
         "mks-tinybee" => "mks-tinybee-v1",
         "mks-tinybee-8mb" => "mks-tinybee-v1",
         "mks-tinybee-4mb" => "mks-tinybee-v1-4mb",
+        "t-lora-pager" => "t-lora-pager-current",
         other => other,
     };
     boards
@@ -1417,6 +1420,18 @@ mod tests {
         assert_eq!(
             find_board(&boards, "mks-tinybee-4mb").unwrap().id,
             board_mks_tinybee::BOARD_ID_4_MIB
+        );
+    }
+
+    #[test]
+    fn pager_short_selector_chooses_current_stub() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask must be inside the repository");
+        let boards = load_boards(root).unwrap();
+        assert_eq!(
+            find_board(&boards, "t-lora-pager").unwrap().id,
+            board_t_lora_pager::BOARD_ID
         );
     }
 }

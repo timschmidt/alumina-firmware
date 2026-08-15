@@ -143,10 +143,14 @@ third-party FOC implementation sources were not inspected or used. In
 particular, the schematic marks GPIO22 and GPIO12 unconnected, establishes no
 independent inverter enable, and establishes no fitted SD/cache medium; example
 code cannot override those revision-specific hardware facts.
-- [LILYGO LilyGoLib](https://github.com/Xinyuan-LilyGO/LilyGoLib) and
-  [current T-LoRa Pager hardware page](https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/master/docs/hardware/lilygo-t-lora-pager.md)
-  — current ESP32-S3/flash/PSRAM/device/pin source for the late board stub and
-  later full inventory.
+- [LILYGO LilyGoLib at `38e6f8dee3ba78b340512af9a013365ef248a7d0`](https://github.com/Xinyuan-LilyGO/LilyGoLib/tree/38e6f8dee3ba78b340512af9a013365ef248a7d0)
+  and the [pinned current T-LoRa Pager hardware page](https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/38e6f8dee3ba78b340512af9a013365ef248a7d0/docs/hardware/lilygo-t-lora-pager.md)
+  — ESP32-S3, memory, fitted-device, I²C-address, bus, interrupt, control, and
+  direct-pin facts for the compile-only board stub. The repository's
+  [MIT license](https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/38e6f8dee3ba78b340512af9a013365ef248a7d0/LICENSE)
+  is compatible with this workspace. No LilyGoLib implementation source or
+  image asset was copied; the package and runtime composition are independently
+  authored from the hardware description.
 
 ## Embassy and ESP Rust runtime
 

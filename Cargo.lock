@@ -31,6 +31,7 @@ dependencies = [
  "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "board-t-deck-pro",
+ "board-t-lora-pager",
  "sha2",
 ]
 
@@ -97,6 +98,7 @@ dependencies = [
  "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "board-t-deck-pro",
+ "board-t-lora-pager",
  "defmt 1.1.1",
  "edge-dhcp",
  "edge-http",
@@ -397,6 +399,15 @@ dependencies = [
 
 [[package]]
 name = "board-t-deck-pro"
+version = "0.1.0"
+dependencies = [
+ "alumina-board",
+ "alumina-capability",
+ "alumina-protocol",
+]
+
+[[package]]
+name = "board-t-lora-pager"
 version = "0.1.0"
 dependencies = [
  "alumina-board",
@@ -2860,6 +2871,7 @@ dependencies = [
  "board-mks-esp32-foc-v1",
  "board-mks-tinybee",
  "board-t-deck-pro",
+ "board-t-lora-pager",
  "sha2",
 ]
 

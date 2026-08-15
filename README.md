@@ -724,7 +724,9 @@ cargo xtask board check mks-tinybee-v1
 cargo xtask board check mks-tinybee-v1-4mb
 cargo xtask board check t-deck-pro
 cargo xtask board check mks-esp32-foc-v1
+cargo xtask board check t-lora-pager
 cargo xtask capabilities --board mks-tinybee --json
+cargo xtask capabilities --board t-lora-pager --json
 ```
 
 The portable commands intentionally operate on the workspace's default members.
@@ -750,9 +752,11 @@ Xtensa linker bundle when it is not already on `PATH`:
 cargo xtask check --board mks-tinybee
 cargo xtask check --board mks-tinybee-4mb
 cargo xtask check --board t-deck-pro
+cargo xtask check --board t-lora-pager
 cargo xtask build --board mks-tinybee --profile release
 cargo xtask build --board mks-tinybee-4mb --profile release
 cargo xtask build --board t-deck-pro --profile release
+cargo xtask build --board t-lora-pager --profile release
 cargo xtask hil list
 cargo xtask hil build mks-tinybee-pcm-short-safe
 ```
@@ -796,7 +800,8 @@ firmware. Datasheets and upstream root metadata are retained under
   dependencies are excluded.
 - Only dual-core ESP32 targets are in scope. MKS TinyBee and LILYGO T-Deck Pro
   are the first hardware targets; MKS ESP32 FOC V1.0 follows for servo control.
-  The current T-LoRa Pager receives a late board stub before full support.
+  The current T-LoRa Pager has a late compile-only board stub before full
+  peripheral support.
 - Core 0 owns Wi-Fi, the web server, SD/cache service, T-Deck peripherals,
   telemetry presentation, and idle work. Core 1 owns safety, motion, FOC,
   deterministic I/O, and hardware-timed queues.

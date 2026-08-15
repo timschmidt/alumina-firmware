@@ -1,6 +1,6 @@
 [package]
-name = "alumina-capability"
-description = "Canonical byte-addressable board capability documents for Alumina"
+name = "board-t-lora-pager"
+description = "Typed compile-time current LILYGO T-LoRa Pager board stub"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,13 +11,9 @@ publish.workspace = true
 [dependencies]
 alumina-board.workspace = true
 alumina-protocol.workspace = true
-sha2.workspace = true
 
 [dev-dependencies]
-board-mks-esp32-foc-v1.workspace = true
-board-mks-tinybee.workspace = true
-board-t-deck-pro.workspace = true
-board-t-lora-pager.workspace = true
+alumina-capability.workspace = true
 
 [lints]
 workspace = true

@@ -3463,6 +3463,7 @@ mod tests {
             &board_mks_tinybee::PACKAGE_4_MIB,
             &board_t_deck_pro::PACKAGE,
             &board_mks_esp32_foc_v1::PACKAGE,
+            &board_t_lora_pager::PACKAGE,
         ] {
             let identity = calculate_identity(package).unwrap();
             assert!(!identity.digest.is_zero());

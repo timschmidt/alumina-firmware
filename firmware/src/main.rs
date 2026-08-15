@@ -14,7 +14,8 @@ use alloc::boxed::Box;
     feature = "board-mks-esp32-foc-v1",
     feature = "board-mks-tinybee",
     feature = "board-mks-tinybee-4mb",
-    feature = "board-t-deck-pro"
+    feature = "board-t-deck-pro",
+    feature = "board-t-lora-pager"
 )))]
 compile_error!("select exactly one board feature through `cargo xtask build --board <id>`");
 #[cfg(any(
@@ -23,7 +24,11 @@ compile_error!("select exactly one board feature through `cargo xtask build --bo
     all(feature = "board-mks-esp32-foc-v1", feature = "board-mks-tinybee-4mb"),
     all(feature = "board-mks-esp32-foc-v1", feature = "board-t-deck-pro"),
     all(feature = "board-mks-tinybee", feature = "board-t-deck-pro"),
-    all(feature = "board-mks-tinybee-4mb", feature = "board-t-deck-pro")
+    all(feature = "board-mks-tinybee-4mb", feature = "board-t-deck-pro"),
+    all(feature = "board-mks-esp32-foc-v1", feature = "board-t-lora-pager"),
+    all(feature = "board-mks-tinybee", feature = "board-t-lora-pager"),
+    all(feature = "board-mks-tinybee-4mb", feature = "board-t-lora-pager"),
+    all(feature = "board-t-deck-pro", feature = "board-t-lora-pager")
 ))]
 compile_error!("multiple board features selected; Alumina images contain exactly one board");
 #[cfg(any(

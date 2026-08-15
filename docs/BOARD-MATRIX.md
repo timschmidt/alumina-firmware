@@ -1,6 +1,6 @@
 # Boards and hardware strategy
 
-Research snapshot: 2026-08-11.
+Research snapshot: 2026-08-15.
 
 ## Support levels
 
@@ -24,6 +24,7 @@ upstream FluidNC profile makes a board electrically or operationally qualified.
 | MKS TinyBee V1.x | ESP32-WROOM-32U, 8 MiB flash, 520 KiB SRAM, dual core | Requested target with official hardware and FluidNC configuration | I²S shift-register step/heater/fan output, limits, SD, Wi-Fi, XYZ coordinated motion | Tight internal RAM; virtual outputs are not GPIO/PWM; no native FOC power stage/current sensing |
 | LILYGO T-Deck Pro | ESP32-S3, 16 MiB flash, 8 MiB PSRAM, dual core | Existing Embassy drivers and integrated UI/radio hardware | Service-core peripheral parity, web UI, async bus ownership, telemetry | Shared buses and EPD latency require bounded/coalesced service tasks; PSRAM is not real-time memory |
 | MKS ESP32 FOC V1.0 | ESP32-WROOM-32D, 4 MiB standard module flash, 520 KiB on-chip SRAM, dual core; received assembly still to confirm | Named first servo target with official schematic and manual | Clean-room dual 3-PWM FOC, dual magnetic sensors, inline current sensing | No fitted cache medium or independent inverter enable is established; phase pins must float for the EG2133 both-off input state, and all shutdown behavior requires bench qualification |
+| LILYGO T-LoRa Pager (current) | ESP32-S3, 16 MiB flash, 8 MiB PSRAM, dual core | Requested late board target and broad service-peripheral test case | Compile-selected Wi-Fi image plus descriptive typed inventory | Compile-only, non-armable stub: no Pager peripheral, SD/cache, visual, overview, capture, or machine-I/O implementation |
 
 Recommended order:
 
@@ -35,6 +36,8 @@ Recommended order:
    SD-cached exact jobs, and the pen/air-cut workflow.
 4. Reconcile MKS ESP32 FOC V1.0, start at low voltage/current with one unloaded
    motor, and progress from PWM/sensing validation to qualified closed loops.
+5. Reconcile a physical current Pager PCB/RF option and licensed operator photo
+   before implementing its XL9555-mediated power/reset and shared-bus actors.
 
 ## MKS TinyBee model
 
@@ -236,12 +239,31 @@ energization remain unverified.
 ## T-LoRa Pager late target
 
 The current LILYGO T-LoRa Pager uses ESP32-S3 with 16 MiB QSPI flash and 8 MiB
-QSPI PSRAM and satisfies the dual-core policy. The official inventory includes a
-480×222 SPI display, SD, MIA-M10Q GNSS, SX1262-family LoRa options, NFC, motion
-sensor, RTC, charger/gauge, haptics, audio, keyboard, rotary input, and an I/O
-expander. M10 first adds a compile-only board/resource/photo stub from current
-LilyGoLib hardware material. Full driver work waits until TinyBee, T-Deck Pro,
-and the first FOC slice are stable. No Pager feature may delay the first workflow.
+QSPI PSRAM and satisfies the dual-core policy. The typed package is based on the
+LilyGoLib hardware page at pinned revision
+`38e6f8dee3ba78b340512af9a013365ef248a7d0`. It inventories the 480×222
+ST7796U SPI display, SD, MIA-M10Q GNSS, selectable LoRa module route, ST25R3916
+NFC, BHI260AP smart sensor, PCF85063A RTC, BQ25896 charger, BQ27220 gauge,
+DRV2605 haptics, ES8311/NS4150B audio path, TCA8418 keyboard, rotary input,
+AW9364 backlight, and XL9555 I/O expander. The shared I²C, SPI, two UARTs, audio
+I²S signals, interrupts, chip selects, and documented direct GPIOs are stable
+typed facts in capability V4.
+
+This is deliberately a `compiles`, `late-stub`, non-armable package. The image
+composes Wi-Fi and the common dual-core service/realtime framework but constructs
+none of those board-specific peripherals. The fitted SD route is exposed as an
+unavailable cache backend because SD power/detect and several peripheral enables
+pass through the still-unimplemented XL9555 transaction. Every fitted device is
+`SupportLevel::Described`; all direct GPIOs remain service-owned high-impedance;
+the graph resource palette, passive overview, and digital capture catalogs are
+empty. The RF population (SX1262 versus SX1280) is an identity gate rather than
+an inferred driver choice.
+
+No photograph was copied from upstream or synthesized. The package publishes no
+visual until a licensed operator image of the exact fixture is captured,
+digested, annotated with resource hotspots, and reviewed. The explicit
+`visual.top-hotspots` HIL requirement prevents promotion to `bench` without that
+preferred real-object view. No Pager feature may delay the first workflow.
 
 ## Existing Alumina board seeds
 

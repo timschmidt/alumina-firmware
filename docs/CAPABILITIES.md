@@ -119,8 +119,8 @@ record is authority only for the exact class/selector/access tuple and must be
 backed by a matching realtime opcode. Graph-subsection access value `1` means a read of the
 fresh debounced semantic state of a configured safety input. It grants no raw
 GPIO read and no output authority. TinyBee currently publishes class `1` for
-GPIO33, GPIO32, GPIO22, and GPIO35; T-Deck Pro and MKS ESP32 FOC publish no
-graph-addressable physical resources yet.
+GPIO33, GPIO32, GPIO22, and GPIO35; T-Deck Pro, MKS ESP32 FOC, and the current
+T-LoRa Pager stub publish no graph-addressable physical resources yet.
 
 The passive diagnostic-overview section begins with this fixed 48-byte header:
 
@@ -149,8 +149,8 @@ itself cannot—appear in the graph palette.
 TinyBee publishes `GPIO22`, `GPIO32`, `GPIO33`, and `GPIO35`, schema 1, compile
 support, a maximum selection of four, 176 request bytes, 432 event bytes, a
 100,000 µs nominal period, and a 500,000 µs freshness ceiling. T-Deck Pro and
-MKS ESP32 FOC publish the canonical absent form: zero schema, support, budgets,
-timing, count, and records.
+MKS ESP32 FOC and the current T-LoRa Pager stub publish the canonical absent
+form: zero schema, support, budgets, timing, count, and records.
 
 The digital edge-capture section begins with this fixed 64-byte header:
 
@@ -183,8 +183,8 @@ nonhazardous, high-impedance, realtime-owned GPIO or safety-input resource.
 Retained channel records must report the exact catalogued source; an external
 analyzer record is not device-produced authority.
 
-The physical TinyBee, its 4 MiB variant, T-Deck Pro, and MKS ESP32 FOC images
-publish the canonical absent form. The distinct host-only
+The physical TinyBee, its 4 MiB variant, T-Deck Pro, MKS ESP32 FOC, and current
+T-LoRa Pager images publish the canonical absent form. The distinct host-only
 `sim-mks-tinybee-v1` package publishes simulated GPIO22, GPIO32, GPIO33, and
 GPIO35; schema 1; compile support; immediate edge-timestamp capture; four
 channels; 64 transitions; 208 configure bytes; 2,048 retained-record bytes;
@@ -320,4 +320,5 @@ Current identities are:
 | MKS TinyBee V1.x, 4 MiB variant | 3,608 | `eb123ad7b5641e36d5fe7eb74c4ab5724d13f3dd15aa2c23b8a61160f69b9091` |
 | T-Deck Pro | 2,837 | `1de707aa21a0f8427e619c6501836cb8b281ff59e7294707c24b766be4e163d5` |
 | MKS ESP32 FOC V1.0 | 3,040 | `cbe9b541f90a0f9a63487f7fc43855b742bc4e7c1bc4776aca27aea3fbc60384` |
+| T-LoRa Pager (current compile-only stub) | 3,157 | `38b450496cb2a53d188eff6f06061b68dffc6a29573a093d0e012ac1e7672d1a` |
 | Host TinyBee simulator | 3,655 | `4ea9bbf0b44c8664808b4e13b20294a0006371cfe1d843478a197b37b6be6cc7` |
