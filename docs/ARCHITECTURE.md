@@ -694,6 +694,24 @@ retriggering a non-healing sample-gap fault on every pass. Poll latency, contact
 conditioning, ESP pull behavior, simultaneous edge latency, and the safe-image
 rewrite still require physical HIL.
 
+TinyBee also publishes a separate passive diagnostic view of that same
+core-1-owned monitor. At the nominal 100 ms management divider, core 1 attempts
+one nonblocking 112-byte `ALMRTI01` health-family frame containing the exact
+slot/resource mapping, `SafetyInputStatus`, and most recent physical sample
+cycle for each of the four slots. It never waits for the 32-entry lossy
+telemetry queue and never calls an output path. The authoritative safety
+snapshot, watchdog behavior, and fault reaction above are unchanged.
+
+Core 0 admits this evidence through an independent 500 ms observer. It checks
+the outer sequence, production cycle, configuration digest, stable mapping,
+monitor generation, and nonregressing per-slot sample cycles before translating
+subscriber-selected resources into canonical authenticated overviews. A bad or
+expired input frame invalidates only diagnostic evidence, just as a bad
+stack-watermark frame invalidates only passive health. It cannot establish
+safety, storage, graph, job, or output authority. T-Deck Pro and MKS ESP32 FOC
+compile the same generic service path with zero request/event/sample capacities
+and the provider constant false.
+
 ## Advanced stepper motion
 
 The motion stack is layered:

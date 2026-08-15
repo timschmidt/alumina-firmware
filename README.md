@@ -82,15 +82,15 @@ followed by the [canonical planner/lowering V3
 evidence](docs/evidence/M10-CANONICAL-PLANNER-EVIDENCE-V3.md) and [shared-MCU
 timer-retiming evidence](docs/evidence/M10-SHARED-MCU-TIMER-RETIMING.md).
 
-The first I4 diagnostic boundary is portable and remains physically offline.
-`alumina-diagnostics` defines allocation-free bounded canonical resource
-overviews and triggered digital edge captures with complete device/boot/
-capability/config/clock identity, provenance, quality, sample cycles, trigger,
-pre/post windows, buffer capacity, decimation, and loss flags. A deterministic
-TinyBee simulator emits four input values and a four-lane edge trace; the
-browser independently reconciles both records to the complete board capability
-and cross-links its ledger, selected resource, and exact-cycle cursor. It grants
-no connection, measurement, diagnostic lease, command, or output authority.
+The I4 diagnostic boundary is portable and evidence-only. `alumina-diagnostics`
+defines allocation-free bounded canonical resource overviews and triggered
+digital edge captures with complete device/boot/capability/config/clock
+identity, provenance, quality, sample cycles, trigger, pre/post windows, buffer
+capacity, decimation, and loss flags. A deterministic TinyBee simulator emits
+four input values and a four-lane edge trace; the browser independently
+reconciles both records to the complete board capability and cross-links its
+ledger, selected resource, and exact-cycle cursor. It grants no connection,
+measurement, diagnostic lease, command, or output authority.
 See the [diagnostic contract](docs/DIAGNOSTICS.md) and [offline diagnostic
 evidence](docs/evidence/M9-OFFLINE-DIAGNOSTIC-EXPLORER.md).
 
@@ -101,12 +101,19 @@ accounting, retry-safe authenticated event polling, retained capture, 168-byte
 native ranges, and retry reconciliation. The typed interface client passes both
 in-memory and real localhost HTTP/HMAC flows; its production worker now admits
 complete simulated events into a live status/logic view and reattaches across a
-same-boot worker replacement without consuming unseen evidence. TinyBee and
-T-Deck Pro compile the dispatcher but honestly return
-`Unsupported` until a physical provider is connected. See the [transport
+same-boot worker replacement without consuming unseen evidence. TinyBee now
+compile-composes a bounded provider over the four configured, core-1-owned
+safety-input slots. A separate 112-byte internal snapshot preserves exact slot
+mapping, debounced semantic state, freshness, and last physical sample cycles;
+core 0 alone turns fresh matching evidence into the existing authenticated
+`ALMOVW01`/`ALMTEV01` records. T-Deck Pro and MKS ESP32 FOC V1 retain zero
+diagnostic storage and return `Unsupported`. The TinyBee path is linked-image
+evidence, not a physical GPIO, Wi-Fi, or timing result. See the [transport
 contract](docs/DIAGNOSTIC-TRANSPORT.md) and [offline authenticated transport
 evidence](docs/evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), plus the
-[authenticated live-telemetry evidence](docs/evidence/M10-AUTHENTICATED-LIVE-TELEMETRY.md).
+[authenticated live-telemetry evidence](docs/evidence/M10-AUTHENTICATED-LIVE-TELEMETRY.md)
+and [TinyBee real-time input bridge
+evidence](docs/evidence/M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md).
 
 The first deployed graphical-control path is also portable end to end. The
 interface lowers one audited Boolean Service-to-Realtime graph into a fixed

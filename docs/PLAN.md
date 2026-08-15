@@ -1060,9 +1060,11 @@ revalidates the complete canonical bytes, and emits them once through strict
 schema v3. The rendering realm revalidates again before building the
 board-name-independent explorer and displaying exact connected-board facts.
 Current schema v5 preserves that capability transfer and adds authenticated
-simulator-backed live telemetry and retained capture documents. Physical Wi-Fi,
-physical resource acquisition, annotated photography, and every control/safety
-authority remain open. See
+simulator-backed live telemetry and retained capture documents. TinyBee now
+compile-composes a bounded semantic resource-overview provider over its four
+core-1 safety-input slots; physical GPIO/timing/Wi-Fi qualification, annotated
+photography, raw acquisition, and every additional control/safety authority
+remain open. See
 [`M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md`](evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
 
 Exit gate:
@@ -1163,6 +1165,16 @@ control/output opcodes, capability nodes beyond stable Boolean inputs,
 composite and identity-bearing parameter editors, label/domain editing,
 collaboration/conflict handling, and higher-rate triggered acquisition remain
 open.
+The TinyBee image now also reports those same configuration-stable semantic
+inputs through a passive core-1-to-core-0 `ALMRTI01` bridge. Exact resource
+mapping, monitor masks/generation, and latest physical sample cycles are
+freshness-checked before core 0 creates the existing authenticated overview;
+unavailable evidence never becomes clear. Both TinyBee flash variants reserve
+exactly four samples and one 432-byte latest-only event. T-Deck Pro and MKS
+ESP32 FOC keep zero diagnostic storage and unsupported providers. This is
+linked-image evidence only; physical values, cadence, loaded stack use, and
+SLogic reconciliation remain open. See
+[`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](evidence/M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md).
 Authenticated latest-only telemetry delivery is now connected through a fixed
 retry-safe HTTP poll: it acknowledges only client-admitted evidence, supports
 zero-claim same-subscription worker reattachment, and admits exact events into
@@ -1176,9 +1188,9 @@ fixed-memory core-0 owner, retry-safe typed browser state, and a deterministic
 four-input TinyBee fixture. In-memory and localhost HTTP/HMAC tests cover exact
 identity, loss, mutation retry, and complete range recovery. The capability-
 reconciled interface plot retains its exact cycle cursor, trigger, source,
-quality, and loss facts. This is simulation evidence only; hardware provider
-policies remain unsupported, and physical acquisition/SLogic qualification
-remain open.
+quality, and loss facts. Overview delivery now has the compile-composed TinyBee
+semantic-input provider described above; digital capture remains simulator-only
+and every physical acquisition/SLogic qualification remains open.
 The production browser worker now also downloads the complete authenticated
 capability document in bounded ranges, survives one deliberately lost range,
 and admits the independently revalidated board-name-independent explorer into

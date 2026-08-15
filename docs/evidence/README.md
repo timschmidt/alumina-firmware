@@ -393,3 +393,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — canonical retry-safe authenticated event polling, client-evidence-only
   acknowledgement, schema-v5 capability-bound live input status and sampled
   logic lanes, plus fresh and same-boot replacement-worker Chromium evidence.
+- [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
+  — bounded canonical core-1 input snapshots, freshness- and mapping-checked
+  core-0 translation into existing authenticated overview events, exact
+  TinyBee-only memory budgets, and compile-only multi-target release evidence.

@@ -347,12 +347,15 @@ inputs, explicitly requests diagnostic arm, downloads exact retained ranges,
 and revalidates the complete record in the rendering realm. The live panel
 cross-links the resulting four-lane deterministic TinyBee trace to the same
 resource aliases and integer cycle cursor. The standalone host simulator opts
-into a dynamic immediate-capture provider; hardware providers still return
-`Unsupported`. This remains explicit simulator evidence with no physical
-acquisition, lease, machine arm, command, or output authority. Live WebSocket
-delivery, analog waveforms, physical analyzer comparison, and overload HIL
-remain open. See
-[`capability-bound waveform worker/UI`](evidence/M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md).
+into a dynamic immediate-capture provider. TinyBee now compile-composes a
+bounded semantic overview provider over its four configured core-1 input slots;
+its capture provider remains `Unsupported`, and T-Deck Pro/MKS ESP32 FOC retain
+no provider storage. This remains simulator evidence for capture and
+compile/link evidence for target overview, with no physical acquisition,
+lease, machine arm, command, or output authority. Live WebSocket delivery,
+analog waveforms, physical analyzer comparison, and overload HIL remain open. See
+[`capability-bound waveform worker/UI`](evidence/M10-CAPABILITY-BOUND-WAVEFORM-WORKER-UI.md)
+and [`TinyBee real-time input telemetry`](evidence/M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md).
 
 Exit:
 

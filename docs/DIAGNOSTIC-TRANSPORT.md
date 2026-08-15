@@ -102,16 +102,30 @@ policy admits at most 1,076 request-body bytes, 229 telemetry selectors, 221
 waveform selectors, 65,536 requested transitions, a 4 MiB abstract retained
 record ceiling, and 168 bytes per range. A concrete service may be smaller.
 
-The current TinyBee and T-Deck Pro firmware compositions deliberately use zero
-request, event, configuration, and record storage with provider policy `NONE`.
-They retain the authenticated dispatcher and context reconciliation, but
-subscribe and configure return `Unsupported` rather than reserving scarce
-internal SRAM for evidence that cannot yet arrive. Installing a physical board
-resource sampler or capture owner must simultaneously select explicit nonzero
-composition budgets and qualify the linked release image. The deterministic
-host fixture uses fixed 176-byte subscription, 432-byte event, 208-byte
-configuration, and 2,048-byte record budgets with `SIMULATED` providers and
-labels every document/sample/source accordingly.
+Current fixed composition budgets are:
+
+| Composition | Request | Event | Waveform configure | Waveform record | Providers |
+| --- | ---: | ---: | ---: | ---: | --- |
+| TinyBee V1.0, 8 MiB primary | 176 | 432 | 0 | 0 | four-input semantic overview |
+| TinyBee V1.0, 4 MiB variant | 176 | 432 | 0 | 0 | four-input semantic overview |
+| T-Deck Pro | 0 | 0 | 0 | 0 | none |
+| MKS ESP32 FOC V1.0 | 0 | 0 | 0 | 0 | none |
+| deterministic host fixture | 176 | 432 | 208 | 2,048 | simulated overview and capture |
+
+For TinyBee, the 176-byte request is exactly the 160-byte subscription header
+plus four selectors. The 432-byte retained event is exactly the 112-byte event
+envelope plus a 320-byte four-sample overview. The provider consumes a distinct
+112-byte internal `ALMRTI01` core-1 snapshot inside the existing 128-byte lossy
+inter-core payload; it does not reuse or weaken the canonical safety snapshot.
+Only configured stable-input semantics are translated. Waveform configure and
+record storage remain zero, so every capture operation returns `Unsupported`.
+
+T-Deck Pro and MKS ESP32 FOC retain the authenticated dispatcher and context
+reconciliation, but subscribe and configure return `Unsupported` rather than
+reserving scarce internal SRAM for evidence that cannot arrive. Adding another
+board provider must select explicit board-local budgets and qualify the linked
+release image. The host fixture labels every document/sample/source as
+simulated.
 
 ## Verification boundary
 
@@ -122,10 +136,14 @@ latest-only loss, retained-event replay, zero-claim worker reattachment,
 live-chunk loss, range retry, full-record validation, and a real localhost
 HTTP/HMAC/native-frame exchange. The production browser worker and rendering
 realm also pass fresh and same-boot replacement Chromium telemetry runs over
-loopback. TinyBee and T-Deck Pro target checks prove composition only.
+loopback. The TinyBee resource-overview provider additionally passes exact
+core-1 snapshot codec/observer/event tests and linked checks for both flash
+variants. T-Deck Pro and MKS ESP32 FOC still compile the zero-storage policy.
+All target results prove composition only.
 
 No physical Wi-Fi, AP association, serial link, GPIO, SLogic capture, or board
-reset is part of this checkpoint. Physical acquisition remains an explicit HIL
-gate. A future authenticated WebSocket may carry the same canonical event
+reset is part of this checkpoint. No TinyBee input value or timing result is
+claimed until physical HIL independently reconciles the linked image and input
+routes. A future authenticated WebSocket may carry the same canonical event
 contract at higher rates; the current authenticated polling path is complete
 without it.

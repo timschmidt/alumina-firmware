@@ -80,6 +80,45 @@ The standalone `alumina-sim-http` binary enables it for production browser
 worker integration. This is a host simulation provider, not an ESP peripheral
 backend or a physical waveform claim.
 
+## TinyBee real-time input bridge (`ALMRTI01`)
+
+TinyBee's 8 MiB primary and 4 MiB variant now compile the first target
+resource-overview provider. Core 1 already owns the configuration-derived GPIO
+safety-input bank. It passively publishes a separate canonical `ALMRTI01`
+snapshot at the nominal 100 ms management divider without awaiting queue
+capacity or changing the existing authority-bearing safety snapshot.
+
+`ALMRTI01` is an internal core-to-core document, not a network protocol. Its
+48-byte header carries the exact `SafetyInputStatus`; each 16-byte slot record
+carries the configuration-stable `ResourceId` and latest physical acquisition
+cycle, including samples that have not yet satisfied debounce. The TinyBee
+composition is therefore 112 bytes for at most four records and fits the fixed
+128-byte lossy telemetry payload. The outer inter-core frame binds a nonzero
+serial sequence, production cycle, and active configuration digest.
+
+Core 0 independently rejects malformed or over-capacity bytes, future or
+expired production, old/ambiguous sequence progress, resource remapping under
+one configuration digest, backwards sample time, and semantic changes without
+a newer monitor generation. Evidence older than 500 ms is unavailable. A
+rejection revokes only this passive diagnostic observation: it cannot alter
+safety state, output state, storage authority, or motion.
+
+For an admitted authenticated subscription, a known input becomes the
+debounced semantic active state with `Measured` provenance and `DEBOUNCED`
+quality annotation. Fresh values are `Valid`; stale known values remain
+`Stale` with their exact last sample cycle. A requested resource without fresh,
+matching configured evidence is represented explicitly as `Unavailable`; it is
+never guessed clear. Core 0 encodes the result in the existing `ALMOVW01` and
+`ALMTEV01` formats, so the current capability-bound browser client needs no
+compatibility schema.
+
+This bridge exposes neither raw electrical GPIO levels nor an independent
+diagnostic lease. It does not add interrupts, RMT/PCNT/DMA capture, analog
+sampling, waveform records, outputs, arming, or reset authority. It has passed
+host and linked-target verification only; physical TinyBee GPIO levels,
+cadence, overload behavior, Wi-Fi delivery, and SLogic comparison remain HIL
+gates.
+
 ## Authenticated transport checkpoint
 
 Canonical `TelemetrySubscribe`/`Status`/`Event` and
@@ -91,8 +130,10 @@ side-effect-free range recovery. The typed interface client reconciles ambiguous
 mutations and validates the complete capture before exposure; a localhost
 HTTP/HMAC/native-frame test exercises the same dispatcher.
 
-See [`DIAGNOSTIC-TRANSPORT.md`](DIAGNOSTIC-TRANSPORT.md). Hardware compositions
-currently report both evidence providers as unsupported. The production browser
-worker can now complete one-shot capture through the opt-in host simulator;
-physical TinyBee sampling/capture, WebSocket event delivery, Wi-Fi/AP transport,
-and SLogic comparison remain HIL gates rather than simulator claims.
+See [`DIAGNOSTIC-TRANSPORT.md`](DIAGNOSTIC-TRANSPORT.md). TinyBee now reports a
+resource-overview provider with fixed four-record storage; its digital-capture
+provider remains unsupported. T-Deck Pro and MKS ESP32 FOC V1 report both
+providers unsupported. The production browser worker can complete one-shot
+capture through the opt-in host simulator; physical TinyBee verification,
+WebSocket event delivery, Wi-Fi/AP transport, and SLogic comparison remain HIL
+gates rather than compile or simulator claims.
