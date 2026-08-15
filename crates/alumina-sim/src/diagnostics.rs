@@ -7,7 +7,7 @@
 use alumina_board::ResourceId;
 use alumina_capability::{CapabilityIdentity, calculate_identity};
 use alumina_clock::{BOOT_ID_BYTES, BootId};
-use alumina_diagnostics::transport::WaveformConfigureView;
+use alumina_diagnostics::transport::{TelemetrySubscribeView, WaveformConfigureView};
 use alumina_diagnostics::{
     CaptureId, CaptureQualityFlags, DiagnosticContext, DiagnosticError, DiagnosticLimits,
     DigitalAcquisitionSource, DigitalCaptureChannel, DigitalCaptureDocument, DigitalCaptureFlags,
@@ -278,6 +278,53 @@ pub fn simulated_immediate_waveform_capture(
     Ok(encoded)
 }
 
+/// Builds one deterministic simulated overview for an admitted subscription.
+///
+/// The provider mirrors the exact requested context, resource order, and event
+/// sequence. Values vary deterministically with sequence and channel so a live
+/// client can distinguish new evidence without attributing it to physical I/O.
+pub fn simulated_resource_overview(
+    subscription: TelemetrySubscribeView<'_>,
+    sequence: u64,
+    snapshot_cycle: DeviceCycle,
+) -> Result<Vec<u8>, DiagnosticFixtureError> {
+    if sequence == 0 {
+        return Err(DiagnosticFixtureError::Diagnostic(
+            DiagnosticError::Identity,
+        ));
+    }
+    let sample_count = subscription.resource_count();
+    let mut samples = Vec::new();
+    samples
+        .try_reserve_exact(sample_count)
+        .map_err(|_| DiagnosticFixtureError::Allocation)?;
+    for (index, resource) in subscription.resources().enumerate() {
+        let age =
+            u64::try_from(sample_count - index).map_err(|_| DiagnosticFixtureError::Allocation)?;
+        let channel = u64::try_from(index).map_err(|_| DiagnosticFixtureError::Allocation)?;
+        samples.push(ResourceOverviewSample {
+            resource,
+            provenance: SampleProvenance::Simulated,
+            quality: SampleQuality::Valid,
+            quality_flags: SampleQualityFlags(SampleQualityFlags::DEBOUNCED),
+            captured_cycle: DeviceCycle(snapshot_cycle.0.saturating_sub(age)),
+            value: ResourceValue::Boolean((sequence ^ channel) & 1 != 0),
+        });
+    }
+    let document = ResourceOverviewDocument {
+        context: subscription.context(),
+        flags: OverviewFlags(OverviewFlags::SIMULATED),
+        snapshot_cycle,
+        sequence,
+        samples: &samples,
+    };
+    let encoded_len = resource_overview_encoded_len(samples.len())?;
+    let mut encoded = reserved_zero_vec(encoded_len)?;
+    let used = encode_resource_overview(&document, &mut encoded)?;
+    encoded.truncate(used);
+    Ok(encoded)
+}
+
 fn reserved_zero_vec(length: usize) -> Result<Vec<u8>, DiagnosticFixtureError> {
     let mut bytes = Vec::new();
     bytes
@@ -368,14 +415,15 @@ const fn transition(
 mod tests {
     use alumina_diagnostics::transport::{
         DiagnosticTransportLimits, SubscriptionId, TelemetryEventView, TelemetryPhase,
-        TelemetrySessionRequest, TelemetrySubscribeFlags, TelemetrySubscribeRequest,
-        WaveformConfigureFlags, WaveformConfigureRequest, WaveformPhase, WaveformReadRequest,
-        WaveformSessionRequest, decode_telemetry_event, decode_telemetry_subscribe,
-        decode_waveform_chunk, decode_waveform_configure, encode_telemetry_subscribe,
-        encode_waveform_configure,
+        TelemetryPollRequest, TelemetrySessionRequest, TelemetrySubscribeFlags,
+        TelemetrySubscribeRequest, WaveformConfigureFlags, WaveformConfigureRequest, WaveformPhase,
+        WaveformReadRequest, WaveformSessionRequest, decode_telemetry_event,
+        decode_telemetry_subscribe, decode_waveform_chunk, decode_waveform_configure,
+        encode_telemetry_subscribe, encode_waveform_configure,
     };
     use alumina_service::diagnostics::{
         DiagnosticProviderPolicy, DiagnosticServiceError, DiagnosticServiceState,
+        MAX_NATIVE_DIAGNOSTIC_RESPONSE_BODY_BYTES,
     };
 
     use super::*;
@@ -584,6 +632,108 @@ mod tests {
         );
         assert_eq!(
             service.subscribe(&other),
+            Err(DiagnosticServiceError::Conflict)
+        );
+    }
+
+    #[test]
+    fn telemetry_poll_replays_then_idempotently_acknowledges_only_client_held_evidence() {
+        let fixture = tinybee_diagnostic_fixture().unwrap();
+        let context = fixture.overview().context();
+        let request_bytes = encode_subscription(context, 17);
+        let subscription =
+            decode_telemetry_subscribe(&request_bytes, DiagnosticTransportLimits::native_control())
+                .unwrap();
+        let reference = TelemetrySessionRequest {
+            subscription_id: subscription.subscription_id(),
+            subscription_digest: subscription.digest(),
+        };
+        let mut service = TestService::new(
+            context,
+            DiagnosticProviderPolicy::SIMULATED,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
+        service.subscribe(&request_bytes).unwrap();
+
+        let (provider, sequence) = service.telemetry_provider_request().unwrap();
+        let first =
+            simulated_resource_overview(provider, sequence, DeviceCycle(2_000_000)).unwrap();
+        service.publish_overview(&first).unwrap();
+        let mut response = [0_u8; MAX_NATIVE_DIAGNOSTIC_RESPONSE_BODY_BYTES];
+        let initial = TelemetryPollRequest {
+            reference,
+            accepted_event_sequence: 0,
+        };
+        let used = service
+            .poll_telemetry_event(initial, &mut response)
+            .unwrap();
+        assert_eq!(used, 432);
+        let first_event = response[..used].to_vec();
+        assert_eq!(
+            service
+                .poll_telemetry_event(initial, &mut response)
+                .unwrap(),
+            used
+        );
+        assert_eq!(&response[..used], first_event);
+
+        let accepted_first = TelemetryPollRequest {
+            reference,
+            accepted_event_sequence: 1,
+        };
+        assert_eq!(
+            service
+                .poll_telemetry_event(accepted_first, &mut response)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            service
+                .poll_telemetry_event(initial, &mut response)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            service
+                .poll_telemetry_event(accepted_first, &mut response)
+                .unwrap(),
+            0
+        );
+
+        let (provider, sequence) = service.telemetry_provider_request().unwrap();
+        let second =
+            simulated_resource_overview(provider, sequence, DeviceCycle(2_010_000)).unwrap();
+        service.publish_overview(&second).unwrap();
+        let fresh_client_len = service
+            .poll_telemetry_event(initial, &mut response)
+            .unwrap();
+        let fresh_client_event = decode_telemetry_event(
+            &response[..fresh_client_len],
+            subscription,
+            DiagnosticLimits::interactive(),
+        )
+        .unwrap();
+        assert_eq!(fresh_client_event.event_sequence(), 2);
+        let used = service
+            .poll_telemetry_event(accepted_first, &mut response)
+            .unwrap();
+        let second_event = decode_telemetry_event(
+            &response[..used],
+            subscription,
+            DiagnosticLimits::interactive(),
+        )
+        .unwrap();
+        assert_eq!(second_event.event_sequence(), 2);
+        assert_eq!(second_event.dropped_events(), 0);
+        assert_eq!(
+            service.poll_telemetry_event(
+                TelemetryPollRequest {
+                    reference,
+                    accepted_event_sequence: 3,
+                },
+                &mut response,
+            ),
             Err(DiagnosticServiceError::Conflict)
         );
     }

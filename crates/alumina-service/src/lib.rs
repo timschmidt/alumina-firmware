@@ -39,7 +39,10 @@ pub const CACHE_LIMITS: CacheLimits = CacheLimits {
 };
 
 /// Largest service response, including a native frame or bounded JSON status.
-pub const MAX_SERVICE_RESPONSE_BYTES: usize = 384;
+///
+/// The 512-byte bound admits a four-resource 432-byte telemetry event inside
+/// the 72-byte native response prefix while retaining eight bytes of headroom.
+pub const MAX_SERVICE_RESPONSE_BYTES: usize = 512;
 /// Exact native V1 storage-status body length.
 pub const STORAGE_BACKEND_STATUS_WIRE_BYTES: usize = 112;
 

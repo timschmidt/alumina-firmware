@@ -22,7 +22,7 @@ use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceSt
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
 
-use crate::diagnostics::simulated_immediate_waveform_capture;
+use crate::diagnostics::{simulated_immediate_waveform_capture, simulated_resource_overview};
 
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
 const NATIVE_FRAME_MEDIA_TYPE: &str = "application/vnd.alumina.frame";
@@ -158,6 +158,7 @@ pub struct ClockHttpFixture {
     runtime_health_epoch: Option<DeviceCycle>,
     runtime_health_samples: u32,
     diagnostics: FixtureDiagnosticService,
+    simulated_telemetry_provider: bool,
     simulated_waveform_provider: bool,
 }
 
@@ -197,6 +198,7 @@ impl ClockHttpFixture {
                 DiagnosticTransportLimits::native_control(),
                 DiagnosticLimits::interactive(),
             ),
+            simulated_telemetry_provider: false,
             simulated_waveform_provider: false,
         })
     }
@@ -223,6 +225,11 @@ impl ClockHttpFixture {
     /// authenticated acquisition and range-download lifecycle.
     pub const fn enable_simulated_waveform_provider(&mut self) {
         self.simulated_waveform_provider = true;
+    }
+
+    /// Enables deterministic overview production for admitted telemetry polls.
+    pub const fn enable_simulated_telemetry_provider(&mut self) {
+        self.simulated_telemetry_provider = true;
     }
 
     /// Complete context accepted by the authenticated diagnostic owner.
@@ -409,6 +416,16 @@ impl ClockHttpFixture {
             FrameKind::Telemetry | FrameKind::Waveform
         ) {
             let operation = native.message.operation;
+            if self.simulated_telemetry_provider && operation == Operation::TelemetryPoll {
+                let overview = self.diagnostics.telemetry_provider_request().and_then(
+                    |(subscription, sequence)| {
+                        simulated_resource_overview(subscription, sequence, transmit_cycle).ok()
+                    },
+                );
+                if let Some(overview) = overview {
+                    let _ = self.diagnostics.publish_overview(&overview);
+                }
+            }
             let Ok(request) = ServiceRequest::native(bytes) else {
                 return ServiceResponse::invalid_native();
             };

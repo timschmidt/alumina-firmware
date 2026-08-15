@@ -2,10 +2,11 @@
 
 use alumina_diagnostics::transport::{
     DiagnosticTransportError, DiagnosticTransportLimits, TelemetryEvent, TelemetryPhase,
-    TelemetrySessionRequest, TelemetrySubscribeView, TelemetrySubscriptionStatus, WaveformChunk,
-    WaveformConfigureView, WaveformPhase, WaveformReadRequest, WaveformSessionRequest,
-    WaveformStatus, decode_telemetry_subscribe, decode_waveform_configure, encode_telemetry_event,
-    encode_waveform_chunk, validate_retained_capture,
+    TelemetryPollRequest, TelemetrySessionRequest, TelemetrySubscribeView,
+    TelemetrySubscriptionStatus, WaveformChunk, WaveformConfigureView, WaveformPhase,
+    WaveformReadRequest, WaveformSessionRequest, WaveformStatus, decode_telemetry_subscribe,
+    decode_waveform_configure, encode_telemetry_event, encode_waveform_chunk,
+    validate_retained_capture,
 };
 use alumina_diagnostics::{
     CaptureQualityFlags, DiagnosticContext, DiagnosticLimits, decode_digital_capture,
@@ -18,8 +19,13 @@ use crate::{NativeRequest, ServiceRequest, ServiceRequestKind, ServiceResponse};
 /// Largest native operation body admitted by the current authenticated HTTP
 /// request envelope (`1148 - 56-byte frame - 16-byte message`).
 pub const MAX_NATIVE_DIAGNOSTIC_REQUEST_BYTES: usize = 1_076;
-/// Largest waveform chunk envelope fitting the current 312-byte response body.
+/// Deliberately retained waveform chunk envelope bound (144-byte header plus
+/// at most 168 range bytes), independent of the larger telemetry response slot.
 pub const MAX_NATIVE_WAVEFORM_CHUNK_ENVELOPE_BYTES: usize = 312;
+/// Largest operation body fitting the enlarged bounded native service response.
+pub const MAX_NATIVE_DIAGNOSTIC_RESPONSE_BODY_BYTES: usize = crate::MAX_SERVICE_RESPONSE_BYTES
+    - alumina_protocol::FrameHeader::WIRE_LEN
+    - alumina_protocol::MessageHeader::WIRE_LEN;
 
 /// Service-side diagnostic operation rejection with stable protocol mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +101,7 @@ struct TelemetrySession<const REQUEST_BYTES: usize, const EVENT_BYTES: usize> {
     request: [u8; REQUEST_BYTES],
     next_event_sequence: u64,
     published_events: u64,
+    last_acknowledged_sequence: u64,
     dropped_events: u64,
     last_event_cycle: DeviceCycle,
     pending_len: usize,
@@ -112,6 +119,7 @@ impl<const REQUEST_BYTES: usize, const EVENT_BYTES: usize>
             request: [0; REQUEST_BYTES],
             next_event_sequence: 1,
             published_events: 0,
+            last_acknowledged_sequence: 0,
             dropped_events: 0,
             last_event_cycle: DeviceCycle(0),
             pending_len: 0,
@@ -361,7 +369,7 @@ impl<
         if native.frame.config_digest != self.context.config_digest {
             return native_response(native, now, StatusCode::Conflict, &[]);
         }
-        let mut response_body = [0_u8; MAX_NATIVE_WAVEFORM_CHUNK_ENVELOPE_BYTES];
+        let mut response_body = [0_u8; MAX_NATIVE_DIAGNOSTIC_RESPONSE_BODY_BYTES];
         let result = match native.message.operation {
             Operation::TelemetrySubscribe => self
                 .subscribe(native.body)
@@ -374,6 +382,9 @@ impl<
                 .map_err(DiagnosticServiceError::Invalid)
                 .and_then(|reference| self.telemetry_status(reference))
                 .and_then(|status| encode_response(status.encode(), &mut response_body)),
+            Operation::TelemetryPoll => TelemetryPollRequest::decode(native.body)
+                .map_err(DiagnosticServiceError::Invalid)
+                .and_then(|poll| self.poll_telemetry_event(poll, &mut response_body)),
             Operation::WaveformConfigure => self
                 .configure_waveform(native.body)
                 .and_then(|status| encode_response(status.encode(), &mut response_body)),
@@ -444,6 +455,7 @@ impl<
         self.telemetry.phase = TelemetryPhase::Active;
         self.telemetry.next_event_sequence = 1;
         self.telemetry.published_events = 0;
+        self.telemetry.last_acknowledged_sequence = 0;
         self.telemetry.dropped_events = 0;
         self.telemetry.last_event_cycle = DeviceCycle(0);
         self.telemetry.pending_len = 0;
@@ -551,6 +563,56 @@ impl<
             .then_some(&self.telemetry.pending_event[..self.telemetry.pending_len])
     }
 
+    /// Borrows the admitted subscription and next sequence only while a
+    /// provider may safely create a new latest-only sample.
+    pub fn telemetry_provider_request(&self) -> Option<(TelemetrySubscribeView<'_>, u64)> {
+        if self.telemetry.phase != TelemetryPhase::Active || self.telemetry.pending_len != 0 {
+            return None;
+        }
+        self.telemetry
+            .view(self.transport_limits)
+            .ok()
+            .map(|subscription| (subscription, self.telemetry.next_event_sequence))
+    }
+
+    /// Acknowledges only caller-admitted evidence and returns the current
+    /// retained event without consuming it. Repeating a poll after a lost
+    /// response therefore returns the same event or a strictly newer one.
+    pub fn poll_telemetry_event(
+        &mut self,
+        request: TelemetryPollRequest,
+        output: &mut [u8],
+    ) -> Result<usize, DiagnosticServiceError> {
+        self.telemetry
+            .matches(request.reference, self.transport_limits)?;
+        if self.telemetry.phase != TelemetryPhase::Active {
+            return Err(DiagnosticServiceError::ForbiddenState);
+        }
+        let accepted = request.accepted_event_sequence;
+        let pending_sequence = if self.telemetry.pending_len == 0 {
+            None
+        } else {
+            self.telemetry.next_event_sequence.checked_sub(1)
+        };
+        if accepted == 0 {
+            // Zero makes no acknowledgement claim. This lets a freshly
+            // reconstructed client reattach to the same exact subscription
+            // after a page/worker loss without consuming unseen evidence.
+        } else if pending_sequence == Some(accepted) {
+            self.acknowledge_telemetry_event(request.reference, accepted)?;
+        } else if accepted != self.telemetry.last_acknowledged_sequence {
+            return Err(DiagnosticServiceError::Conflict);
+        }
+        let Some(event) = self.pending_telemetry_event() else {
+            return Ok(0);
+        };
+        if event.len() > output.len() {
+            return Err(DiagnosticServiceError::Capacity);
+        }
+        output[..event.len()].copy_from_slice(event);
+        Ok(event.len())
+    }
+
     /// Acknowledges exactly the currently pending event after successful send.
     pub fn acknowledge_telemetry_event(
         &mut self,
@@ -558,6 +620,9 @@ impl<
         event_sequence: u64,
     ) -> Result<TelemetrySubscriptionStatus, DiagnosticServiceError> {
         self.telemetry.matches(reference, self.transport_limits)?;
+        if event_sequence == self.telemetry.last_acknowledged_sequence {
+            return self.telemetry.status(self.transport_limits);
+        }
         if self.telemetry.pending_len == 0
             || event_sequence != self.telemetry.next_event_sequence - 1
         {
@@ -568,6 +633,7 @@ impl<
             .published_events
             .checked_add(1)
             .ok_or(DiagnosticServiceError::Capacity)?;
+        self.telemetry.last_acknowledged_sequence = event_sequence;
         self.telemetry.pending_len = 0;
         self.telemetry.status(self.transport_limits)
     }
@@ -880,5 +946,5 @@ fn native_response(
     body: &[u8],
 ) -> ServiceResponse {
     ServiceResponse::native(request, now, status, body)
-        .expect("diagnostic response respects the fixed 312-byte operation-body bound")
+        .expect("diagnostic response respects the fixed operation-body bound")
 }

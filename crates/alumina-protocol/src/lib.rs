@@ -373,6 +373,8 @@ pub enum Operation {
     TelemetryEvent = 0x0703,
     /// Fetch the exact state of one boot-bound telemetry subscription.
     TelemetryStatus = 0x0704,
+    /// Acknowledge the newest accepted event and fetch the retained latest event.
+    TelemetryPoll = 0x0705,
     /// Fetch current AP/STA and credential-transaction state.
     NetworkStatus = 0x0801,
     /// Scan visible infrastructure WLANs.
@@ -480,7 +482,8 @@ impl Operation {
             Self::TelemetrySubscribe
             | Self::TelemetryUnsubscribe
             | Self::TelemetryEvent
-            | Self::TelemetryStatus => FrameKind::Telemetry,
+            | Self::TelemetryStatus
+            | Self::TelemetryPoll => FrameKind::Telemetry,
             Self::NetworkStatus
             | Self::NetworkScan
             | Self::NetworkJoin
@@ -547,6 +550,7 @@ impl Operation {
             0x0702 => Some(Self::TelemetryUnsubscribe),
             0x0703 => Some(Self::TelemetryEvent),
             0x0704 => Some(Self::TelemetryStatus),
+            0x0705 => Some(Self::TelemetryPoll),
             0x0801 => Some(Self::NetworkStatus),
             0x0802 => Some(Self::NetworkScan),
             0x0803 => Some(Self::NetworkJoin),
@@ -1040,6 +1044,7 @@ mod tests {
             Some(Operation::StorageProvision)
         );
         assert_eq!(Operation::from_wire(0x0509), Some(Operation::JobConfirm));
+        assert_eq!(Operation::from_wire(0x0705), Some(Operation::TelemetryPoll));
         assert_eq!(
             Operation::from_wire(0x090a),
             Some(Operation::StorageInspect)

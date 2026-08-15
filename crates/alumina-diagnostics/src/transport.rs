@@ -27,6 +27,8 @@ pub const TELEMETRY_SESSION_MAGIC: [u8; 8] = *b"ALMTLR01";
 pub const TELEMETRY_STATUS_MAGIC: [u8; 8] = *b"ALMTST01";
 /// Exact telemetry event-envelope magic.
 pub const TELEMETRY_EVENT_MAGIC: [u8; 8] = *b"ALMTEV01";
+/// Exact retry-safe telemetry event-poll magic.
+pub const TELEMETRY_POLL_MAGIC: [u8; 8] = *b"ALMTPR01";
 /// Exact waveform configure-request magic.
 pub const WAVEFORM_CONFIGURE_MAGIC: [u8; 8] = *b"ALMWCF01";
 /// Exact waveform session-reference magic.
@@ -48,6 +50,8 @@ pub const TELEMETRY_SESSION_WIRE_BYTES: usize = 56;
 pub const TELEMETRY_STATUS_WIRE_BYTES: usize = 120;
 /// Bytes before an embedded complete resource overview.
 pub const TELEMETRY_EVENT_HEADER_BYTES: usize = 112;
+/// Exact telemetry event-poll request length.
+pub const TELEMETRY_POLL_WIRE_BYTES: usize = 72;
 /// Bytes before waveform channel selectors.
 pub const WAVEFORM_CONFIGURE_HEADER_BYTES: usize = 192;
 /// Exact waveform session-reference length.
@@ -488,6 +492,57 @@ impl TelemetrySessionRequest {
             subscription_digest: read_digest(encoded, 24),
         };
         validate_nonzero_digest(request.subscription_digest)?;
+        if request.encode()? != encoded {
+            return Err(DiagnosticTransportError::Reserved);
+        }
+        Ok(request)
+    }
+}
+
+/// Retry-safe acknowledgement and fetch request for one latest-only event slot.
+///
+/// `accepted_event_sequence` is zero before the caller has admitted any event.
+/// Otherwise it names the newest complete event the caller independently
+/// validated. Repeating the same request after an ambiguous response is
+/// idempotent: acknowledgement never advances beyond caller-held evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TelemetryPollRequest {
+    /// Exact subscription identity and request digest.
+    pub reference: TelemetrySessionRequest,
+    /// Newest event sequence already admitted by the caller, or zero.
+    pub accepted_event_sequence: u64,
+}
+
+impl TelemetryPollRequest {
+    /// Encodes the fixed canonical poll request.
+    pub fn encode(self) -> Result<[u8; TELEMETRY_POLL_WIRE_BYTES], DiagnosticTransportError> {
+        validate_nonzero_digest(self.reference.subscription_digest)?;
+        let mut encoded = [0_u8; TELEMETRY_POLL_WIRE_BYTES];
+        encoded[0..8].copy_from_slice(&TELEMETRY_POLL_MAGIC);
+        encoded[8..10].copy_from_slice(&DIAGNOSTIC_TRANSPORT_VERSION.to_le_bytes());
+        encoded[12..16].copy_from_slice(&(TELEMETRY_POLL_WIRE_BYTES as u32).to_le_bytes());
+        encoded[16..24].copy_from_slice(&self.reference.subscription_id.get().to_le_bytes());
+        encoded[24..56].copy_from_slice(&self.reference.subscription_digest.0);
+        encoded[56..64].copy_from_slice(&self.accepted_event_sequence.to_le_bytes());
+        Ok(encoded)
+    }
+
+    /// Decodes one fixed canonical poll request and rejects reserved bytes.
+    pub fn decode(encoded: &[u8]) -> Result<Self, DiagnosticTransportError> {
+        validate_prefix(encoded, TELEMETRY_POLL_MAGIC, TELEMETRY_POLL_WIRE_BYTES)?;
+        if encoded[10..12].iter().any(|byte| *byte != 0)
+            || encoded[64..72].iter().any(|byte| *byte != 0)
+        {
+            return Err(DiagnosticTransportError::Reserved);
+        }
+        let request = Self {
+            reference: TelemetrySessionRequest {
+                subscription_id: SubscriptionId::new(read_u64(encoded, 16))?,
+                subscription_digest: read_digest(encoded, 24),
+            },
+            accepted_event_sequence: read_u64(encoded, 56),
+        };
+        validate_nonzero_digest(request.reference.subscription_digest)?;
         if request.encode()? != encoded {
             return Err(DiagnosticTransportError::Reserved);
         }
@@ -1926,6 +1981,18 @@ mod tests {
         assert_eq!(
             TelemetrySessionRequest::decode(&reference.encode().unwrap()),
             Ok(reference)
+        );
+        let poll = TelemetryPollRequest {
+            reference,
+            accepted_event_sequence: 9,
+        };
+        let encoded_poll = poll.encode().unwrap();
+        assert_eq!(TelemetryPollRequest::decode(&encoded_poll), Ok(poll));
+        let mut noncanonical_poll = encoded_poll;
+        noncanonical_poll[71] = 1;
+        assert_eq!(
+            TelemetryPollRequest::decode(&noncanonical_poll),
+            Err(DiagnosticTransportError::Reserved)
         );
     }
 

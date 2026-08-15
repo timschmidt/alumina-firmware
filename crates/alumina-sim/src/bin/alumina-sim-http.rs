@@ -204,6 +204,7 @@ fn main() -> Result<(), ServerError> {
         ClockFixturePolicy::HEALTHY_1MHZ,
     )
     .map_err(|error| ServerError::Fixture(error.to_string()))?;
+    fixture.enable_simulated_telemetry_provider();
     fixture.enable_simulated_waveform_provider();
     let mut faults = FaultState::default();
     println!(
