@@ -37,7 +37,7 @@ pub const REALTIME_JOB_REPORT_WIRE_BYTES: usize = 128;
 /// Exact fixed core-0 prefetch report length.
 pub const SERVICE_JOB_REPORT_WIRE_BYTES: usize = 96;
 /// Exact combined `JobStatus` response body length.
-pub const JOB_STATUS_WIRE_BYTES: usize = 336;
+pub const JOB_STATUS_WIRE_BYTES: usize = 368;
 /// Exact `JobCancel` operation body length.
 pub const JOB_CANCEL_WIRE_BYTES: usize = 8;
 /// Maximum number of independently validated blocks that core 1 may lend to
@@ -62,8 +62,8 @@ const REALTIME_JOB_REPORT_VERSION: u16 = 1;
 const SERVICE_JOB_REPORT_MAGIC: [u8; 8] = *b"ALMJSV01";
 const SERVICE_JOB_REPORT_VERSION: u16 = 1;
 const SERVICE_REPORT_FLAG_FINAL: u8 = 1 << 0;
-const JOB_STATUS_MAGIC: [u8; 8] = *b"ALMJST02";
-const JOB_STATUS_VERSION: u16 = 2;
+const JOB_STATUS_MAGIC: [u8; 8] = *b"ALMJST03";
+const JOB_STATUS_VERSION: u16 = 3;
 const JOB_STATUS_FLAG_SERVICE: u8 = 1 << 0;
 const JOB_STATUS_FLAG_REALTIME: u8 = 1 << 1;
 const JOB_STATUS_FLAG_SCHEDULE: u8 = 1 << 2;
@@ -1931,7 +1931,7 @@ impl JobStatusReport {
         }
         if let Some(schedule) = self.schedule {
             flags |= JOB_STATUS_FLAG_SCHEDULE;
-            encoded[240..336].copy_from_slice(
+            encoded[240..368].copy_from_slice(
                 &schedule
                     .encode()
                     .map_err(JobStatusReportWireError::Schedule)?,
@@ -1981,11 +1981,11 @@ impl JobStatusReport {
         };
         let schedule = if flags & JOB_STATUS_FLAG_SCHEDULE != 0 {
             Some(
-                JobScheduleReport::decode(&encoded[240..336])
+                JobScheduleReport::decode(&encoded[240..368])
                     .map_err(JobStatusReportWireError::Schedule)?,
             )
         } else {
-            if encoded[240..336].iter().any(|byte| *byte != 0) {
+            if encoded[240..368].iter().any(|byte| *byte != 0) {
                 return Err(JobStatusReportWireError::Reserved);
             }
             None
@@ -2400,6 +2400,8 @@ mod tests {
         };
         let encoded = status.encode().unwrap();
         assert_eq!(encoded.len(), JOB_STATUS_WIRE_BYTES);
+        assert_eq!(&encoded[..8], b"ALMJST03");
+        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
         assert_eq!(JobStatusReport::decode(&encoded), Ok(status));
         assert_eq!(
             JobStatusReport::decode(&JobStatusReport::default().encode().unwrap()),

@@ -11,16 +11,16 @@ pub const JOB_COMMIT_WIRE_BYTES: usize = 240;
 /// Exact authenticated `JobConfirm`/`JobAbort` reference body.
 pub const JOB_SCHEDULE_REFERENCE_WIRE_BYTES: usize = 88;
 /// Exact schedule section appended to combined job status.
-pub const JOB_SCHEDULE_REPORT_WIRE_BYTES: usize = 96;
+pub const JOB_SCHEDULE_REPORT_WIRE_BYTES: usize = 128;
 /// Nonzero UI-selected commit identity bytes.
 pub const JOB_COMMIT_ID_BYTES: usize = 16;
 
 const COMMIT_MAGIC: [u8; 8] = *b"ALMJCOM2";
 const REFERENCE_MAGIC: [u8; 8] = *b"ALMJREF2";
-const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH3";
+const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH4";
 const COMMIT_VERSION: u16 = 2;
 const REFERENCE_VERSION: u16 = 2;
-const REPORT_VERSION: u16 = 3;
+const REPORT_VERSION: u16 = 4;
 const PREPARED_TOKEN_DOMAIN: [u8; 16] = *b"ALM-PREPARED-V2\0";
 const REFERENCE_CONFIRM: u8 = 1;
 const REFERENCE_ABORT: u8 = 2;
@@ -826,6 +826,7 @@ impl PreparedJobSchedule {
             state: self.state,
             fault: self.fault,
             policy,
+            descriptor_token: self.prepared_token,
             prepared_token,
             start_emitted: self.start_emitted,
             start_observation: self.start_observation,
@@ -873,6 +874,8 @@ pub struct JobScheduleReport {
     pub state: JobScheduleState,
     pub fault: JobScheduleFault,
     pub policy: Option<JobNetworkPolicy>,
+    /// Exact boot-and-descriptor identity retained before and after commit.
+    pub descriptor_token: PreparedJobToken,
     /// Present only before commit; this is the browser's boot-bound prepare receipt.
     pub prepared_token: Option<PreparedJobToken>,
     pub start_emitted: bool,
@@ -925,6 +928,7 @@ impl JobScheduleReport {
             encoded[80..88].copy_from_slice(&observation.earliest_cycle.0.to_le_bytes());
             encoded[88..96].copy_from_slice(&observation.latest_cycle.0.to_le_bytes());
         }
+        encoded[96..128].copy_from_slice(&self.descriptor_token.0.0);
         Ok(encoded)
     }
 
@@ -995,6 +999,11 @@ impl JobScheduleReport {
             state: JobScheduleState::from_wire(encoded[10]).ok_or(JobScheduleWireError::State)?,
             fault: JobScheduleFault::from_wire(encoded[11]).ok_or(JobScheduleWireError::Fault)?,
             policy,
+            descriptor_token: {
+                let mut token = [0_u8; 32];
+                token.copy_from_slice(&encoded[96..128]);
+                PreparedJobToken(Digest(token))
+            },
             prepared_token,
             start_emitted: flags & REPORT_FLAG_START_EMITTED != 0,
             start_observation: if encoded[64] == 0 {
@@ -1029,6 +1038,7 @@ impl JobScheduleReport {
     }
 
     fn validate(self) -> Result<(), JobScheduleWireError> {
+        self.descriptor_token.validate()?;
         let committed = self.policy.is_some();
         if !committed {
             let valid_state = matches!(
@@ -1037,7 +1047,7 @@ impl JobScheduleReport {
                     | (JobScheduleState::Faulted, JobScheduleFault::SafetyStop)
             );
             if !valid_state
-                || self.prepared_token.is_none()
+                || self.prepared_token != Some(self.descriptor_token)
                 || self.start_emitted
                 || self.start_observation.is_some()
                 || self.local_start_cycle.0 != 0
@@ -1048,9 +1058,6 @@ impl JobScheduleReport {
             {
                 return Err(JobScheduleWireError::StateShape);
             }
-            self.prepared_token
-                .ok_or(JobScheduleWireError::PreparedToken)?
-                .validate()?;
             return Ok(());
         }
         if self.prepared_token.is_some() {
@@ -1317,8 +1324,8 @@ mod tests {
         let report = schedule.report();
         let encoded = report.encode().unwrap();
         assert_eq!(encoded.len(), JOB_SCHEDULE_REPORT_WIRE_BYTES);
-        assert_eq!(&encoded[..8], b"ALMJSCH3");
-        assert_eq!(&encoded[8..10], &3_u16.to_le_bytes());
+        assert_eq!(&encoded[..8], b"ALMJSCH4");
+        assert_eq!(&encoded[8..10], &4_u16.to_le_bytes());
         assert_eq!(JobScheduleReport::decode(&encoded), Ok(report));
         let mut legacy = encoded;
         legacy[..8].copy_from_slice(b"ALMJSCH1");
@@ -1336,6 +1343,12 @@ mod tests {
         assert_eq!(schedule.prepared_token(), commit.prepared_token);
         let installed = schedule.install(commit, admission(1_000)).unwrap();
         assert_eq!(installed.state, JobScheduleState::Installed);
+        assert_eq!(installed.descriptor_token, commit.prepared_token);
+        assert_eq!(installed.prepared_token, None);
+        assert_eq!(
+            JobScheduleReport::decode(&installed.encode().unwrap()),
+            Ok(installed)
+        );
         assert_eq!(schedule.install(commit, admission(1_001)), Ok(installed));
 
         let confirm =
