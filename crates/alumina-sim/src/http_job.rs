@@ -263,7 +263,7 @@ impl SimulatedCachedJobService {
                 return Ok(());
             }
             if !job.storage_mutation_safe() {
-                return Err(StatusCode::Conflict);
+                return Err(StatusCode::Busy);
             }
         }
         let publication = self
@@ -838,7 +838,7 @@ mod tests {
             DeviceCycle(1_050_000),
             31,
         );
-        assert_eq!(status, StatusCode::Conflict);
+        assert_eq!(status, StatusCode::Busy);
         assert_eq!(
             JobStatusReport::decode(&body)
                 .unwrap()
