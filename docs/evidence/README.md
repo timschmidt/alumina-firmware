@@ -401,3 +401,11 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — greenfield capability V3 passive-observation authority, descriptor-derived
   TinyBee telemetry budgets/timing, graph-independent board-explorer admission,
   and optimized loopback browser evidence with every physical claim closed.
+- [`M10-CAPABILITY-DERIVED-DIGITAL-CAPTURE.md`](M10-CAPABILITY-DERIVED-DIGITAL-CAPTURE.md)
+  — greenfield capability V4 acquisition authority, a distinct deterministic
+  simulator identity, image-derived worker/UI waveform admission, and optimized
+  loopback browser evidence with every physical claim closed.
+- [`M10-T-LORA-PAGER-COMPILE-STUB.md`](M10-T-LORA-PAGER-COMPILE-STUB.md) — the
+  pinned-MIT current Pager resource inventory, compile-selected closed dual-core
+  image, exact capability/artifact identities, and explicit peripheral,
+  storage, visual, hardware, and moving-Hyper boundaries.
