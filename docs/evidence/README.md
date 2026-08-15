@@ -397,3 +397,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact
   TinyBee-only memory budgets, and compile-only multi-target release evidence.
+- [`M10-CAPABILITY-DERIVED-DIAGNOSTIC-OVERVIEW.md`](M10-CAPABILITY-DERIVED-DIAGNOSTIC-OVERVIEW.md)
+  — greenfield capability V3 passive-observation authority, descriptor-derived
+  TinyBee telemetry budgets/timing, graph-independent board-explorer admission,
+  and optimized loopback browser evidence with every physical claim closed.
