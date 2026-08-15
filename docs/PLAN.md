@@ -762,12 +762,20 @@ applied-response loss: each raw request is discarded before fixture
 authentication or application, status proves the actor remains confirmed, and
 only an exact retry aborts it. See the [browser abort-request recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md).
-Reorder/duplication, sustained outage, broader packet stress,
-background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
-backend, and the physical exit gate remain open; current board packages are
-non-armable. Fresh-owner same-attempt terminal reattachment is now exact and
-bounded: schedule-report V4 retains the boot/descriptor token, the worker polls
-all actors before any prepare mutation, and an exact all-complete set becomes
+A bounded repeated abort-mutation outage is now separately qualified through
+the point of no return while authenticated status remains available. The
+worker retains an accepted stop intent, observes that neither MCU aborted, and
+projects the exact terminal `completed_after_stop_request` only after both
+cached schedules complete; a fresh no-fault run remains ordinary `complete`.
+See the [browser abort-guard outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). Full
+control/status outage, reorder/duplication, mixed abort/complete outcomes,
+broader packet stress, background-throttling, attended-policy controls, HIL
+runs, a qualified I²S/DMA backend, and the physical exit gate remain open;
+current board packages are non-armable. Fresh-owner same-attempt terminal
+reattachment is now exact and bounded: schedule-report V4 retains the
+boot/descriptor token, the worker polls all actors before any prepare mutation,
+and an exact all-complete set becomes
 `retained_complete` with local cycles but no fabricated UI epoch or new start
 authority. See the [browser cached-job reattachment
 evidence](evidence/M10-BROWSER-CACHED-JOB-REATTACHMENT.md).

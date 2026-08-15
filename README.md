@@ -345,6 +345,14 @@ traffic with a deterministic host MCU fixture. It recovers from clock/health
 response loss, a finite outage, reboot, ambiguous capability ranges and
 diagnostic responses, and refuses an excessive causal interval without
 cross-contaminating the independent models.
+The cached-job worker also distinguishes applied-response ambiguity, one-shot
+unapplied abort loss, and bounded repeated abort-mutation loss through the
+point of no return. In the latter case it retains the accepted stop and reports
+`completed_after_stop_request` after exact all-participant completion instead
+of misreporting an abort or ordinary success. This remains localhost
+mutation-only fault evidence with status reads available; see the
+[abort-guard outage
+evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md).
 Physical radio and timing qualification remain closed. The same coordinator
 now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped

@@ -410,10 +410,7 @@ which reuses the immutable cache and selects a new future epoch. See the
 Operation-specific successful-response loss now qualifies live browser
 reconciliation after one applied storage chunk and one applied schedule commit,
 followed by a clean no-fault run. See the [browser cached-job recovery
-evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md). Attended-policy
-controls, sustained/reordered/duplicated traffic, broader network/storage
-faults, background-throttling qualification, and physical qualification remain
-open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md).
 Successful response loss after applied pre-guard aborts on both participants is
 qualified from installed and confirmed states with mandatory
 status-before-next-mutation progression; see the
@@ -423,6 +420,15 @@ pre-application selector now qualifies one-shot initial abort-request loss from
 confirmed state: authenticated status observes unchanged authority before the
 exact mutation is retried. See the [browser abort-request recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md).
+A bounded repeated loss of that abort mutation is now qualified from confirmed
+state through the guard while status reads remain available. No abort is
+applied; worker schema V8 retains the accepted stop and terminates as
+`completed_after_stop_request` after exact all-participant completion. See the
+[browser abort-guard outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). Attended-policy
+controls, full control/status outage, reordered/duplicated traffic, mixed
+abort/complete outcomes, broader network/storage faults, background-throttling
+qualification, and physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
 uses an all-participant read-only status round and exact retained descriptor
 tokens; it exposes `retained_complete`, preserves local start cycles, carries no

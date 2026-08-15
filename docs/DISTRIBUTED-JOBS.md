@@ -316,8 +316,15 @@ participant's first abort request before authentication or application. Status
 then proves the actor remains `Confirmed`, the exact abort is retried, and the
 coordinator still advances participants one at a time to global `Aborted`; see
 the [abort-request recovery
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md). Sustained
-outage through the guard remains open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md). A bounded
+repeated-loss qualification then discards every attempted abort mutation until
+the guard closes while leaving authenticated status available. The worker
+retains the accepted stop, observes no applied abort, continues exact status
+reconciliation, and terminates as `completed_after_stop_request` only when both
+participants complete. See the [abort-guard outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). Full
+control/status outage, reordered or duplicated traffic, and mixed
+abort/complete outcomes remain open.
 
 ## Operation after network loss
 
