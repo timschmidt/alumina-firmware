@@ -111,6 +111,11 @@ acknowledged local clear and is unaffected. Durable same-attempt browser
 reattachment, including bounded terminal treatment instead of an unbounded
 retry loop, remains explicit follow-on work.
 
+That boundary was subsequently closed by schedule/status schema replacement and
+replacement-worker qualification at `aluminafw` commit `a02a877` and
+`alumina-interface` commit `c7fda5b`. See
+[`M10-BROWSER-CACHED-JOB-REATTACHMENT.md`](M10-BROWSER-CACHED-JOB-REATTACHMENT.md).
+
 ## Verification performed
 
 The following passed on the recorded implementation:
@@ -140,11 +145,13 @@ intentionally diff-inspected.
 
 ## Claims deliberately kept closed
 
-This evidence does not establish abort-response-loss recovery, fresh-owner
-same-attempt reattachment, response reorder or duplication, sustained outage,
-background-tab reliability, ESP32 execution, physical Wi-Fi/AP behavior, real
+This confirmation-loss run does not itself establish abort-response-loss
+recovery, fresh-owner same-attempt reattachment, response reorder or
+duplication, sustained outage, background-tab reliability, ESP32 execution,
+physical Wi-Fi/AP behavior, real
 SD-card durability, GPIO or bus timing, I2S/RMT/MCPWM/ADC behavior, motor motion,
 multi-MCU electrical simultaneity, endstop/E-stop/interlock response, attended
 or cached-autonomous production policy, production credentials, or any
 machine-arm/safety qualification. The simulator's latch authority cannot
-authorize physical output.
+authorize physical output. Fresh-owner terminal reattachment is established
+only by the later evidence linked above.

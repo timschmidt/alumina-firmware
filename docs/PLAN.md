@@ -751,10 +751,16 @@ response loss on both participants is now separately qualified: each ambiguous
 grant of future start authority is reconciled through status before the next
 participant advances. See the [browser confirmation-recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md). Lost abort,
-fresh-owner same-attempt reattachment, reorder/duplication, sustained outage,
-broader packet stress, background-throttling, attended-policy controls, HIL
-runs, a qualified I²S/DMA backend, and the physical exit gate remain open;
-current board packages are non-armable. Firmware-to-browser observed-start
+reorder/duplication, sustained outage, broader packet stress,
+background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
+backend, and the physical exit gate remain open; current board packages are
+non-armable. Fresh-owner same-attempt terminal reattachment is now exact and
+bounded: schedule-report V4 retains the boot/descriptor token, the worker polls
+all actors before any prepare mutation, and an exact all-complete set becomes
+`retained_complete` with local cycles but no fabricated UI epoch or new start
+authority. See the [browser cached-job reattachment
+evidence](evidence/M10-BROWSER-CACHED-JOB-REATTACHMENT.md).
+Firmware-to-browser observed-start
 reconciliation is implemented in the portable path: exact affine inversion
 maps each authenticated cycle observation to a conservative browser-time
 interval, refuses missing/regressed/foreign evidence, and the deterministic

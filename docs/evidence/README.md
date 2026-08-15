@@ -405,7 +405,12 @@ a hardware qualification: board promotion still follows the evidence ladder in
   mutations, read-only browser reconciliation, and no-fault Chromium regression.
 - [`M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md`](M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md)
   — successful confirmation-response loss on both participants, exact
-  confirmation-state progression, and the fresh-owner reattachment boundary.
+  confirmation-state progression, and identification of the then-open
+  fresh-owner reattachment boundary.
+- [`M10-BROWSER-CACHED-JOB-REATTACHMENT.md`](M10-BROWSER-CACHED-JOB-REATTACHMENT.md)
+  — exact terminal descriptor identity retained in schedule status, read-only
+  all-participant discovery, bounded replacement-worker reconciliation, and
+  optimized same-actor Chromium evidence without new start authority.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

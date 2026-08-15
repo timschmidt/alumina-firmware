@@ -302,8 +302,13 @@ streaming, so no physical latch or synchronization-tolerance claim follows from
 the simulation. Loopback browser qualification now also discards the successful
 `JobConfirm` response on each participant after application, requires the local
 view to advance through `0 -> 1 -> 2` status-reconciled confirmations, and then
-observes terminal completion. Lost abort delivery and fresh-browser reattachment
-to an already-terminal same prepare ID remain open.
+observes terminal completion. A later replacement-worker qualification reuses
+the exact compiled request against those unchanged terminal actors. The worker
+first performs a complete read-only status round, binds each `ALMJSCH4`
+descriptor token, retains the reported local start cycles, and terminates as
+`retained_complete` without inventing the old browser epoch or issuing new
+schedule/start authority. Mixed terminal/empty participant state fails closed
+before prepare. Lost abort delivery remains open.
 
 ## Operation after network loss
 

@@ -563,8 +563,8 @@ timeline releases from the MCU clock at the exact epoch. The later `Start`
 action is one-shot software/safety-state reconciliation, not a Wi-Fi trigger or
 the source of the physical edge.
 
-The 96-byte `ALMJSCH3` schedule report uses a strict union. Its header holds
-version 3, state, fault, and commit/policy/start flags in bytes `8..16`. In
+The 128-byte `ALMJSCH4` schedule report uses a strict union. Its header holds
+version 4, state, fault, and commit/policy/start flags in bytes `8..16`. In
 `Prepared`, bytes `16..48` are the prepared token and `48..96` are zero. After
 commit, bytes `16..48` are start/confirmation/abort/lease cycles and `48..64`
 is the commit ID. A committed report never carries a prepared token. Bytes
@@ -578,6 +578,13 @@ is the commit ID. A committed report never carries a prepared token. Bytes
 | 72 | 8 | scheduled first-output cycle, exactly equal to the installed start cycle |
 | 80 | 8 | conservative earliest observed cycle |
 | 88 | 8 | conservative latest observed cycle |
+
+Bytes `96..128` always carry the exact boot-and-descriptor-derived prepared
+token, including after commit and terminal completion. This retained identity
+lets a replacement browser owner prove that an authenticated report belongs to
+the exact compiled descriptor without fabricating the original browser commit
+or start epoch. It grants no prepare, install, confirmation, or start authority.
+The V4 decoder is exact; there is no V3 compatibility path.
 
 The observation is valid only after the one-shot start action. Its earliest
 cycle cannot precede the scheduled cycle and its latest cannot precede its
@@ -594,17 +601,17 @@ State codes are `Prepared=1`, `Installed=2`, `Confirmed=3`, `Priming=4`,
 `Faulted=10`. Fault code `5` is `StartObservation`; the earlier fault codes are
 unchanged.
 
-`JobStatus` has an empty request body and a fixed 336-byte response:
+`JobStatus` has an empty request body and a fixed 368-byte response:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMJST02` |
-| 8 | 2 | exact status version (`2`) |
+| 0 | 8 | ASCII `ALMJST03` |
+| 8 | 2 | exact status version (`3`) |
 | 10 | 1 | bits 0/1/2: service, realtime, and schedule reports present |
 | 11 | 5 | reserved zero |
 | 16 | 96 | `ALMJSV01` core-0 report, or all zero |
 | 112 | 128 | `ALMJRT01` core-1 report, or all zero |
-| 240 | 96 | `ALMJSCH3` core-1 schedule report, or all zero |
+| 240 | 128 | `ALMJSCH4` core-1 schedule report, or all zero |
 
 The service report carries state, axis width, validated/sent/total block counts,
 verified storage-chunk count, current ring credits/depth, and a terminal
@@ -618,7 +625,11 @@ only when their prepared token or every committed field matches its exact local
 descriptor/commit. While `Running`, it accepts exactly one monotonic
 no-observation-to-observation enrichment; it rejects later reports that erase or
 replace retained evidence. The browser's authenticated participant controller
-applies the same rule independently.
+applies the same rule independently. Before any new prepare mutation it performs
+one complete read-only status round. A fresh owner may accept only an exact
+descriptor-token-matched terminal completion; mixed complete/empty participant
+sets fail closed, and the fresh owner reports no original UI epoch. `ALMJST03`
+is likewise an exact schema replacement with no V2 decoder.
 
 The current target images route prepare/commit/confirm/abort and independently
 enforce these contracts on both cores. Core 1 now binds the descriptor's exact
