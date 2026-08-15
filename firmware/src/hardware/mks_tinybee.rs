@@ -42,6 +42,14 @@ pub const JOB_AXES: usize = 3;
 pub const CONFIGURATION_BINDINGS: usize = 64;
 /// Maximum configuration-derived safety inputs physically routed by this board.
 pub const SAFETY_INPUT_CAPACITY: usize = 4;
+/// Canonical four-selector authenticated telemetry request retained on core 0.
+pub const DIAGNOSTIC_TELEMETRY_REQUEST_BYTES: usize = 176;
+/// Canonical four-sample authenticated telemetry event retained on core 0.
+pub const DIAGNOSTIC_TELEMETRY_EVENT_BYTES: usize = 432;
+/// Stable Boolean resources available to the low-rate overview provider.
+pub const DIAGNOSTIC_OVERVIEW_SAMPLES: usize = SAFETY_INPUT_CAPACITY;
+/// TinyBee composes a passive provider over its core-1-owned safety input bank.
+pub const DIAGNOSTIC_RESOURCE_OVERVIEW: bool = true;
 /// A complete-image writer exists, but its blocking GPIO timing has not been
 /// qualified as a motion serializer and therefore cannot authorize arming.
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = true;

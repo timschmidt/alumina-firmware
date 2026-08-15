@@ -55,7 +55,13 @@ use alumina_config::{
     RealtimeConfigurationService, RealtimeConfigurationState,
 };
 use alumina_diagnostics::transport::DiagnosticTransportLimits;
-use alumina_diagnostics::{DiagnosticContext, DiagnosticLimits};
+use alumina_diagnostics::{
+    DiagnosticContext, DiagnosticLimits, REALTIME_INPUT_SNAPSHOT_HEADER_BYTES,
+    REALTIME_INPUT_SNAPSHOT_MAGIC, REALTIME_INPUT_SNAPSHOT_RECORD_BYTES,
+    RESOURCE_OVERVIEW_HEADER_BYTES, RESOURCE_OVERVIEW_SAMPLE_BYTES, RealtimeInputRecord,
+    RealtimeInputSnapshotDocument, ResourceOverviewSample, ResourceValue, SampleProvenance,
+    SampleQuality, SampleQualityFlags, encode_realtime_input_snapshot,
+};
 use alumina_graph_ir::{CoreGraphCommand, CoreGraphExecutionCommand};
 use alumina_job::{
     JobScheduleAction, JobScheduleReport, JobScheduleState, JobStartObservation,
@@ -69,7 +75,7 @@ use alumina_runtime::stack::StackWatermarkSnapshot;
 use alumina_runtime::{
     APP_CORE_STACK_BYTES, APP_CORE_STACK_WORDS, COMMAND_QUEUE_DEPTH, DeadlineProbe,
     DefaultBoundary, DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame,
-    RuntimeBudget, TELEMETRY_QUEUE_DEPTH, UrgentKind, WORK_QUEUE_DEPTH,
+    RuntimeBudget, TELEMETRY_PAYLOAD_BYTES, TELEMETRY_QUEUE_DEPTH, UrgentKind, WORK_QUEUE_DEPTH,
 };
 use alumina_safety::{
     Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE,
@@ -88,7 +94,9 @@ use esp_hal::timer::timg::TimerGroup;
 use panic_rtt_target as _;
 use static_cell::StaticCell;
 
-use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
+use alumina_service::diagnostics::{
+    DiagnosticProviderPolicy, DiagnosticServiceError, DiagnosticServiceState, RealtimeInputObserver,
+};
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_xtensa_stack_watermark::{
     REALTIME_SCAN_WORDS, SERVICE_SCAN_WORDS, STACK_LOW_EXCLUSION_BYTES, TargetStackWatermark,
@@ -108,13 +116,44 @@ type TargetSafetyInputMonitor = SafetyInputMonitor<{ selected::SAFETY_INPUT_CAPA
 static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
 static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
-// Neither initial hardware target has a qualified acquisition provider yet.
-// Keep the authenticated dispatcher and context reconciliation compiled, but
-// do not reserve unusable request/event/record storage in scarce internal
-// SRAM. A board composition must add explicit nonzero budgets at the same time
-// that it installs and qualifies a provider.
-type TargetDiagnosticService = DiagnosticServiceState<0, 0, 0, 0>;
+// TinyBee's four core-1-owned configured safety inputs have a passive,
+// freshness-bound overview provider. Waveform acquisition remains unsupported,
+// so no configure/record storage is reserved. Other targets retain zero-sized
+// diagnostic sessions until their own physical provider is composed.
+type TargetDiagnosticService = DiagnosticServiceState<
+    { selected::DIAGNOSTIC_TELEMETRY_REQUEST_BYTES },
+    { selected::DIAGNOSTIC_TELEMETRY_EVENT_BYTES },
+    0,
+    0,
+>;
+type TargetRealtimeInputObserver = RealtimeInputObserver<{ selected::SAFETY_INPUT_CAPACITY }>;
 static DIAGNOSTIC_SERVICE: StaticCell<TargetDiagnosticService> = StaticCell::new();
+
+const TARGET_DIAGNOSTIC_PROVIDERS: DiagnosticProviderPolicy = DiagnosticProviderPolicy {
+    resource_overview: selected::DIAGNOSTIC_RESOURCE_OVERVIEW,
+    digital_capture: false,
+};
+
+const TARGET_REALTIME_INPUT_SNAPSHOT_BYTES: usize = REALTIME_INPUT_SNAPSHOT_HEADER_BYTES
+    + selected::SAFETY_INPUT_CAPACITY * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES;
+const TARGET_OVERVIEW_SAMPLES: usize = selected::DIAGNOSTIC_OVERVIEW_SAMPLES;
+const TARGET_OVERVIEW_BYTES: usize =
+    RESOURCE_OVERVIEW_HEADER_BYTES + TARGET_OVERVIEW_SAMPLES * RESOURCE_OVERVIEW_SAMPLE_BYTES;
+const EMPTY_REALTIME_INPUT_RECORD: RealtimeInputRecord = RealtimeInputRecord {
+    resource: alumina_board::ResourceId::Gpio(0),
+    sampled_at: None,
+};
+const EMPTY_OVERVIEW_SAMPLE: ResourceOverviewSample = ResourceOverviewSample {
+    resource: alumina_board::ResourceId::Gpio(0),
+    provenance: SampleProvenance::Inferred,
+    quality: SampleQuality::Unavailable,
+    quality_flags: SampleQualityFlags(0),
+    captured_cycle: DeviceCycle(0),
+    value: ResourceValue::Unavailable,
+};
+
+const _: [(); selected::SAFETY_INPUT_CAPACITY] = [(); TARGET_OVERVIEW_SAMPLES];
+const _: () = assert!(TARGET_REALTIME_INPUT_SNAPSHOT_BYTES <= TELEMETRY_PAYLOAD_BYTES);
 
 const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
 const RUNTIME_HEALTH_MAX_AGE_CYCLES: u64 = Duration::from_secs(2).as_ticks();
@@ -323,6 +362,7 @@ async fn service_task(
     let mut configurations = ConfigurationService::new();
     let mut graphs = GraphService::new(network.device_id(), graph_bridge);
     let mut health = RuntimeHealthService::new(RUNTIME_HEALTH_MAX_AGE_CYCLES);
+    let mut realtime_inputs = TargetRealtimeInputObserver::new(SAFETY_OBSERVATION_MAX_AGE_CYCLES);
     let diagnostics = DIAGNOSTIC_SERVICE.init(TargetDiagnosticService::new(
         DiagnosticContext {
             device_id: network.device_id(),
@@ -331,7 +371,7 @@ async fn service_task(
             config_digest: Digest::ZERO,
             clock_frequency_hz: TICK_HZ,
         },
-        DiagnosticProviderPolicy::NONE,
+        TARGET_DIAGNOSTIC_PROVIDERS,
         DiagnosticTransportLimits::native_control(),
         DiagnosticLimits::interactive(),
     ));
@@ -423,32 +463,10 @@ async fn service_task(
                         })
                 }
                 FrameKind::Health => {
-                    let accepted = frame.validate(FrameKind::Health).is_ok()
-                        && frame.header().config_digest.is_zero()
-                        && frame.payload().is_ok_and(|payload| {
-                            StackWatermarkSnapshot::decode(payload).is_ok_and(|report| {
-                                report.allocated_bytes
-                                    == u32::try_from(APP_CORE_STACK_BYTES)
-                                        .expect("app stack size fits health report")
-                                    && report.excluded_low_bytes
-                                        == u32::try_from(STACK_LOW_EXCLUSION_BYTES)
-                                            .expect("stack exclusion fits health report")
-                                    && health
-                                        .observe_realtime(
-                                            frame.header().sequence,
-                                            frame.header().cycle,
-                                            now,
-                                            report,
-                                        )
-                                        .is_ok()
-                            })
-                        });
-                    if !accepted {
-                        health.invalidate_realtime();
-                    }
+                    observe_passive_health_frame(&frame, now, &mut health, &mut realtime_inputs);
                     // Health is deliberately passive: rejecting malformed or
-                    // stale instrumentation revokes only health data and makes
-                    // no safety, timing, storage, or output-authority transition.
+                    // stale instrumentation revokes only its matching evidence
+                    // and makes no safety, timing, storage, or output transition.
                     true
                 }
                 _ => false,
@@ -598,6 +616,12 @@ async fn service_task(
             service_bridge.respond(&request, response);
         }
 
+        publish_service_input_overview(
+            diagnostics,
+            &realtime_inputs,
+            DeviceCycle(Instant::now().as_ticks()),
+        );
+
         if jobs
             .prefetch_step(&mut storage_backend, &mut endpoint)
             .await
@@ -623,6 +647,94 @@ async fn service_task(
             ordinary_wake.min(Instant::from_ticks(cycle.0))
         });
         Timer::at(wake).await;
+    }
+}
+
+fn observe_passive_health_frame<const PAYLOAD: usize>(
+    frame: &IntercoreFrame<PAYLOAD>,
+    observed_at: DeviceCycle,
+    health: &mut RuntimeHealthService,
+    realtime_inputs: &mut TargetRealtimeInputObserver,
+) {
+    if frame.validate(FrameKind::Health).is_err() {
+        health.invalidate_realtime();
+        realtime_inputs.invalidate();
+        return;
+    }
+    let Ok(payload) = frame.payload() else {
+        health.invalidate_realtime();
+        realtime_inputs.invalidate();
+        return;
+    };
+    if selected::DIAGNOSTIC_RESOURCE_OVERVIEW && payload.starts_with(&REALTIME_INPUT_SNAPSHOT_MAGIC)
+    {
+        let _ = realtime_inputs.observe_encoded(
+            frame.header().sequence,
+            frame.header().cycle,
+            observed_at,
+            frame.header().config_digest,
+            payload,
+        );
+        return;
+    }
+
+    let accepted = frame.header().config_digest.is_zero()
+        && StackWatermarkSnapshot::decode(payload).is_ok_and(|report| {
+            report.allocated_bytes
+                == u32::try_from(APP_CORE_STACK_BYTES).expect("app stack size fits health report")
+                && report.excluded_low_bytes
+                    == u32::try_from(STACK_LOW_EXCLUSION_BYTES)
+                        .expect("stack exclusion fits health report")
+                && health
+                    .observe_realtime(
+                        frame.header().sequence,
+                        frame.header().cycle,
+                        observed_at,
+                        report,
+                    )
+                    .is_ok()
+        });
+    if !accepted {
+        health.invalidate_realtime();
+    }
+}
+
+fn publish_service_input_overview(
+    diagnostics: &mut TargetDiagnosticService,
+    realtime_inputs: &TargetRealtimeInputObserver,
+    now: DeviceCycle,
+) {
+    if !selected::DIAGNOSTIC_RESOURCE_OVERVIEW {
+        return;
+    }
+    let Some((subscription, sequence)) = diagnostics.telemetry_provider_request_at(now) else {
+        return;
+    };
+    let mut samples = [EMPTY_OVERVIEW_SAMPLE; TARGET_OVERVIEW_SAMPLES];
+    let mut overview = [0_u8; TARGET_OVERVIEW_BYTES];
+    let overview_len = match realtime_inputs.encode_overview(
+        diagnostics.context(),
+        subscription,
+        sequence,
+        now,
+        &mut samples,
+        &mut overview,
+    ) {
+        Ok(overview_len) => overview_len,
+        Err(reason) => {
+            error!(
+                "real-time input overview assembly failed: {:?}",
+                defmt::Debug2Format(&reason)
+            );
+            return;
+        }
+    };
+    match diagnostics.publish_overview(&overview[..overview_len]) {
+        Ok(()) | Err(DiagnosticServiceError::Deadline) => {}
+        Err(reason) => error!(
+            "real-time input overview publication failed: {:?}",
+            defmt::Debug2Format(&reason)
+        ),
     }
 }
 
@@ -681,6 +793,7 @@ async fn realtime_task(
     let mut graph_sequence = 0_u32;
     let mut clock_sequence = 0_u32;
     let mut health_sequence = 0_u32;
+    let mut input_diagnostic_sequence = 0_u32;
     let mut next_health_report = Instant::now() + Duration::from_secs(1);
 
     publish_safety_snapshot(
@@ -693,6 +806,15 @@ async fn realtime_task(
         safety_input_status,
         0,
     );
+    if selected::DIAGNOSTIC_RESOURCE_OVERVIEW {
+        let _ = publish_realtime_input_snapshot(
+            &mut endpoint,
+            &mut input_diagnostic_sequence,
+            DeviceCycle(Instant::now().as_ticks()),
+            Digest::ZERO,
+            None,
+        );
+    }
 
     loop {
         let schedule_wake = jobs.next_schedule_deadline();
@@ -1214,6 +1336,17 @@ async fn realtime_task(
                     DeviceCycle(observed.as_ticks()),
                     probe,
                 );
+                if selected::DIAGNOSTIC_RESOURCE_OVERVIEW {
+                    let _ = publish_realtime_input_snapshot(
+                        &mut endpoint,
+                        &mut input_diagnostic_sequence,
+                        DeviceCycle(observed.as_ticks()),
+                        configurations
+                            .active_identity()
+                            .map_or(Digest::ZERO, |identity| identity.digest),
+                        safety_inputs.as_ref(),
+                    );
+                }
             }
 
             let stack_sample_failed = stack_watermark
@@ -1884,6 +2017,50 @@ fn publish_stack_watermark_report(
     let sequence = next_nonzero(*report_sequence);
     let frame = IntercoreFrame::new(FrameKind::Health, sequence, now, Digest::ZERO, &payload)
         .map_err(|_| ())?;
+    if endpoint.try_publish_telemetry(frame).is_ok() {
+        *report_sequence = sequence;
+    }
+    Ok(())
+}
+
+fn publish_realtime_input_snapshot(
+    endpoint: &mut DefaultRealtimeEndpoint,
+    report_sequence: &mut u32,
+    now: DeviceCycle,
+    config_digest: Digest,
+    monitor: Option<&TargetSafetyInputMonitor>,
+) -> Result<(), ()> {
+    let mut records = [EMPTY_REALTIME_INPUT_RECORD; selected::SAFETY_INPUT_CAPACITY];
+    let (status, record_count) = if let Some(monitor) = monitor {
+        let status = monitor.status(now);
+        for (slot, record) in records.iter_mut().enumerate().take(monitor.len()) {
+            *record = RealtimeInputRecord {
+                resource: monitor.spec(slot).ok_or(())?.resource,
+                sampled_at: monitor.last_sample_cycle(slot),
+            };
+        }
+        (status, monitor.len())
+    } else {
+        (SafetyInputStatus::unconfigured(), 0)
+    };
+    let mut payload = [0_u8; TARGET_REALTIME_INPUT_SNAPSHOT_BYTES];
+    let payload_len = encode_realtime_input_snapshot(
+        &RealtimeInputSnapshotDocument {
+            status,
+            records: &records[..record_count],
+        },
+        &mut payload,
+    )
+    .map_err(|_| ())?;
+    let sequence = next_nonzero(*report_sequence);
+    let frame = IntercoreFrame::new(
+        FrameKind::Health,
+        sequence,
+        now,
+        config_digest,
+        &payload[..payload_len],
+    )
+    .map_err(|_| ())?;
     if endpoint.try_publish_telemetry(frame).is_ok() {
         *report_sequence = sequence;
     }

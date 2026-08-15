@@ -17,6 +17,6 @@ impl CapabilityService {
 
     /// Returns one authenticated range or a correlated fail-closed status.
     pub fn dispatch(request: &ServiceRequest, now: DeviceCycle) -> ServiceResponse {
-        CapabilityDocumentService::dispatch(&selected::PACKAGE, request, now)
+        CapabilityDocumentService::dispatch(selected::PACKAGE, request, now)
     }
 }

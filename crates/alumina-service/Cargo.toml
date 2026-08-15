@@ -20,6 +20,7 @@ alumina-storage.workspace = true
 heapless.workspace = true
 
 [dev-dependencies]
+alumina-clock.workspace = true
 embassy-futures.workspace = true
 
 [lints]

@@ -35,6 +35,14 @@ pub const JOB_AXES: usize = 1;
 pub const CONFIGURATION_BINDINGS: usize = 64;
 /// T-Deck Pro currently exposes no configuration-derived safety-input route.
 pub const SAFETY_INPUT_CAPACITY: usize = 0;
+/// No target telemetry request storage is reserved before a provider is qualified.
+pub const DIAGNOSTIC_TELEMETRY_REQUEST_BYTES: usize = 0;
+/// No target telemetry event storage is reserved before a provider is qualified.
+pub const DIAGNOSTIC_TELEMETRY_EVENT_BYTES: usize = 0;
+/// No machine-domain stable Boolean input provider is composed yet.
+pub const DIAGNOSTIC_OVERVIEW_SAMPLES: usize = 0;
+/// T-Deck Pro does not yet compose a physical resource-overview provider.
+pub const DIAGNOSTIC_RESOURCE_OVERVIEW: bool = false;
 /// T-Deck Pro exposes no machine step/dir output backend.
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
 /// No machine output can authorize arming on this board package.

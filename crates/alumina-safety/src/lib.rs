@@ -434,6 +434,21 @@ impl<const INPUTS: usize> SafetyInputMonitor<INPUTS> {
         }
     }
 
+    /// Exact latest physical acquisition cycle for one configuration-stable slot.
+    ///
+    /// This exposes timing evidence only; it grants no peripheral ownership and
+    /// does not imply that debounce, freshness, or safety policy accepted a value.
+    pub const fn last_sample_cycle(&self, slot: usize) -> Option<DeviceCycle> {
+        if slot < self.count {
+            match self.states[slot].last_sample {
+                Some(cycle) => Some(DeviceCycle(cycle)),
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
+
     /// Read one configured resource's known, fresh, debounced semantic state.
     ///
     /// Unknown resources, pre-debounce state, future-dated samples, and the
@@ -1474,6 +1489,8 @@ mod tests {
             Some(false)
         );
         assert_eq!(monitor.observe(0, true, DeviceCycle(11)).unwrap(), None);
+        assert_eq!(monitor.last_sample_cycle(0), Some(DeviceCycle(11)));
+        assert_eq!(monitor.last_sample_cycle(1), None);
         assert_eq!(monitor.observe(0, true, DeviceCycle(12)).unwrap(), None);
         assert_eq!(
             monitor.stable_active_by_resource(resource, DeviceCycle(12)),

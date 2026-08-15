@@ -656,7 +656,9 @@ mod tests {
         );
         service.subscribe(&request_bytes).unwrap();
 
-        let (provider, sequence) = service.telemetry_provider_request().unwrap();
+        let (provider, sequence) = service
+            .telemetry_provider_request_at(DeviceCycle(2_000_000))
+            .unwrap();
         let first =
             simulated_resource_overview(provider, sequence, DeviceCycle(2_000_000)).unwrap();
         service.publish_overview(&first).unwrap();
@@ -701,7 +703,14 @@ mod tests {
             0
         );
 
-        let (provider, sequence) = service.telemetry_provider_request().unwrap();
+        assert!(
+            service
+                .telemetry_provider_request_at(DeviceCycle(2_009_999))
+                .is_none()
+        );
+        let (provider, sequence) = service
+            .telemetry_provider_request_at(DeviceCycle(2_010_000))
+            .unwrap();
         let second =
             simulated_resource_overview(provider, sequence, DeviceCycle(2_010_000)).unwrap();
         service.publish_overview(&second).unwrap();

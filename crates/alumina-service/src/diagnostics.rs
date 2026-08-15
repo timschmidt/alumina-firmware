@@ -9,10 +9,14 @@ use alumina_diagnostics::transport::{
     validate_retained_capture,
 };
 use alumina_diagnostics::{
-    CaptureQualityFlags, DiagnosticContext, DiagnosticLimits, decode_digital_capture,
-    decode_resource_overview, digital_capture_encoded_len,
+    CaptureQualityFlags, DiagnosticContext, DiagnosticError, DiagnosticLimits, OverviewFlags,
+    RealtimeInputRecord, ResourceOverviewDocument, ResourceOverviewSample, ResourceValue,
+    SampleProvenance, SampleQuality, SampleQualityFlags, decode_digital_capture,
+    decode_realtime_input_snapshot, decode_resource_overview, digital_capture_encoded_len,
+    encode_resource_overview,
 };
 use alumina_protocol::{DeviceCycle, Digest, FrameKind, Operation, StatusCode};
+use alumina_safety::SafetyInputStatus;
 
 use crate::{NativeRequest, ServiceRequest, ServiceRequestKind, ServiceResponse};
 
@@ -85,6 +89,276 @@ impl DiagnosticProviderPolicy {
         resource_overview: true,
         digital_capture: true,
     };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AcceptedRealtimeInputSnapshot<const INPUTS: usize> {
+    frame_sequence: u32,
+    produced_at: DeviceCycle,
+    config_digest: Digest,
+    status: SafetyInputStatus,
+    records: [Option<RealtimeInputRecord>; INPUTS],
+    record_count: usize,
+}
+
+/// Rejection while validating a lossy core-1 diagnostic input publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RealtimeInputObservationError {
+    /// Canonical snapshot bytes were malformed.
+    Snapshot(DiagnosticError),
+    /// Snapshot contains more slots than this board composition reserves.
+    Capacity,
+    /// Frame sequence was zero, duplicated, old, or ambiguously far ahead.
+    FrameSequence,
+    /// Producer or per-slot acquisition time was later than observer time.
+    Future,
+    /// Snapshot was already outside the declared freshness window when dequeued.
+    Expired,
+    /// A configuration digest retained a different slot-to-resource mapping.
+    ResourceMapping,
+    /// A per-slot acquisition timestamp moved backwards.
+    SampleTime,
+    /// Debounced semantic state changed without a newer monitor generation.
+    TransitionGeneration,
+}
+
+/// Rejection while translating an admitted input snapshot into an overview.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RealtimeInputOverviewError {
+    /// Subscription and caller-supplied evidence context differed.
+    Context,
+    /// Caller scratch space could not hold every selected resource.
+    Capacity,
+    /// Canonical overview encoding rejected the assembled evidence.
+    Record(DiagnosticError),
+}
+
+/// Freshness- and identity-checking core-0 observer for passive input diagnostics.
+///
+/// Publications are lossy and latest-only. Rejection revokes only diagnostic
+/// evidence; this observer neither grants safety authority nor drives outputs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeInputObserver<const INPUTS: usize> {
+    maximum_age_cycles: u64,
+    accepted: Option<AcceptedRealtimeInputSnapshot<INPUTS>>,
+}
+
+impl<const INPUTS: usize> RealtimeInputObserver<INPUTS> {
+    /// Creates an observer with no retained evidence.
+    pub const fn new(maximum_age_cycles: u64) -> Self {
+        Self {
+            maximum_age_cycles,
+            accepted: None,
+        }
+    }
+
+    /// Decodes and admits one complete core-1 publication.
+    ///
+    /// The outer inter-core frame supplies the exact configuration identity and
+    /// production cycle; the payload supplies slot mapping and acquisition time.
+    pub fn observe_encoded(
+        &mut self,
+        frame_sequence: u32,
+        produced_at: DeviceCycle,
+        observed_at: DeviceCycle,
+        config_digest: Digest,
+        encoded: &[u8],
+    ) -> Result<(), RealtimeInputObservationError> {
+        let view = match decode_realtime_input_snapshot(encoded) {
+            Ok(view) => view,
+            Err(error) => {
+                self.invalidate();
+                return Err(RealtimeInputObservationError::Snapshot(error));
+            }
+        };
+        if view.record_count() > INPUTS {
+            self.invalidate();
+            return Err(RealtimeInputObservationError::Capacity);
+        }
+        if frame_sequence == 0
+            || self
+                .accepted
+                .is_some_and(|previous| !serial_is_newer(frame_sequence, previous.frame_sequence))
+        {
+            self.invalidate();
+            return Err(RealtimeInputObservationError::FrameSequence);
+        }
+        let Some(age) = observed_at.0.checked_sub(produced_at.0) else {
+            self.invalidate();
+            return Err(RealtimeInputObservationError::Future);
+        };
+        if age > self.maximum_age_cycles {
+            self.invalidate();
+            return Err(RealtimeInputObservationError::Expired);
+        }
+
+        let mut records = [None; INPUTS];
+        for (slot, record) in view.records().enumerate() {
+            if record
+                .sampled_at
+                .is_some_and(|sampled_at| sampled_at > produced_at)
+            {
+                self.invalidate();
+                return Err(RealtimeInputObservationError::Future);
+            }
+            records[slot] = Some(record);
+        }
+        let candidate = AcceptedRealtimeInputSnapshot {
+            frame_sequence,
+            produced_at,
+            config_digest,
+            status: view.status(),
+            records,
+            record_count: view.record_count(),
+        };
+        if let Some(previous) = self.accepted
+            && previous.config_digest == candidate.config_digest
+        {
+            let mapping_changed = previous.record_count != candidate.record_count
+                || previous.status.required_mask != candidate.status.required_mask
+                || (0..previous.record_count).any(|slot| {
+                    previous.records[slot].map(|record| record.resource)
+                        != candidate.records[slot].map(|record| record.resource)
+                });
+            if mapping_changed {
+                self.invalidate();
+                return Err(RealtimeInputObservationError::ResourceMapping);
+            }
+            if candidate.produced_at < previous.produced_at {
+                self.invalidate();
+                return Err(RealtimeInputObservationError::SampleTime);
+            }
+            for slot in 0..candidate.record_count {
+                let previous_sample = previous.records[slot].and_then(|record| record.sampled_at);
+                let candidate_sample = candidate.records[slot].and_then(|record| record.sampled_at);
+                let regressed = match (previous_sample, candidate_sample) {
+                    (Some(previous), Some(candidate)) => candidate < previous,
+                    (Some(_), None) => true,
+                    (None, _) => false,
+                };
+                if regressed {
+                    self.invalidate();
+                    return Err(RealtimeInputObservationError::SampleTime);
+                }
+            }
+            let generation_changed =
+                candidate.status.transition_generation != previous.status.transition_generation;
+            if generation_changed
+                && !serial_is_newer(
+                    candidate.status.transition_generation,
+                    previous.status.transition_generation,
+                )
+            {
+                self.invalidate();
+                return Err(RealtimeInputObservationError::TransitionGeneration);
+            }
+            let semantic_changed = candidate.status.known_mask != previous.status.known_mask
+                || candidate.status.active_mask != previous.status.active_mask;
+            if semantic_changed && !generation_changed {
+                self.invalidate();
+                return Err(RealtimeInputObservationError::TransitionGeneration);
+            }
+        }
+        self.accepted = Some(candidate);
+        Ok(())
+    }
+
+    /// Revokes retained diagnostic evidence without affecting safety state.
+    pub fn invalidate(&mut self) {
+        self.accepted = None;
+    }
+
+    /// Assembles one canonical overview for an admitted subscription.
+    ///
+    /// Missing, expired, or differently configured evidence becomes explicit
+    /// unavailable values. Known stale values retain their exact last sample time.
+    pub fn encode_overview(
+        &self,
+        context: DiagnosticContext,
+        subscription: TelemetrySubscribeView<'_>,
+        sequence: u64,
+        snapshot_cycle: DeviceCycle,
+        samples: &mut [ResourceOverviewSample],
+        output: &mut [u8],
+    ) -> Result<usize, RealtimeInputOverviewError> {
+        if subscription.context() != context {
+            return Err(RealtimeInputOverviewError::Context);
+        }
+        if subscription.resource_count() > samples.len() {
+            return Err(RealtimeInputOverviewError::Capacity);
+        }
+        let accepted = self.accepted.filter(|accepted| {
+            accepted.config_digest == context.config_digest
+                && snapshot_cycle
+                    .0
+                    .checked_sub(accepted.produced_at.0)
+                    .is_some_and(|age| age <= self.maximum_age_cycles)
+        });
+        for (index, resource) in subscription.resources().enumerate() {
+            samples[index] = accepted
+                .and_then(|accepted| accepted.sample(resource))
+                .unwrap_or(ResourceOverviewSample {
+                    resource,
+                    provenance: SampleProvenance::Inferred,
+                    quality: SampleQuality::Unavailable,
+                    quality_flags: SampleQualityFlags(0),
+                    captured_cycle: DeviceCycle(0),
+                    value: ResourceValue::Unavailable,
+                });
+        }
+        encode_resource_overview(
+            &ResourceOverviewDocument {
+                context,
+                flags: OverviewFlags(0),
+                snapshot_cycle,
+                sequence,
+                samples: &samples[..subscription.resource_count()],
+            },
+            output,
+        )
+        .map_err(RealtimeInputOverviewError::Record)
+    }
+}
+
+impl<const INPUTS: usize> AcceptedRealtimeInputSnapshot<INPUTS> {
+    fn sample(self, resource: alumina_board::ResourceId) -> Option<ResourceOverviewSample> {
+        let slot = self.records[..self.record_count]
+            .iter()
+            .position(|record| record.is_some_and(|record| record.resource == resource))?;
+        let record = self.records[slot].expect("located record is present");
+        let bit = 1_u32 << slot;
+        let known = self.status.known_mask & bit != 0;
+        let stale = self.status.stale_mask & bit != 0;
+        Some(ResourceOverviewSample {
+            resource,
+            provenance: SampleProvenance::Measured,
+            quality: if known {
+                if stale {
+                    SampleQuality::Stale
+                } else {
+                    SampleQuality::Valid
+                }
+            } else {
+                SampleQuality::Unavailable
+            },
+            quality_flags: SampleQualityFlags(if known {
+                SampleQualityFlags::DEBOUNCED
+            } else {
+                0
+            }),
+            captured_cycle: record.sampled_at.unwrap_or(DeviceCycle(0)),
+            value: if known {
+                ResourceValue::Boolean(self.status.active_mask & bit != 0)
+            } else {
+                ResourceValue::Unavailable
+            },
+        })
+    }
+}
+
+const fn serial_is_newer(candidate: u32, previous: u32) -> bool {
+    let distance = candidate.wrapping_sub(previous);
+    distance != 0 && distance < (1_u32 << 31)
 }
 
 impl From<DiagnosticTransportError> for DiagnosticServiceError {
@@ -575,6 +849,26 @@ impl<
             .map(|subscription| (subscription, self.telemetry.next_event_sequence))
     }
 
+    /// Borrows a provider request only when its minimum publication period is due.
+    ///
+    /// This prevents a fast service loop from repeatedly assembling evidence
+    /// that the canonical event publisher would reject as premature.
+    pub fn telemetry_provider_request_at(
+        &self,
+        now: DeviceCycle,
+    ) -> Option<(TelemetrySubscribeView<'_>, u64)> {
+        let (subscription, sequence) = self.telemetry_provider_request()?;
+        if sequence > 1
+            && now
+                .0
+                .checked_sub(self.telemetry.last_event_cycle.0)
+                .is_none_or(|elapsed| elapsed < subscription.minimum_period_cycles())
+        {
+            return None;
+        }
+        Some((subscription, sequence))
+    }
+
     /// Acknowledges only caller-admitted evidence and returns the current
     /// retained event without consuming it. Repeating a poll after a lost
     /// response therefore returns the same event or a strictly newer one.
@@ -947,4 +1241,363 @@ fn native_response(
 ) -> ServiceResponse {
     ServiceResponse::native(request, now, status, body)
         .expect("diagnostic response respects the fixed operation-body bound")
+}
+
+#[cfg(test)]
+mod tests {
+    use alumina_capability::CapabilityIdentity;
+    use alumina_clock::{BOOT_ID_BYTES, BootId};
+    use alumina_diagnostics::transport::{
+        DiagnosticTransportLimits, SubscriptionId, TelemetryPollRequest, TelemetrySessionRequest,
+        TelemetrySubscribeFlags, TelemetrySubscribeRequest, decode_telemetry_event,
+        decode_telemetry_subscribe, encode_telemetry_subscribe,
+    };
+    use alumina_diagnostics::{
+        REALTIME_INPUT_SNAPSHOT_HEADER_BYTES, REALTIME_INPUT_SNAPSHOT_RECORD_BYTES,
+        RealtimeInputSnapshotDocument, decode_resource_overview, encode_realtime_input_snapshot,
+    };
+    use alumina_protocol::DeviceId;
+
+    use super::*;
+
+    const RESOURCES: [alumina_board::ResourceId; 4] = [
+        alumina_board::ResourceId::Gpio(22),
+        alumina_board::ResourceId::Gpio(32),
+        alumina_board::ResourceId::Gpio(33),
+        alumina_board::ResourceId::Gpio(35),
+    ];
+
+    fn context() -> DiagnosticContext {
+        DiagnosticContext {
+            device_id: DeviceId(*b"ALUM-SIM:TINYBEE"),
+            boot_id: BootId::new([0x41; BOOT_ID_BYTES]).unwrap(),
+            capability: CapabilityIdentity {
+                byte_len: 3_435,
+                digest: Digest([0x42; 32]),
+            },
+            config_digest: Digest([0x43; 32]),
+            clock_frequency_hz: 1_000_000,
+        }
+    }
+
+    fn subscription_bytes(context: DiagnosticContext) -> [u8; 176] {
+        let request = TelemetrySubscribeRequest {
+            subscription_id: SubscriptionId::new(9).unwrap(),
+            context,
+            flags: TelemetrySubscribeFlags(TelemetrySubscribeFlags::LATEST_ONLY),
+            minimum_period_cycles: 100_000,
+            maximum_event_bytes: 432,
+            resources: &RESOURCES,
+        };
+        let mut encoded = [0_u8; 176];
+        let used = encode_telemetry_subscribe(
+            &request,
+            &mut encoded,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        assert_eq!(used, encoded.len());
+        encoded
+    }
+
+    fn input_records() -> [RealtimeInputRecord; 4] {
+        [
+            RealtimeInputRecord {
+                resource: alumina_board::ResourceId::Gpio(33),
+                sampled_at: Some(DeviceCycle(990)),
+            },
+            RealtimeInputRecord {
+                resource: alumina_board::ResourceId::Gpio(32),
+                sampled_at: Some(DeviceCycle(991)),
+            },
+            RealtimeInputRecord {
+                resource: alumina_board::ResourceId::Gpio(22),
+                sampled_at: Some(DeviceCycle(992)),
+            },
+            RealtimeInputRecord {
+                resource: alumina_board::ResourceId::Gpio(35),
+                sampled_at: Some(DeviceCycle(993)),
+            },
+        ]
+    }
+
+    fn input_status() -> SafetyInputStatus {
+        SafetyInputStatus {
+            input_count: 4,
+            known_mask: 0b1111,
+            active_mask: 0b1001,
+            required_mask: 0b0111,
+            stale_mask: 0b0010,
+            transition_generation: 4,
+            next_watchdog_deadline: None,
+        }
+    }
+
+    fn encode_input_snapshot(
+        status: SafetyInputStatus,
+        records: &[RealtimeInputRecord],
+    ) -> [u8; REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 4 * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES] {
+        let mut encoded =
+            [0_u8; REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 4 * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES];
+        encode_realtime_input_snapshot(
+            &RealtimeInputSnapshotDocument { status, records },
+            &mut encoded,
+        )
+        .unwrap();
+        encoded
+    }
+
+    #[test]
+    fn input_observer_preserves_resource_mapping_quality_and_sample_time() {
+        let context = context();
+        let subscription_bytes = subscription_bytes(context);
+        let subscription = decode_telemetry_subscribe(
+            &subscription_bytes,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        let encoded = encode_input_snapshot(input_status(), &input_records());
+        let mut observer = RealtimeInputObserver::<4>::new(500);
+        observer
+            .observe_encoded(
+                1,
+                DeviceCycle(1_000),
+                DeviceCycle(1_010),
+                context.config_digest,
+                &encoded,
+            )
+            .unwrap();
+
+        let mut samples = [ResourceOverviewSample {
+            resource: alumina_board::ResourceId::Gpio(0),
+            provenance: SampleProvenance::Inferred,
+            quality: SampleQuality::Unavailable,
+            quality_flags: SampleQualityFlags(0),
+            captured_cycle: DeviceCycle(0),
+            value: ResourceValue::Unavailable,
+        }; 4];
+        let mut overview = [0_u8; 320];
+        let used = observer
+            .encode_overview(
+                context,
+                subscription,
+                1,
+                DeviceCycle(1_100),
+                &mut samples,
+                &mut overview,
+            )
+            .unwrap();
+        assert_eq!(used, overview.len());
+        let overview =
+            decode_resource_overview(&overview, DiagnosticLimits::interactive()).unwrap();
+        let samples = overview
+            .samples()
+            .collect::<heapless::Vec<ResourceOverviewSample, 4>>();
+        assert_eq!(samples[0].resource, alumina_board::ResourceId::Gpio(22));
+        assert_eq!(samples[0].captured_cycle, DeviceCycle(992));
+        assert_eq!(samples[0].value, ResourceValue::Boolean(false));
+        assert_eq!(samples[0].quality, SampleQuality::Valid);
+        assert_eq!(samples[1].captured_cycle, DeviceCycle(991));
+        assert_eq!(samples[1].quality, SampleQuality::Stale);
+        assert_eq!(samples[2].captured_cycle, DeviceCycle(990));
+        assert_eq!(samples[2].value, ResourceValue::Boolean(true));
+        assert_eq!(samples[3].captured_cycle, DeviceCycle(993));
+        assert_eq!(samples[3].value, ResourceValue::Boolean(true));
+        assert!(
+            samples
+                .iter()
+                .all(|sample| { sample.quality_flags.contains(SampleQualityFlags::DEBOUNCED) })
+        );
+    }
+
+    #[test]
+    fn target_style_observer_publishes_one_exact_authenticated_event() {
+        type TargetService = DiagnosticServiceState<176, 432, 0, 0>;
+
+        let context = context();
+        let subscription_bytes = subscription_bytes(context);
+        let subscription = decode_telemetry_subscribe(
+            &subscription_bytes,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        let reference = TelemetrySessionRequest {
+            subscription_id: subscription.subscription_id(),
+            subscription_digest: subscription.digest(),
+        };
+        let mut service = TargetService::new(
+            context,
+            DiagnosticProviderPolicy {
+                resource_overview: true,
+                digital_capture: false,
+            },
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
+        service.subscribe(&subscription_bytes).unwrap();
+
+        let mut observer = RealtimeInputObserver::<4>::new(500);
+        let input = encode_input_snapshot(input_status(), &input_records());
+        observer
+            .observe_encoded(
+                1,
+                DeviceCycle(1_000),
+                DeviceCycle(1_010),
+                context.config_digest,
+                &input,
+            )
+            .unwrap();
+        let (provider_request, sequence) = service
+            .telemetry_provider_request_at(DeviceCycle(1_100))
+            .unwrap();
+        let mut samples = [ResourceOverviewSample {
+            resource: alumina_board::ResourceId::Gpio(0),
+            provenance: SampleProvenance::Inferred,
+            quality: SampleQuality::Unavailable,
+            quality_flags: SampleQualityFlags(0),
+            captured_cycle: DeviceCycle(0),
+            value: ResourceValue::Unavailable,
+        }; 4];
+        let mut overview = [0_u8; 320];
+        let overview_len = observer
+            .encode_overview(
+                context,
+                provider_request,
+                sequence,
+                DeviceCycle(1_100),
+                &mut samples,
+                &mut overview,
+            )
+            .unwrap();
+        service.publish_overview(&overview[..overview_len]).unwrap();
+
+        let mut event = [0_u8; MAX_NATIVE_DIAGNOSTIC_RESPONSE_BODY_BYTES];
+        let event_len = service
+            .poll_telemetry_event(
+                TelemetryPollRequest {
+                    reference,
+                    accepted_event_sequence: 0,
+                },
+                &mut event,
+            )
+            .unwrap();
+        assert_eq!(event_len, 432);
+        let event = decode_telemetry_event(
+            &event[..event_len],
+            subscription,
+            DiagnosticLimits::interactive(),
+        )
+        .unwrap();
+        assert_eq!(event.event_sequence(), 1);
+        assert_eq!(event.dropped_events(), 0);
+        assert_eq!(event.overview().snapshot_cycle(), DeviceCycle(1_100));
+        assert_eq!(
+            event
+                .overview()
+                .sample(alumina_board::ResourceId::Gpio(33))
+                .unwrap()
+                .value,
+            ResourceValue::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn input_observer_revokes_mapping_generation_and_time_substitution() {
+        let context = context();
+        let subscription_bytes = subscription_bytes(context);
+        let subscription = decode_telemetry_subscribe(
+            &subscription_bytes,
+            DiagnosticTransportLimits::native_control(),
+        )
+        .unwrap();
+        let records = input_records();
+        let encoded = encode_input_snapshot(input_status(), &records);
+        let mut observer = RealtimeInputObserver::<4>::new(500);
+        observer
+            .observe_encoded(
+                1,
+                DeviceCycle(1_000),
+                DeviceCycle(1_010),
+                context.config_digest,
+                &encoded,
+            )
+            .unwrap();
+
+        let mut changed_status = input_status();
+        changed_status.active_mask ^= 1;
+        let changed = encode_input_snapshot(changed_status, &records);
+        assert_eq!(
+            observer.observe_encoded(
+                2,
+                DeviceCycle(1_100),
+                DeviceCycle(1_110),
+                context.config_digest,
+                &changed,
+            ),
+            Err(RealtimeInputObservationError::TransitionGeneration)
+        );
+
+        let mut changed_records = records;
+        changed_records[0].resource = alumina_board::ResourceId::Gpio(21);
+        let changed = encode_input_snapshot(input_status(), &changed_records);
+        observer
+            .observe_encoded(
+                3,
+                DeviceCycle(1_200),
+                DeviceCycle(1_210),
+                context.config_digest,
+                &encoded,
+            )
+            .unwrap();
+        assert_eq!(
+            observer.observe_encoded(
+                4,
+                DeviceCycle(1_300),
+                DeviceCycle(1_310),
+                context.config_digest,
+                &changed,
+            ),
+            Err(RealtimeInputObservationError::ResourceMapping)
+        );
+
+        let mut future_records = records;
+        future_records[0].sampled_at = Some(DeviceCycle(2_001));
+        let future = encode_input_snapshot(input_status(), &future_records);
+        assert_eq!(
+            observer.observe_encoded(
+                5,
+                DeviceCycle(2_000),
+                DeviceCycle(2_010),
+                context.config_digest,
+                &future,
+            ),
+            Err(RealtimeInputObservationError::Future)
+        );
+
+        let mut samples = [ResourceOverviewSample {
+            resource: alumina_board::ResourceId::Gpio(0),
+            provenance: SampleProvenance::Inferred,
+            quality: SampleQuality::Unavailable,
+            quality_flags: SampleQualityFlags(0),
+            captured_cycle: DeviceCycle(0),
+            value: ResourceValue::Unavailable,
+        }; 4];
+        let mut overview = [0_u8; 320];
+        observer
+            .encode_overview(
+                context,
+                subscription,
+                1,
+                DeviceCycle(2_020),
+                &mut samples,
+                &mut overview,
+            )
+            .unwrap();
+        let overview =
+            decode_resource_overview(&overview, DiagnosticLimits::interactive()).unwrap();
+        assert!(overview.samples().all(|sample| {
+            sample.quality == SampleQuality::Unavailable
+                && sample.value == ResourceValue::Unavailable
+        }));
+    }
 }

@@ -8,6 +8,7 @@ use alumina_board::ResourceId;
 use alumina_capability::{CapabilityIdentity, decode_resource_id, encode_resource_id};
 use alumina_clock::{BOOT_ID_BYTES, BootId};
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
+use alumina_safety::SafetyInputStatus;
 
 /// Canonical authenticated telemetry and waveform transport bodies.
 pub mod transport;
@@ -30,6 +31,16 @@ pub const DIGITAL_CAPTURE_HEADER_BYTES: usize = 224;
 pub const DIGITAL_CAPTURE_CHANNEL_BYTES: usize = 16;
 /// Bytes in one digital transition record.
 pub const DIGITAL_TRANSITION_BYTES: usize = 16;
+/// Exact real-time input-snapshot document magic.
+pub const REALTIME_INPUT_SNAPSHOT_MAGIC: [u8; 8] = *b"ALMRTI01";
+/// Exact real-time input-snapshot schema version.
+pub const REALTIME_INPUT_SNAPSHOT_VERSION: u16 = 1;
+/// Bytes before the first real-time input record.
+pub const REALTIME_INPUT_SNAPSHOT_HEADER_BYTES: usize = 48;
+/// Bytes in one real-time input record.
+pub const REALTIME_INPUT_SNAPSHOT_RECORD_BYTES: usize = 16;
+/// Maximum records admitted by the fixed mask representation.
+pub const MAX_REALTIME_INPUT_SNAPSHOT_INPUTS: usize = 32;
 /// Format-level maximum digital channels in one capture.
 ///
 /// This is independent of a caller selecting an even smaller decode policy and
@@ -248,6 +259,84 @@ pub struct ResourceOverviewDocument<'a> {
     /// Strictly increasing typed resource records; omission conveys no value.
     pub samples: &'a [ResourceOverviewSample],
 }
+
+/// One configuration-stable real-time input slot and its exact latest sample cycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeInputRecord {
+    /// Exact board resource sampled by this configuration slot.
+    pub resource: ResourceId,
+    /// Most recent physical acquisition cycle, including pre-debounce samples.
+    pub sampled_at: Option<DeviceCycle>,
+}
+
+/// Borrowed core-1 input snapshot supplied to the canonical encoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeInputSnapshotDocument<'a> {
+    /// Aggregate semantic input facts in the same slot order as `records`.
+    pub status: SafetyInputStatus,
+    /// Exact configuration-stable resource mapping and acquisition cycles.
+    pub records: &'a [RealtimeInputRecord],
+}
+
+/// Allocation-free validated view of one core-1 input snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealtimeInputSnapshotView<'a> {
+    status: SafetyInputStatus,
+    records: &'a [u8],
+    record_count: usize,
+}
+
+impl<'a> RealtimeInputSnapshotView<'a> {
+    /// Aggregate semantic facts for every retained slot.
+    pub const fn status(self) -> SafetyInputStatus {
+        self.status
+    }
+
+    /// Number of configuration-stable input slots.
+    pub const fn record_count(self) -> usize {
+        self.record_count
+    }
+
+    /// Iterates validated records in configuration-stable slot order.
+    pub fn records(self) -> RealtimeInputRecordIter<'a> {
+        RealtimeInputRecordIter {
+            records: self.records,
+            offset: 0,
+        }
+    }
+
+    /// Returns one validated record by its configuration-stable slot.
+    pub fn record(self, slot: usize) -> Option<RealtimeInputRecord> {
+        self.records().nth(slot)
+    }
+}
+
+/// Iterator over validated fixed-size real-time input records.
+#[derive(Clone, Debug)]
+pub struct RealtimeInputRecordIter<'a> {
+    records: &'a [u8],
+    offset: usize,
+}
+
+impl Iterator for RealtimeInputRecordIter<'_> {
+    type Item = RealtimeInputRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let end = self
+            .offset
+            .checked_add(REALTIME_INPUT_SNAPSHOT_RECORD_BYTES)?;
+        let record = self.records.get(self.offset..end)?;
+        self.offset = end;
+        Some(decode_realtime_input_record(record).expect("validated input record remains valid"))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = (self.records.len() - self.offset) / REALTIME_INPUT_SNAPSHOT_RECORD_BYTES;
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for RealtimeInputRecordIter<'_> {}
 
 /// Allocation-free validated view of a canonical resource overview.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -796,6 +885,106 @@ impl fmt::Display for DiagnosticError {
     }
 }
 
+/// Returns the exact real-time input-snapshot length for `record_count`.
+pub fn realtime_input_snapshot_encoded_len(record_count: usize) -> Result<usize, DiagnosticError> {
+    if record_count > MAX_REALTIME_INPUT_SNAPSHOT_INPUTS {
+        return Err(DiagnosticError::Limit("real-time input records"));
+    }
+    REALTIME_INPUT_SNAPSHOT_HEADER_BYTES
+        .checked_add(
+            record_count
+                .checked_mul(REALTIME_INPUT_SNAPSHOT_RECORD_BYTES)
+                .ok_or(DiagnosticError::Length)?,
+        )
+        .ok_or(DiagnosticError::Length)
+}
+
+/// Encodes one exact core-1 input snapshot into caller-owned memory.
+pub fn encode_realtime_input_snapshot(
+    document: &RealtimeInputSnapshotDocument<'_>,
+    output: &mut [u8],
+) -> Result<usize, DiagnosticError> {
+    validate_realtime_input_snapshot(document.status, document.records)?;
+    let total = realtime_input_snapshot_encoded_len(document.records.len())?;
+    if output.len() < total {
+        return Err(DiagnosticError::Length);
+    }
+
+    let encoded = &mut output[..total];
+    encoded.fill(0);
+    encoded[0..8].copy_from_slice(&REALTIME_INPUT_SNAPSHOT_MAGIC);
+    encoded[8..10].copy_from_slice(&REALTIME_INPUT_SNAPSHOT_VERSION.to_le_bytes());
+    encoded[12..16].copy_from_slice(
+        &u32::try_from(total)
+            .map_err(|_| DiagnosticError::Length)?
+            .to_le_bytes(),
+    );
+    encoded[16] = document.status.input_count;
+    encoded[17] = u8::from(document.status.next_watchdog_deadline.is_some());
+    encoded[20..24].copy_from_slice(&document.status.known_mask.to_le_bytes());
+    encoded[24..28].copy_from_slice(&document.status.active_mask.to_le_bytes());
+    encoded[28..32].copy_from_slice(&document.status.required_mask.to_le_bytes());
+    encoded[32..36].copy_from_slice(&document.status.stale_mask.to_le_bytes());
+    encoded[36..40].copy_from_slice(&document.status.transition_generation.to_le_bytes());
+    if let Some(deadline) = document.status.next_watchdog_deadline {
+        encoded[40..48].copy_from_slice(&deadline.0.to_le_bytes());
+    }
+    for (index, record) in document.records.iter().copied().enumerate() {
+        let start =
+            REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + index * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES;
+        encode_realtime_input_record(
+            record,
+            &mut encoded[start..start + REALTIME_INPUT_SNAPSHOT_RECORD_BYTES],
+        );
+    }
+    Ok(total)
+}
+
+/// Decodes and independently validates one complete core-1 input snapshot.
+pub fn decode_realtime_input_snapshot(
+    encoded: &[u8],
+) -> Result<RealtimeInputSnapshotView<'_>, DiagnosticError> {
+    if encoded.len() < REALTIME_INPUT_SNAPSHOT_HEADER_BYTES {
+        return Err(DiagnosticError::Length);
+    }
+    if encoded[0..8] != REALTIME_INPUT_SNAPSHOT_MAGIC {
+        return Err(DiagnosticError::Magic);
+    }
+    if read_u16(encoded, 8) != REALTIME_INPUT_SNAPSHOT_VERSION {
+        return Err(DiagnosticError::Version);
+    }
+    if encoded[10..12] != [0; 2] || encoded[18..20] != [0; 2] || encoded[17] & !1 != 0 {
+        return Err(DiagnosticError::Reserved);
+    }
+    if read_u32(encoded, 12) != u32::try_from(encoded.len()).map_err(|_| DiagnosticError::Length)? {
+        return Err(DiagnosticError::Length);
+    }
+    let record_count = usize::from(encoded[16]);
+    let expected = realtime_input_snapshot_encoded_len(record_count)?;
+    if encoded.len() != expected {
+        return Err(DiagnosticError::Length);
+    }
+    if encoded[17] == 0 && encoded[40..48] != [0; 8] {
+        return Err(DiagnosticError::Reserved);
+    }
+    let status = SafetyInputStatus {
+        input_count: encoded[16],
+        known_mask: read_u32(encoded, 20),
+        active_mask: read_u32(encoded, 24),
+        required_mask: read_u32(encoded, 28),
+        stale_mask: read_u32(encoded, 32),
+        transition_generation: read_u32(encoded, 36),
+        next_watchdog_deadline: (encoded[17] != 0).then(|| DeviceCycle(read_u64(encoded, 40))),
+    };
+    let records = &encoded[REALTIME_INPUT_SNAPSHOT_HEADER_BYTES..];
+    validate_encoded_realtime_input_snapshot(status, records)?;
+    Ok(RealtimeInputSnapshotView {
+        status,
+        records,
+        record_count,
+    })
+}
+
 /// Returns the exact resource-overview encoded length for `sample_count`.
 pub fn resource_overview_encoded_len(sample_count: usize) -> Result<usize, DiagnosticError> {
     RESOURCE_OVERVIEW_HEADER_BYTES
@@ -1130,6 +1319,96 @@ fn validate_overview_flags(flags: OverviewFlags) -> Result<(), DiagnosticError> 
     } else {
         Ok(())
     }
+}
+
+fn validate_realtime_input_snapshot(
+    status: SafetyInputStatus,
+    records: &[RealtimeInputRecord],
+) -> Result<(), DiagnosticError> {
+    status.validate().map_err(|_| DiagnosticError::Quality)?;
+    if usize::from(status.input_count) != records.len()
+        || records.len() > MAX_REALTIME_INPUT_SNAPSHOT_INPUTS
+    {
+        return Err(DiagnosticError::Length);
+    }
+    for (slot, record) in records.iter().copied().enumerate() {
+        if records[..slot]
+            .iter()
+            .any(|previous| previous.resource == record.resource)
+        {
+            return Err(DiagnosticError::Resource);
+        }
+        validate_realtime_input_record_state(status, slot, record)?;
+    }
+    Ok(())
+}
+
+fn validate_encoded_realtime_input_snapshot(
+    status: SafetyInputStatus,
+    records: &[u8],
+) -> Result<(), DiagnosticError> {
+    status.validate().map_err(|_| DiagnosticError::Quality)?;
+    if !records
+        .len()
+        .is_multiple_of(REALTIME_INPUT_SNAPSHOT_RECORD_BYTES)
+        || records.len() / REALTIME_INPUT_SNAPSHOT_RECORD_BYTES != usize::from(status.input_count)
+    {
+        return Err(DiagnosticError::Length);
+    }
+
+    for (slot, encoded) in records
+        .chunks_exact(REALTIME_INPUT_SNAPSHOT_RECORD_BYTES)
+        .enumerate()
+    {
+        let record = decode_realtime_input_record(encoded)?;
+        for previous in records[..slot * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES]
+            .chunks_exact(REALTIME_INPUT_SNAPSHOT_RECORD_BYTES)
+        {
+            if decode_realtime_input_record(previous)?.resource == record.resource {
+                return Err(DiagnosticError::Resource);
+            }
+        }
+        validate_realtime_input_record_state(status, slot, record)?;
+    }
+    Ok(())
+}
+
+fn validate_realtime_input_record_state(
+    status: SafetyInputStatus,
+    slot: usize,
+    record: RealtimeInputRecord,
+) -> Result<(), DiagnosticError> {
+    let bit = 1_u32 << slot;
+    if (status.known_mask & bit != 0 || status.stale_mask & bit == 0) && record.sampled_at.is_none()
+    {
+        return Err(DiagnosticError::Quality);
+    }
+    Ok(())
+}
+
+fn encode_realtime_input_record(record: RealtimeInputRecord, output: &mut [u8]) {
+    output.fill(0);
+    output[0..4].copy_from_slice(&encode_resource_id(record.resource));
+    output[4] = u8::from(record.sampled_at.is_some());
+    if let Some(sampled_at) = record.sampled_at {
+        output[8..16].copy_from_slice(&sampled_at.0.to_le_bytes());
+    }
+}
+
+fn decode_realtime_input_record(encoded: &[u8]) -> Result<RealtimeInputRecord, DiagnosticError> {
+    if encoded.len() != REALTIME_INPUT_SNAPSHOT_RECORD_BYTES {
+        return Err(DiagnosticError::Length);
+    }
+    if encoded[4] & !1 != 0
+        || encoded[5..8].iter().any(|byte| *byte != 0)
+        || encoded[4] == 0 && encoded[8..16].iter().any(|byte| *byte != 0)
+    {
+        return Err(DiagnosticError::Reserved);
+    }
+    Ok(RealtimeInputRecord {
+        resource: decode_resource_id(&encoded[0..4]).map_err(|_| DiagnosticError::Resource)?,
+        sampled_at: (encoded[4] != 0).then(|| DeviceCycle(read_u64(encoded, 8))),
+    })
 }
 
 fn validate_overview_samples(
@@ -1739,6 +2018,143 @@ mod tests {
             channels,
             transitions,
         }
+    }
+
+    #[test]
+    fn realtime_input_snapshot_round_trips_slot_mapping_and_exact_sample_cycles() {
+        let status = SafetyInputStatus {
+            input_count: 4,
+            known_mask: 0b1111,
+            active_mask: 0b1001,
+            required_mask: 0b0111,
+            stale_mask: 0,
+            transition_generation: 7,
+            next_watchdog_deadline: Some(DeviceCycle(2_500)),
+        };
+        let records = [
+            RealtimeInputRecord {
+                resource: ResourceId::Gpio(33),
+                sampled_at: Some(DeviceCycle(2_000)),
+            },
+            RealtimeInputRecord {
+                resource: ResourceId::Gpio(32),
+                sampled_at: Some(DeviceCycle(2_001)),
+            },
+            RealtimeInputRecord {
+                resource: ResourceId::Gpio(22),
+                sampled_at: Some(DeviceCycle(2_002)),
+            },
+            RealtimeInputRecord {
+                resource: ResourceId::Gpio(35),
+                sampled_at: Some(DeviceCycle(2_003)),
+            },
+        ];
+        let mut encoded =
+            [0_u8; REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 4 * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES];
+        assert_eq!(
+            encode_realtime_input_snapshot(
+                &RealtimeInputSnapshotDocument {
+                    status,
+                    records: &records,
+                },
+                &mut encoded,
+            ),
+            Ok(encoded.len())
+        );
+        assert_eq!(&encoded[..8], b"ALMRTI01");
+        let decoded = decode_realtime_input_snapshot(&encoded).unwrap();
+        assert_eq!(decoded.status(), status);
+        assert_eq!(decoded.record_count(), records.len());
+        assert_eq!(
+            decoded.records().collect::<heapless_test::Vec4<_>>(),
+            heapless_test::Vec4(records)
+        );
+    }
+
+    #[test]
+    fn realtime_input_snapshot_rejects_ambiguous_slots_and_noncanonical_wire() {
+        let status = SafetyInputStatus {
+            input_count: 2,
+            known_mask: 0b01,
+            active_mask: 0,
+            required_mask: 0b11,
+            stale_mask: 0b10,
+            transition_generation: 1,
+            next_watchdog_deadline: None,
+        };
+        let mut records = [
+            RealtimeInputRecord {
+                resource: ResourceId::Gpio(22),
+                sampled_at: Some(DeviceCycle(10)),
+            },
+            RealtimeInputRecord {
+                resource: ResourceId::Gpio(32),
+                sampled_at: None,
+            },
+        ];
+        let mut encoded =
+            [0_u8; REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 2 * REALTIME_INPUT_SNAPSHOT_RECORD_BYTES];
+        assert_eq!(
+            encode_realtime_input_snapshot(
+                &RealtimeInputSnapshotDocument {
+                    status,
+                    records: &records,
+                },
+                &mut encoded,
+            ),
+            Ok(encoded.len())
+        );
+
+        records[1].resource = records[0].resource;
+        assert_eq!(
+            encode_realtime_input_snapshot(
+                &RealtimeInputSnapshotDocument {
+                    status,
+                    records: &records,
+                },
+                &mut encoded,
+            ),
+            Err(DiagnosticError::Resource)
+        );
+        records[1].resource = ResourceId::Gpio(32);
+        records[0].sampled_at = None;
+        assert_eq!(
+            encode_realtime_input_snapshot(
+                &RealtimeInputSnapshotDocument {
+                    status,
+                    records: &records,
+                },
+                &mut encoded,
+            ),
+            Err(DiagnosticError::Quality)
+        );
+
+        records[0].sampled_at = Some(DeviceCycle(10));
+        encode_realtime_input_snapshot(
+            &RealtimeInputSnapshotDocument {
+                status,
+                records: &records,
+            },
+            &mut encoded,
+        )
+        .unwrap();
+        encoded[REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 5] = 1;
+        assert_eq!(
+            decode_realtime_input_snapshot(&encoded),
+            Err(DiagnosticError::Reserved)
+        );
+
+        encoded[REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 5] = 0;
+        let second_record =
+            REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + REALTIME_INPUT_SNAPSHOT_RECORD_BYTES;
+        encoded.copy_within(
+            REALTIME_INPUT_SNAPSHOT_HEADER_BYTES..REALTIME_INPUT_SNAPSHOT_HEADER_BYTES + 4,
+            second_record,
+        );
+        assert_eq!(
+            decode_realtime_input_snapshot(&encoded),
+            Err(DiagnosticError::Resource)
+        );
     }
 
     #[test]

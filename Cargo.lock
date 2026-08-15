@@ -66,6 +66,7 @@ dependencies = [
  "alumina-capability",
  "alumina-clock",
  "alumina-protocol",
+ "alumina-safety",
  "sha2",
 ]
 
@@ -224,6 +225,7 @@ version = "0.1.0"
 dependencies = [
  "alumina-board",
  "alumina-capability",
+ "alumina-clock",
  "alumina-diagnostics",
  "alumina-net",
  "alumina-protocol",
