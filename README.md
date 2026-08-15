@@ -358,6 +358,11 @@ as `split_after_stop_request`, renders the machine state indeterminate, and
 stops status polling. The localhost asymmetric qualification is recorded in
 the [abort-split outage
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md).
+Stopping during partial installation now aborts only the participant with an
+emitted local commit and cancels the never-installed participant. The latter
+retains no fabricated local cycle, and a second job completes on the same
+simulated boots after terminal clear; see the [installing-stop
+evidence](docs/evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md).
 Physical radio and timing qualification remain closed. The same coordinator
 now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped

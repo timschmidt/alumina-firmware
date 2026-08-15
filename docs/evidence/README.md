@@ -416,6 +416,18 @@ a hardware qualification: board promotion still follows the evidence ladder in
   and confirmed states, mandatory per-participant read-only reconciliation
   before the next mutation, exact aborted terminal state, and a no-fault
   Chromium regression.
+- [`M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md`](M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md)
+  — pre-application abort-request loss, mandatory unchanged-state status
+  reconciliation, exact retry, and all-participant aborted completion.
+- [`M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md`](M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md)
+  — bounded repeated abort-mutation loss through the point of no return and an
+  explicit completed-after-stop terminal rather than a fabricated abort.
+- [`M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md`](M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md)
+  — asymmetric applied/lost abort mutations, exact aborted/complete terminal
+  facts, and an indeterminate-machine UI result.
+- [`M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md`](M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md)
+  — exact abort of an installed participant, cancellation of a never-installed
+  participant without a fabricated cycle, and same-boot reuse by a second job.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

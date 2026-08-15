@@ -327,9 +327,15 @@ variant now allows one participant to apply abort while another loses the
 mutation through its guard. Once every actor is terminal and at least one is
 stopped and one complete, the exact global result is
 `split_after_stop_request`; see the [abort-split outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). Full
-control/status outage, reordered or duplicated traffic, and splits involving
-faulted, cancelled, or never-installed actors remain open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). A stop during
+installation now distinguishes emitted local commits from browser-only planned
+commits. Installed participants receive `JobAbort`; never-installed prepared
+participants must reach `Cancelled`, retain no local start cycle, and can then
+accept a distinct job after terminal clear. The same-boot two-attempt boundary
+is recorded in the [installing-stop
+evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md). Full
+control/status outage, reordered or duplicated traffic, and faulted or other
+terminal mixtures remain open.
 
 ## Operation after network loss
 

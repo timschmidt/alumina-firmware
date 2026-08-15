@@ -773,9 +773,15 @@ complementary asymmetric case is now exact: one participant applies abort while
 the other loses 18 abort mutations through its guard, and schema V9 terminates
 with the retained `aborted`/`complete` facts as `split_after_stop_request`
 instead of polling forever. See the [browser abort-split outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). Full
-control/status outage, reorder/duplication, split outcomes involving faulted,
-cancelled, or never-installed actors, broader packet stress,
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). The exact
+installation split is now closed as well: when stop observes one installed and
+one ready participant, the worker aborts the installed actor, cancels the
+never-installed actor without inventing a local cycle, clears the terminal,
+and completes a distinct job on the same boots. See the [browser
+installing-stop
+evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md). Full
+control/status outage, reorder/duplication, faulted or other terminal mixtures,
+broader packet stress,
 background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
 backend, and the physical exit gate remain open; current board packages are
 non-armable. Fresh-owner same-attempt terminal reattachment is now exact and

@@ -430,8 +430,14 @@ qualification lets one actor apply abort while the other loses abort mutations
 through its guard. Schema V9 retains the exact `aborted`/`complete` split as
 terminal `split_after_stop_request`; see the [browser abort-split outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md).
+An installation-phase stop now uses emitted commit authority rather than the
+browser's complete planned set: it aborts an installed actor, cancels a ready
+never-installed actor, retains the exact cycle/null distinction, and then
+completes a second job on the same sessions and boots. See the [browser
+installing-stop
+evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md).
 Attended-policy controls, full control/status outage, reordered/duplicated
-traffic, split outcomes involving faulted, cancelled, or never-installed actors,
+traffic, faulted or other terminal mixtures,
 broader network/storage faults, background-throttling qualification, and
 physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
