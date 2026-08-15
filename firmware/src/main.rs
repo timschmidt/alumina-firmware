@@ -131,7 +131,7 @@ static DIAGNOSTIC_SERVICE: StaticCell<TargetDiagnosticService> = StaticCell::new
 
 const TARGET_DIAGNOSTIC_PROVIDERS: DiagnosticProviderPolicy = DiagnosticProviderPolicy {
     resource_overview: selected::DIAGNOSTIC_RESOURCE_OVERVIEW,
-    digital_capture: false,
+    digital_capture: selected::PACKAGE.digital_capture,
 };
 
 const TARGET_REALTIME_INPUT_SNAPSHOT_BYTES: usize = REALTIME_INPUT_SNAPSHOT_HEADER_BYTES

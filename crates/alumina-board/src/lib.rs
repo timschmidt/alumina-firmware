@@ -259,6 +259,137 @@ impl DiagnosticOverviewDescriptor<'_> {
     }
 }
 
+/// Acquisition mechanism admitted for one device-produced digital channel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum DigitalCaptureSourceKind {
+    /// Deterministic host simulation, never physical measurement.
+    Simulated = 1,
+    /// ESP RMT edge/timestamp acquisition.
+    Rmt = 2,
+    /// ESP pulse-counter acquisition.
+    Pcnt = 3,
+    /// Peripheral DMA acquisition.
+    Dma = 4,
+    /// Qualified bounded software sampling.
+    Software = 5,
+}
+
+/// Canonical waveform-configure flags admitted by a digital-capture provider.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct DigitalCaptureConfigureFlags(pub u16);
+
+impl DigitalCaptureConfigureFlags {
+    /// Capture retains edge timestamps rather than a sampled analog stream.
+    pub const EDGE_TIMESTAMPS: u16 = 1 << 0;
+    /// Caller may accept qualified bounded software sampling.
+    pub const ALLOW_SOFTWARE: u16 = 1 << 1;
+    /// All flags understood by this board schema.
+    pub const KNOWN: u16 = Self::EDGE_TIMESTAMPS | Self::ALLOW_SOFTWARE;
+
+    /// Whether one flag is present.
+    pub const fn contains(self, flag: u16) -> bool {
+        self.0 & flag != 0
+    }
+}
+
+/// Trigger predicates admitted by one digital-capture provider.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct DigitalCaptureTriggerSet(pub u8);
+
+impl DigitalCaptureTriggerSet {
+    /// Begin acquisition immediately without a channel event.
+    pub const IMMEDIATE: u8 = 1 << 0;
+    /// Low-to-high logical transition.
+    pub const RISING: u8 = 1 << 1;
+    /// High-to-low logical transition.
+    pub const FALLING: u8 = 1 << 2;
+    /// Either logical transition.
+    pub const EITHER: u8 = 1 << 3;
+    /// All trigger bits understood by this board schema.
+    pub const KNOWN: u8 = Self::IMMEDIATE | Self::RISING | Self::FALLING | Self::EITHER;
+
+    /// Whether one trigger bit is present.
+    pub const fn contains(self, trigger: u8) -> bool {
+        self.0 & trigger != 0
+    }
+}
+
+/// One typed resource admitted to a device-produced digital capture.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DigitalCaptureResourceDescriptor {
+    /// Exact physical or board-semantic resource represented by the channel.
+    pub resource: ResourceId,
+    /// Acquisition mechanism the retained channel must report.
+    pub source: DigitalCaptureSourceKind,
+    /// Evidence level for this complete resource-to-capture path.
+    pub support: SupportLevel,
+}
+
+/// Exact fixed-memory digital edge-capture provider published by one image.
+///
+/// This grants only bounded evidence acquisition over the listed resources. It
+/// grants no graph operation, output lease, pin-mode change, arm transition, or
+/// safety authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DigitalCaptureDescriptor<'a> {
+    /// Exact `ALMDIG` record schema emitted by this provider, or zero if absent.
+    pub schema_version: u16,
+    /// Whole-provider evidence floor, absent when no provider is declared.
+    pub support: Option<SupportLevel>,
+    /// Exact canonical configure flags accepted by this provider.
+    pub configure_flags: DigitalCaptureConfigureFlags,
+    /// Set of admitted trigger predicates.
+    pub trigger_kinds: DigitalCaptureTriggerSet,
+    /// Largest channel selection admitted by one configuration.
+    pub maximum_channels: u16,
+    /// Largest retained transition capacity admitted by one configuration.
+    pub maximum_transitions: u32,
+    /// Permanently reserved canonical configure-request bytes.
+    pub configure_bytes: u32,
+    /// Permanently reserved complete retained-record bytes.
+    pub record_bytes: u32,
+    /// Largest canonical range/chunk payload.
+    pub maximum_chunk_bytes: u32,
+    /// Largest pretrigger interval in microseconds.
+    pub maximum_pretrigger_micros: u32,
+    /// Largest complete requested capture duration in microseconds.
+    pub maximum_duration_micros: u32,
+    /// Largest trigger-deadline window in microseconds.
+    pub arm_horizon_micros: u32,
+    /// Strictly ordered channel palette.
+    pub resources: &'a [DigitalCaptureResourceDescriptor],
+}
+
+impl DigitalCaptureDescriptor<'_> {
+    /// Canonical declaration for an image with no digital-capture provider.
+    pub const NONE: Self = Self {
+        schema_version: 0,
+        support: None,
+        configure_flags: DigitalCaptureConfigureFlags(0),
+        trigger_kinds: DigitalCaptureTriggerSet(0),
+        maximum_channels: 0,
+        maximum_transitions: 0,
+        configure_bytes: 0,
+        record_bytes: 0,
+        maximum_chunk_bytes: 0,
+        maximum_pretrigger_micros: 0,
+        maximum_duration_micros: 0,
+        arm_horizon_micros: 0,
+        resources: &[],
+    };
+
+    /// Whether this exact image has at least a compiling capture provider.
+    pub const fn is_implemented(self) -> bool {
+        matches!(
+            self.support,
+            Some(SupportLevel::Compiles | SupportLevel::Bench | SupportLevel::Qualified)
+        )
+    }
+}
+
 /// Compile-time flash and RAM facts for one PCB/module revision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryDescriptor {
@@ -615,6 +746,8 @@ pub struct BoardPackage<'a> {
     pub graph: GraphExecutorDescriptor<'a>,
     /// Passive diagnostic-overview provider and observation palette.
     pub diagnostic_overview: DiagnosticOverviewDescriptor<'a>,
+    /// Explicit digital edge-capture provider and channel palette.
+    pub digital_capture: DigitalCaptureDescriptor<'a>,
     /// Canonical configuration aliases.
     pub aliases: &'a [AliasDescriptor<'a>],
     /// Routed controller/pin groups.
@@ -721,6 +854,7 @@ impl BoardPackage<'_> {
 
         self.validate_graph_executor()?;
         self.validate_diagnostic_overview()?;
+        self.validate_digital_capture()?;
 
         for (index, alias) in self.aliases.iter().enumerate() {
             if alias.name.is_empty() {
@@ -1213,6 +1347,84 @@ impl BoardPackage<'_> {
         }
         Ok(())
     }
+
+    fn validate_digital_capture(&self) -> Result<(), BoardError> {
+        let capture = self.digital_capture;
+        let has_nonzero_fact = capture.schema_version != 0
+            || capture.configure_flags.0 != 0
+            || capture.trigger_kinds.0 != 0
+            || capture.maximum_channels != 0
+            || capture.maximum_transitions != 0
+            || capture.configure_bytes != 0
+            || capture.record_bytes != 0
+            || capture.maximum_chunk_bytes != 0
+            || capture.maximum_pretrigger_micros != 0
+            || capture.maximum_duration_micros != 0
+            || capture.arm_horizon_micros != 0
+            || !capture.resources.is_empty();
+        let Some(support) = capture.support else {
+            return if has_nonzero_fact {
+                Err(BoardError::IncompleteDigitalCapture)
+            } else {
+                Ok(())
+            };
+        };
+        let flags = capture.configure_flags;
+        let triggers = capture.trigger_kinds;
+        if capture.schema_version == 0
+            || flags.0 & !DigitalCaptureConfigureFlags::KNOWN != 0
+            || !flags.contains(DigitalCaptureConfigureFlags::EDGE_TIMESTAMPS)
+            || triggers.0 == 0
+            || triggers.0 & !DigitalCaptureTriggerSet::KNOWN != 0
+            || capture.maximum_channels == 0
+            || usize::from(capture.maximum_channels) < capture.resources.len()
+            || capture.maximum_transitions == 0
+            || capture.configure_bytes == 0
+            || capture.record_bytes == 0
+            || capture.maximum_chunk_bytes == 0
+            || capture.maximum_chunk_bytes > capture.record_bytes
+            || capture.maximum_pretrigger_micros > capture.maximum_duration_micros
+            || capture.maximum_duration_micros == 0
+            || capture.arm_horizon_micros == 0
+            || capture.resources.is_empty()
+        {
+            return Err(BoardError::IncompleteDigitalCapture);
+        }
+        let mut has_software_source = false;
+        for (index, resource) in capture.resources.iter().copied().enumerate() {
+            let physical = self.resource(resource.resource).ok_or(
+                BoardError::DigitalCaptureMissingResource {
+                    index,
+                    resource: resource.resource,
+                },
+            )?;
+            has_software_source |= resource.source == DigitalCaptureSourceKind::Software;
+            if resource.support < support
+                || physical.owner != OwnerDomain::Realtime
+                || physical.hazardous_output
+                || physical.safe_value != SafeValue::HighImpedance
+                || !matches!(
+                    resource.resource,
+                    ResourceId::Gpio(_) | ResourceId::SafetyInput(_)
+                )
+            {
+                return Err(BoardError::InvalidDigitalCaptureResource {
+                    index,
+                    resource: resource.resource,
+                });
+            }
+            if index != 0 && capture.resources[index - 1].resource >= resource.resource {
+                return Err(BoardError::NoncanonicalDigitalCaptureResource {
+                    index,
+                    resource: resource.resource,
+                });
+            }
+        }
+        if flags.contains(DigitalCaptureConfigureFlags::ALLOW_SOFTWARE) != has_software_source {
+            return Err(BoardError::IncompleteDigitalCapture);
+        }
+        Ok(())
+    }
 }
 
 const fn bus_kind_matches(kind: BusKind, resource: ResourceId) -> bool {
@@ -1318,6 +1530,29 @@ pub enum BoardError {
     /// Passive overview resources were duplicated or not strictly ordered.
     NoncanonicalDiagnosticOverviewResource {
         /// Diagnostic observation palette index.
+        index: usize,
+        /// Rejected resource.
+        resource: ResourceId,
+    },
+    /// Digital capture support and its fixed budgets/timing were inconsistent.
+    IncompleteDigitalCapture,
+    /// A digital-capture record referenced no typed board resource.
+    DigitalCaptureMissingResource {
+        /// Digital capture palette index.
+        index: usize,
+        /// Missing typed resource.
+        resource: ResourceId,
+    },
+    /// A digital-capture resource was hazardous, misowned, or semantically invalid.
+    InvalidDigitalCaptureResource {
+        /// Digital capture palette index.
+        index: usize,
+        /// Rejected resource.
+        resource: ResourceId,
+    },
+    /// Digital-capture resources were duplicated or not strictly ordered.
+    NoncanonicalDigitalCaptureResource {
+        /// Digital capture palette index.
         index: usize,
         /// Rejected resource.
         resource: ResourceId,
@@ -1682,6 +1917,7 @@ mod tests {
             },
             graph: TEST_GRAPH,
             diagnostic_overview: DiagnosticOverviewDescriptor::NONE,
+            digital_capture: DigitalCaptureDescriptor::NONE,
             aliases,
             buses,
             devices,
@@ -1903,6 +2139,104 @@ mod tests {
         assert_eq!(
             unsafe_overview.validate(),
             Err(BoardError::InvalidDiagnosticOverviewResource {
+                index: 0,
+                resource: first.id,
+            })
+        );
+    }
+
+    #[test]
+    fn digital_capture_is_explicit_bounded_and_distinct_from_other_authority() {
+        let first = ResourceDescriptor {
+            id: ResourceId::Gpio(22),
+            owner: OwnerDomain::Realtime,
+            safe_value: SafeValue::HighImpedance,
+            hazardous_output: false,
+        };
+        let second = ResourceDescriptor {
+            id: ResourceId::Gpio(33),
+            ..first
+        };
+        let resources = [first, second];
+        let channels = [
+            DigitalCaptureResourceDescriptor {
+                resource: first.id,
+                source: DigitalCaptureSourceKind::Simulated,
+                support: SupportLevel::Compiles,
+            },
+            DigitalCaptureResourceDescriptor {
+                resource: second.id,
+                source: DigitalCaptureSourceKind::Simulated,
+                support: SupportLevel::Bench,
+            },
+        ];
+        let mut valid = package(&resources, &[], &[], &[], &[]);
+        valid.digital_capture = DigitalCaptureDescriptor {
+            schema_version: 1,
+            support: Some(SupportLevel::Compiles),
+            configure_flags: DigitalCaptureConfigureFlags(
+                DigitalCaptureConfigureFlags::EDGE_TIMESTAMPS,
+            ),
+            trigger_kinds: DigitalCaptureTriggerSet(DigitalCaptureTriggerSet::IMMEDIATE),
+            maximum_channels: 2,
+            maximum_transitions: 16,
+            configure_bytes: 200,
+            record_bytes: 1_024,
+            maximum_chunk_bytes: 128,
+            maximum_pretrigger_micros: 0,
+            maximum_duration_micros: 2_000_000,
+            arm_horizon_micros: 30_000_000,
+            resources: &channels,
+        };
+        assert!(valid.graph.resources.is_empty());
+        assert_eq!(
+            valid.diagnostic_overview,
+            DiagnosticOverviewDescriptor::NONE
+        );
+        assert_eq!(valid.validate(), Ok(()));
+
+        let mut absent_with_budget = valid;
+        absent_with_budget.digital_capture.support = None;
+        assert_eq!(
+            absent_with_budget.validate(),
+            Err(BoardError::IncompleteDigitalCapture)
+        );
+
+        let reversed = [channels[1], channels[0]];
+        let mut noncanonical = valid;
+        noncanonical.digital_capture.resources = &reversed;
+        assert_eq!(
+            noncanonical.validate(),
+            Err(BoardError::NoncanonicalDigitalCaptureResource {
+                index: 1,
+                resource: first.id,
+            })
+        );
+
+        let mut unsupported_software_flag = valid;
+        unsupported_software_flag.digital_capture.configure_flags = DigitalCaptureConfigureFlags(
+            DigitalCaptureConfigureFlags::EDGE_TIMESTAMPS
+                | DigitalCaptureConfigureFlags::ALLOW_SOFTWARE,
+        );
+        assert_eq!(
+            unsupported_software_flag.validate(),
+            Err(BoardError::IncompleteDigitalCapture)
+        );
+
+        let hazardous = [ResourceDescriptor {
+            hazardous_output: true,
+            ..first
+        }];
+        let one_channel = [channels[0]];
+        let mut unsafe_capture = package(&hazardous, &[], &[], &[], &[]);
+        unsafe_capture.digital_capture = DigitalCaptureDescriptor {
+            maximum_channels: 1,
+            resources: &one_channel,
+            ..valid.digital_capture
+        };
+        assert_eq!(
+            unsafe_capture.validate(),
+            Err(BoardError::InvalidDigitalCaptureResource {
                 index: 0,
                 resource: first.id,
             })

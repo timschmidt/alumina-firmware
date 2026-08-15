@@ -385,7 +385,7 @@ constructs owned resources, and returns separate `ServiceResources` and
 motion, network, or application code.
 
 `alumina-capability` serializes the same package as the canonical allocation-free
-`ALMCAP03` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
+`ALMCAP04` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
 own declared field, is compiled into the board package, and is recomputed by
 `xtask` and firmware. Public identity advertises digest/length; authenticated
 `CapabilitiesGet` reads contiguous bounded ranges through the single native
@@ -397,6 +397,11 @@ authority separate from both the general resource ledger and graph opcode
 admission. It reports exact resource selectors, fixed queue budgets, record
 schema, cadence, freshness, and evidence without granting a pin lease, raw
 electrical sampling, interrupt configuration, output command, or safety role.
+
+The separately bounded digital-capture catalog names exact device acquisition
+sources and fixed channel, transition, byte, trigger, and timing budgets. A
+graph-readable or passively observable input is not capturable unless it also
+appears in that catalog.
 
 `alumina-config` consumes that exact capability identity and streams canonical
 `ALMCFG06` bytes from an inert, content-addressed SD publication. Fixed resource

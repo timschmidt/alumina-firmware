@@ -4,10 +4,11 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
-    DiagnosticOverviewDescriptor, ElectricalConstraintDescriptor, ElectricalConstraintKind,
-    GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass,
-    HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain,
-    Qualification, ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
+    DiagnosticOverviewDescriptor, DigitalCaptureDescriptor, ElectricalConstraintDescriptor,
+    ElectricalConstraintKind, GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess,
+    GraphResourceClass, HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger,
+    MemoryDescriptor, OwnerDomain, Qualification, ResourceDescriptor, ResourceId, SafeValue,
+    SupportLevel,
 };
 use alumina_protocol::Digest;
 
@@ -64,10 +65,12 @@ pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescri
 /// This safe-only image currently composes no passive input overview provider.
 pub const DIAGNOSTIC_OVERVIEW: DiagnosticOverviewDescriptor<'static> =
     DiagnosticOverviewDescriptor::NONE;
-/// SHA-256 of the canonical `ALMCAP03` V3 document exported by this package.
+/// No physical digital acquisition backend is composed by this safe-only image.
+pub const DIGITAL_CAPTURE: DigitalCaptureDescriptor<'static> = DigitalCaptureDescriptor::NONE;
+/// SHA-256 of the canonical `ALMCAP04` V4 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0xf7, 0xbc, 0xc1, 0x58, 0x48, 0xaa, 0xc2, 0xad, 0x75, 0x0d, 0xbf, 0x07, 0x8b, 0xc2, 0x9d, 0xaa,
-    0xc3, 0x04, 0x2a, 0x60, 0xc6, 0x80, 0x99, 0x9c, 0xc8, 0x0e, 0xe5, 0x49, 0x80, 0xfd, 0x9f, 0x52,
+    0xcb, 0xe9, 0xb5, 0x41, 0xf9, 0x0a, 0x0f, 0x9a, 0x63, 0x48, 0x7f, 0x7f, 0xc4, 0x38, 0x55, 0xb7,
+    0x42, 0xbc, 0x4e, 0x7c, 0x1b, 0xc4, 0x77, 0x6a, 0xca, 0x27, 0xae, 0xa3, 0xfb, 0xc6, 0x03, 0x84,
 ]);
 
 /// Stable board-local fitted-device namespace.
@@ -857,6 +860,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
     },
     graph: GRAPH_EXECUTOR,
     diagnostic_overview: DIAGNOSTIC_OVERVIEW,
+    digital_capture: DIGITAL_CAPTURE,
     aliases: ALIASES,
     buses: BUSES,
     devices: DEVICES,

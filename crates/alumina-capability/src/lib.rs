@@ -4,16 +4,18 @@
 use alumina_board::{
     AliasDescriptor, BoardError, BoardPackage, BusKind, Chip, ClockDomain, ClockSource,
     DeviceRoute, DiagnosticObservationKind, DiagnosticOverviewDescriptor,
-    DiagnosticResourceDescriptor, ElectricalConstraintKind, FlashRegionKind,
-    GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass,
-    GraphResourceDescriptor, HilKind, InterruptTrigger, NormalizedPoint, OwnerDomain,
-    Qualification, ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
+    DiagnosticResourceDescriptor, DigitalCaptureConfigureFlags, DigitalCaptureDescriptor,
+    DigitalCaptureResourceDescriptor, DigitalCaptureSourceKind, DigitalCaptureTriggerSet,
+    ElectricalConstraintKind, FlashRegionKind, GraphExecutorDescriptor, GraphOpcodeDescriptor,
+    GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor, HilKind, InterruptTrigger,
+    NormalizedPoint, OwnerDomain, Qualification, ResourceDescriptor, ResourceId, SafeValue,
+    SupportLevel,
 };
 use alumina_protocol::Digest;
 use sha2::{Digest as ShaDigest, Sha256};
 
 /// Exact capability-document schema version.
-pub const CAPABILITY_DOCUMENT_VERSION: u16 = 3;
+pub const CAPABILITY_DOCUMENT_VERSION: u16 = 4;
 /// Bytes in the fixed canonical document header.
 pub const CAPABILITY_DOCUMENT_HEADER_BYTES: usize = 16;
 /// Exact `CapabilitiesGet` range-request body length.
@@ -32,12 +34,17 @@ pub const GRAPH_RESOURCE_CAPABILITY_BYTES: usize = 12;
 pub const DIAGNOSTIC_OVERVIEW_HEADER_BYTES: usize = 48;
 /// Bytes in one passive diagnostic resource-capability record.
 pub const DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES: usize = 12;
+/// Bytes in the digital-capture prefix before resource records.
+pub const DIGITAL_CAPTURE_HEADER_BYTES: usize = 64;
+/// Bytes in one digital-capture resource-capability record.
+pub const DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES: usize = 12;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP03";
-const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ03";
-const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR03";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP04";
+const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ04";
+const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR04";
 const GRAPH_EXECUTOR_MAGIC: [u8; 8] = *b"ALMGRC02";
 const DIAGNOSTIC_OVERVIEW_MAGIC: [u8; 8] = *b"ALMDOV01";
+const DIGITAL_CAPTURE_MAGIC: [u8; 8] = *b"ALMDCP01";
 const RESPONSE_FLAG_COMPLETE: u8 = 1 << 0;
 
 /// Exact identity of one canonical immutable capability document.
@@ -93,12 +100,12 @@ impl Default for BoardCapabilityLimits {
     }
 }
 
-/// Independently validated, allocation-free view of one complete canonical V3
+/// Independently validated, allocation-free view of one complete canonical V4
 /// board capability document.
 ///
 /// The view exposes the board summary and the descriptive tables needed by a
 /// board explorer while preserving the graph executor as a separate authority.
-/// All intervening V3 sections are structurally and canonically validated even
+/// All intervening V4 sections are structurally and canonically validated even
 /// when they are represented here only by counts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoardCapabilityView<'a> {
@@ -117,6 +124,7 @@ pub struct BoardCapabilityView<'a> {
     realtime_core: u8,
     graph: GraphExecutionCapability<'a>,
     diagnostic_overview: DiagnosticOverviewCapability<'a>,
+    digital_capture: DigitalCaptureCapability<'a>,
     resource_records: &'a [u8],
     alias_records: &'a [u8],
     alias_count: usize,
@@ -183,7 +191,7 @@ impl<'a> BoardCapabilityView<'a> {
         self.psram_bytes
     }
 
-    /// Whether deterministic active state may occupy PSRAM. V3 board-package
+    /// Whether deterministic active state may occupy PSRAM. V4 board-package
     /// validation currently requires this to be false.
     pub const fn realtime_psram_allowed(self) -> bool {
         self.realtime_psram_allowed
@@ -207,6 +215,11 @@ impl<'a> BoardCapabilityView<'a> {
     /// Passive diagnostic observations, separate from graph authority.
     pub const fn diagnostic_overview(self) -> DiagnosticOverviewCapability<'a> {
         self.diagnostic_overview
+    }
+
+    /// Device-produced digital capture, separate from graph and overview authority.
+    pub const fn digital_capture(self) -> DigitalCaptureCapability<'a> {
+        self.digital_capture
     }
 
     /// Number of descriptive resource records.
@@ -478,7 +491,7 @@ impl<'a> Iterator for CapabilityHotspotIter<'a> {
 
 impl ExactSizeIterator for CapabilityHotspotIter<'_> {}
 
-/// Independently decoded fixed V2 graph-executor section of one complete V3
+/// Independently decoded fixed V2 graph-executor section of one complete V4
 /// capability document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GraphExecutionCapability<'a> {
@@ -600,7 +613,7 @@ impl<'a> GraphExecutionCapability<'a> {
 }
 
 /// Independently decoded passive diagnostic-overview section of one complete
-/// V3 capability document.
+/// V4 capability document.
 ///
 /// This catalog authorizes observation only. It does not imply graph access,
 /// raw electrical acquisition, a GPIO lease, or permission to change pin mode.
@@ -679,6 +692,107 @@ impl<'a> DiagnosticOverviewCapability<'a> {
     }
 }
 
+/// Independently decoded device-produced digital-capture section of one
+/// complete V4 capability document.
+///
+/// This catalog authorizes only bounded evidence acquisition over exact
+/// channels. It does not imply graph access, raw access to other pins, output
+/// control, arming, or safety authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DigitalCaptureCapability<'a> {
+    identity: CapabilityIdentity,
+    schema_version: u16,
+    support: Option<SupportLevel>,
+    configure_flags: DigitalCaptureConfigureFlags,
+    trigger_kinds: DigitalCaptureTriggerSet,
+    maximum_channels: u16,
+    maximum_transitions: u32,
+    configure_bytes: u32,
+    record_bytes: u32,
+    maximum_chunk_bytes: u32,
+    maximum_pretrigger_micros: u32,
+    maximum_duration_micros: u32,
+    arm_horizon_micros: u32,
+    resource_records: &'a [u8],
+}
+
+impl<'a> DigitalCaptureCapability<'a> {
+    /// Complete capability-document identity containing this section.
+    pub const fn identity(self) -> CapabilityIdentity {
+        self.identity
+    }
+
+    /// Exact `ALMDIG` record schema emitted by the provider, or zero if absent.
+    pub const fn schema_version(self) -> u16 {
+        self.schema_version
+    }
+
+    /// Whole-provider evidence floor, absent when no provider is declared.
+    pub const fn support(self) -> Option<SupportLevel> {
+        self.support
+    }
+
+    /// Whether this exact image has at least a compiling capture provider.
+    pub const fn is_implemented(self) -> bool {
+        matches!(
+            self.support,
+            Some(SupportLevel::Compiles | SupportLevel::Bench | SupportLevel::Qualified)
+        )
+    }
+
+    /// Exact configure flags and trigger predicates accepted by the provider.
+    pub const fn configure_policy(
+        self,
+    ) -> (DigitalCaptureConfigureFlags, DigitalCaptureTriggerSet) {
+        (self.configure_flags, self.trigger_kinds)
+    }
+
+    /// Maximum selected channels and retained transitions.
+    pub const fn shape_limits(self) -> (u16, u32) {
+        (self.maximum_channels, self.maximum_transitions)
+    }
+
+    /// Fixed configure, retained-record, and range/chunk byte budgets.
+    pub const fn byte_limits(self) -> (u32, u32, u32) {
+        (
+            self.configure_bytes,
+            self.record_bytes,
+            self.maximum_chunk_bytes,
+        )
+    }
+
+    /// Maximum pretrigger, complete duration, and arm horizon in microseconds.
+    pub const fn timing_micros(self) -> (u32, u32, u32) {
+        (
+            self.maximum_pretrigger_micros,
+            self.maximum_duration_micros,
+            self.arm_horizon_micros,
+        )
+    }
+
+    /// Number of channel resources published by this exact image.
+    pub const fn resource_count(self) -> usize {
+        self.resource_records.len() / DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES
+    }
+
+    /// Iterate independently decoded channel records.
+    pub fn resources(self) -> impl ExactSizeIterator<Item = DigitalCaptureResourceDescriptor> + 'a {
+        self.resource_records
+            .chunks_exact(DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES)
+            .map(decode_digital_capture_resource_unchecked)
+    }
+
+    /// Whether this exact resource/source pair has an implemented capture path.
+    pub fn admits(self, resource: ResourceId, source: DigitalCaptureSourceKind) -> bool {
+        self.is_implemented()
+            && self.resources().any(|candidate| {
+                candidate.resource == resource
+                    && candidate.source == source
+                    && candidate.support >= SupportLevel::Compiles
+            })
+    }
+}
+
 /// Failure while independently locating and decoding the fixed graph section
 /// of an untrusted complete capability document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -687,7 +801,7 @@ pub enum CapabilityDocumentError {
     Length,
     /// Document, graph, or diagnostic-section magic was not exact.
     Magic,
-    /// Document version was not exactly V3.
+    /// Document version was not exactly V4.
     Version,
     /// Reserved bytes or a Boolean were noncanonical.
     Reserved,
@@ -703,6 +817,8 @@ pub enum CapabilityDocumentError {
     Graph,
     /// Passive diagnostic support, budgets, timing, or resource records were invalid.
     Diagnostic,
+    /// Digital-capture support, budgets, timing, or resource records were invalid.
+    Capture,
     /// One graph resource identifier was malformed.
     Resource(ResourceWireError),
 }
@@ -725,7 +841,7 @@ pub struct CapabilityRead {
 pub enum CapabilityError {
     /// The board package failed its structural validation.
     Board(BoardError),
-    /// A count, string, address, or total length exceeded V3 integer bounds.
+    /// A count, string, address, or total length exceeded V4 integer bounds.
     Length,
     /// The requested offset was beyond the exact document end.
     Range,
@@ -822,17 +938,17 @@ pub fn read_verified_range(
     })
 }
 
-/// Independently validates and exposes one complete canonical V3 board
+/// Independently validates and exposes one complete canonical V4 board
 /// capability document within caller-selected bounds.
 ///
-/// This function hashes the complete byte string and validates every V3
+/// This function hashes the complete byte string and validates every V4
 /// section, including sections not directly exposed by the returned view. The
 /// resulting digest is content identity only: the caller must compare it with
 /// an identity obtained from its authenticated device/session before treating
 /// any fact as belonging to that device.
 #[allow(
     clippy::too_many_lines,
-    reason = "the canonical V3 section order remains one linear, auditable decoder"
+    reason = "the canonical V4 section order remains one linear, auditable decoder"
 )]
 pub fn decode_board_capability(
     document: &[u8],
@@ -845,7 +961,14 @@ pub fn decode_board_capability(
     validate_document_header(document)?;
     let graph = decode_graph_execution(document)?;
     let diagnostic_overview = decode_diagnostic_overview(document)?;
+    let digital_capture = decode_digital_capture_capability(document)?;
     if diagnostic_overview.resource_count()
+        > usize::try_from(limits.maximum_records_per_section)
+            .map_err(|_| CapabilityDocumentError::Limit)?
+    {
+        return Err(CapabilityDocumentError::Limit);
+    }
+    if digital_capture.resource_count()
         > usize::try_from(limits.maximum_records_per_section)
             .map_err(|_| CapabilityDocumentError::Limit)?
     {
@@ -906,6 +1029,16 @@ pub fn decode_board_capability(
         .ok_or(CapabilityDocumentError::Length)?;
     let _ = cursor.take(diagnostic_bytes)?;
 
+    let capture_bytes = DIGITAL_CAPTURE_HEADER_BYTES
+        .checked_add(
+            digital_capture
+                .resource_count()
+                .checked_mul(DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES)
+                .ok_or(CapabilityDocumentError::Length)?,
+        )
+        .ok_or(CapabilityDocumentError::Length)?;
+    let _ = cursor.take(capture_bytes)?;
+
     let resource_count = cursor.count(limits.maximum_records_per_section)?;
     let resource_start = cursor.position();
     for _ in 0..resource_count {
@@ -940,6 +1073,20 @@ pub fn decode_board_capability(
             || resource.observation != DiagnosticObservationKind::StableBooleanInput
         {
             return Err(CapabilityDocumentError::Diagnostic);
+        }
+    }
+    for resource in digital_capture.resources() {
+        let descriptor = find_resource_descriptor(resource_records, resource.resource)
+            .ok_or(CapabilityDocumentError::Capture)?;
+        if descriptor.owner != OwnerDomain::Realtime
+            || descriptor.hazardous_output
+            || descriptor.safe_value != SafeValue::HighImpedance
+            || !matches!(
+                descriptor.id,
+                ResourceId::Gpio(_) | ResourceId::SafetyInput(_)
+            )
+        {
+            return Err(CapabilityDocumentError::Capture);
         }
     }
 
@@ -1202,6 +1349,7 @@ pub fn decode_board_capability(
         realtime_core,
         graph,
         diagnostic_overview,
+        digital_capture,
         resource_records,
         alias_records,
         alias_count,
@@ -1219,7 +1367,7 @@ pub fn decode_board_capability(
 }
 
 /// Locates and independently decodes the graph-executor section of a complete
-/// canonical V3 capability document. The graph subsection retains its exact V2
+/// canonical V4 capability document. The graph subsection retains its exact V2
 /// encoding because that subsection did not change.
 ///
 /// The caller must still compare [`GraphExecutionCapability::identity`] with
@@ -1352,7 +1500,7 @@ pub fn decode_graph_execution(
 }
 
 /// Locates and independently decodes the passive diagnostic-overview section
-/// of a complete canonical V3 capability document.
+/// of a complete canonical V4 capability document.
 ///
 /// The returned palette is observation authority only. Full board decoding
 /// additionally reconciles every entry with the descriptive resource table.
@@ -1466,6 +1614,160 @@ pub fn decode_diagnostic_overview(
     })
 }
 
+/// Locates and independently decodes the device-produced digital-capture
+/// section of a complete canonical V4 capability document.
+///
+/// Full board decoding additionally reconciles every channel with the
+/// descriptive resource table. This narrower view remains useful for bounded
+/// preflight before a UI allocates channel state.
+pub fn decode_digital_capture_capability(
+    document: &[u8],
+) -> Result<DigitalCaptureCapability<'_>, CapabilityDocumentError> {
+    validate_document_header(document)?;
+    let graph = decode_graph_execution(document)?;
+    let overview = decode_diagnostic_overview(document)?;
+
+    let mut cursor = CAPABILITY_DOCUMENT_HEADER_BYTES;
+    cursor = skip_capability_string(document, cursor)?;
+    cursor = skip_capability_string(document, cursor)?;
+    cursor = cursor
+        .checked_add(33)
+        .ok_or(CapabilityDocumentError::Length)?;
+    cursor = cursor
+        .checked_add(GRAPH_EXECUTOR_HEADER_BYTES)
+        .and_then(|offset| {
+            graph
+                .opcode_count()
+                .checked_mul(GRAPH_OPCODE_CAPABILITY_BYTES)
+                .and_then(|bytes| offset.checked_add(bytes))
+        })
+        .and_then(|offset| {
+            graph
+                .resource_count()
+                .checked_mul(GRAPH_RESOURCE_CAPABILITY_BYTES)
+                .and_then(|bytes| offset.checked_add(bytes))
+        })
+        .and_then(|offset| offset.checked_add(DIAGNOSTIC_OVERVIEW_HEADER_BYTES))
+        .and_then(|offset| {
+            overview
+                .resource_count()
+                .checked_mul(DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES)
+                .and_then(|bytes| offset.checked_add(bytes))
+        })
+        .ok_or(CapabilityDocumentError::Length)?;
+
+    let header_end = cursor
+        .checked_add(DIGITAL_CAPTURE_HEADER_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let header = document
+        .get(cursor..header_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    if header[..8] != DIGITAL_CAPTURE_MAGIC {
+        return Err(CapabilityDocumentError::Magic);
+    }
+    if header[18..20].iter().any(|byte| *byte != 0) || header[48..64].iter().any(|byte| *byte != 0)
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    let schema_version = read_u16(header, 8);
+    let support = match header[10] {
+        0 => None,
+        value => Some(support_from_wire(value).ok_or(CapabilityDocumentError::Capture)?),
+    };
+    let trigger_kinds = DigitalCaptureTriggerSet(header[11]);
+    let configure_flags = DigitalCaptureConfigureFlags(read_u16(header, 12));
+    let maximum_channels = read_u16(header, 14);
+    let resource_count = usize::from(read_u16(header, 16));
+    let maximum_transitions = read_u32(header, 20);
+    let configure_bytes = read_u32(header, 24);
+    let record_bytes = read_u32(header, 28);
+    let maximum_chunk_bytes = read_u32(header, 32);
+    let maximum_pretrigger_micros = read_u32(header, 36);
+    let maximum_duration_micros = read_u32(header, 40);
+    let arm_horizon_micros = read_u32(header, 44);
+    match support {
+        None if schema_version != 0
+            || trigger_kinds.0 != 0
+            || configure_flags.0 != 0
+            || maximum_channels != 0
+            || resource_count != 0
+            || maximum_transitions != 0
+            || configure_bytes != 0
+            || record_bytes != 0
+            || maximum_chunk_bytes != 0
+            || maximum_pretrigger_micros != 0
+            || maximum_duration_micros != 0
+            || arm_horizon_micros != 0 =>
+        {
+            return Err(CapabilityDocumentError::Capture);
+        }
+        Some(_)
+            if schema_version == 0
+                || configure_flags.0 & !DigitalCaptureConfigureFlags::KNOWN != 0
+                || !configure_flags.contains(DigitalCaptureConfigureFlags::EDGE_TIMESTAMPS)
+                || trigger_kinds.0 == 0
+                || trigger_kinds.0 & !DigitalCaptureTriggerSet::KNOWN != 0
+                || maximum_channels == 0
+                || resource_count == 0
+                || resource_count > usize::from(maximum_channels)
+                || maximum_transitions == 0
+                || configure_bytes == 0
+                || record_bytes == 0
+                || maximum_chunk_bytes == 0
+                || maximum_chunk_bytes > record_bytes
+                || maximum_pretrigger_micros > maximum_duration_micros
+                || maximum_duration_micros == 0
+                || arm_horizon_micros == 0 =>
+        {
+            return Err(CapabilityDocumentError::Capture);
+        }
+        _ => {}
+    }
+
+    let records_bytes = resource_count
+        .checked_mul(DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let records_end = header_end
+        .checked_add(records_bytes)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let resource_records = document
+        .get(header_end..records_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let mut previous = None;
+    let mut has_software_source = false;
+    for record in resource_records.chunks_exact(DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES) {
+        let resource = decode_digital_capture_resource(record)?;
+        has_software_source |= resource.source == DigitalCaptureSourceKind::Software;
+        if support.is_none_or(|floor| resource.support < floor)
+            || previous.is_some_and(|prior| prior >= resource.resource)
+        {
+            return Err(CapabilityDocumentError::Capture);
+        }
+        previous = Some(resource.resource);
+    }
+    if configure_flags.contains(DigitalCaptureConfigureFlags::ALLOW_SOFTWARE) != has_software_source
+    {
+        return Err(CapabilityDocumentError::Capture);
+    }
+
+    Ok(DigitalCaptureCapability {
+        identity: graph.identity(),
+        schema_version,
+        support,
+        configure_flags,
+        trigger_kinds,
+        maximum_channels,
+        maximum_transitions,
+        configure_bytes,
+        record_bytes,
+        maximum_chunk_bytes,
+        maximum_pretrigger_micros,
+        maximum_duration_micros,
+        arm_horizon_micros,
+        resource_records,
+    })
+}
+
 /// Exact authenticated range request for one immutable capability identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CapabilityReadRequest {
@@ -1491,7 +1793,7 @@ impl CapabilityReadRequest {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V3 representation.
+    /// Decodes only the exact V4 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, CapabilityWireError> {
         if encoded.len() != CAPABILITY_READ_REQUEST_BYTES {
             return Err(CapabilityWireError::Length);
@@ -1637,7 +1939,7 @@ pub enum CapabilityWireError {
     Length,
     /// Magic did not select the expected schema.
     Magic,
-    /// Version was not exactly V3.
+    /// Version was not exactly V4.
     Version,
     /// Flags or reserved bytes were nonzero.
     Reserved,
@@ -1789,6 +2091,7 @@ fn encode_payload<S: ByteSink>(
     ])?;
     write_graph_executor(sink, package.graph)?;
     write_diagnostic_overview(sink, package.diagnostic_overview)?;
+    write_digital_capture(sink, package.digital_capture)?;
 
     write_count(sink, package.board.resources.len())?;
     for resource in package.board.resources {
@@ -2003,6 +2306,40 @@ fn write_diagnostic_overview<S: ByteSink>(
         let mut encoded = [0_u8; DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES];
         encoded[..4].copy_from_slice(&encode_resource_id(resource.resource));
         encoded[4] = diagnostic_observation_kind(resource.observation);
+        encoded[5] = support(resource.support);
+        // Bytes 6..12 are reserved zero.
+        sink.write(&encoded)?;
+    }
+    Ok(())
+}
+
+fn write_digital_capture<S: ByteSink>(
+    sink: &mut S,
+    capture: DigitalCaptureDescriptor<'_>,
+) -> Result<(), CapabilityError> {
+    let resource_count =
+        u16::try_from(capture.resources.len()).map_err(|_| CapabilityError::Length)?;
+    let mut header = [0_u8; DIGITAL_CAPTURE_HEADER_BYTES];
+    header[..8].copy_from_slice(&DIGITAL_CAPTURE_MAGIC);
+    header[8..10].copy_from_slice(&capture.schema_version.to_le_bytes());
+    header[10] = capture.support.map_or(0, support);
+    header[11] = capture.trigger_kinds.0;
+    header[12..14].copy_from_slice(&capture.configure_flags.0.to_le_bytes());
+    header[14..16].copy_from_slice(&capture.maximum_channels.to_le_bytes());
+    header[16..18].copy_from_slice(&resource_count.to_le_bytes());
+    // Bytes 18..20 and 48..64 are reserved zero.
+    header[20..24].copy_from_slice(&capture.maximum_transitions.to_le_bytes());
+    header[24..28].copy_from_slice(&capture.configure_bytes.to_le_bytes());
+    header[28..32].copy_from_slice(&capture.record_bytes.to_le_bytes());
+    header[32..36].copy_from_slice(&capture.maximum_chunk_bytes.to_le_bytes());
+    header[36..40].copy_from_slice(&capture.maximum_pretrigger_micros.to_le_bytes());
+    header[40..44].copy_from_slice(&capture.maximum_duration_micros.to_le_bytes());
+    header[44..48].copy_from_slice(&capture.arm_horizon_micros.to_le_bytes());
+    sink.write(&header)?;
+    for resource in capture.resources {
+        let mut encoded = [0_u8; DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES];
+        encoded[..4].copy_from_slice(&encode_resource_id(resource.resource));
+        encoded[4] = digital_capture_source(resource.source);
         encoded[5] = support(resource.support);
         // Bytes 6..12 are reserved zero.
         sink.write(&encoded)?;
@@ -2292,6 +2629,27 @@ fn decode_diagnostic_resource(
 fn decode_diagnostic_resource_unchecked(record: &[u8]) -> DiagnosticResourceDescriptor {
     decode_diagnostic_resource(record)
         .expect("diagnostic capability resource was independently validated")
+}
+
+fn decode_digital_capture_resource(
+    record: &[u8],
+) -> Result<DigitalCaptureResourceDescriptor, CapabilityDocumentError> {
+    if record.len() != DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES
+        || record[6..12].iter().any(|byte| *byte != 0)
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    Ok(DigitalCaptureResourceDescriptor {
+        resource: decode_resource_id(&record[..4]).map_err(CapabilityDocumentError::Resource)?,
+        source: digital_capture_source_from_wire(record[4])
+            .ok_or(CapabilityDocumentError::Capture)?,
+        support: support_from_wire(record[5]).ok_or(CapabilityDocumentError::Capture)?,
+    })
+}
+
+fn decode_digital_capture_resource_unchecked(record: &[u8]) -> DigitalCaptureResourceDescriptor {
+    decode_digital_capture_resource(record)
+        .expect("digital-capture capability resource was independently validated")
 }
 
 fn resource_records_contain(records: &[u8], resource: ResourceId) -> bool {
@@ -2812,6 +3170,27 @@ const fn diagnostic_observation_kind_from_wire(value: u8) -> Option<DiagnosticOb
     }
 }
 
+const fn digital_capture_source(value: DigitalCaptureSourceKind) -> u8 {
+    match value {
+        DigitalCaptureSourceKind::Simulated => 1,
+        DigitalCaptureSourceKind::Rmt => 2,
+        DigitalCaptureSourceKind::Pcnt => 3,
+        DigitalCaptureSourceKind::Dma => 4,
+        DigitalCaptureSourceKind::Software => 5,
+    }
+}
+
+const fn digital_capture_source_from_wire(value: u8) -> Option<DigitalCaptureSourceKind> {
+    match value {
+        1 => Some(DigitalCaptureSourceKind::Simulated),
+        2 => Some(DigitalCaptureSourceKind::Rmt),
+        3 => Some(DigitalCaptureSourceKind::Pcnt),
+        4 => Some(DigitalCaptureSourceKind::Dma),
+        5 => Some(DigitalCaptureSourceKind::Software),
+        _ => None,
+    }
+}
+
 const fn flash_kind(value: FlashRegionKind) -> u8 {
     match value {
         FlashRegionKind::Bootloader => 1,
@@ -3012,6 +3391,12 @@ mod tests {
     }
 
     fn resource_section_offset(package: &BoardPackage<'_>) -> usize {
+        capture_section_offset(package)
+            + DIGITAL_CAPTURE_HEADER_BYTES
+            + package.digital_capture.resources.len() * DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES
+    }
+
+    fn capture_section_offset(package: &BoardPackage<'_>) -> usize {
         diagnostic_section_offset(package)
             + DIAGNOSTIC_OVERVIEW_HEADER_BYTES
             + package.diagnostic_overview.resources.len() * DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES
@@ -3082,7 +3467,7 @@ mod tests {
             let identity = calculate_identity(package).unwrap();
             assert!(!identity.digest.is_zero());
             let document = complete_document(package);
-            assert_eq!(&document[..8], b"ALMCAP03");
+            assert_eq!(&document[..8], b"ALMCAP04");
             assert_eq!(read_u32(&document, 12), identity.byte_len);
             let mut hasher = Sha256::new();
             hasher.update(&document);
@@ -3162,6 +3547,48 @@ mod tests {
                     .iter()
                     .copied())
             );
+            let digital_capture = decode_digital_capture_capability(&document).unwrap();
+            assert_eq!(digital_capture.identity(), identity);
+            assert_eq!(
+                digital_capture.schema_version(),
+                package.digital_capture.schema_version
+            );
+            assert_eq!(digital_capture.support(), package.digital_capture.support);
+            assert_eq!(
+                digital_capture.configure_policy(),
+                (
+                    package.digital_capture.configure_flags,
+                    package.digital_capture.trigger_kinds,
+                )
+            );
+            assert_eq!(
+                digital_capture.shape_limits(),
+                (
+                    package.digital_capture.maximum_channels,
+                    package.digital_capture.maximum_transitions,
+                )
+            );
+            assert_eq!(
+                digital_capture.byte_limits(),
+                (
+                    package.digital_capture.configure_bytes,
+                    package.digital_capture.record_bytes,
+                    package.digital_capture.maximum_chunk_bytes,
+                )
+            );
+            assert_eq!(
+                digital_capture.timing_micros(),
+                (
+                    package.digital_capture.maximum_pretrigger_micros,
+                    package.digital_capture.maximum_duration_micros,
+                    package.digital_capture.arm_horizon_micros,
+                )
+            );
+            assert!(
+                digital_capture
+                    .resources()
+                    .eq(package.digital_capture.resources.iter().copied())
+            );
             let board =
                 decode_board_capability(&document, BoardCapabilityLimits::interactive()).unwrap();
             assert_eq!(board.identity(), identity);
@@ -3184,6 +3611,7 @@ mod tests {
             assert_eq!(board.service_core(), package.cores.service_core);
             assert_eq!(board.realtime_core(), package.cores.realtime_core);
             assert_eq!(board.diagnostic_overview(), diagnostic_overview);
+            assert_eq!(board.digital_capture(), digital_capture);
             assert!(
                 board
                     .resources()
@@ -3400,6 +3828,99 @@ mod tests {
     }
 
     #[test]
+    fn digital_capture_tamper_fails_closed_and_is_not_graph_authority() {
+        let channels = [22_u8, 32, 33, 35].map(|gpio| DigitalCaptureResourceDescriptor {
+            resource: ResourceId::Gpio(gpio),
+            source: DigitalCaptureSourceKind::Simulated,
+            support: SupportLevel::Compiles,
+        });
+        let mut package = board_mks_tinybee::PACKAGE;
+        package.digital_capture = DigitalCaptureDescriptor {
+            schema_version: 1,
+            support: Some(SupportLevel::Compiles),
+            configure_flags: DigitalCaptureConfigureFlags(
+                DigitalCaptureConfigureFlags::EDGE_TIMESTAMPS,
+            ),
+            trigger_kinds: DigitalCaptureTriggerSet(DigitalCaptureTriggerSet::IMMEDIATE),
+            maximum_channels: 4,
+            maximum_transitions: 64,
+            configure_bytes: 208,
+            record_bytes: 2_048,
+            maximum_chunk_bytes: 168,
+            maximum_pretrigger_micros: 0,
+            maximum_duration_micros: 2_000_000,
+            arm_horizon_micros: 30_000_000,
+            resources: &channels,
+        };
+        let document = complete_document(&package);
+        let offset = capture_section_offset(&package);
+        let capture = decode_digital_capture_capability(&document).unwrap();
+        assert_eq!(capture.schema_version(), 1);
+        assert_eq!(capture.support(), Some(SupportLevel::Compiles));
+        assert_eq!(
+            capture.configure_policy(),
+            (
+                DigitalCaptureConfigureFlags(DigitalCaptureConfigureFlags::EDGE_TIMESTAMPS),
+                DigitalCaptureTriggerSet(DigitalCaptureTriggerSet::IMMEDIATE),
+            )
+        );
+        assert_eq!(capture.shape_limits(), (4, 64));
+        assert_eq!(capture.byte_limits(), (208, 2_048, 168));
+        assert_eq!(capture.timing_micros(), (0, 2_000_000, 30_000_000));
+        assert!(capture.resources().eq(channels));
+        assert!(capture.admits(ResourceId::Gpio(22), DigitalCaptureSourceKind::Simulated));
+        assert!(!capture.admits(ResourceId::Gpio(25), DigitalCaptureSourceKind::Simulated));
+
+        let absent = complete_document(&board_t_deck_pro::PACKAGE);
+        let absent = decode_digital_capture_capability(&absent).unwrap();
+        assert_eq!(absent.support(), None);
+        assert_eq!(absent.resource_count(), 0);
+
+        let mut reserved = document.clone();
+        reserved[offset + 48] = 1;
+        assert_eq!(
+            decode_digital_capture_capability(&reserved),
+            Err(CapabilityDocumentError::Reserved)
+        );
+
+        let mut absent_with_facts = document.clone();
+        absent_with_facts[offset + 10] = 0;
+        assert_eq!(
+            decode_digital_capture_capability(&absent_with_facts),
+            Err(CapabilityDocumentError::Capture)
+        );
+
+        let record_offset = offset + DIGITAL_CAPTURE_HEADER_BYTES;
+        let mut unknown_source = document.clone();
+        unknown_source[record_offset + 4] = 0xff;
+        assert_eq!(
+            decode_digital_capture_capability(&unknown_source),
+            Err(CapabilityDocumentError::Capture)
+        );
+
+        let mut unsafe_resource = document.clone();
+        unsafe_resource[record_offset..record_offset + 4]
+            .copy_from_slice(&encode_resource_id(ResourceId::Gpio(25)));
+        assert!(decode_digital_capture_capability(&unsafe_resource).is_ok());
+        assert_eq!(
+            decode_board_capability(&unsafe_resource, BoardCapabilityLimits::interactive()),
+            Err(CapabilityDocumentError::Capture)
+        );
+
+        let mut duplicate = document;
+        let first = duplicate
+            [record_offset..record_offset + DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES]
+            .to_vec();
+        duplicate[record_offset + DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES
+            ..record_offset + 2 * DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES]
+            .copy_from_slice(&first);
+        assert_eq!(
+            decode_digital_capture_capability(&duplicate),
+            Err(CapabilityDocumentError::Capture)
+        );
+    }
+
+    #[test]
     fn graph_capability_tamper_fails_closed_and_palettes_are_exact() {
         let package = &board_mks_tinybee::PACKAGE;
         let document = complete_document(package);
@@ -3500,7 +4021,7 @@ mod tests {
         assert_eq!(read.identity, identity);
         assert_eq!(read.byte_len, 32);
         assert!(!read.complete);
-        assert_eq!(&chunk[..8], b"ALMCAP03");
+        assert_eq!(&chunk[..8], b"ALMCAP04");
     }
 
     #[test]

@@ -120,10 +120,18 @@ inter-core payload; it does not reuse or weaken the canonical safety snapshot.
 Only configured stable-input semantics are translated. Waveform configure and
 record storage remain zero, so every capture operation returns `Unsupported`.
 The same facts are serialized in the `ALMDOV01` section of capability-document
-V3. Firmware queue reservations and freshness timing derive from that board
+V4. Firmware queue reservations and freshness timing derive from that board
 descriptor, and the browser checks its selection and encoded request/event
 sizes against the authenticated catalog. This is passive observation authority,
 not graph access or raw pin acquisition.
+
+The `ALMDCP01` section independently keeps physical TinyBee waveform authority
+absent. The host fixture instead serves the distinct `sim-mks-tinybee-v1`
+package, whose simulated four-channel provider publishes its exact 208-byte
+configure arena, 2,048-byte record arena, 168-byte chunk ceiling, 64-transition
+capacity, immediate trigger, and timing bounds. Service admission and retained
+record source checks consume that descriptor directly; graph membership does
+not substitute for it.
 
 T-Deck Pro and MKS ESP32 FOC retain the authenticated dispatcher and context
 reconciliation, but subscribe and configure return `Unsupported` rather than

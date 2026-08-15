@@ -109,7 +109,7 @@ quality annotation. Fresh values are `Valid`; stale known values remain
 `Stale` with their exact last sample cycle. A requested resource without fresh,
 matching configured evidence is represented explicitly as `Unavailable`; it is
 never guessed clear. Core 0 encodes the result in the existing `ALMOVW01` and
-`ALMTEV01` formats. Capability-document V3 and the UI move together without a
+`ALMTEV01` formats. Capability-document V4 and the UI move together without a
 V2 parser or record shim: `ALMDOV01` now tells the browser exactly which
 semantic observations exist, their 176/432-byte budgets, 100 ms nominal
 cadence, and 500 ms freshness ceiling. Telemetry selection no longer borrows

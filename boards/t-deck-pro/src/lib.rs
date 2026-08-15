@@ -4,10 +4,11 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
-    DiagnosticOverviewDescriptor, ElectricalConstraintDescriptor, ElectricalConstraintKind,
-    GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass,
-    HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain,
-    Qualification, ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
+    DiagnosticOverviewDescriptor, DigitalCaptureDescriptor, ElectricalConstraintDescriptor,
+    ElectricalConstraintKind, GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess,
+    GraphResourceClass, HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger,
+    MemoryDescriptor, OwnerDomain, Qualification, ResourceDescriptor, ResourceId, SafeValue,
+    SupportLevel,
 };
 use alumina_protocol::Digest;
 
@@ -62,10 +63,12 @@ pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescri
 /// This image currently composes no passive machine-input overview provider.
 pub const DIAGNOSTIC_OVERVIEW: DiagnosticOverviewDescriptor<'static> =
     DiagnosticOverviewDescriptor::NONE;
-/// SHA-256 of the canonical `ALMCAP03` V3 document exported by this package.
+/// No physical digital acquisition backend is composed by this image.
+pub const DIGITAL_CAPTURE: DigitalCaptureDescriptor<'static> = DigitalCaptureDescriptor::NONE;
+/// SHA-256 of the canonical `ALMCAP04` V4 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x83, 0x5f, 0xaa, 0x62, 0xf3, 0xd2, 0xa6, 0x23, 0xa7, 0x5d, 0xb1, 0xa4, 0x51, 0x35, 0xb2, 0x67,
-    0x94, 0x31, 0x30, 0x17, 0x2d, 0xe0, 0xd0, 0xe4, 0xc4, 0x30, 0x81, 0x48, 0xa3, 0x33, 0x1b, 0x21,
+    0x1d, 0xe7, 0x07, 0xaa, 0x21, 0xa0, 0xf8, 0x42, 0x7e, 0x61, 0x9c, 0x65, 0x01, 0x83, 0x6c, 0xb8,
+    0xb2, 0x81, 0xff, 0x59, 0xe7, 0x29, 0x47, 0x07, 0xc2, 0x4b, 0x76, 0x6b, 0xe4, 0xe1, 0x63, 0xd5,
 ]);
 
 pub mod device {
@@ -836,6 +839,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
     },
     graph: GRAPH_EXECUTOR,
     diagnostic_overview: DIAGNOSTIC_OVERVIEW,
+    digital_capture: DIGITAL_CAPTURE,
     aliases: ALIASES,
     buses: BUSES,
     devices: DEVICES,

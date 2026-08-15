@@ -1,5 +1,6 @@
 //! Single-owner, fixed-memory diagnostic transport state.
 
+use alumina_board::{DigitalCaptureDescriptor, DigitalCaptureSourceKind, DigitalCaptureTriggerSet};
 use alumina_diagnostics::transport::{
     DiagnosticTransportError, DiagnosticTransportLimits, TelemetryEvent, TelemetryPhase,
     TelemetryPollRequest, TelemetrySessionRequest, TelemetrySubscribeView,
@@ -9,7 +10,8 @@ use alumina_diagnostics::transport::{
     validate_retained_capture,
 };
 use alumina_diagnostics::{
-    CaptureQualityFlags, DiagnosticContext, DiagnosticError, DiagnosticLimits, OverviewFlags,
+    CaptureQualityFlags, DIGITAL_CAPTURE_VERSION, DiagnosticContext, DiagnosticError,
+    DiagnosticLimits, DigitalAcquisitionSource, DigitalTriggerCondition, OverviewFlags,
     RealtimeInputRecord, ResourceOverviewDocument, ResourceOverviewSample, ResourceValue,
     SampleProvenance, SampleQuality, SampleQualityFlags, decode_digital_capture,
     decode_realtime_input_snapshot, decode_resource_overview, digital_capture_encoded_len,
@@ -70,25 +72,145 @@ impl DiagnosticServiceError {
 }
 
 /// Compile-time composition policy for evidence-producing providers.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiagnosticProviderPolicy {
     /// A resource owner can assemble canonical overview samples.
     pub resource_overview: bool,
     /// A capture owner can execute and retain configured digital acquisitions.
-    pub digital_capture: bool,
+    pub digital_capture: DigitalCaptureDescriptor<'static>,
 }
 
 impl DiagnosticProviderPolicy {
     /// No provider is connected; protocol operations fail honestly as unsupported.
     pub const NONE: Self = Self {
         resource_overview: false,
-        digital_capture: false,
+        digital_capture: DigitalCaptureDescriptor::NONE,
     };
-    /// Deterministic host providers used only by explicit simulation fixtures.
-    pub const SIMULATED: Self = Self {
-        resource_overview: true,
-        digital_capture: true,
+}
+
+fn admit_waveform_configuration(
+    configuration: WaveformConfigureView<'_>,
+    descriptor: DigitalCaptureDescriptor<'_>,
+    context: DiagnosticContext,
+    configure_len: usize,
+) -> Result<usize, DiagnosticServiceError> {
+    if !descriptor.is_implemented() || descriptor.schema_version != DIGITAL_CAPTURE_VERSION {
+        return Err(DiagnosticServiceError::Unsupported);
+    }
+    let configure_bytes = usize::try_from(descriptor.configure_bytes)
+        .map_err(|_| DiagnosticServiceError::Capacity)?;
+    if configure_len > configure_bytes
+        || configuration.channel_count() > usize::from(descriptor.maximum_channels)
+        || configuration.transition_capacity() > descriptor.maximum_transitions
+        || configuration.maximum_chunk_bytes() > descriptor.maximum_chunk_bytes
+    {
+        return Err(DiagnosticServiceError::Capacity);
+    }
+    if configuration.flags().0 & !descriptor.configure_flags.0 != 0 {
+        return Err(DiagnosticServiceError::Invalid(
+            DiagnosticTransportError::Flags,
+        ));
+    }
+    let trigger_bit = match configuration.trigger().1 {
+        DigitalTriggerCondition::Immediate => DigitalCaptureTriggerSet::IMMEDIATE,
+        DigitalTriggerCondition::Rising => DigitalCaptureTriggerSet::RISING,
+        DigitalTriggerCondition::Falling => DigitalCaptureTriggerSet::FALLING,
+        DigitalTriggerCondition::Either => DigitalCaptureTriggerSet::EITHER,
     };
+    if !descriptor.trigger_kinds.contains(trigger_bit) {
+        return Err(DiagnosticServiceError::Invalid(
+            DiagnosticTransportError::Window,
+        ));
+    }
+    if configuration.channels().any(|resource| {
+        !descriptor
+            .resources
+            .iter()
+            .any(|candidate| candidate.resource == resource)
+    }) {
+        return Err(DiagnosticServiceError::Invalid(
+            DiagnosticTransportError::Resource,
+        ));
+    }
+
+    let (pretrigger, posttrigger) = configuration.requested_window_cycles();
+    let duration = pretrigger
+        .checked_add(posttrigger)
+        .ok_or(DiagnosticServiceError::Invalid(
+            DiagnosticTransportError::Window,
+        ))?;
+    let (earliest, latest) = configuration.trigger_deadline_window();
+    let arm_horizon = latest
+        .0
+        .checked_sub(earliest.0)
+        .ok_or(DiagnosticServiceError::Invalid(
+            DiagnosticTransportError::Window,
+        ))?;
+    if pretrigger
+        > micros_to_cycles_floor(
+            descriptor.maximum_pretrigger_micros,
+            context.clock_frequency_hz,
+        )
+        || duration
+            > micros_to_cycles_floor(
+                descriptor.maximum_duration_micros,
+                context.clock_frequency_hz,
+            )
+        || arm_horizon
+            > micros_to_cycles_floor(descriptor.arm_horizon_micros, context.clock_frequency_hz)
+    {
+        return Err(DiagnosticServiceError::Invalid(
+            DiagnosticTransportError::Limit("digital capture timing"),
+        ));
+    }
+
+    digital_capture_encoded_len(
+        configuration.channel_count(),
+        usize::try_from(configuration.transition_capacity())
+            .map_err(|_| DiagnosticServiceError::Capacity)?,
+    )
+    .map_err(|error| DiagnosticServiceError::Invalid(DiagnosticTransportError::Record(error)))
+}
+
+fn admit_retained_capture_sources(
+    capture: alumina_diagnostics::DigitalCaptureView<'_>,
+    descriptor: DigitalCaptureDescriptor<'_>,
+) -> Result<(), DiagnosticServiceError> {
+    for channel in capture.channels() {
+        let Some(expected) = descriptor
+            .resources
+            .iter()
+            .find(|candidate| candidate.resource == channel.resource)
+        else {
+            return Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Resource,
+            ));
+        };
+        if digital_capture_source(channel.source) != Some(expected.source) {
+            return Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Resource,
+            ));
+        }
+    }
+    Ok(())
+}
+
+const fn digital_capture_source(
+    source: DigitalAcquisitionSource,
+) -> Option<DigitalCaptureSourceKind> {
+    match source {
+        DigitalAcquisitionSource::Simulated => Some(DigitalCaptureSourceKind::Simulated),
+        DigitalAcquisitionSource::Rmt => Some(DigitalCaptureSourceKind::Rmt),
+        DigitalAcquisitionSource::Pcnt => Some(DigitalCaptureSourceKind::Pcnt),
+        DigitalAcquisitionSource::Dma => Some(DigitalCaptureSourceKind::Dma),
+        DigitalAcquisitionSource::Software => Some(DigitalCaptureSourceKind::Software),
+        DigitalAcquisitionSource::ExternalAnalyzer => None,
+    }
+}
+
+fn micros_to_cycles_floor(micros: u32, frequency_hz: u64) -> u64 {
+    let cycles = u128::from(micros) * u128::from(frequency_hz) / 1_000_000;
+    u64::try_from(cycles).unwrap_or(u64::MAX)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -937,7 +1059,7 @@ impl<
         &mut self,
         encoded: &[u8],
     ) -> Result<WaveformStatus, DiagnosticServiceError> {
-        if !self.providers.digital_capture {
+        if !self.providers.digital_capture.is_implemented() {
             return Err(DiagnosticServiceError::Unsupported);
         }
         if encoded.len() > CONFIGURE_BYTES || encoded.len() > MAX_NATIVE_DIAGNOSTIC_REQUEST_BYTES {
@@ -947,15 +1069,17 @@ impl<
         if incoming.context() != self.context {
             return Err(DiagnosticServiceError::Conflict);
         }
-        let maximum_record = digital_capture_encoded_len(
-            incoming.channel_count(),
-            usize::try_from(incoming.transition_capacity())
-                .map_err(|_| DiagnosticServiceError::Capacity)?,
-        )
-        .map_err(|error| {
-            DiagnosticServiceError::Invalid(DiagnosticTransportError::Record(error))
-        })?;
-        if maximum_record > RECORD_BYTES {
+        let maximum_record = admit_waveform_configuration(
+            incoming,
+            self.providers.digital_capture,
+            self.context,
+            encoded.len(),
+        )?;
+        if maximum_record > RECORD_BYTES
+            || maximum_record
+                > usize::try_from(self.providers.digital_capture.record_bytes)
+                    .map_err(|_| DiagnosticServiceError::Capacity)?
+        {
             return Err(DiagnosticServiceError::Capacity);
         }
         if self.waveform.occupied {
@@ -1050,7 +1174,11 @@ impl<
         if self.waveform.phase != WaveformPhase::Armed {
             return Err(DiagnosticServiceError::ForbiddenState);
         }
-        if encoded.len() > RECORD_BYTES {
+        if encoded.len() > RECORD_BYTES
+            || encoded.len()
+                > usize::try_from(self.providers.digital_capture.record_bytes)
+                    .map_err(|_| DiagnosticServiceError::Capacity)?
+        {
             return Err(DiagnosticServiceError::Capacity);
         }
         let configuration = self.waveform.view(self.transport_limits)?;
@@ -1063,6 +1191,7 @@ impl<
         let capture = decode_digital_capture(encoded, self.record_limits).map_err(|error| {
             DiagnosticServiceError::Invalid(DiagnosticTransportError::Record(error))
         })?;
+        admit_retained_capture_sources(capture, self.providers.digital_capture)?;
         let (trigger_cycle, _, _, _) = capture.trigger();
         self.waveform.record.fill(0);
         self.waveform.record[..encoded.len()].copy_from_slice(encoded);
@@ -1111,6 +1240,7 @@ impl<
         if request.record_digest != self.waveform.record_digest {
             return Err(DiagnosticServiceError::Conflict);
         }
+        let configuration = self.waveform.view(self.transport_limits)?;
         let offset =
             usize::try_from(request.offset).map_err(|_| DiagnosticServiceError::Capacity)?;
         if offset >= self.waveform.record_len {
@@ -1120,6 +1250,13 @@ impl<
         }
         let requested =
             usize::try_from(request.maximum_bytes).map_err(|_| DiagnosticServiceError::Capacity)?;
+        let configured_chunk = usize::try_from(configuration.maximum_chunk_bytes())
+            .map_err(|_| DiagnosticServiceError::Capacity)?;
+        let advertised_chunk = usize::try_from(self.providers.digital_capture.maximum_chunk_bytes)
+            .map_err(|_| DiagnosticServiceError::Capacity)?;
+        if requested > configured_chunk || requested > advertised_chunk {
+            return Err(DiagnosticServiceError::Capacity);
+        }
         let end = offset
             .saturating_add(requested)
             .min(self.waveform.record_len);
@@ -1429,7 +1566,7 @@ mod tests {
             context,
             DiagnosticProviderPolicy {
                 resource_overview: true,
-                digital_capture: false,
+                digital_capture: DigitalCaptureDescriptor::NONE,
             },
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),

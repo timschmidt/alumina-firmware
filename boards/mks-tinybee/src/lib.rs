@@ -5,10 +5,11 @@ use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
     DiagnosticObservationKind, DiagnosticOverviewDescriptor, DiagnosticResourceDescriptor,
-    ElectricalConstraintDescriptor, ElectricalConstraintKind, GraphExecutorDescriptor,
-    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor,
-    HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain,
-    Qualification, ResourceDescriptor, ResourceId, SafeOutputImage, SafeValue, SupportLevel,
+    DigitalCaptureDescriptor, ElectricalConstraintDescriptor, ElectricalConstraintKind,
+    GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass,
+    GraphResourceDescriptor, HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger,
+    MemoryDescriptor, OwnerDomain, Qualification, ResourceDescriptor, ResourceId, SafeOutputImage,
+    SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
 
@@ -133,15 +134,17 @@ pub const DIAGNOSTIC_OVERVIEW: DiagnosticOverviewDescriptor<'static> =
         maximum_age_micros: 500_000,
         resources: DIAGNOSTIC_OVERVIEW_RESOURCES,
     };
-/// SHA-256 of the primary 8 MiB canonical `ALMCAP03` V3 document.
+/// No physical digital acquisition backend is composed by either TinyBee image.
+pub const DIGITAL_CAPTURE: DigitalCaptureDescriptor<'static> = DigitalCaptureDescriptor::NONE;
+/// SHA-256 of the primary 8 MiB canonical `ALMCAP04` V4 document.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x27, 0xdc, 0xdd, 0x9e, 0xa4, 0xa1, 0xf9, 0xfc, 0xb1, 0xa4, 0xae, 0xef, 0xb3, 0x49, 0x84, 0xa4,
-    0xe4, 0xa0, 0xca, 0x14, 0x6c, 0x66, 0x0f, 0x66, 0x9b, 0xf6, 0x32, 0xf9, 0x8c, 0xac, 0x74, 0xaf,
+    0x4c, 0x70, 0x54, 0xf6, 0x01, 0xd1, 0x68, 0x87, 0xc2, 0xc2, 0xcc, 0x85, 0x98, 0xcc, 0x30, 0x19,
+    0xc6, 0x24, 0x90, 0x48, 0x00, 0xce, 0xcc, 0xa4, 0xf9, 0x82, 0xaf, 0x7b, 0xb4, 0x5b, 0x7c, 0x57,
 ]);
-/// SHA-256 of the 4 MiB canonical `ALMCAP03` V3 document.
+/// SHA-256 of the 4 MiB canonical `ALMCAP04` V4 document.
 pub const CAPABILITY_DIGEST_4_MIB: Digest = Digest([
-    0x0c, 0x1a, 0x0b, 0x1b, 0xc8, 0xa9, 0x2e, 0x24, 0xad, 0x0b, 0x7f, 0x68, 0xfa, 0x92, 0x17, 0x1e,
-    0x1f, 0xbe, 0x72, 0x45, 0x07, 0x26, 0x9a, 0xc7, 0x85, 0x78, 0x7f, 0x16, 0xd3, 0x84, 0xe1, 0x3b,
+    0xeb, 0x12, 0x3a, 0xd7, 0xb5, 0x64, 0x1e, 0x36, 0xd5, 0xfe, 0x7e, 0xb7, 0x4c, 0x4a, 0xb5, 0x72,
+    0x4d, 0x13, 0xf3, 0xdd, 0x15, 0xaa, 0x2c, 0x23, 0xb8, 0xa6, 0x11, 0x60, 0xf6, 0x9b, 0x90, 0x91,
 ]);
 /// Shift-register safe image inferred from active-high StepStick disable inputs.
 ///
@@ -1113,6 +1116,7 @@ const fn package(
         },
         graph: GRAPH_EXECUTOR,
         diagnostic_overview: DIAGNOSTIC_OVERVIEW,
+        digital_capture: DIGITAL_CAPTURE,
         aliases: ALIASES,
         buses: BUSES,
         devices: DEVICES,

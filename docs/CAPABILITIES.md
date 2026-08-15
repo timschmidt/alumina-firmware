@@ -1,6 +1,6 @@
-# Canonical board capability document V3
+# Canonical board capability document V4
 
-The `ALMCAP03` document is the immutable byte authority shared by firmware,
+The `ALMCAP04` document is the immutable byte authority shared by firmware,
 `xtask`, simulation, and the browser/WASM interface. It serializes the complete
 typed `BoardPackage` without Rust layout, JSON key ordering, allocation, or
 platform-width dependence. The package's declared capability digest is excluded
@@ -10,22 +10,26 @@ starts.
 
 Changing any serialized board fact, array order, string byte, visual digest,
 qualification, or armability requires a new capability digest. This is a
-deliberately conservative V3 identity. Cached machine partitions
+deliberately conservative V4 identity. Cached machine partitions
 bind that exact digest.
 
-V3 publishes the exact fixed graph-executor arenas, implemented
+V4 publishes the exact fixed graph-executor arenas, implemented
 opcode palette, and graph-addressable physical-resource palette. A browser may
 lower only against the complete authenticated document for the selected device;
 an opcode existing in source code, a GPIO appearing in the general resource
 inventory, or spare nominal RAM is not deployment authority.
 
-V3 also adds an independently typed passive diagnostic-overview catalog. It
-publishes the exact semantic resources an image can observe, fixed request/event
+The independently typed passive diagnostic-overview catalog publishes the
+exact semantic resources an image can observe, fixed request/event
 storage, nominal cadence, and freshness ceiling. This catalog grants no graph
 operation, GPIO lease, raw electrical acquisition, interrupt route, pin-mode
-change, output command, or safety authority. Raw digital/analog acquisition and
-waveform capture require a future separately bounded capability; they are not
-inferred from graph access or the descriptive resource inventory.
+change, output command, or safety authority.
+
+V4 adds a third, independent digital edge-capture catalog. It publishes the
+exact acquisition source for each admitted resource together with configure,
+record, chunk, channel, transition, timing, and trigger bounds. It grants only
+bounded evidence acquisition. Capture is never inferred from graph access,
+passive overview membership, an interrupt route, or the descriptive inventory.
 
 Installed flash capacity is therefore an identity fact, not a boot-time hint.
 For example, the primary 8 MiB TinyBee and its opportunistic 4 MiB variant have
@@ -47,8 +51,8 @@ The fixed 16-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCAP03` |
-| 8 | 2 | exact schema version (`3`) |
+| 0 | 8 | ASCII `ALMCAP04` |
+| 8 | 2 | exact schema version (`4`) |
 | 10 | 2 | reserved zero |
 | 12 | 4 | complete document length including this header |
 
@@ -79,7 +83,8 @@ The header is followed by these fields with no implicit padding:
 5. service-core, realtime-core, and two reserved zero bytes;
 6. fixed graph-executor section;
 7. fixed passive diagnostic-overview section;
-8. resources, aliases, buses, devices, flash regions, clocks, electrical
+8. fixed digital edge-capture section;
+9. resources, aliases, buses, devices, flash regions, clocks, electrical
    constraints, interrupts, safe-output images, visuals, then HIL requirements.
 
 The graph-executor section begins with this fixed 72-byte header:
@@ -147,6 +152,46 @@ support, a maximum selection of four, 176 request bytes, 432 event bytes, a
 MKS ESP32 FOC publish the canonical absent form: zero schema, support, budgets,
 timing, count, and records.
 
+The digital edge-capture section begins with this fixed 64-byte header:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMDCP01` |
+| 8 | 2 | exact emitted `ALMDIG` schema, or zero when absent |
+| 10 | 1 | whole-provider support, or zero when absent |
+| 11 | 1 | admitted trigger bitset |
+| 12 | 2 | admitted configure-flag bitset |
+| 14 | 2 | maximum selected channels |
+| 16 | 2 | capture-resource-record count |
+| 18 | 2 | reserved zero |
+| 20 | 4 | maximum retained transition capacity |
+| 24 | 4 | permanently reserved canonical configure bytes |
+| 28 | 4 | permanently reserved retained-record bytes |
+| 32 | 4 | maximum range/chunk payload bytes |
+| 36 | 4 | maximum pretrigger interval in microseconds |
+| 40 | 4 | maximum complete requested duration in microseconds |
+| 44 | 4 | maximum trigger-deadline horizon in microseconds |
+| 48 | 16 | reserved zero |
+
+Configure flag bit 0 requires edge timestamps and bit 1 permits a qualified
+bounded software source. Trigger bits 0 through 3 admit immediate, rising,
+falling, and either-edge requests respectively. Each following 12-byte record
+is a four-byte typed resource ID, acquisition source, support, and six reserved
+zero bytes. Source values 1 through 5 are simulated, RMT, PCNT, DMA, and
+software. Records are strictly increasing by typed resource ID and must name a
+nonhazardous, high-impedance, realtime-owned GPIO or safety-input resource.
+Retained channel records must report the exact catalogued source; an external
+analyzer record is not device-produced authority.
+
+The physical TinyBee, its 4 MiB variant, T-Deck Pro, and MKS ESP32 FOC images
+publish the canonical absent form. The distinct host-only
+`sim-mks-tinybee-v1` package publishes simulated GPIO22, GPIO32, GPIO33, and
+GPIO35; schema 1; compile support; immediate edge-timestamp capture; four
+channels; 64 transitions; 208 configure bytes; 2,048 retained-record bytes;
+168-byte chunks; zero pretrigger; a 2,000,000 µs duration ceiling; and a
+30,000,000 µs arm horizon. Its capability identity cannot be substituted for a
+physical TinyBee identity.
+
 The section entries are canonical as follows:
 
 - resource: resource ID, owner, safe value, hazardous flag, reserved zero;
@@ -190,6 +235,7 @@ Enum values are explicitly assigned in schema order:
 | safe value | not-applicable, high-impedance, low, high, engine-image |
 | support | described, compiles, bench, qualified |
 | diagnostic observation | stable Boolean input |
+| digital capture source | simulated, RMT, PCNT, DMA, software |
 | bus | I2C, SPI, UART |
 | device route | dedicated, I2C address, SPI chip select, UART |
 | flash region | bootloader, partition table, application, configuration, web bundle, update slot, crash log |
@@ -202,7 +248,7 @@ Enum values are explicitly assigned in schema order:
 ## Independent board-explorer decoding
 
 `decode_board_capability` is the allocation-free consumer boundary for a
-complete untrusted V3 document. It applies caller-owned limits before exposing
+complete untrusted V4 document. It applies caller-owned limits before exposing
 borrowed summary, resource, alias, visual, hotspot, and polygon iterators. The
 interactive policy permits at most 4 MiB of document bytes, 64 KiB per string,
 4,096 ordinary records per section, 32 visuals, 4,096 hotspots per visual, and
@@ -214,8 +260,9 @@ unknown or duplicate typed resources, missing resource references, invalid
 core ownership, unsafe shifted-output image coverage, duplicate
 aliases/interrupts/images/visuals/hotspots, out-of-plane points, strict prefixes,
 trailing bytes, and all caller-limit violations. It retains the existing
-independent graph-executor and passive diagnostic-overview views as separate,
-narrower authorities.
+independent graph-executor, passive diagnostic-overview, and digital-capture
+views as separate, narrower authorities. Full decoding additionally reconciles
+every capture record against safe descriptive ownership and electrical facts.
 
 The returned SHA-256 is content identity, never transport or device
 authentication. A live UI must compare it with the capability identity obtained
@@ -234,8 +281,8 @@ The exact 56-byte request body is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCPQ03` |
-| 8 | 2 | version `3` |
+| 0 | 8 | ASCII `ALMCPQ04` |
+| 8 | 2 | version `4` |
 | 10 | 2 | reserved zero |
 | 12 | 4 | document offset |
 | 16 | 2 | requested bytes, `1..=240` |
@@ -248,8 +295,8 @@ document bytes:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCPR03` |
-| 8 | 2 | version `3` |
+| 0 | 8 | ASCII `ALMCPR04` |
+| 8 | 2 | version `4` |
 | 10 | 1 | bit 0: this chunk reaches the document end |
 | 11 | 5 | reserved zero |
 | 16 | 4 | complete document length |
@@ -269,7 +316,8 @@ Current identities are:
 
 | Board | Bytes | SHA-256 |
 | --- | ---: | --- |
-| MKS TinyBee V1.x, 8 MiB primary | 3,531 | `27dcdd9ea4a1f9fcb1a4aeefb34984a4e4a0ca146c660f669bf632f98cac74af` |
-| MKS TinyBee V1.x, 4 MiB variant | 3,544 | `0c1a0b1bc8a92e24ad0b7f68fa92171e1fbe724507269ac785787f16d384e13b` |
-| T-Deck Pro | 2,773 | `835faa62f3d2a623a75db1a45135b267943130172de0d0e4c4308148a3331b21` |
-| MKS ESP32 FOC V1.0 | 2,976 | `f7bcc15848aac2ad750dbf078bc29daac3042a60c680999cc80ee54980fd9f52` |
+| MKS TinyBee V1.x, 8 MiB primary | 3,595 | `4c7054f601d16887c2c2cc8598cc3019c624904800cecca4f982af7bb45b7c57` |
+| MKS TinyBee V1.x, 4 MiB variant | 3,608 | `eb123ad7b5641e36d5fe7eb74c4ab5724d13f3dd15aa2c23b8a61160f69b9091` |
+| T-Deck Pro | 2,837 | `1de707aa21a0f8427e619c6501836cb8b281ff59e7294707c24b766be4e163d5` |
+| MKS ESP32 FOC V1.0 | 3,040 | `cbe9b541f90a0f9a63487f7fc43855b742bc4e7c1bc4776aca27aea3fbc60384` |
+| Host TinyBee simulator | 3,655 | `4ea9bbf0b44c8664808b4e13b20294a0006371cfe1d843478a197b37b6be6cc7` |

@@ -18,11 +18,15 @@ use alumina_net::{
 use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind, Operation, StatusCode};
 use alumina_runtime::stack::{StackDomain, StackWatermarkFlags, StackWatermarkSnapshot};
 use alumina_service::capability::CapabilityDocumentService;
-use alumina_service::diagnostics::{DiagnosticProviderPolicy, DiagnosticServiceState};
+use alumina_service::diagnostics::DiagnosticServiceState;
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
 
-use crate::diagnostics::{simulated_immediate_waveform_capture, simulated_resource_overview};
+use crate::capability;
+use crate::diagnostics::{
+    SIMULATED_DIAGNOSTIC_PROVIDERS, simulated_immediate_waveform_capture,
+    simulated_resource_overview,
+};
 
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
 const NATIVE_FRAME_MEDIA_TYPE: &str = "application/vnd.alumina.frame";
@@ -194,7 +198,7 @@ impl ClockHttpFixture {
             runtime_health_samples: 0,
             diagnostics: FixtureDiagnosticService::new(
                 diagnostic_context,
-                DiagnosticProviderPolicy::SIMULATED,
+                SIMULATED_DIAGNOSTIC_PROVIDERS,
                 DiagnosticTransportLimits::native_control(),
                 DiagnosticLimits::interactive(),
             ),
@@ -258,7 +262,7 @@ impl ClockHttpFixture {
         self.runtime_health_samples = 0;
         self.diagnostics = FixtureDiagnosticService::new(
             diagnostic_context(boot_id, self.policy.frequency_hz)?,
-            DiagnosticProviderPolicy::SIMULATED,
+            SIMULATED_DIAGNOSTIC_PROVIDERS,
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
         );
@@ -347,7 +351,8 @@ impl ClockHttpFixture {
         let device_id = lower_hex(&context.device_id.0);
         let capability_digest = lower_hex(&context.capability.digest.0);
         let body = format!(
-            "{{\"protocol_version\":1,\"board_id\":\"mks-tinybee-v1\",\"credential_source\":\"development-fallback\",\"production_armable\":false,\"device_id\":\"{device_id}\",\"capability_digest\":\"{capability_digest}\",\"capability_document_bytes\":{}}}",
+            "{{\"protocol_version\":1,\"board_id\":\"{}\",\"credential_source\":\"development-fallback\",\"production_armable\":false,\"device_id\":\"{device_id}\",\"capability_digest\":\"{capability_digest}\",\"capability_document_bytes\":{}}}",
+            capability::BOARD_ID,
             context.capability.byte_len
         )
         .into_bytes();
@@ -451,7 +456,7 @@ impl ClockHttpFixture {
                 return ServiceResponse::invalid_native();
             };
             return CapabilityDocumentService::dispatch(
-                &board_mks_tinybee::PACKAGE,
+                &capability::package(),
                 &request,
                 transmit_cycle,
             );
@@ -642,7 +647,7 @@ fn diagnostic_context(
     Ok(DiagnosticContext {
         device_id: DeviceId(*b"ALUM-SIM:TINYBEE"),
         boot_id,
-        capability: calculate_identity(&board_mks_tinybee::PACKAGE)
+        capability: calculate_identity(&capability::package())
             .map_err(|_| ClockFixtureError::Capability)?,
         config_digest: Digest::ZERO,
         clock_frequency_hz,
@@ -880,9 +885,9 @@ mod tests {
         let identity_response =
             fixture.handle(&identity_request, 0, DeviceCycle(0), DeviceCycle(0));
         let identity_text = core::str::from_utf8(&identity_response.body).unwrap();
-        let capability = calculate_identity(&board_mks_tinybee::PACKAGE).unwrap();
+        let capability = calculate_identity(&capability::package()).unwrap();
         assert_eq!(identity_response.status, 200);
-        assert!(identity_text.contains("\"board_id\":\"mks-tinybee-v1\""));
+        assert!(identity_text.contains("\"board_id\":\"sim-mks-tinybee-v1\""));
         assert!(identity_text.contains("\"device_id\":\"414c554d2d53494d3a54494e59424545\""));
         assert!(identity_text.contains(&format!(
             "\"capability_digest\":\"{}\"",
@@ -1063,7 +1068,7 @@ mod tests {
     #[test]
     fn authenticated_capability_ranges_use_the_shared_production_dispatcher() {
         let mut fixture = fixture();
-        let identity = calculate_identity(&board_mks_tinybee::PACKAGE).unwrap();
+        let identity = calculate_identity(&capability::package()).unwrap();
         let first = fixture.handle(
             &native_capability_request(74, Digest::ZERO, 0),
             10,

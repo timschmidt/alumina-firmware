@@ -1205,13 +1205,14 @@ GPIO22/32/33/35 and keeps every descriptive-but-unadmitted ADC, UART, timer,
 shifted output, storage resource, other GPIO, and raw pin operation closed.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
 endpoints and filter host plots without mutating the graph or granting live
-telemetry. A complete bounded allocation-free `ALMCAP03` decoder now feeds a
+telemetry. A complete bounded allocation-free `ALMCAP04` decoder now feeds a
 board-name-independent owned explorer model. The visible TinyBee reference
 separates all 62 descriptive resources, aliases, owners, safe/hazard facts and
-supporting-ledger counts from both the four passively observable inputs and the
-independent four graph-readable inputs. The passive catalog also binds exact
-queue budgets, cadence, freshness, schema, and evidence; searchable
-graph-closed, diagnostic-closed, and hazardous views do not create operations.
+supporting-ledger counts from the independent passive-overview,
+digital-capture, and graph palettes. The host simulator alone publishes four
+simulated capture sources and exact fixed-memory/timing limits; physical boards
+remain capture-absent. Searchable graph-closed, diagnostic-closed,
+capture-closed, and hazardous views do not create operations.
 Because the package
 publishes no licensed visual, the UI draws no board shape or hotspot and keeps
 the physical-reconciliation HIL gate visibly open. Canonical HostExact node

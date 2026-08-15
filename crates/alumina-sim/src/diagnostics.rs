@@ -19,6 +19,9 @@ use alumina_diagnostics::{
     resource_overview_encoded_len,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
+use alumina_service::diagnostics::DiagnosticProviderPolicy;
+
+use crate::capability;
 
 /// Stable simulator-only device namespace used by the TinyBee fixture.
 pub const TINYBEE_SIMULATOR_DEVICE_ID: DeviceId = DeviceId(*b"ALUM-SIM:TINYBEE");
@@ -28,6 +31,11 @@ pub const TINYBEE_SIMULATOR_CLOCK_HZ: u64 = 1_000_000;
 pub const TINYBEE_SIMULATOR_CHANNELS: usize = 4;
 /// Number of retained edge events in the deterministic capture.
 pub const TINYBEE_SIMULATOR_TRANSITIONS: usize = 14;
+/// Provider composition exported by the host-only TinyBee simulator.
+pub const SIMULATED_DIAGNOSTIC_PROVIDERS: DiagnosticProviderPolicy = DiagnosticProviderPolicy {
+    resource_overview: true,
+    digital_capture: capability::DIGITAL_CAPTURE,
+};
 
 /// Construction failure for the deterministic diagnostic fixture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,7 +97,7 @@ impl TinyBeeDiagnosticFixture {
 /// resulting records contain only simulated values and are safe to construct
 /// on a host with a real board attached.
 pub fn tinybee_diagnostic_fixture() -> Result<TinyBeeDiagnosticFixture, DiagnosticFixtureError> {
-    let capability = calculate_identity(&board_mks_tinybee::PACKAGE)
+    let capability = calculate_identity(&capability::package())
         .map_err(|_| DiagnosticFixtureError::Capability)?;
     let context = DiagnosticContext {
         device_id: TINYBEE_SIMULATOR_DEVICE_ID,
@@ -105,12 +113,13 @@ pub fn tinybee_diagnostic_fixture() -> Result<TinyBeeDiagnosticFixture, Diagnost
 /// Builds the deterministic records for an explicit service-owned context.
 ///
 /// This is used by authenticated HTTP simulations whose boot identity differs
-/// from the standalone fixture. The current 8 MiB TinyBee capability identity
-/// remains mandatory; callers cannot relabel these resources as another board.
+/// from the standalone fixture. The simulator-specific TinyBee capability
+/// identity remains mandatory; callers cannot relabel these records as a
+/// physical board.
 pub fn tinybee_diagnostic_fixture_for_context(
     context: DiagnosticContext,
 ) -> Result<TinyBeeDiagnosticFixture, DiagnosticFixtureError> {
-    let capability = calculate_identity(&board_mks_tinybee::PACKAGE)
+    let capability = calculate_identity(&capability::package())
         .map_err(|_| DiagnosticFixtureError::Capability)?;
     if context.capability != capability {
         return Err(DiagnosticFixtureError::Capability);
@@ -139,15 +148,15 @@ pub fn tinybee_diagnostic_fixture_for_context(
         context,
         flags: DigitalCaptureFlags(DigitalCaptureFlags::SIMULATED),
         capture_id: CaptureId::new(*b"TINYBEE-SIM-0001")?,
-        start_cycle: DeviceCycle(2_000_000),
-        end_cycle_exclusive: DeviceCycle(2_002_000),
-        requested_pretrigger_cycles: 500,
-        requested_posttrigger_cycles: 1_500,
-        trigger_cycle: DeviceCycle(2_000_500),
-        trigger_channel_index: 2,
-        trigger_condition: DigitalTriggerCondition::Rising,
+        start_cycle: DeviceCycle(2_001_000),
+        end_cycle_exclusive: DeviceCycle(2_003_000),
+        requested_pretrigger_cycles: 0,
+        requested_posttrigger_cycles: 2_000,
+        trigger_cycle: DeviceCycle(2_001_000),
+        trigger_channel_index: u16::MAX,
+        trigger_condition: DigitalTriggerCondition::Immediate,
         state: DigitalCaptureState::TriggeredComplete,
-        trigger_transition_index: 4,
+        trigger_transition_index: u32::MAX,
         transition_capacity: 64,
         retained_event_stride: 1,
         quality_flags: CaptureQualityFlags(CaptureQualityFlags::CLOCK_UNQUALIFIED),
@@ -414,13 +423,14 @@ const fn transition(
 #[cfg(test)]
 mod tests {
     use alumina_diagnostics::transport::{
-        DiagnosticTransportLimits, SubscriptionId, TelemetryEventView, TelemetryPhase,
-        TelemetryPollRequest, TelemetrySessionRequest, TelemetrySubscribeFlags,
+        DiagnosticTransportError, DiagnosticTransportLimits, SubscriptionId, TelemetryEventView,
+        TelemetryPhase, TelemetryPollRequest, TelemetrySessionRequest, TelemetrySubscribeFlags,
         TelemetrySubscribeRequest, WaveformConfigureFlags, WaveformConfigureRequest, WaveformPhase,
         WaveformReadRequest, WaveformSessionRequest, decode_telemetry_event,
         decode_telemetry_subscribe, decode_waveform_chunk, decode_waveform_configure,
         encode_telemetry_subscribe, encode_waveform_configure,
     };
+    use alumina_diagnostics::{DIGITAL_CAPTURE_CHANNEL_BYTES, DIGITAL_CAPTURE_HEADER_BYTES};
     use alumina_service::diagnostics::{
         DiagnosticProviderPolicy, DiagnosticServiceError, DiagnosticServiceState,
         MAX_NATIVE_DIAGNOSTIC_RESPONSE_BODY_BYTES,
@@ -464,14 +474,14 @@ mod tests {
                 capture_id: CaptureId::new(*b"TINYBEE-SIM-0001").unwrap(),
                 context,
                 flags: WaveformConfigureFlags(WaveformConfigureFlags::EDGE_TIMESTAMPS),
-                requested_pretrigger_cycles: 500,
-                requested_posttrigger_cycles: 1_500,
-                earliest_trigger_cycle: DeviceCycle(2_000_400),
-                latest_trigger_cycle: DeviceCycle(2_000_600),
+                requested_pretrigger_cycles: 0,
+                requested_posttrigger_cycles: 2_000,
+                earliest_trigger_cycle: DeviceCycle(2_000_000),
+                latest_trigger_cycle: DeviceCycle(2_100_000),
                 transition_capacity: 64,
                 maximum_chunk_bytes: 168,
-                trigger_channel_index: 2,
-                trigger_condition: DigitalTriggerCondition::Rising,
+                trigger_channel_index: u16::MAX,
+                trigger_condition: DigitalTriggerCondition::Immediate,
                 channels: &SELECTED_RESOURCES,
             },
             &mut encoded,
@@ -510,7 +520,7 @@ mod tests {
     #[test]
     fn tinybee_fixture_is_canonical_capability_bound_and_explicitly_simulated() {
         let fixture = tinybee_diagnostic_fixture().unwrap();
-        let expected = calculate_identity(&board_mks_tinybee::PACKAGE).unwrap();
+        let expected = calculate_identity(&capability::package()).unwrap();
         assert_eq!(fixture.capability(), expected);
         assert_eq!(fixture.overview_bytes().len(), 320);
         assert_eq!(fixture.digital_capture_bytes().len(), 512);
@@ -527,12 +537,9 @@ mod tests {
         assert!(capture.flags().contains(DigitalCaptureFlags::SIMULATED));
         assert_eq!(capture.channel_count(), 4);
         assert_eq!(capture.transition_count(), 14);
-        assert_eq!(capture.trigger().0, DeviceCycle(2_000_500));
-        assert_eq!(
-            capture.channel(capture.trigger().1).unwrap().resource,
-            ResourceId::Gpio(33)
-        );
-        assert_eq!(capture.trigger().2, DigitalTriggerCondition::Rising);
+        assert_eq!(capture.trigger().0, DeviceCycle(2_001_000));
+        assert_eq!(capture.trigger().1, u16::MAX);
+        assert_eq!(capture.trigger().2, DigitalTriggerCondition::Immediate);
         assert!(
             capture
                 .quality_flags()
@@ -561,7 +568,7 @@ mod tests {
         };
         let mut service = TestService::new(
             context,
-            DiagnosticProviderPolicy::SIMULATED,
+            SIMULATED_DIAGNOSTIC_PROVIDERS,
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
         );
@@ -650,7 +657,7 @@ mod tests {
         };
         let mut service = TestService::new(
             context,
-            DiagnosticProviderPolicy::SIMULATED,
+            SIMULATED_DIAGNOSTIC_PROVIDERS,
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
         );
@@ -763,7 +770,7 @@ mod tests {
         };
         let mut service = TestService::new(
             context,
-            DiagnosticProviderPolicy::SIMULATED,
+            SIMULATED_DIAGNOSTIC_PROVIDERS,
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
         );
@@ -775,7 +782,7 @@ mod tests {
             configured
         );
         let armed = service
-            .arm_waveform(reference, DeviceCycle(2_000_100))
+            .arm_waveform(reference, DeviceCycle(2_000_000))
             .unwrap();
         assert_eq!(armed.phase, WaveformPhase::Armed);
         assert_eq!(armed.generation, 1);
@@ -830,6 +837,18 @@ mod tests {
         assert_eq!(progressed.published_bytes, 336);
         assert_eq!(progressed.dropped_chunks, 1);
 
+        let overwide_read = WaveformReadRequest {
+            capture_id: reference.capture_id,
+            configure_digest: reference.configure_digest,
+            record_digest: complete.record_digest,
+            offset: 0,
+            maximum_bytes: 169,
+        };
+        assert_eq!(
+            service.read_waveform(overwide_read, &mut chunk_bytes),
+            Err(DiagnosticServiceError::Capacity)
+        );
+
         let read = WaveformReadRequest {
             capture_id: reference.capture_id,
             configure_digest: reference.configure_digest,
@@ -870,7 +889,7 @@ mod tests {
         };
         let mut service = TestService::new(
             context,
-            DiagnosticProviderPolicy::SIMULATED,
+            SIMULATED_DIAGNOSTIC_PROVIDERS,
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
         );
@@ -893,6 +912,86 @@ mod tests {
         assert_eq!(capture.channel_count(), SELECTED_RESOURCES.len());
         assert_eq!(capture.transition_count(), 16);
         assert!(capture.flags().contains(DigitalCaptureFlags::SIMULATED));
+    }
+
+    #[test]
+    fn capture_catalog_rejects_resource_trigger_timing_and_source_substitution() {
+        let fixture = tinybee_diagnostic_fixture().unwrap();
+        let context = fixture.digital_capture().context();
+        let valid = encode_configuration(context);
+        let mut service = TestService::new(
+            context,
+            SIMULATED_DIAGNOSTIC_PROVIDERS,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        );
+
+        let mut unlisted_resource = valid;
+        unlisted_resource[192..196].copy_from_slice(&alumina_capability::encode_resource_id(
+            ResourceId::Gpio(21),
+        ));
+        assert_eq!(
+            service.configure_waveform(&unlisted_resource),
+            Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Resource
+            ))
+        );
+
+        let mut unavailable_trigger = valid;
+        unavailable_trigger[144..152].copy_from_slice(&500_u64.to_le_bytes());
+        unavailable_trigger[152..160].copy_from_slice(&1_500_u64.to_le_bytes());
+        unavailable_trigger[184..186].copy_from_slice(&2_u16.to_le_bytes());
+        unavailable_trigger[186] = DigitalTriggerCondition::Rising as u8;
+        assert_eq!(
+            service.configure_waveform(&unavailable_trigger),
+            Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Window
+            ))
+        );
+
+        let mut overlong = valid;
+        overlong[152..160].copy_from_slice(&2_000_001_u64.to_le_bytes());
+        assert_eq!(
+            service.configure_waveform(&overlong),
+            Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Limit("digital capture timing")
+            ))
+        );
+
+        let mut distant_deadline = valid;
+        distant_deadline[168..176].copy_from_slice(&32_000_001_u64.to_le_bytes());
+        assert_eq!(
+            service.configure_waveform(&distant_deadline),
+            Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Limit("digital capture timing")
+            ))
+        );
+
+        let configuration =
+            decode_waveform_configure(&valid, DiagnosticTransportLimits::native_control()).unwrap();
+        let reference = WaveformSessionRequest {
+            capture_id: configuration.capture_id(),
+            configure_digest: configuration.digest(),
+        };
+        service.configure_waveform(&valid).unwrap();
+        service
+            .arm_waveform(reference, DeviceCycle(2_000_000))
+            .unwrap();
+
+        let mut wrong_source = fixture.digital_capture_bytes().to_vec();
+        wrong_source[10..12].copy_from_slice(&0_u16.to_le_bytes());
+        for channel in 0..SELECTED_RESOURCES.len() {
+            wrong_source
+                [DIGITAL_CAPTURE_HEADER_BYTES + channel * DIGITAL_CAPTURE_CHANNEL_BYTES + 5] =
+                DigitalAcquisitionSource::Rmt as u8;
+        }
+        assert!(decode_digital_capture(&wrong_source, DiagnosticLimits::interactive()).is_ok());
+        assert_eq!(
+            service.retain_waveform_capture(&wrong_source),
+            Err(DiagnosticServiceError::Invalid(
+                DiagnosticTransportError::Resource
+            ))
+        );
     }
 
     #[test]
