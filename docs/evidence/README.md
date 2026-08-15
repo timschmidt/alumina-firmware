@@ -397,6 +397,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
   exact CAM handoff, canonical active configuration, authenticated immutable
   cache delivery, deferred deterministic two-MCU start, simulated latch
   completion, and optimized loopback Chromium evidence.
+- [`M10-REPEATED-CACHED-JOBS.md`](M10-REPEATED-CACHED-JOBS.md) — transactional
+  terminal-job replacement, exact-retry preservation, immutable cache reuse,
+  and two consecutive synchronized attempts on unchanged simulated MCU boots.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

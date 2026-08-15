@@ -402,9 +402,14 @@ inverts their boot-scoped cycle intervals into browser monotonic time, preserves
 their simulator/peripheral/software authority, and displays conservative
 participant spread and shared-epoch error. Its two-device simulation proves
 known edges are contained and rejects missing or regressed evidence. Live
-cache/job driving, attended-policy controls, broader network/storage faults,
-worker integration for the full job lifecycle, and physical qualification
-remain open. See the
+cache/job driving and the complete worker lifecycle now carry two consecutive
+attempts on two unchanged simulator boots: the rendering realm retains the first
+terminal evidence, clears its bounded owner, then stages a distinct prepare ID
+which reuses the immutable cache and selects a new future epoch. See the
+[repeated cached-job evidence](evidence/M10-REPEATED-CACHED-JOBS.md).
+Attended-policy controls, broader network/storage faults, background-throttling
+qualification, and physical qualification remain open. Observed-edge authority
+is recorded separately in the
 [observed-start replay evidence](evidence/M7-OBSERVED-START-REPLAY.md).
 
 Exit:

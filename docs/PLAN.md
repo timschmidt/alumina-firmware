@@ -736,7 +736,13 @@ precommit cancellation, and ambiguous-mutation status reconciliation. Worker
 lifecycle/UI integration and production-worker authenticated browser/HTTP
 qualification now cover nominal sampling, response loss, a finite outage,
 reboot, bounded delay, and conservative excessive-delay rejection. Live
-cache/schedule ownership, broader packet-stress and background-throttling cases,
+cache/schedule ownership now carries two distinct attempts through immutable
+delivery, prepare, install, confirm, prime, observed start, terminal retention,
+worker clear, and cache-reusing restage on the same two simulator boots. Exact
+descriptor retries remain idempotent, while a different descriptor replaces
+only terminal quiescent state and failed validation preserves prior evidence.
+See the [repeated cached-job evidence](evidence/M10-REPEATED-CACHED-JOBS.md).
+Broader packet-stress and background-throttling cases, attended-policy controls,
 HIL runs, a qualified I²S/DMA backend, and the physical exit gate remain open;
 current board packages are non-armable. Firmware-to-browser observed-start
 reconciliation is implemented in the portable path: exact affine inversion

@@ -219,6 +219,24 @@ discarded. Core 0 and the authenticated browser client accept the brief
 `Running`-without-observation state followed by exactly one evidence enrichment,
 but reject any later attempt to erase or replace it.
 
+## Repeated job attempts
+
+An exact `JobPrepare` descriptor retry means “report the same attempt,” not
+“run these bytes again.” It is idempotent before and after terminal state. A new
+attempt must use a new nonzero `prepare_id`; its partition and global manifest
+may remain byte-for-byte identical and are reconciled through their existing
+content identities.
+
+A participant rejects the new descriptor until the prior service, realtime
+executor, and schedule are terminal and all retained queue/work ownership is
+quiescent. It validates the complete replacement against storage and the active
+boot/capability/configuration before changing the retained actor. Candidate
+failure leaves the old terminal evidence readable. The browser correspondingly
+retains and validates the terminal snapshot, clears only its local worker owner,
+then stages the next attempt without requiring a device reboot, authentication
+boot change, or Wi-Fi-timed kickoff. The usual prepare/install/confirm sequence
+selects a fresh future epoch for every attempt.
+
 ## Deterministic prepare/commit start
 
 The UI orchestrates a bounded two-phase procedure:

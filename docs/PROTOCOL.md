@@ -472,6 +472,32 @@ requires an exact nonzero active-configuration identity and an armable board.
 Neither first board currently satisfies those later gates, so target
 `JobPrepare` still returns `Unsupported` before storage is opened.
 
+### Prepare retry and terminal replacement
+
+`JobPrepare` has one unambiguous retry rule. Repeating the exact complete
+descriptor is idempotent in every state, including after cancellation or a
+terminal schedule; it returns the retained status and never constructs a new
+attempt. A logically new attempt therefore requires a distinct nonzero
+`prepare_id`, even when it intentionally reuses identical immutable partition
+and global-manifest publications.
+
+A different descriptor returns `Busy` while any part of the retained job is
+nonterminal or owns queued, prefetched, lookahead, executor, or output work. It
+may replace retained state only after core 0, core 1, and the schedule are all
+terminal and both command/work boundaries are quiescent. Cancellation becomes
+replaceable only after its cross-core terminal acknowledgement. The candidate
+publication, complete stream, identities, limits, and new prepared schedule are
+validated transactionally before the retained job changes. A missing or corrupt
+publication, identity mismatch, invalid stream, or invalid candidate schedule
+returns its typed failure while preserving the complete prior terminal report.
+
+Content-addressed storage is independent of attempt identity. Replacement
+neither erases nor republishes an already valid object, so a later attempt can
+reconcile and reuse the same immutable cache bytes. Rendering-realm
+`clear_cached_job` releases only the worker/UI owner after terminal evidence is
+retained; it is not a native command to erase firmware evidence or bypass the
+replacement gate.
+
 The 344-byte intercore command begins with `ALJC`, version `2`, a one-byte action,
 and one reserved zero byte. Action `1` carries the 16-byte authentication boot ID
 at `8..24` and the complete descriptor at `24..344`. Action `2` contains only the
