@@ -353,6 +353,11 @@ of misreporting an abort or ordinary success. This remains localhost
 mutation-only fault evidence with status reads available; see the
 [abort-guard outage
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md).
+If only a subset aborts, schema V9 now retains the terminal participant facts
+as `split_after_stop_request`, renders the machine state indeterminate, and
+stops status polling. The localhost asymmetric qualification is recorded in
+the [abort-split outage
+evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md).
 Physical radio and timing qualification remain closed. The same coordinator
 now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped

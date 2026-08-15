@@ -322,9 +322,14 @@ the guard closes while leaving authenticated status available. The worker
 retains the accepted stop, observes no applied abort, continues exact status
 reconciliation, and terminates as `completed_after_stop_request` only when both
 participants complete. See the [abort-guard outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). Full
-control/status outage, reordered or duplicated traffic, and mixed
-abort/complete outcomes remain open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). The asymmetric
+variant now allows one participant to apply abort while another loses the
+mutation through its guard. Once every actor is terminal and at least one is
+stopped and one complete, the exact global result is
+`split_after_stop_request`; see the [abort-split outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). Full
+control/status outage, reordered or duplicated traffic, and splits involving
+faulted, cancelled, or never-installed actors remain open.
 
 ## Operation after network loss
 

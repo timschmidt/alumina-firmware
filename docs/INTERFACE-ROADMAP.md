@@ -422,13 +422,18 @@ exact mutation is retried. See the [browser abort-request recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md).
 A bounded repeated loss of that abort mutation is now qualified from confirmed
 state through the guard while status reads remain available. No abort is
-applied; worker schema V8 retains the accepted stop and terminates as
+applied; worker schema V9 retains the accepted stop and terminates as
 `completed_after_stop_request` after exact all-participant completion. See the
 [browser abort-guard outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). Attended-policy
-controls, full control/status outage, reordered/duplicated traffic, mixed
-abort/complete outcomes, broader network/storage faults, background-throttling
-qualification, and physical qualification remain open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). A second
+qualification lets one actor apply abort while the other loses abort mutations
+through its guard. Schema V9 retains the exact `aborted`/`complete` split as
+terminal `split_after_stop_request`; see the [browser abort-split outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md).
+Attended-policy controls, full control/status outage, reordered/duplicated
+traffic, split outcomes involving faulted, cancelled, or never-installed actors,
+broader network/storage faults, background-throttling qualification, and
+physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
 uses an all-participant read-only status round and exact retained descriptor
 tokens; it exposes `retained_complete`, preserves local start cycles, carries no
