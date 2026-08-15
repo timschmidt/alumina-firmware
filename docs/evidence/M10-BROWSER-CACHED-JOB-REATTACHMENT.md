@@ -145,3 +145,7 @@ simultaneity, endstop/E-stop/interlock response, attended or cached-autonomous
 production policy, production credentials, or any machine-arm/safety
 qualification. The simulator's latch authority cannot authorize physical
 output.
+
+Applied pre-confirm abort-response loss was subsequently qualified in
+[`M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md`](M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md);
+the remaining broader abort boundaries listed above remain closed.

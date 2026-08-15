@@ -115,6 +115,9 @@ That boundary was subsequently closed by schedule/status schema replacement and
 replacement-worker qualification at `aluminafw` commit `a02a877` and
 `alumina-interface` commit `c7fda5b`. See
 [`M10-BROWSER-CACHED-JOB-REATTACHMENT.md`](M10-BROWSER-CACHED-JOB-REATTACHMENT.md).
+Applied pre-confirm abort-response loss was subsequently qualified separately
+at `alumina-interface` commit `205e059`; see
+[`M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md`](M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md).
 
 ## Verification performed
 
@@ -154,4 +157,5 @@ multi-MCU electrical simultaneity, endstop/E-stop/interlock response, attended
 or cached-autonomous production policy, production credentials, or any
 machine-arm/safety qualification. The simulator's latch authority cannot
 authorize physical output. Fresh-owner terminal reattachment is established
-only by the later evidence linked above.
+only by the later evidence linked above, and applied abort-response loss is
+established only by its separate later checkpoint.

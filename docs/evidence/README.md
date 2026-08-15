@@ -411,6 +411,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — exact terminal descriptor identity retained in schedule status, read-only
   all-participant discovery, bounded replacement-worker reconciliation, and
   optimized same-actor Chromium evidence without new start authority.
+- [`M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md`](M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md)
+  — successful applied-abort response loss on both participants, mandatory
+  per-participant read-only reconciliation before the next mutation, exact
+  aborted terminal state, and a no-fault Chromium regression.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact
