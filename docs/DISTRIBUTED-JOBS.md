@@ -299,7 +299,11 @@ edge is proved to lie inside its reconstructed browser-time interval, and the
 aggregate retains a conservative upper bound on cross-device spread. This is
 software evidence only. The TinyBee and T-Deck Pro adapters still reject motion
 streaming, so no physical latch or synchronization-tolerance claim follows from
-the simulation.
+the simulation. Loopback browser qualification now also discards the successful
+`JobConfirm` response on each participant after application, requires the local
+view to advance through `0 -> 1 -> 2` status-reconciled confirmations, and then
+observes terminal completion. Lost abort delivery and fresh-browser reattachment
+to an already-terminal same prepare ID remain open.
 
 ## Operation after network loss
 

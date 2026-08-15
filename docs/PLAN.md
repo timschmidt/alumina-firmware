@@ -746,11 +746,15 @@ Operation-specific successful-response loss now proves that the live browser
 recovers an already-applied storage chunk through publication inspection and an
 already-applied schedule commit through status reconciliation, then completes a
 no-fault regression. See the [browser cached-job recovery
-evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md). Lost confirm/abort,
-reorder/duplication, sustained outage, broader packet stress,
-background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
-backend, and the physical exit gate remain open; current board packages are
-non-armable. Firmware-to-browser observed-start
+evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md). Successful confirmation
+response loss on both participants is now separately qualified: each ambiguous
+grant of future start authority is reconciled through status before the next
+participant advances. See the [browser confirmation-recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md). Lost abort,
+fresh-owner same-attempt reattachment, reorder/duplication, sustained outage,
+broader packet stress, background-throttling, attended-policy controls, HIL
+runs, a qualified I²S/DMA backend, and the physical exit gate remain open;
+current board packages are non-armable. Firmware-to-browser observed-start
 reconciliation is implemented in the portable path: exact affine inversion
 maps each authenticated cycle observation to a conservative browser-time
 interval, refuses missing/regressed/foreign evidence, and the deterministic

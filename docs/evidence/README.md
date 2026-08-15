@@ -403,6 +403,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M10-BROWSER-CACHED-JOB-RECOVERY.md`](M10-BROWSER-CACHED-JOB-RECOVERY.md)
   — operation-specific successful-response loss after storage and schedule
   mutations, read-only browser reconciliation, and no-fault Chromium regression.
+- [`M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md`](M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md)
+  — successful confirmation-response loss on both participants, exact
+  confirmation-state progression, and the fresh-owner reattachment boundary.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

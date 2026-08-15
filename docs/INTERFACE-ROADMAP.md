@@ -411,9 +411,12 @@ Operation-specific successful-response loss now qualifies live browser
 reconciliation after one applied storage chunk and one applied schedule commit,
 followed by a clean no-fault run. See the [browser cached-job recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md). Attended-policy
-controls, lost confirm/abort, sustained/reordered/duplicated traffic, broader
-network/storage faults, background-throttling qualification, and physical
-qualification remain open. Observed-edge authority
+controls, lost abort, fresh-owner same-attempt reattachment,
+sustained/reordered/duplicated traffic, broader network/storage faults,
+background-throttling qualification, and physical qualification remain open.
+Successful confirmation-response loss on both participants is qualified in the
+[browser confirmation-recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md). Observed-edge authority
 is recorded separately in the
 [observed-start replay evidence](evidence/M7-OBSERVED-START-REPLAY.md).
 
