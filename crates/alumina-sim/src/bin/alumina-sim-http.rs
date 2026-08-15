@@ -34,6 +34,7 @@ struct ServerOptions {
     drop_initial_control_requests: u64,
     drop_control_request: Option<u64>,
     drop_operation_request: Option<Operation>,
+    drop_operation_request_count: u64,
     drop_operation_response: Option<Operation>,
     reboot_control_request: Option<u64>,
 }
@@ -52,10 +53,12 @@ impl ServerOptions {
             drop_initial_control_requests: 0,
             drop_control_request: None,
             drop_operation_request: None,
+            drop_operation_request_count: 1,
             drop_operation_response: None,
             reboot_control_request: None,
         };
         let mut arguments = std::env::args().skip(1);
+        let mut drop_operation_request_count_set = false;
         while let Some(argument) = arguments.next() {
             if argument == "--help" {
                 print_help();
@@ -113,6 +116,10 @@ impl ServerOptions {
                 "--drop-operation-request" => {
                     options.drop_operation_request = Some(parse_operation(&value, &argument)?);
                 }
+                "--drop-operation-request-count" => {
+                    options.drop_operation_request_count = nonzero_u64(&value, &argument)?;
+                    drop_operation_request_count_set = true;
+                }
                 "--drop-operation-response" => {
                     options.drop_operation_response = Some(parse_operation(&value, &argument)?);
                 }
@@ -125,6 +132,11 @@ impl ServerOptions {
                     )));
                 }
             }
+        }
+        if drop_operation_request_count_set && options.drop_operation_request.is_none() {
+            return Err(ServerError::Argument(
+                "--drop-operation-request-count requires --drop-operation-request".to_owned(),
+            ));
         }
         Ok(options)
     }
@@ -158,6 +170,7 @@ fn print_help() {
          [--processing-delay-ms N] [--response-delay-ms N] [--drift-ppm N] \
          [--drop-initial-control-requests N] [--drop-control-request N] \
          [--drop-operation-request NAME_OR_WIRE] \
+         [--drop-operation-request-count N] \
          [--drop-operation-response NAME_OR_WIRE] [--reboot-control-request N]"
     );
 }
@@ -268,7 +281,7 @@ impl AffineHostClock {
 struct FaultState {
     control_requests: u64,
     single_drop_completed: bool,
-    operation_request_drop_completed: bool,
+    operation_request_drops: u64,
     operation_response_drop_completed: bool,
     rebooted: bool,
 }
@@ -277,12 +290,16 @@ impl FaultState {
     fn take_operation_request_drop(
         &mut self,
         selected: Option<Operation>,
+        selected_count: u64,
         observed: Option<Operation>,
     ) -> Option<Operation> {
-        if self.operation_request_drop_completed || selected.is_none() || selected != observed {
+        if self.operation_request_drops >= selected_count
+            || selected.is_none()
+            || selected != observed
+        {
             return None;
         }
-        self.operation_request_drop_completed = true;
+        self.operation_request_drops = self.operation_request_drops.saturating_add(1);
         observed
     }
 }
@@ -340,9 +357,11 @@ fn handle_connection(
     let operation = control.then(|| request_operation(&request)).flatten();
     if control {
         faults.control_requests = faults.control_requests.saturating_add(1);
-        if let Some(operation) =
-            faults.take_operation_request_drop(options.drop_operation_request, operation)
-        {
+        if let Some(operation) = faults.take_operation_request_drop(
+            options.drop_operation_request,
+            options.drop_operation_request_count,
+            operation,
+        ) {
             eprintln!(
                 "fault injection: dropped unapplied request for operation 0x{:04x}",
                 operation.wire_value()
@@ -638,25 +657,40 @@ mod tests {
     }
 
     #[test]
-    fn operation_request_drop_is_exact_one_shot_and_precedes_application() {
+    fn operation_request_drop_is_exact_bounded_and_precedes_application() {
         let mut faults = FaultState::default();
         assert_eq!(
             faults.take_operation_request_drop(
                 Some(Operation::JobAbort),
+                2,
                 Some(Operation::JobStatus),
             ),
             None
         );
-        assert!(!faults.operation_request_drop_completed);
+        assert_eq!(faults.operation_request_drops, 0);
         assert_eq!(
-            faults
-                .take_operation_request_drop(Some(Operation::JobAbort), Some(Operation::JobAbort),),
+            faults.take_operation_request_drop(
+                Some(Operation::JobAbort),
+                2,
+                Some(Operation::JobAbort),
+            ),
             Some(Operation::JobAbort)
         );
-        assert!(faults.operation_request_drop_completed);
         assert_eq!(
-            faults
-                .take_operation_request_drop(Some(Operation::JobAbort), Some(Operation::JobAbort),),
+            faults.take_operation_request_drop(
+                Some(Operation::JobAbort),
+                2,
+                Some(Operation::JobAbort),
+            ),
+            Some(Operation::JobAbort)
+        );
+        assert_eq!(faults.operation_request_drops, 2);
+        assert_eq!(
+            faults.take_operation_request_drop(
+                Some(Operation::JobAbort),
+                2,
+                Some(Operation::JobAbort),
+            ),
             None
         );
     }
