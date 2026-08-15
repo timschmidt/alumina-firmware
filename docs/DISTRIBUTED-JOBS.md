@@ -142,8 +142,9 @@ publication identity before every new or ambiguous transaction, validates each
 local chunk and every reported durable prefix, and never retries a mutation by
 assuming a lost response means failure. For each MCU it reconciles the local
 executable partition completely before the identical global manifest. These
-headless/WASM state machines are implemented; live browser/radio/SD
-qualification and their UI remain open.
+headless/WASM state machines are implemented. Loopback browser qualification
+now loses one successful applied chunk response and recovers through inspection;
+physical browser/radio/SD qualification remains open.
 
 The V1 cache is not FAT or another general filesystem. Two fixed SHA-256 anchors
 alternate generations over an append-only, hash-chained sequence of begin,

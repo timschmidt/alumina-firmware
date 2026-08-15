@@ -407,8 +407,13 @@ attempts on two unchanged simulator boots: the rendering realm retains the first
 terminal evidence, clears its bounded owner, then stages a distinct prepare ID
 which reuses the immutable cache and selects a new future epoch. See the
 [repeated cached-job evidence](evidence/M10-REPEATED-CACHED-JOBS.md).
-Attended-policy controls, broader network/storage faults, background-throttling
-qualification, and physical qualification remain open. Observed-edge authority
+Operation-specific successful-response loss now qualifies live browser
+reconciliation after one applied storage chunk and one applied schedule commit,
+followed by a clean no-fault run. See the [browser cached-job recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md). Attended-policy
+controls, lost confirm/abort, sustained/reordered/duplicated traffic, broader
+network/storage faults, background-throttling qualification, and physical
+qualification remain open. Observed-edge authority
 is recorded separately in the
 [observed-start replay evidence](evidence/M7-OBSERVED-START-REPLAY.md).
 

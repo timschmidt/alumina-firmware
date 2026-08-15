@@ -400,6 +400,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M10-REPEATED-CACHED-JOBS.md`](M10-REPEATED-CACHED-JOBS.md) — transactional
   terminal-job replacement, exact-retry preservation, immutable cache reuse,
   and two consecutive synchronized attempts on unchanged simulated MCU boots.
+- [`M10-BROWSER-CACHED-JOB-RECOVERY.md`](M10-BROWSER-CACHED-JOB-RECOVERY.md)
+  — operation-specific successful-response loss after storage and schedule
+  mutations, read-only browser reconciliation, and no-fault Chromium regression.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact
