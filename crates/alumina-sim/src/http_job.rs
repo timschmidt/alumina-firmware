@@ -259,11 +259,12 @@ impl SimulatedCachedJobService {
             return Err(StatusCode::Integrity);
         }
         if let Some(job) = &self.job {
-            return if job.descriptor == descriptor && !job.cancelled {
-                Ok(())
-            } else {
-                Err(StatusCode::Conflict)
-            };
+            if job.descriptor == descriptor {
+                return Ok(());
+            }
+            if !job.storage_mutation_safe() {
+                return Err(StatusCode::Conflict);
+            }
         }
         let publication = self
             .cache
@@ -708,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn immutable_cache_prepare_and_future_start_complete_through_native_frames() {
+    fn immutable_cache_jobs_replace_only_after_terminal_safe_completion() {
         let device_id = DeviceId(*b"SIM-JOB-MCU-0001");
         let boot_id = BootId::new([0x31; 16]).unwrap();
         let active = SimulatedActiveConfiguration::new().unwrap();
@@ -824,6 +825,28 @@ mod tests {
         let prepared = JobStatusReport::decode(&body).unwrap();
         assert_eq!(prepared.schedule.unwrap().state, JobScheduleState::Prepared);
         let prepared_token = prepared.schedule.unwrap().prepared_token.unwrap();
+        let replacement_descriptor = JobDescriptor {
+            prepare_id: descriptor.prepare_id + 1,
+            ..descriptor
+        };
+        let (status, body) = dispatch(
+            &mut service,
+            FrameKind::Job,
+            Operation::JobPrepare,
+            active.digest(),
+            &replacement_descriptor.encode::<2>().unwrap(),
+            DeviceCycle(1_050_000),
+            31,
+        );
+        assert_eq!(status, StatusCode::Conflict);
+        assert_eq!(
+            JobStatusReport::decode(&body)
+                .unwrap()
+                .service
+                .unwrap()
+                .prepare_id,
+            descriptor.prepare_id
+        );
         let commit = JobCommitRequest {
             policy: JobNetworkPolicy::CachedAutonomous,
             prepare_id: descriptor.prepare_id,
@@ -848,7 +871,7 @@ mod tests {
             active.digest(),
             &commit.encode().unwrap(),
             DeviceCycle(1_100_000),
-            31,
+            32,
         );
         assert_eq!(status, StatusCode::Ok);
         assert_eq!(
@@ -868,7 +891,7 @@ mod tests {
             active.digest(),
             &confirm.encode().unwrap(),
             DeviceCycle(1_200_000),
-            32,
+            33,
         );
         assert_eq!(status, StatusCode::Ok);
         assert_eq!(
@@ -887,7 +910,7 @@ mod tests {
             active.digest(),
             &[],
             DeviceCycle(4_000_000),
-            33,
+            34,
         );
         assert_eq!(
             JobStatusReport::decode(&body)
@@ -904,7 +927,7 @@ mod tests {
             active.digest(),
             &[],
             DeviceCycle(5_000_000),
-            34,
+            35,
         );
         assert_eq!(status, StatusCode::Ok);
         let complete = JobStatusReport::decode(&body).unwrap();
@@ -914,6 +937,83 @@ mod tests {
             JobStartObservationSource::SimulatedLatch
         );
         assert_eq!(complete.realtime.unwrap().state, RealtimeJobState::Complete);
+
+        let (status, body) = dispatch(
+            &mut service,
+            FrameKind::Job,
+            Operation::JobPrepare,
+            active.digest(),
+            &descriptor.encode::<2>().unwrap(),
+            DeviceCycle(5_000_001),
+            36,
+        );
+        assert_eq!(status, StatusCode::Ok);
+        assert_eq!(
+            JobStatusReport::decode(&body)
+                .unwrap()
+                .schedule
+                .unwrap()
+                .state,
+            JobScheduleState::Complete
+        );
+
+        let missing_descriptor = JobDescriptor {
+            prepare_id: descriptor.prepare_id + 2,
+            partition: PublishedObject {
+                object: StoredObject {
+                    content: ContentId::from_sha256(Digest([0xa5; 32])),
+                    ..descriptor.partition.object
+                },
+                ..descriptor.partition
+            },
+            ..descriptor
+        };
+        let (status, body) = dispatch(
+            &mut service,
+            FrameKind::Job,
+            Operation::JobPrepare,
+            active.digest(),
+            &missing_descriptor.encode::<2>().unwrap(),
+            DeviceCycle(5_000_002),
+            37,
+        );
+        assert_eq!(status, StatusCode::NotFound);
+        assert_eq!(
+            JobStatusReport::decode(&body)
+                .unwrap()
+                .service
+                .unwrap()
+                .prepare_id,
+            descriptor.prepare_id
+        );
+
+        let (status, body) = dispatch(
+            &mut service,
+            FrameKind::Job,
+            Operation::JobPrepare,
+            active.digest(),
+            &replacement_descriptor.encode::<2>().unwrap(),
+            DeviceCycle(5_000_003),
+            38,
+        );
+        assert_eq!(status, StatusCode::Ok);
+        let replacement = JobStatusReport::decode(&body).unwrap();
+        assert_eq!(
+            replacement.service.unwrap().prepare_id,
+            replacement_descriptor.prepare_id
+        );
+        assert_eq!(
+            replacement.realtime.unwrap().prepare_id,
+            replacement_descriptor.prepare_id
+        );
+        assert_eq!(
+            replacement.schedule.unwrap().state,
+            JobScheduleState::Prepared
+        );
+        assert_ne!(
+            replacement.schedule.unwrap().prepared_token,
+            Some(prepared_token)
+        );
     }
 
     fn upload_plan(upload_id: UploadId, kind: ObjectKind, bytes: &[u8]) -> UploadPlan {
