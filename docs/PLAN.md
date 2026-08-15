@@ -1213,6 +1213,8 @@ digital-capture, and graph palettes. The host simulator alone publishes four
 simulated capture sources and exact fixed-memory/timing limits; physical boards
 remain capture-absent. Searchable graph-closed, diagnostic-closed,
 capture-closed, and hazardous views do not create operations.
+See
+[`M10-CAPABILITY-DERIVED-DIGITAL-CAPTURE.md`](evidence/M10-CAPABILITY-DERIVED-DIGITAL-CAPTURE.md).
 Because the package
 publishes no licensed visual, the UI draws no board shape or hotspot and keeps
 the physical-reconciliation HIL gate visibly open. Canonical HostExact node
