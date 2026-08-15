@@ -308,11 +308,11 @@ first performs a complete read-only status round, binds each `ALMJSCH4`
 descriptor token, retains the reported local start cycles, and terminates as
 `retained_complete` without inventing the old browser epoch or issuing new
 schedule/start authority. Mixed terminal/empty participant state fails closed
-before prepare. A separate installed-state stop qualification discards the
-successful response after each participant applies `JobAbort`; every ambiguity
-is reconciled through status before the next participant mutates, and both end
-exactly `Aborted`. Initial abort-request non-delivery, abort after confirmation,
-and sustained outage through the guard remain open.
+before prepare. Separate installed- and confirmed-state stop qualifications
+discard the successful response after each participant applies `JobAbort`;
+every ambiguity is reconciled through status before the next participant
+mutates, and both end exactly `Aborted`. Initial abort-request non-delivery and
+sustained outage through the guard remain open.
 
 ## Operation after network loss
 

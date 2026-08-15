@@ -3,10 +3,12 @@
 Date: 2026-08-15
 
 Status: two independent simulated MCUs each applied one pre-guard `JobAbort`
-request and discarded its successful response. The production browser worker
-exposed both transport ambiguities, reconciled each participant through
-authenticated read-only schedule status before mutating the next participant,
-and reached an exact all-participant `aborted` terminal snapshot. A fresh-actor
+request and discarded its successful response in two separate runs: first from
+globally installed state and then after both actors had already granted future
+start authority and reported `Confirmed`. The production browser worker exposed
+both transport ambiguities, reconciled each participant through authenticated
+read-only schedule status before mutating the next participant, and reached an
+exact all-participant `aborted` terminal snapshot in both cases. A fresh-actor
 ordinary no-fault completion regression also passed. This is loopback control-
 traffic evidence only. The connected bare MKS TinyBee V1.0, workstation WLAN,
 GPIO, motors, motor power, and every physical output/safety path remained
@@ -15,7 +17,8 @@ untouched.
 The implementation checkpoints are:
 
 - `aluminafw` operation-specific simulator selector commit `1bedfa7`; and
-- `alumina-interface` qualification commit `205e059`.
+- `alumina-interface` installed-state qualification commit `205e059`; and
+- `alumina-interface` confirmed-state qualification commit `b670a0e`.
 
 The current run used the exact schedule/status schemas from `aluminafw` commit
 `a02a877`. The interface resolved the actively edited sibling CSGRS/Hyper
@@ -59,6 +62,14 @@ and asserts `lost_aborts == reconciled_aborts` before every next `JobAbort`.
 Thus participant two cannot be mutated while participant one's outcome remains
 ambiguous.
 
+The distinct `confirmed-abort-recovery` mode uses the same strict invariants but
+waits for global `confirmed` before requesting stop. Its two failure snapshots
+may contain only `confirmed` or `aborted` schedule state and must retain locally
+aborted counts `0 -> 1`. A focused client test independently proves an ambiguous
+abort response cannot erase or re-grant the previously confirmed start
+authority: only authenticated status may advance that participant to
+`Aborted`.
+
 ## Chromium results
 
 Two independent `alumina-sim-http` processes listened on ports 8098 and 8099
@@ -90,6 +101,22 @@ unchanged ordinary `single` mode completed the full start lifecycle in 419
 snapshots with zero failure observations. Its shared epoch was
 `62,952,000,001 ns`, mapping to local cycles `98,339,464` and `98,288,738`.
 
+The separate confirmed-state run then used fresh fault-selected actors. Both
+participants reached `confirmed` before the stop command. It passed after 391
+snapshots with this sequence:
+
+```text
+caching -> preparing -> ready -> installing -> installed ->
+confirming -> confirmed -> aborting -> aborted
+```
+
+Its selected epoch was `61,066,300,002 ns`, mapping to local cycles
+`123,253,557` and `123,219,326`. The first failure retained both participants
+locally `confirmed`; the second retained participant one `aborted` and
+participant two `confirmed`. Final status reported both `aborted`, zero failure,
+and no error. Each simulator again logged exactly one dropped applied response
+for operation `0x0504`.
+
 Representative commands were:
 
 ```console
@@ -103,6 +130,7 @@ target/debug/alumina-sim-http --bind 127.0.0.1:8099 \
 
 # alumina-interface, with the optimized bundle and Chromium CDP already served
 node tests/browser/read-cached-job-result.mjs 9224 abort-recovery
+node tests/browser/read-cached-job-result.mjs 9224 confirmed-abort-recovery
 ```
 
 ## Verification performed
@@ -110,7 +138,7 @@ node tests/browser/read-cached-job-result.mjs 9224 abort-recovery
 The following passed on the recorded source:
 
 - `cargo test --workspace --locked --offline` in `alumina-interface`: 36
-  application, 68 client, 125 core, and one integration test, plus the
+  application, 69 client, 125 core, and one integration test, plus the
   compile-fail documentation test;
 - warnings-denied all-target workspace Clippy with dependency linting excluded;
 - package-scoped formatting and `git diff --check`;
@@ -135,9 +163,10 @@ formatted, reset, pinned, staged, committed, or intentionally diff-inspected.
 ## Claims deliberately kept closed
 
 This evidence covers successful-response loss only after each abort was applied
-before the guard. It does not establish initial `JobAbort` request non-delivery,
-sustained outage through the guard, abort after confirmation, any action at or
-after the point of no return, hardwired stop/E-stop behavior, browser crash or
+before the guard, from installed and confirmed state. It does not establish
+initial `JobAbort` request non-delivery, sustained outage through the guard, any
+action at or after the point of no return, hardwired stop/E-stop behavior,
+browser crash or
 background reliability, response reorder/duplication, ESP32 execution,
 physical Wi-Fi/AP behavior, real SD-card durability, GPIO or bus timing,
 I2S/RMT/MCPWM/ADC behavior, motor motion, multi-MCU electrical simultaneity,

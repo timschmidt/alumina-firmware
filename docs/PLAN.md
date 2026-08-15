@@ -751,13 +751,14 @@ response loss on both participants is now separately qualified: each ambiguous
 grant of future start authority is reconciled through status before the next
 participant advances. See the [browser confirmation-recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRM-RECOVERY.md). Successful
-response loss after each participant applied a pre-confirm `JobAbort` is now
-also qualified. Each ambiguity forces read-only status before the next
-participant mutation and ends in exact all-participant `aborted`; see the
+response loss after each participant applied a pre-guard `JobAbort` is now
+qualified from both globally installed and globally confirmed state. Each
+ambiguity forces read-only status before the next participant mutation and ends
+in exact all-participant `aborted`; see the
 [browser abort-recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md). Initial abort
-request non-delivery, abort after confirmation, reorder/duplication, sustained
-outage, broader packet stress,
+request non-delivery, reorder/duplication, sustained outage, broader packet
+stress,
 background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
 backend, and the physical exit gate remain open; current board packages are
 non-armable. Fresh-owner same-attempt terminal reattachment is now exact and
