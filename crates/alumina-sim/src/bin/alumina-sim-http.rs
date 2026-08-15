@@ -8,7 +8,9 @@ use std::net::{TcpListener, TcpStream};
 use std::time::Instant;
 
 use alumina_net::{HttpMethod, MAX_AUTHENTICATED_BODY_BYTES};
-use alumina_protocol::{DeviceCycle, DeviceId};
+use alumina_protocol::{
+    DeviceCycle, DeviceId, FrameHeader, MessageDirection, MessageHeader, Operation, StatusCode,
+};
 use alumina_sim::http_fixture::{
     ClockFixturePolicy, ClockHttpFixture, FixtureHttpRequest, FixtureHttpResponse,
 };
@@ -31,6 +33,7 @@ struct ServerOptions {
     drift_ppm: i32,
     drop_initial_control_requests: u64,
     drop_control_request: Option<u64>,
+    drop_operation_response: Option<Operation>,
     reboot_control_request: Option<u64>,
 }
 
@@ -47,6 +50,7 @@ impl ServerOptions {
             drift_ppm: 37,
             drop_initial_control_requests: 0,
             drop_control_request: None,
+            drop_operation_response: None,
             reboot_control_request: None,
         };
         let mut arguments = std::env::args().skip(1);
@@ -104,6 +108,9 @@ impl ServerOptions {
                 "--drop-control-request" => {
                     options.drop_control_request = Some(nonzero_u64(&value, &argument)?);
                 }
+                "--drop-operation-response" => {
+                    options.drop_operation_response = Some(parse_operation(&value)?);
+                }
                 "--reboot-control-request" => {
                     options.reboot_control_request = Some(nonzero_u64(&value, &argument)?);
                 }
@@ -145,8 +152,38 @@ fn print_help() {
         "alumina-sim-http [--bind IP:PORT] [--device-id 32_HEX_DIGITS] [--secret TEXT] \
          [--processing-delay-ms N] [--response-delay-ms N] [--drift-ppm N] \
          [--drop-initial-control-requests N] [--drop-control-request N] \
-         [--reboot-control-request N]"
+         [--drop-operation-response NAME_OR_WIRE] [--reboot-control-request N]"
     );
+}
+
+fn parse_operation(value: &str) -> Result<Operation, ServerError> {
+    let named = match value {
+        "storage-inspect" => Some(Operation::StorageInspect),
+        "storage-begin-upload" => Some(Operation::StorageBeginUpload),
+        "storage-put-chunk" => Some(Operation::StoragePutChunk),
+        "storage-finalize" => Some(Operation::StorageFinalize),
+        "job-prepare" => Some(Operation::JobPrepare),
+        "job-status" => Some(Operation::JobStatus),
+        "job-commit" => Some(Operation::JobCommit),
+        "job-confirm" => Some(Operation::JobConfirm),
+        "job-abort" => Some(Operation::JobAbort),
+        "job-cancel" => Some(Operation::JobCancel),
+        _ => None,
+    };
+    if let Some(operation) = named {
+        return Ok(operation);
+    }
+    let wire = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .and_then(|digits| u16::from_str_radix(digits, 16).ok())
+        .or_else(|| value.parse::<u16>().ok());
+    wire.and_then(Operation::from_wire).ok_or_else(|| {
+        ServerError::Argument(
+            "--drop-operation-response requires a supported canonical name or assigned u16 wire value"
+                .to_owned(),
+        )
+    })
 }
 
 fn parse_device_id(value: &str) -> Result<DeviceId, ServerError> {
@@ -226,6 +263,7 @@ impl AffineHostClock {
 struct FaultState {
     control_requests: u64,
     single_drop_completed: bool,
+    operation_drop_completed: bool,
     rebooted: bool,
 }
 
@@ -279,6 +317,7 @@ fn handle_connection(
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let request = read_request(stream)?;
     let control = request.method == HttpMethod::Post && request.path == "/api/v1/control";
+    let operation = control.then(|| request_operation(&request)).flatten();
     if control {
         faults.control_requests = faults.control_requests.saturating_add(1);
         if !faults.rebooted && options.reboot_control_request == Some(faults.control_requests) {
@@ -302,13 +341,62 @@ fn handle_connection(
     if single_drop {
         faults.single_drop_completed = true;
     }
-    if initial_outage || single_drop {
+    let operation_drop = !faults.operation_drop_completed
+        && options.drop_operation_response.is_some()
+        && options.drop_operation_response == operation
+        && operation.is_some_and(|operation| native_response_succeeded(&response, operation));
+    if operation_drop {
+        faults.operation_drop_completed = true;
+        if let Some(operation) = operation {
+            eprintln!(
+                "fault injection: dropped applied response for operation 0x{:04x}",
+                operation.wire_value()
+            );
+        }
+    }
+    if initial_outage || single_drop || operation_drop {
         return Ok(());
     }
     if !options.response_delay_ms.eq(&0) {
         std::thread::sleep(Duration::from_millis(options.response_delay_ms));
     }
     write_response(stream, &response)
+}
+
+fn request_operation(request: &FixtureHttpRequest) -> Option<Operation> {
+    if request.method != HttpMethod::Post || request.path != "/api/v1/control" {
+        return None;
+    }
+    let message = native_message(&request.body)?;
+    (message.direction == MessageDirection::Request).then_some(message.operation)
+}
+
+fn native_response_succeeded(response: &FixtureHttpResponse, operation: Operation) -> bool {
+    response.status == 200
+        && native_message(&response.body).is_some_and(|message| {
+            message.direction == MessageDirection::Response
+                && message.operation == operation
+                && message.status == StatusCode::Ok
+        })
+}
+
+fn native_message(encoded: &[u8]) -> Option<MessageHeader> {
+    if encoded.len() < FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN {
+        return None;
+    }
+    let maximum_payload = u32::try_from(MAX_AUTHENTICATED_BODY_BYTES).ok()?;
+    let frame = FrameHeader::decode(&encoded[..FrameHeader::WIRE_LEN], maximum_payload).ok()?;
+    let payload_len = usize::try_from(frame.payload_len).ok()?;
+    if encoded.len() != FrameHeader::WIRE_LEN.checked_add(payload_len)? {
+        return None;
+    }
+    let message_end = FrameHeader::WIRE_LEN.checked_add(MessageHeader::WIRE_LEN)?;
+    MessageHeader::decode_and_validate(
+        &encoded[FrameHeader::WIRE_LEN..message_end],
+        frame.kind,
+        frame.payload_len,
+    )
+    .ok()
 }
 
 fn read_request(stream: &mut TcpStream) -> Result<FixtureHttpRequest, ServerError> {
@@ -477,3 +565,107 @@ impl fmt::Display for ServerError {
 }
 
 impl core::error::Error for ServerError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alumina_protocol::Digest;
+
+    fn native_request(message: MessageHeader) -> FixtureHttpRequest {
+        let frame = FrameHeader::new(
+            message.operation.frame_kind(),
+            u32::try_from(MessageHeader::WIRE_LEN).unwrap(),
+            1,
+            DeviceCycle(2),
+            Digest::ZERO,
+        );
+        let mut body = Vec::new();
+        body.extend_from_slice(&frame.encode());
+        body.extend_from_slice(&message.encode());
+        FixtureHttpRequest {
+            method: HttpMethod::Post,
+            path: "/api/v1/control".to_owned(),
+            headers: Vec::new(),
+            body,
+        }
+    }
+
+    #[test]
+    fn operation_selector_accepts_names_and_assigned_wire_values_only() {
+        assert_eq!(
+            parse_operation("storage-put-chunk").unwrap(),
+            Operation::StoragePutChunk
+        );
+        assert_eq!(parse_operation("0x0503").unwrap(), Operation::JobCommit);
+        assert_eq!(parse_operation("1289").unwrap(), Operation::JobConfirm);
+        assert!(parse_operation("0x090b").is_err());
+        assert!(parse_operation("put-something").is_err());
+    }
+
+    #[test]
+    fn operation_selector_requires_one_canonical_native_control_request() {
+        let request = native_request(MessageHeader::request(Operation::JobCommit, 7, 0));
+        assert_eq!(request_operation(&request), Some(Operation::JobCommit));
+
+        let response = native_request(MessageHeader::response(
+            Operation::JobCommit,
+            7,
+            StatusCode::Ok,
+            0,
+        ));
+        assert_eq!(request_operation(&response), None);
+
+        let mut trailing = request.clone();
+        trailing.body.push(0);
+        assert_eq!(request_operation(&trailing), None);
+
+        let mut foreign_path = request;
+        foreign_path.path = "/api/v1/storage".to_owned();
+        assert_eq!(request_operation(&foreign_path), None);
+    }
+
+    #[test]
+    fn operation_drop_requires_a_successful_matching_native_response() {
+        let body = native_request(MessageHeader::response(
+            Operation::StoragePutChunk,
+            7,
+            StatusCode::Ok,
+            0,
+        ))
+        .body;
+        let successful = FixtureHttpResponse {
+            status: 200,
+            reason: "OK",
+            headers: Vec::new(),
+            body,
+        };
+        assert!(native_response_succeeded(
+            &successful,
+            Operation::StoragePutChunk
+        ));
+        assert!(!native_response_succeeded(
+            &successful,
+            Operation::JobCommit
+        ));
+
+        let mut rejected = successful.clone();
+        rejected.status = 401;
+        assert!(!native_response_succeeded(
+            &rejected,
+            Operation::StoragePutChunk
+        ));
+
+        let mut native_failure = successful;
+        native_failure.body = native_request(MessageHeader::response(
+            Operation::StoragePutChunk,
+            7,
+            StatusCode::Conflict,
+            0,
+        ))
+        .body;
+        assert!(!native_response_succeeded(
+            &native_failure,
+            Operation::StoragePutChunk
+        ));
+    }
+}
