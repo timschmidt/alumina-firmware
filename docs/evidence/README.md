@@ -428,6 +428,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md`](M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md)
   — exact abort of an installed participant, cancellation of a never-installed
   participant without a fabricated cycle, and same-boot reuse by a second job.
+- [`M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md`](M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md)
+  — byte-identical replay of an applied authenticated abort, replay-window 401
+  rejection before second native dispatch, and fresh-request status
+  reconciliation to exact all-participant abort.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

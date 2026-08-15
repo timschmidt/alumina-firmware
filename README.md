@@ -363,6 +363,15 @@ emitted local commit and cancels the never-installed participant. The latter
 retains no fabricated local cycle, and a second job completes on the same
 simulated boots after terminal clear; see the [installing-stop
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md).
+The authenticated simulator can now replay one byte-identical, already-applied
+native mutation. Both actors reject a duplicated `JobAbort` at the replay
+window with HTTP 401 before second dispatch; the browser preserves the
+ambiguous first application, spends the failed counter, reconciles through a
+fresh status request, and reaches exact all-participant `aborted`. See the
+[abort-duplicate
+evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). General
+reordering, concurrent duplication, and full control/status outage remain
+open.
 Physical radio and timing qualification remain closed. The same coordinator
 now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped

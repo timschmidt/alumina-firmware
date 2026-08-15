@@ -779,9 +779,15 @@ one ready participant, the worker aborts the installed actor, cancels the
 never-installed actor without inventing a local cycle, clears the terminal,
 and completes a distinct job on the same boots. See the [browser
 installing-stop
-evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md). Full
-control/status outage, reorder/duplication, faulted or other terminal mixtures,
-broader packet stress,
+evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md). A bounded
+post-application duplicate is now closed independently: each actor applies one
+authenticated `JobAbort`, rejects the byte-identical replay with HTTP 401
+before native redispatch, and the browser abandons that pending exchange and
+reconciles through a fresh status request to exact all-participant `aborted`.
+See the [browser abort-duplicate
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). Full
+control/status outage, reordered traffic, duplication outside that exact
+one-shot case, faulted or other terminal mixtures, broader packet stress,
 background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
 backend, and the physical exit gate remain open; current board packages are
 non-armable. Fresh-owner same-attempt terminal reattachment is now exact and

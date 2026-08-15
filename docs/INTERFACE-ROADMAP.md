@@ -436,8 +436,14 @@ never-installed actor, retains the exact cycle/null distinction, and then
 completes a second job on the same sessions and boots. See the [browser
 installing-stop
 evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md).
-Attended-policy controls, full control/status outage, reordered/duplicated
-traffic, faulted or other terminal mixtures,
+A one-shot post-application duplicate is now qualified separately. Each actor
+applies one authenticated `JobAbort`, rejects its byte-identical replay with
+HTTP 401 before second native dispatch, and the worker preserves ambiguity
+until a fresh status request proves the exact terminal state. See the [browser
+abort-duplicate
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md).
+Attended-policy controls, full control/status outage, reordered traffic,
+duplication outside that exact case, faulted or other terminal mixtures,
 broader network/storage faults, background-throttling qualification, and
 physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
