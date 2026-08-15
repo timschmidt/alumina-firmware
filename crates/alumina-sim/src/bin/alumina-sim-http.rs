@@ -8,7 +8,7 @@ use std::net::{TcpListener, TcpStream};
 use std::time::Instant;
 
 use alumina_net::{HttpMethod, MAX_AUTHENTICATED_BODY_BYTES};
-use alumina_protocol::DeviceCycle;
+use alumina_protocol::{DeviceCycle, DeviceId};
 use alumina_sim::http_fixture::{
     ClockFixturePolicy, ClockHttpFixture, FixtureHttpRequest, FixtureHttpResponse,
 };
@@ -24,6 +24,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ServerOptions {
     bind: SocketAddr,
+    device_id: DeviceId,
     secret: Vec<u8>,
     processing_delay_ms: u64,
     response_delay_ms: u64,
@@ -39,6 +40,7 @@ impl ServerOptions {
             bind: DEFAULT_BIND
                 .parse()
                 .expect("static socket address is valid"),
+            device_id: DeviceId(*b"ALUM-SIM:TINYBEE"),
             secret: DEFAULT_SECRET.as_bytes().to_vec(),
             processing_delay_ms: 1,
             response_delay_ms: 2,
@@ -70,6 +72,9 @@ impl ServerOptions {
                     }
                     options.secret.fill(0);
                     options.secret = value.into_bytes();
+                }
+                "--device-id" => {
+                    options.device_id = parse_device_id(&value)?;
                 }
                 "--processing-delay-ms" => {
                     options.processing_delay_ms = bounded_milliseconds(&value)?;
@@ -137,11 +142,44 @@ fn nonzero_u64(value: &str, argument: &str) -> Result<u64, ServerError> {
 
 fn print_help() {
     println!(
-        "alumina-sim-http [--bind IP:PORT] [--secret TEXT] \
+        "alumina-sim-http [--bind IP:PORT] [--device-id 32_HEX_DIGITS] [--secret TEXT] \
          [--processing-delay-ms N] [--response-delay-ms N] [--drift-ppm N] \
          [--drop-initial-control-requests N] [--drop-control-request N] \
          [--reboot-control-request N]"
     );
+}
+
+fn parse_device_id(value: &str) -> Result<DeviceId, ServerError> {
+    if value.len() != 32 {
+        return Err(ServerError::Argument(
+            "--device-id must contain exactly 32 hexadecimal digits".to_owned(),
+        ));
+    }
+    let mut bytes = [0_u8; 16];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let high = hexadecimal_nibble(pair[0]).ok_or_else(|| {
+            ServerError::Argument("--device-id contains a non-hexadecimal digit".to_owned())
+        })?;
+        let low = hexadecimal_nibble(pair[1]).ok_or_else(|| {
+            ServerError::Argument("--device-id contains a non-hexadecimal digit".to_owned())
+        })?;
+        bytes[index] = (high << 4) | low;
+    }
+    if bytes.iter().all(|byte| *byte == 0) {
+        return Err(ServerError::Argument(
+            "--device-id may not use the all-zero sentinel".to_owned(),
+        ));
+    }
+    Ok(DeviceId(bytes))
+}
+
+const fn hexadecimal_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[derive(Debug)]
@@ -198,10 +236,11 @@ fn main() -> Result<(), ServerError> {
         ClockFixturePolicy::HEALTHY_1MHZ.frequency_hz,
         options.drift_ppm,
     );
-    let mut fixture = ClockHttpFixture::new(
+    let mut fixture = ClockHttpFixture::new_for_device(
         options.secret.clone(),
         [0x31; 16],
         ClockFixturePolicy::HEALTHY_1MHZ,
+        options.device_id,
     )
     .map_err(|error| ServerError::Fixture(error.to_string()))?;
     fixture.enable_simulated_telemetry_provider();

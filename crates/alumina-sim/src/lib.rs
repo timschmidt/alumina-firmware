@@ -1,11 +1,13 @@
 #![doc = "Deterministic host models for Alumina storage and service/RT boundaries."]
 
 pub mod capability;
+pub mod configuration;
 pub mod diagnostics;
 pub mod distributed;
 pub mod foc;
 pub mod foc_hardware;
 pub mod http_fixture;
+mod http_job;
 pub mod motion;
 pub mod shift_register;
 
@@ -486,6 +488,40 @@ impl CacheService {
         let published = self.coordinator.record_published(publish, context)?;
         self.durable.upload = None;
         Ok(published)
+    }
+
+    /// Revalidates one exact published identity without exposing cache internals.
+    ///
+    /// An absent content identity returns `Ok(None)`. A matching content name
+    /// paired with different metadata or corrupt bytes is an integrity error,
+    /// never a cache miss.
+    pub fn inspect_published(
+        &self,
+        expected: PublishedObject,
+    ) -> Result<Option<PublishedObject>, Error> {
+        self.require_powered()?;
+        let Some(record) = self.durable.published.get(&expected.object.content) else {
+            return Ok(None);
+        };
+        if record.object != expected.object || record.manifest != expected.manifest {
+            return Err(Error::Integrity);
+        }
+        self.read_published(expected.object.content)?;
+        Ok(Some(expected))
+    }
+
+    /// Returns and revalidates the typed publication named by one content identity.
+    pub fn published_object(&self, content: ContentId) -> Result<Option<PublishedObject>, Error> {
+        self.require_powered()?;
+        let Some(record) = self.durable.published.get(&content) else {
+            return Ok(None);
+        };
+        let published = PublishedObject {
+            object: record.object,
+            manifest: record.manifest,
+        };
+        self.read_published(content)?;
+        Ok(Some(published))
     }
 
     /// Reads and verifies one published object in canonical chunk order.

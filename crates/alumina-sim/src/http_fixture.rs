@@ -27,6 +27,7 @@ use crate::diagnostics::{
     SIMULATED_DIAGNOSTIC_PROVIDERS, simulated_immediate_waveform_capture,
     simulated_resource_overview,
 };
+use crate::http_job::{SimulatedActiveConfiguration, SimulatedCachedJobService};
 
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
 const NATIVE_FRAME_MEDIA_TYPE: &str = "application/vnd.alumina.frame";
@@ -162,6 +163,8 @@ pub struct ClockHttpFixture {
     runtime_health_epoch: Option<DeviceCycle>,
     runtime_health_samples: u32,
     diagnostics: FixtureDiagnosticService,
+    active_configuration: SimulatedActiveConfiguration,
+    cached_job_service: SimulatedCachedJobService,
     simulated_telemetry_provider: bool,
     simulated_waveform_provider: bool,
 }
@@ -177,15 +180,36 @@ impl ClockHttpFixture {
         boot_bytes: [u8; 16],
         policy: ClockFixturePolicy,
     ) -> Result<Self, ClockFixtureError> {
+        Self::new_for_device(secret, boot_bytes, policy, DeviceId(*b"ALUM-SIM:TINYBEE"))
+    }
+
+    /// Creates one deterministic boot for an explicit stable simulator identity.
+    ///
+    /// # Errors
+    ///
+    /// Applies the same checks as [`Self::new`] and rejects the all-zero device sentinel.
+    pub fn new_for_device(
+        secret: Vec<u8>,
+        boot_bytes: [u8; 16],
+        policy: ClockFixturePolicy,
+        device_id: DeviceId,
+    ) -> Result<Self, ClockFixtureError> {
         if secret.is_empty() {
             return Err(ClockFixtureError::Secret);
+        }
+        if device_id.0.iter().all(|byte| *byte == 0) {
+            return Err(ClockFixtureError::Device);
         }
         policy.validate()?;
         let nonce = BootNonce::new(boot_bytes).map_err(ClockFixtureError::Authentication)?;
         let boot_id = BootId::new(boot_bytes).map_err(|_| ClockFixtureError::Boot)?;
-        let diagnostic_context = diagnostic_context(boot_id, policy.frequency_hz)?;
+        let active_configuration =
+            SimulatedActiveConfiguration::new().map_err(|_| ClockFixtureError::Configuration)?;
+        let diagnostic_context = diagnostic_context(device_id, boot_id, policy.frequency_hz)?;
         let authentication = AuthenticationState::new(nonce, AuthRateLimit::INITIAL)
             .map_err(ClockFixtureError::Authentication)?;
+        let cached_job_service =
+            SimulatedCachedJobService::new(device_id, boot_id, active_configuration.digest());
         Ok(Self {
             secret,
             nonce,
@@ -202,6 +226,8 @@ impl ClockHttpFixture {
                 DiagnosticTransportLimits::native_control(),
                 DiagnosticLimits::interactive(),
             ),
+            active_configuration,
+            cached_job_service,
             simulated_telemetry_provider: false,
             simulated_waveform_provider: false,
         })
@@ -252,6 +278,10 @@ impl ClockHttpFixture {
         if nonce == self.nonce {
             return Err(ClockFixtureError::Boot);
         }
+        self.cached_job_service
+            .reboot(boot_id)
+            .map_err(|_| ClockFixtureError::Cache)?;
+        let device_id = self.diagnostics.context().device_id;
         self.nonce = nonce;
         self.boot_id = boot_id;
         self.authentication = AuthenticationState::new(nonce, AuthRateLimit::INITIAL)
@@ -261,7 +291,7 @@ impl ClockHttpFixture {
         self.runtime_health_epoch = None;
         self.runtime_health_samples = 0;
         self.diagnostics = FixtureDiagnosticService::new(
-            diagnostic_context(boot_id, self.policy.frequency_hz)?,
+            diagnostic_context(device_id, boot_id, self.policy.frequency_hz)?,
             SIMULATED_DIAGNOSTIC_PROVIDERS,
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
@@ -470,6 +500,30 @@ impl ClockHttpFixture {
             };
             return self.runtime_health_response(&request, transmit_cycle, valid_snapshot_request);
         }
+        if native.frame.kind == FrameKind::Configuration {
+            let valid = native.message.operation == Operation::ConfigurationGet
+                && native.frame.config_digest == Digest::ZERO
+                && native.body.is_empty();
+            let (status, body) = if valid {
+                (
+                    StatusCode::Ok,
+                    self.active_configuration.status().as_slice(),
+                )
+            } else {
+                (StatusCode::InvalidRequest, &[][..])
+            };
+            return ServiceResponse::native(native, transmit_cycle, status, body)
+                .unwrap_or_else(|_| ServiceResponse::invalid_native());
+        }
+        if let Some(response) = self.cached_job_service.dispatch(
+            native,
+            transmit_cycle,
+            self.policy.frequency_hz,
+            self.policy.minimum_lead_cycles,
+            self.policy.maximum_schedule_horizon_cycles,
+        ) {
+            return response;
+        }
         if native.frame.kind != FrameKind::ClockSample
             || native.message.operation != Operation::ClockHeartbeat
             || native.frame.config_digest != Digest::ZERO
@@ -641,11 +695,12 @@ impl Drop for ClockHttpFixture {
 }
 
 fn diagnostic_context(
+    device_id: DeviceId,
     boot_id: BootId,
     clock_frequency_hz: u64,
 ) -> Result<DiagnosticContext, ClockFixtureError> {
     Ok(DiagnosticContext {
-        device_id: DeviceId(*b"ALUM-SIM:TINYBEE"),
+        device_id,
         boot_id,
         capability: calculate_identity(&capability::package())
             .map_err(|_| ClockFixtureError::Capability)?,
@@ -699,8 +754,14 @@ pub enum ClockFixtureError {
     Boot,
     /// Clock capability policy was inconsistent.
     Policy,
+    /// Stable simulator device identity used the absent all-zero sentinel.
+    Device,
     /// Current TinyBee capability package could not produce an identity.
     Capability,
+    /// Canonical simulator machine configuration could not be constructed.
+    Configuration,
+    /// Durable simulator cache state could not be reconciled across reboot.
+    Cache,
     /// Portable authentication state rejected its boot/rate facts.
     Authentication(AuthError),
 }
@@ -711,7 +772,10 @@ impl fmt::Display for ClockFixtureError {
             Self::Secret => formatter.write_str("fixture secret must be nonempty"),
             Self::Boot => formatter.write_str("fixture boot identity is invalid"),
             Self::Policy => formatter.write_str("fixture clock policy is invalid"),
+            Self::Device => formatter.write_str("fixture device identity is invalid"),
             Self::Capability => formatter.write_str("fixture capability identity is invalid"),
+            Self::Configuration => formatter.write_str("fixture machine configuration is invalid"),
+            Self::Cache => formatter.write_str("fixture cache reboot reconciliation failed"),
             Self::Authentication(error) => {
                 write!(formatter, "fixture authentication policy failed: {error:?}")
             }
