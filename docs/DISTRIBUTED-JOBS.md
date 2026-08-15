@@ -311,8 +311,13 @@ schedule/start authority. Mixed terminal/empty participant state fails closed
 before prepare. Separate installed- and confirmed-state stop qualifications
 discard the successful response after each participant applies `JobAbort`;
 every ambiguity is reconciled through status before the next participant
-mutates, and both end exactly `Aborted`. Initial abort-request non-delivery and
-sustained outage through the guard remain open.
+mutates, and both end exactly `Aborted`. A distinct qualification discards each
+participant's first abort request before authentication or application. Status
+then proves the actor remains `Confirmed`, the exact abort is retried, and the
+coordinator still advances participants one at a time to global `Aborted`; see
+the [abort-request recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md). Sustained
+outage through the guard remains open.
 
 ## Operation after network loss
 

@@ -756,9 +756,13 @@ qualified from both globally installed and globally confirmed state. Each
 ambiguity forces read-only status before the next participant mutation and ends
 in exact all-participant `aborted`; see the
 [browser abort-recovery
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md). Initial abort
-request non-delivery, reorder/duplication, sustained outage, broader packet
-stress,
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md). One-shot initial
+abort request non-delivery from globally confirmed state is now distinct from
+applied-response loss: each raw request is discarded before fixture
+authentication or application, status proves the actor remains confirmed, and
+only an exact retry aborts it. See the [browser abort-request recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md).
+Reorder/duplication, sustained outage, broader packet stress,
 background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
 backend, and the physical exit gate remain open; current board packages are
 non-armable. Fresh-owner same-attempt terminal reattachment is now exact and

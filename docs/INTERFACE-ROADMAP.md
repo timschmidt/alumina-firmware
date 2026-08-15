@@ -411,15 +411,19 @@ Operation-specific successful-response loss now qualifies live browser
 reconciliation after one applied storage chunk and one applied schedule commit,
 followed by a clean no-fault run. See the [browser cached-job recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-RECOVERY.md). Attended-policy
-controls, initial abort-request non-delivery,
-sustained/reordered/duplicated traffic, broader network/storage faults,
-background-throttling qualification, and physical qualification remain open.
+controls, sustained/reordered/duplicated traffic, broader network/storage
+faults, background-throttling qualification, and physical qualification remain
+open.
 Successful response loss after applied pre-guard aborts on both participants is
 qualified from installed and confirmed states with mandatory
 status-before-next-mutation progression; see the
 [browser abort-recovery
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md). Fresh-owner
-same-attempt terminal reattachment now
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-RECOVERY.md). The separate
+pre-application selector now qualifies one-shot initial abort-request loss from
+confirmed state: authenticated status observes unchanged authority before the
+exact mutation is retried. See the [browser abort-request recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md).
+Fresh-owner same-attempt terminal reattachment now
 uses an all-participant read-only status round and exact retained descriptor
 tokens; it exposes `retained_complete`, preserves local start cycles, carries no
 old UI epoch, and grants no new start authority. See the [browser cached-job
