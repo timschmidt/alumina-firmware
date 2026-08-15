@@ -366,8 +366,9 @@ evidence](docs/evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md).
 The authenticated simulator can now replay one byte-identical, already-applied
 native mutation. Both actors reject a duplicated `JobAbort` at the replay
 window with HTTP 401 before second dispatch; the browser preserves the
-ambiguous first application, spends the failed counter, reconciles through a
-fresh status request, and reaches exact all-participant `aborted`. See the
+ambiguous first application, spends the failed counter, reopens authenticated
+session authority, reconciles through status, and reaches exact
+all-participant `aborted`. See the
 [abort-duplicate
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). General
 reordering, concurrent duplication, and full control/status outage remain

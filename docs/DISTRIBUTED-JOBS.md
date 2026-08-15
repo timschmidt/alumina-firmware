@@ -337,9 +337,9 @@ evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md). A distinct
 post-application duplicate qualification sends the same authenticated
 `JobAbort` bytes twice to each actor. The replay window returns HTTP 401 before
 the second native dispatch; the browser then abandons the ambiguous exchange,
-spends its counter, and uses a fresh status request in the same boot-scoped
-session to recover the exact already-aborted participant state before
-advancing. See the [abort-duplicate
+spends its counter, reopens a boot-correlated authenticated session, and uses
+status to recover the exact already-aborted participant state before advancing.
+See the [abort-duplicate
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). Full
 control/status outage, reordered traffic, duplicates outside that one-shot
 exact request boundary, and faulted or other terminal mixtures remain open.

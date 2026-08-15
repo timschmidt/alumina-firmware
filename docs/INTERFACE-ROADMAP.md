@@ -439,8 +439,8 @@ evidence](evidence/M10-BROWSER-CACHED-JOB-INSTALLING-STOP.md).
 A one-shot post-application duplicate is now qualified separately. Each actor
 applies one authenticated `JobAbort`, rejects its byte-identical replay with
 HTTP 401 before second native dispatch, and the worker preserves ambiguity
-until a fresh status request proves the exact terminal state. See the [browser
-abort-duplicate
+while reopening authenticated session authority before status proves the exact
+terminal state. See the [browser abort-duplicate
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md).
 Attended-policy controls, full control/status outage, reordered traffic,
 duplication outside that exact case, faulted or other terminal mixtures,

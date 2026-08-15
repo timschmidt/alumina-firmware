@@ -7,8 +7,8 @@ one authenticated `JobAbort`, then received a byte-identical replay carrying
 the already-consumed authentication counter and proof. Each MCU rejected its
 replay with HTTP 401 before a second native dispatch. The browser treated that
 non-success response as ambiguous mutation delivery, opened a fresh
-authenticated request after spending the failed counter, reconciled through
-read-only `JobStatus` on the same boot-scoped session, and reached the exact
+authenticated session after spending the failed counter, reconciled through
+read-only `JobStatus`, and reached the exact
 all-participant `aborted` terminal without blindly repeating an already-applied
 mutation. A separate fresh-actor run completed normally with no fault selector.
 This is localhost software evidence only. The connected bare
@@ -60,10 +60,12 @@ success media or authentication headers. This preserves the meaningful
 plain-text body.
 
 The cached-job controller does not retransmit the ambiguous `JobAbort` from the
-same pending request. It abandons that pending exchange, permanently spends its
-HMAC counter, and issues a fresh read-only `JobStatus` request within the same
-boot-scoped authenticated session. Only the returned exact schedule state
-determines the next transition. In this qualification the first
+same pending request. It abandons that pending exchange and permanently spends
+its HMAC counter. Because an HTTP status failure cannot carry a trusted native
+response, the job owner also invalidates that HTTP session; the ordinary device
+owner opens a replacement session against the same MCU boot before the next job
+operation. It then issues read-only `JobStatus`. Only the returned exact
+schedule state determines the next transition. In this qualification the first
 status round found one participant already `Aborted` and the other still
 `Confirmed`; the next participant was then handled independently. This is the
 same status-before-next-mutation invariant used for lost successful responses,
