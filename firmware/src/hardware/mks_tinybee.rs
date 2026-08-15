@@ -42,14 +42,24 @@ pub const JOB_AXES: usize = 3;
 pub const CONFIGURATION_BINDINGS: usize = 64;
 /// Maximum configuration-derived safety inputs physically routed by this board.
 pub const SAFETY_INPUT_CAPACITY: usize = 4;
-/// Canonical four-selector authenticated telemetry request retained on core 0.
-pub const DIAGNOSTIC_TELEMETRY_REQUEST_BYTES: usize = 176;
-/// Canonical four-sample authenticated telemetry event retained on core 0.
-pub const DIAGNOSTIC_TELEMETRY_EVENT_BYTES: usize = 432;
-/// Stable Boolean resources available to the low-rate overview provider.
-pub const DIAGNOSTIC_OVERVIEW_SAMPLES: usize = SAFETY_INPUT_CAPACITY;
+/// Canonical subscription storage derived from the immutable board capability.
+pub const DIAGNOSTIC_TELEMETRY_REQUEST_BYTES: usize =
+    board_mks_tinybee::DIAGNOSTIC_OVERVIEW.telemetry_request_bytes as usize;
+/// Canonical event storage derived from the immutable board capability.
+pub const DIAGNOSTIC_TELEMETRY_EVENT_BYTES: usize =
+    board_mks_tinybee::DIAGNOSTIC_OVERVIEW.telemetry_event_bytes as usize;
+/// Exact passive observation palette compiled into this image.
+pub const DIAGNOSTIC_OVERVIEW_SAMPLES: usize =
+    board_mks_tinybee::DIAGNOSTIC_OVERVIEW.resources.len();
 /// TinyBee composes a passive provider over its core-1-owned safety input bank.
-pub const DIAGNOSTIC_RESOURCE_OVERVIEW: bool = true;
+pub const DIAGNOSTIC_RESOURCE_OVERVIEW: bool =
+    board_mks_tinybee::DIAGNOSTIC_OVERVIEW.is_implemented();
+/// Capability-published nominal overview period.
+pub const DIAGNOSTIC_OVERVIEW_PERIOD_MICROS: u32 =
+    board_mks_tinybee::DIAGNOSTIC_OVERVIEW.nominal_period_micros;
+/// Capability-published freshness ceiling for physical input evidence.
+pub const DIAGNOSTIC_MAXIMUM_AGE_MICROS: u32 =
+    board_mks_tinybee::DIAGNOSTIC_OVERVIEW.maximum_age_micros;
 /// A complete-image writer exists, but its blocking GPIO timing has not been
 /// qualified as a motion serializer and therefore cannot authorize arming.
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = true;

@@ -4,6 +4,7 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
+    DiagnosticObservationKind, DiagnosticOverviewDescriptor, DiagnosticResourceDescriptor,
     ElectricalConstraintDescriptor, ElectricalConstraintKind, GraphExecutorDescriptor,
     GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor,
     HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain,
@@ -97,15 +98,50 @@ pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescri
     opcodes: GRAPH_OPCODES,
     resources: GRAPH_RESOURCES,
 };
-/// SHA-256 of the primary 8 MiB canonical `ALMCAP02` V2 document.
+/// Passive semantic-input palette, independent of graph execution authority.
+pub static DIAGNOSTIC_OVERVIEW_RESOURCES: &[DiagnosticResourceDescriptor] = &[
+    DiagnosticResourceDescriptor {
+        resource: ResourceId::Gpio(22),
+        observation: DiagnosticObservationKind::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+    DiagnosticResourceDescriptor {
+        resource: ResourceId::Gpio(32),
+        observation: DiagnosticObservationKind::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+    DiagnosticResourceDescriptor {
+        resource: ResourceId::Gpio(33),
+        observation: DiagnosticObservationKind::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+    DiagnosticResourceDescriptor {
+        resource: ResourceId::Gpio(35),
+        observation: DiagnosticObservationKind::StableBooleanInput,
+        support: SupportLevel::Compiles,
+    },
+];
+/// Exact fixed-memory passive overview provider composed by both image variants.
+pub const DIAGNOSTIC_OVERVIEW: DiagnosticOverviewDescriptor<'static> =
+    DiagnosticOverviewDescriptor {
+        schema_version: 1,
+        support: Some(SupportLevel::Compiles),
+        maximum_resources: 4,
+        telemetry_request_bytes: 176,
+        telemetry_event_bytes: 432,
+        nominal_period_micros: 100_000,
+        maximum_age_micros: 500_000,
+        resources: DIAGNOSTIC_OVERVIEW_RESOURCES,
+    };
+/// SHA-256 of the primary 8 MiB canonical `ALMCAP03` V3 document.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x0e, 0x82, 0x51, 0x38, 0x96, 0xe5, 0x2e, 0x0a, 0x58, 0xfb, 0x92, 0xde, 0x91, 0x30, 0xc4, 0x46,
-    0xd5, 0x90, 0xbf, 0x64, 0x9f, 0xbc, 0x22, 0x74, 0x22, 0x09, 0xb2, 0xd0, 0x4c, 0x8c, 0xb0, 0xa5,
+    0x27, 0xdc, 0xdd, 0x9e, 0xa4, 0xa1, 0xf9, 0xfc, 0xb1, 0xa4, 0xae, 0xef, 0xb3, 0x49, 0x84, 0xa4,
+    0xe4, 0xa0, 0xca, 0x14, 0x6c, 0x66, 0x0f, 0x66, 0x9b, 0xf6, 0x32, 0xf9, 0x8c, 0xac, 0x74, 0xaf,
 ]);
-/// SHA-256 of the 4 MiB canonical `ALMCAP02` V2 document.
+/// SHA-256 of the 4 MiB canonical `ALMCAP03` V3 document.
 pub const CAPABILITY_DIGEST_4_MIB: Digest = Digest([
-    0xba, 0x06, 0xff, 0xad, 0x44, 0x12, 0x5a, 0x4c, 0xf5, 0xb7, 0x2b, 0xa1, 0xa1, 0x42, 0x96, 0xa0,
-    0xfb, 0x3d, 0x91, 0xf4, 0x36, 0x4a, 0xf0, 0x50, 0x61, 0x6b, 0xdf, 0x0c, 0xeb, 0xb0, 0xed, 0x04,
+    0x0c, 0x1a, 0x0b, 0x1b, 0xc8, 0xa9, 0x2e, 0x24, 0xad, 0x0b, 0x7f, 0x68, 0xfa, 0x92, 0x17, 0x1e,
+    0x1f, 0xbe, 0x72, 0x45, 0x07, 0x26, 0x9a, 0xc7, 0x85, 0x78, 0x7f, 0x16, 0xd3, 0x84, 0xe1, 0x3b,
 ]);
 /// Shift-register safe image inferred from active-high StepStick disable inputs.
 ///
@@ -1076,6 +1112,7 @@ const fn package(
             realtime_core: 1,
         },
         graph: GRAPH_EXECUTOR,
+        diagnostic_overview: DIAGNOSTIC_OVERVIEW,
         aliases: ALIASES,
         buses: BUSES,
         devices: DEVICES,

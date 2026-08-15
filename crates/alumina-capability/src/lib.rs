@@ -3,16 +3,17 @@
 
 use alumina_board::{
     AliasDescriptor, BoardError, BoardPackage, BusKind, Chip, ClockDomain, ClockSource,
-    DeviceRoute, ElectricalConstraintKind, FlashRegionKind, GraphExecutorDescriptor,
-    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, GraphResourceDescriptor,
-    HilKind, InterruptTrigger, NormalizedPoint, OwnerDomain, Qualification, ResourceDescriptor,
-    ResourceId, SafeValue, SupportLevel,
+    DeviceRoute, DiagnosticObservationKind, DiagnosticOverviewDescriptor,
+    DiagnosticResourceDescriptor, ElectricalConstraintKind, FlashRegionKind,
+    GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass,
+    GraphResourceDescriptor, HilKind, InterruptTrigger, NormalizedPoint, OwnerDomain,
+    Qualification, ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
 use sha2::{Digest as ShaDigest, Sha256};
 
 /// Exact capability-document schema version.
-pub const CAPABILITY_DOCUMENT_VERSION: u16 = 2;
+pub const CAPABILITY_DOCUMENT_VERSION: u16 = 3;
 /// Bytes in the fixed canonical document header.
 pub const CAPABILITY_DOCUMENT_HEADER_BYTES: usize = 16;
 /// Exact `CapabilitiesGet` range-request body length.
@@ -27,11 +28,16 @@ pub const GRAPH_EXECUTOR_HEADER_BYTES: usize = 72;
 pub const GRAPH_OPCODE_CAPABILITY_BYTES: usize = 12;
 /// Bytes in one graph resource-capability record.
 pub const GRAPH_RESOURCE_CAPABILITY_BYTES: usize = 12;
+/// Bytes in the passive diagnostic-overview prefix before resource records.
+pub const DIAGNOSTIC_OVERVIEW_HEADER_BYTES: usize = 48;
+/// Bytes in one passive diagnostic resource-capability record.
+pub const DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES: usize = 12;
 
-const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP02";
-const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ02";
-const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR02";
+const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP03";
+const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ03";
+const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR03";
 const GRAPH_EXECUTOR_MAGIC: [u8; 8] = *b"ALMGRC02";
+const DIAGNOSTIC_OVERVIEW_MAGIC: [u8; 8] = *b"ALMDOV01";
 const RESPONSE_FLAG_COMPLETE: u8 = 1 << 0;
 
 /// Exact identity of one canonical immutable capability document.
@@ -55,8 +61,9 @@ pub struct BoardCapabilityLimits {
     pub maximum_document_bytes: u32,
     /// Largest individual UTF-8 string accepted.
     pub maximum_string_bytes: u32,
-    /// Largest resource, alias, bus, device, flash, clock, constraint,
-    /// interrupt, safe-image, or HIL-requirement table accepted.
+    /// Largest diagnostic-resource, descriptive-resource, alias, bus, device,
+    /// flash, clock, constraint, interrupt, safe-image, or HIL-requirement
+    /// table accepted.
     pub maximum_records_per_section: u32,
     /// Largest visual table accepted.
     pub maximum_visuals: u32,
@@ -86,12 +93,12 @@ impl Default for BoardCapabilityLimits {
     }
 }
 
-/// Independently validated, allocation-free view of one complete canonical V2
+/// Independently validated, allocation-free view of one complete canonical V3
 /// board capability document.
 ///
 /// The view exposes the board summary and the descriptive tables needed by a
 /// board explorer while preserving the graph executor as a separate authority.
-/// All intervening V2 sections are structurally and canonically validated even
+/// All intervening V3 sections are structurally and canonically validated even
 /// when they are represented here only by counts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoardCapabilityView<'a> {
@@ -109,6 +116,7 @@ pub struct BoardCapabilityView<'a> {
     service_core: u8,
     realtime_core: u8,
     graph: GraphExecutionCapability<'a>,
+    diagnostic_overview: DiagnosticOverviewCapability<'a>,
     resource_records: &'a [u8],
     alias_records: &'a [u8],
     alias_count: usize,
@@ -175,7 +183,7 @@ impl<'a> BoardCapabilityView<'a> {
         self.psram_bytes
     }
 
-    /// Whether deterministic active state may occupy PSRAM. V2 board-package
+    /// Whether deterministic active state may occupy PSRAM. V3 board-package
     /// validation currently requires this to be false.
     pub const fn realtime_psram_allowed(self) -> bool {
         self.realtime_psram_allowed
@@ -194,6 +202,11 @@ impl<'a> BoardCapabilityView<'a> {
     /// Independently decoded graph executor and its narrower access palette.
     pub const fn graph(self) -> GraphExecutionCapability<'a> {
         self.graph
+    }
+
+    /// Passive diagnostic observations, separate from graph authority.
+    pub const fn diagnostic_overview(self) -> DiagnosticOverviewCapability<'a> {
+        self.diagnostic_overview
     }
 
     /// Number of descriptive resource records.
@@ -465,7 +478,7 @@ impl<'a> Iterator for CapabilityHotspotIter<'a> {
 
 impl ExactSizeIterator for CapabilityHotspotIter<'_> {}
 
-/// Independently decoded fixed graph-executor section of one complete V2
+/// Independently decoded fixed V2 graph-executor section of one complete V3
 /// capability document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GraphExecutionCapability<'a> {
@@ -586,15 +599,95 @@ impl<'a> GraphExecutionCapability<'a> {
     }
 }
 
+/// Independently decoded passive diagnostic-overview section of one complete
+/// V3 capability document.
+///
+/// This catalog authorizes observation only. It does not imply graph access,
+/// raw electrical acquisition, a GPIO lease, or permission to change pin mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticOverviewCapability<'a> {
+    identity: CapabilityIdentity,
+    schema_version: u16,
+    support: Option<SupportLevel>,
+    maximum_resources: u16,
+    telemetry_request_bytes: u32,
+    telemetry_event_bytes: u32,
+    nominal_period_micros: u32,
+    maximum_age_micros: u32,
+    resource_records: &'a [u8],
+}
+
+impl<'a> DiagnosticOverviewCapability<'a> {
+    /// Complete capability-document identity containing this section.
+    pub const fn identity(self) -> CapabilityIdentity {
+        self.identity
+    }
+
+    /// Exact `ALMOVW` record schema emitted by the provider, or zero if absent.
+    pub const fn schema_version(self) -> u16 {
+        self.schema_version
+    }
+
+    /// Whole-provider evidence floor, absent when no provider is composed.
+    pub const fn support(self) -> Option<SupportLevel> {
+        self.support
+    }
+
+    /// Whether this exact image has at least a compiling overview provider.
+    pub const fn is_implemented(self) -> bool {
+        matches!(
+            self.support,
+            Some(SupportLevel::Compiles | SupportLevel::Bench | SupportLevel::Qualified)
+        )
+    }
+
+    /// Largest resource selection admitted by one subscription.
+    pub const fn maximum_resources(self) -> u16 {
+        self.maximum_resources
+    }
+
+    /// Permanently reserved request and event byte budgets.
+    pub const fn telemetry_bytes(self) -> (u32, u32) {
+        (self.telemetry_request_bytes, self.telemetry_event_bytes)
+    }
+
+    /// Nominal publication period and maximum fresh-sample age in microseconds.
+    pub const fn timing_micros(self) -> (u32, u32) {
+        (self.nominal_period_micros, self.maximum_age_micros)
+    }
+
+    /// Number of passive semantic resources published by this exact image.
+    pub const fn resource_count(self) -> usize {
+        self.resource_records.len() / DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES
+    }
+
+    /// Iterate independently decoded passive observation records.
+    pub fn resources(self) -> impl ExactSizeIterator<Item = DiagnosticResourceDescriptor> + 'a {
+        self.resource_records
+            .chunks_exact(DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES)
+            .map(decode_diagnostic_resource_unchecked)
+    }
+
+    /// Whether this exact resource/observation pair has an implemented path.
+    pub fn admits(self, resource: ResourceId, observation: DiagnosticObservationKind) -> bool {
+        self.is_implemented()
+            && self.resources().any(|candidate| {
+                candidate.resource == resource
+                    && candidate.observation == observation
+                    && candidate.support >= SupportLevel::Compiles
+            })
+    }
+}
+
 /// Failure while independently locating and decoding the fixed graph section
 /// of an untrusted complete capability document.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityDocumentError {
     /// Document or a length-prefixed prefix field was truncated.
     Length,
-    /// Document or graph-section magic was not exact V2.
+    /// Document, graph, or diagnostic-section magic was not exact.
     Magic,
-    /// Document version was not exactly V2.
+    /// Document version was not exactly V3.
     Version,
     /// Reserved bytes or a Boolean were noncanonical.
     Reserved,
@@ -608,6 +701,8 @@ pub enum CapabilityDocumentError {
     Section,
     /// Graph capacities, counts, class, access, or support were invalid.
     Graph,
+    /// Passive diagnostic support, budgets, timing, or resource records were invalid.
+    Diagnostic,
     /// One graph resource identifier was malformed.
     Resource(ResourceWireError),
 }
@@ -630,7 +725,7 @@ pub struct CapabilityRead {
 pub enum CapabilityError {
     /// The board package failed its structural validation.
     Board(BoardError),
-    /// A count, string, address, or total length exceeded V2 integer bounds.
+    /// A count, string, address, or total length exceeded V3 integer bounds.
     Length,
     /// The requested offset was beyond the exact document end.
     Range,
@@ -727,17 +822,17 @@ pub fn read_verified_range(
     })
 }
 
-/// Independently validates and exposes one complete canonical V2 board
+/// Independently validates and exposes one complete canonical V3 board
 /// capability document within caller-selected bounds.
 ///
-/// This function hashes the complete byte string and validates every V2
+/// This function hashes the complete byte string and validates every V3
 /// section, including sections not directly exposed by the returned view. The
 /// resulting digest is content identity only: the caller must compare it with
 /// an identity obtained from its authenticated device/session before treating
 /// any fact as belonging to that device.
 #[allow(
     clippy::too_many_lines,
-    reason = "the canonical V2 section order remains one linear, auditable decoder"
+    reason = "the canonical V3 section order remains one linear, auditable decoder"
 )]
 pub fn decode_board_capability(
     document: &[u8],
@@ -749,6 +844,13 @@ pub fn decode_board_capability(
     }
     validate_document_header(document)?;
     let graph = decode_graph_execution(document)?;
+    let diagnostic_overview = decode_diagnostic_overview(document)?;
+    if diagnostic_overview.resource_count()
+        > usize::try_from(limits.maximum_records_per_section)
+            .map_err(|_| CapabilityDocumentError::Limit)?
+    {
+        return Err(CapabilityDocumentError::Limit);
+    }
     let mut cursor = DocumentCursor::new(document, CAPABILITY_DOCUMENT_HEADER_BYTES, limits);
     let board_id = cursor.string()?;
     let revision = cursor.string()?;
@@ -794,6 +896,16 @@ pub fn decode_board_capability(
         .ok_or(CapabilityDocumentError::Length)?;
     let _ = cursor.take(graph_bytes)?;
 
+    let diagnostic_bytes = DIAGNOSTIC_OVERVIEW_HEADER_BYTES
+        .checked_add(
+            diagnostic_overview
+                .resource_count()
+                .checked_mul(DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES)
+                .ok_or(CapabilityDocumentError::Length)?,
+        )
+        .ok_or(CapabilityDocumentError::Length)?;
+    let _ = cursor.take(diagnostic_bytes)?;
+
     let resource_count = cursor.count(limits.maximum_records_per_section)?;
     let resource_start = cursor.position();
     for _ in 0..resource_count {
@@ -813,6 +925,21 @@ pub fn decode_board_capability(
             .ok_or(CapabilityDocumentError::Section)?;
         if descriptor.owner != OwnerDomain::Realtime {
             return Err(CapabilityDocumentError::Section);
+        }
+    }
+    for resource in diagnostic_overview.resources() {
+        let descriptor = find_resource_descriptor(resource_records, resource.resource)
+            .ok_or(CapabilityDocumentError::Diagnostic)?;
+        if descriptor.owner != OwnerDomain::Realtime
+            || descriptor.hazardous_output
+            || descriptor.safe_value != SafeValue::HighImpedance
+            || !matches!(
+                descriptor.id,
+                ResourceId::Gpio(_) | ResourceId::SafetyInput(_)
+            )
+            || resource.observation != DiagnosticObservationKind::StableBooleanInput
+        {
+            return Err(CapabilityDocumentError::Diagnostic);
         }
     }
 
@@ -1074,6 +1201,7 @@ pub fn decode_board_capability(
         service_core,
         realtime_core,
         graph,
+        diagnostic_overview,
         resource_records,
         alias_records,
         alias_count,
@@ -1091,7 +1219,8 @@ pub fn decode_board_capability(
 }
 
 /// Locates and independently decodes the graph-executor section of a complete
-/// canonical V2 capability document.
+/// canonical V3 capability document. The graph subsection retains its exact V2
+/// encoding because that subsection did not change.
 ///
 /// The caller must still compare [`GraphExecutionCapability::identity`] with
 /// the device identity it authenticated. This function hashes all supplied
@@ -1222,6 +1351,121 @@ pub fn decode_graph_execution(
     })
 }
 
+/// Locates and independently decodes the passive diagnostic-overview section
+/// of a complete canonical V3 capability document.
+///
+/// The returned palette is observation authority only. Full board decoding
+/// additionally reconciles every entry with the descriptive resource table.
+pub fn decode_diagnostic_overview(
+    document: &[u8],
+) -> Result<DiagnosticOverviewCapability<'_>, CapabilityDocumentError> {
+    validate_document_header(document)?;
+    let graph = decode_graph_execution(document)?;
+
+    let mut cursor = CAPABILITY_DOCUMENT_HEADER_BYTES;
+    cursor = skip_capability_string(document, cursor)?;
+    cursor = skip_capability_string(document, cursor)?;
+    cursor = cursor
+        .checked_add(33)
+        .ok_or(CapabilityDocumentError::Length)?;
+    cursor = cursor
+        .checked_add(GRAPH_EXECUTOR_HEADER_BYTES)
+        .and_then(|offset| {
+            graph
+                .opcode_count()
+                .checked_mul(GRAPH_OPCODE_CAPABILITY_BYTES)
+                .and_then(|bytes| offset.checked_add(bytes))
+        })
+        .and_then(|offset| {
+            graph
+                .resource_count()
+                .checked_mul(GRAPH_RESOURCE_CAPABILITY_BYTES)
+                .and_then(|bytes| offset.checked_add(bytes))
+        })
+        .ok_or(CapabilityDocumentError::Length)?;
+
+    let header_end = cursor
+        .checked_add(DIAGNOSTIC_OVERVIEW_HEADER_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let header = document
+        .get(cursor..header_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    if header[..8] != DIAGNOSTIC_OVERVIEW_MAGIC {
+        return Err(CapabilityDocumentError::Magic);
+    }
+    if header[11] != 0 || header[32..48].iter().any(|byte| *byte != 0) {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    let schema_version = read_u16(header, 8);
+    let support = match header[10] {
+        0 => None,
+        value => Some(support_from_wire(value).ok_or(CapabilityDocumentError::Diagnostic)?),
+    };
+    let maximum_resources = read_u16(header, 12);
+    let resource_count = usize::from(read_u16(header, 14));
+    let telemetry_request_bytes = read_u32(header, 16);
+    let telemetry_event_bytes = read_u32(header, 20);
+    let nominal_period_micros = read_u32(header, 24);
+    let maximum_age_micros = read_u32(header, 28);
+    match support {
+        None if schema_version != 0
+            || maximum_resources != 0
+            || resource_count != 0
+            || telemetry_request_bytes != 0
+            || telemetry_event_bytes != 0
+            || nominal_period_micros != 0
+            || maximum_age_micros != 0 =>
+        {
+            return Err(CapabilityDocumentError::Diagnostic);
+        }
+        Some(_)
+            if schema_version == 0
+                || maximum_resources == 0
+                || resource_count == 0
+                || resource_count > usize::from(maximum_resources)
+                || telemetry_request_bytes == 0
+                || telemetry_event_bytes == 0
+                || nominal_period_micros == 0
+                || maximum_age_micros < nominal_period_micros =>
+        {
+            return Err(CapabilityDocumentError::Diagnostic);
+        }
+        _ => {}
+    }
+
+    let record_bytes = resource_count
+        .checked_mul(DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let record_end = header_end
+        .checked_add(record_bytes)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let resource_records = document
+        .get(header_end..record_end)
+        .ok_or(CapabilityDocumentError::Length)?;
+    let mut previous = None;
+    for record in resource_records.chunks_exact(DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES) {
+        let resource = decode_diagnostic_resource(record)?;
+        if support.is_none_or(|floor| resource.support < floor)
+            || previous.is_some_and(|prior| prior >= resource.resource)
+        {
+            return Err(CapabilityDocumentError::Diagnostic);
+        }
+        previous = Some(resource.resource);
+    }
+
+    Ok(DiagnosticOverviewCapability {
+        identity: graph.identity(),
+        schema_version,
+        support,
+        maximum_resources,
+        telemetry_request_bytes,
+        telemetry_event_bytes,
+        nominal_period_micros,
+        maximum_age_micros,
+        resource_records,
+    })
+}
+
 /// Exact authenticated range request for one immutable capability identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CapabilityReadRequest {
@@ -1247,7 +1491,7 @@ impl CapabilityReadRequest {
         Ok(encoded)
     }
 
-    /// Decodes only the exact V1 representation.
+    /// Decodes only the exact V3 representation.
     pub fn decode(encoded: &[u8]) -> Result<Self, CapabilityWireError> {
         if encoded.len() != CAPABILITY_READ_REQUEST_BYTES {
             return Err(CapabilityWireError::Length);
@@ -1393,7 +1637,7 @@ pub enum CapabilityWireError {
     Length,
     /// Magic did not select the expected schema.
     Magic,
-    /// Version was not exactly V2.
+    /// Version was not exactly V3.
     Version,
     /// Flags or reserved bytes were nonzero.
     Reserved,
@@ -1544,6 +1788,7 @@ fn encode_payload<S: ByteSink>(
         0,
     ])?;
     write_graph_executor(sink, package.graph)?;
+    write_diagnostic_overview(sink, package.diagnostic_overview)?;
 
     write_count(sink, package.board.resources.len())?;
     for resource in package.board.resources {
@@ -1731,6 +1976,35 @@ fn write_graph_executor<S: ByteSink>(
         encoded[5] = support(resource.support);
         // Bytes 6..8 are reserved zero.
         encoded[8..12].copy_from_slice(&resource.class.get().to_le_bytes());
+        sink.write(&encoded)?;
+    }
+    Ok(())
+}
+
+fn write_diagnostic_overview<S: ByteSink>(
+    sink: &mut S,
+    overview: DiagnosticOverviewDescriptor<'_>,
+) -> Result<(), CapabilityError> {
+    let resource_count =
+        u16::try_from(overview.resources.len()).map_err(|_| CapabilityError::Length)?;
+    let mut header = [0_u8; DIAGNOSTIC_OVERVIEW_HEADER_BYTES];
+    header[..8].copy_from_slice(&DIAGNOSTIC_OVERVIEW_MAGIC);
+    header[8..10].copy_from_slice(&overview.schema_version.to_le_bytes());
+    header[10] = overview.support.map_or(0, support);
+    // Byte 11 and bytes 32..48 are reserved zero.
+    header[12..14].copy_from_slice(&overview.maximum_resources.to_le_bytes());
+    header[14..16].copy_from_slice(&resource_count.to_le_bytes());
+    header[16..20].copy_from_slice(&overview.telemetry_request_bytes.to_le_bytes());
+    header[20..24].copy_from_slice(&overview.telemetry_event_bytes.to_le_bytes());
+    header[24..28].copy_from_slice(&overview.nominal_period_micros.to_le_bytes());
+    header[28..32].copy_from_slice(&overview.maximum_age_micros.to_le_bytes());
+    sink.write(&header)?;
+    for resource in overview.resources {
+        let mut encoded = [0_u8; DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES];
+        encoded[..4].copy_from_slice(&encode_resource_id(resource.resource));
+        encoded[4] = diagnostic_observation_kind(resource.observation);
+        encoded[5] = support(resource.support);
+        // Bytes 6..12 are reserved zero.
         sink.write(&encoded)?;
     }
     Ok(())
@@ -1997,6 +2271,27 @@ fn decode_resource_descriptor(
 fn decode_resource_descriptor_unchecked(record: &[u8]) -> ResourceDescriptor {
     decode_resource_descriptor(record)
         .expect("board capability resource was independently validated")
+}
+
+fn decode_diagnostic_resource(
+    record: &[u8],
+) -> Result<DiagnosticResourceDescriptor, CapabilityDocumentError> {
+    if record.len() != DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES
+        || record[6..12].iter().any(|byte| *byte != 0)
+    {
+        return Err(CapabilityDocumentError::Reserved);
+    }
+    Ok(DiagnosticResourceDescriptor {
+        resource: decode_resource_id(&record[..4]).map_err(CapabilityDocumentError::Resource)?,
+        observation: diagnostic_observation_kind_from_wire(record[4])
+            .ok_or(CapabilityDocumentError::Diagnostic)?,
+        support: support_from_wire(record[5]).ok_or(CapabilityDocumentError::Diagnostic)?,
+    })
+}
+
+fn decode_diagnostic_resource_unchecked(record: &[u8]) -> DiagnosticResourceDescriptor {
+    decode_diagnostic_resource(record)
+        .expect("diagnostic capability resource was independently validated")
 }
 
 fn resource_records_contain(records: &[u8], resource: ResourceId) -> bool {
@@ -2504,6 +2799,19 @@ const fn graph_resource_access_from_wire(value: u8) -> Option<GraphResourceAcces
     }
 }
 
+const fn diagnostic_observation_kind(value: DiagnosticObservationKind) -> u8 {
+    match value {
+        DiagnosticObservationKind::StableBooleanInput => 1,
+    }
+}
+
+const fn diagnostic_observation_kind_from_wire(value: u8) -> Option<DiagnosticObservationKind> {
+    match value {
+        1 => Some(DiagnosticObservationKind::StableBooleanInput),
+        _ => None,
+    }
+}
+
 const fn flash_kind(value: FlashRegionKind) -> u8 {
     match value {
         FlashRegionKind::Bootloader => 1,
@@ -2696,6 +3004,19 @@ mod tests {
             + 33
     }
 
+    fn diagnostic_section_offset(package: &BoardPackage<'_>) -> usize {
+        graph_section_offset(package)
+            + GRAPH_EXECUTOR_HEADER_BYTES
+            + package.graph.opcodes.len() * GRAPH_OPCODE_CAPABILITY_BYTES
+            + package.graph.resources.len() * GRAPH_RESOURCE_CAPABILITY_BYTES
+    }
+
+    fn resource_section_offset(package: &BoardPackage<'_>) -> usize {
+        diagnostic_section_offset(package)
+            + DIAGNOSTIC_OVERVIEW_HEADER_BYTES
+            + package.diagnostic_overview.resources.len() * DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES
+    }
+
     #[test]
     fn request_and_response_prefixes_are_exact_and_canonical() {
         for resource in [
@@ -2761,7 +3082,7 @@ mod tests {
             let identity = calculate_identity(package).unwrap();
             assert!(!identity.digest.is_zero());
             let document = complete_document(package);
-            assert_eq!(&document[..8], b"ALMCAP02");
+            assert_eq!(&document[..8], b"ALMCAP03");
             assert_eq!(read_u32(&document, 12), identity.byte_len);
             let mut hasher = Sha256::new();
             hasher.update(&document);
@@ -2806,6 +3127,41 @@ mod tests {
                     .resources()
                     .eq(package.graph.resources.iter().copied())
             );
+            let diagnostic_overview = decode_diagnostic_overview(&document).unwrap();
+            assert_eq!(diagnostic_overview.identity(), identity);
+            assert_eq!(
+                diagnostic_overview.schema_version(),
+                package.diagnostic_overview.schema_version
+            );
+            assert_eq!(
+                diagnostic_overview.support(),
+                package.diagnostic_overview.support
+            );
+            assert_eq!(
+                diagnostic_overview.maximum_resources(),
+                package.diagnostic_overview.maximum_resources
+            );
+            assert_eq!(
+                diagnostic_overview.telemetry_bytes(),
+                (
+                    package.diagnostic_overview.telemetry_request_bytes,
+                    package.diagnostic_overview.telemetry_event_bytes,
+                )
+            );
+            assert_eq!(
+                diagnostic_overview.timing_micros(),
+                (
+                    package.diagnostic_overview.nominal_period_micros,
+                    package.diagnostic_overview.maximum_age_micros,
+                )
+            );
+            assert!(
+                diagnostic_overview.resources().eq(package
+                    .diagnostic_overview
+                    .resources
+                    .iter()
+                    .copied())
+            );
             let board =
                 decode_board_capability(&document, BoardCapabilityLimits::interactive()).unwrap();
             assert_eq!(board.identity(), identity);
@@ -2827,6 +3183,7 @@ mod tests {
             );
             assert_eq!(board.service_core(), package.cores.service_core);
             assert_eq!(board.realtime_core(), package.cores.realtime_core);
+            assert_eq!(board.diagnostic_overview(), diagnostic_overview);
             assert!(
                 board
                     .resources()
@@ -2933,12 +3290,7 @@ mod tests {
             Err(CapabilityDocumentError::Limit)
         );
 
-        let graph_offset = graph_section_offset(package);
-        let first_resource = graph_offset
-            + GRAPH_EXECUTOR_HEADER_BYTES
-            + package.graph.opcodes.len() * GRAPH_OPCODE_CAPABILITY_BYTES
-            + package.graph.resources.len() * GRAPH_RESOURCE_CAPABILITY_BYTES
-            + 4;
+        let first_resource = resource_section_offset(package) + 4;
         let mut bad_boolean = document.clone();
         bad_boolean[first_resource + 6] = 2;
         assert_eq!(
@@ -2953,6 +3305,97 @@ mod tests {
         assert_eq!(
             decode_board_capability(&trailing, BoardCapabilityLimits::interactive()),
             Err(CapabilityDocumentError::Section)
+        );
+    }
+
+    #[test]
+    fn diagnostic_overview_tamper_fails_closed_and_is_not_graph_authority() {
+        let package = &board_mks_tinybee::PACKAGE;
+        let document = complete_document(package);
+        let offset = diagnostic_section_offset(package);
+        let overview = decode_diagnostic_overview(&document).unwrap();
+        assert_eq!(overview.schema_version(), 1);
+        assert_eq!(overview.support(), Some(SupportLevel::Compiles));
+        assert_eq!(overview.maximum_resources(), 4);
+        assert_eq!(overview.telemetry_bytes(), (176, 432));
+        assert_eq!(overview.timing_micros(), (100_000, 500_000));
+        assert!(overview.resources().eq([
+            DiagnosticResourceDescriptor {
+                resource: ResourceId::Gpio(22),
+                observation: DiagnosticObservationKind::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            DiagnosticResourceDescriptor {
+                resource: ResourceId::Gpio(32),
+                observation: DiagnosticObservationKind::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            DiagnosticResourceDescriptor {
+                resource: ResourceId::Gpio(33),
+                observation: DiagnosticObservationKind::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            DiagnosticResourceDescriptor {
+                resource: ResourceId::Gpio(35),
+                observation: DiagnosticObservationKind::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+        ]));
+        assert!(overview.admits(
+            ResourceId::Gpio(22),
+            DiagnosticObservationKind::StableBooleanInput
+        ));
+        assert!(!overview.admits(
+            ResourceId::Gpio(25),
+            DiagnosticObservationKind::StableBooleanInput
+        ));
+
+        let mut described_only = document.clone();
+        described_only[offset + 10] = support(SupportLevel::Described);
+        let described_only = decode_diagnostic_overview(&described_only).unwrap();
+        assert_eq!(described_only.support(), Some(SupportLevel::Described));
+        assert!(!described_only.is_implemented());
+        assert!(!described_only.admits(
+            ResourceId::Gpio(22),
+            DiagnosticObservationKind::StableBooleanInput
+        ));
+
+        let unsupported = complete_document(&board_t_deck_pro::PACKAGE);
+        let unsupported = decode_diagnostic_overview(&unsupported).unwrap();
+        assert_eq!(unsupported.support(), None);
+        assert_eq!(unsupported.resource_count(), 0);
+
+        let mut reserved = document.clone();
+        reserved[offset + 32] = 1;
+        assert_eq!(
+            decode_diagnostic_overview(&reserved),
+            Err(CapabilityDocumentError::Reserved)
+        );
+
+        let mut absent_with_facts = document.clone();
+        absent_with_facts[offset + 10] = 0;
+        assert_eq!(
+            decode_diagnostic_overview(&absent_with_facts),
+            Err(CapabilityDocumentError::Diagnostic)
+        );
+
+        let record_offset = offset + DIAGNOSTIC_OVERVIEW_HEADER_BYTES;
+        let mut unknown_observation = document.clone();
+        unknown_observation[record_offset + 4] = 0xff;
+        assert_eq!(
+            decode_diagnostic_overview(&unknown_observation),
+            Err(CapabilityDocumentError::Diagnostic)
+        );
+
+        let mut duplicate = document;
+        let first =
+            duplicate[record_offset..record_offset + DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES].to_vec();
+        duplicate[record_offset + DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES
+            ..record_offset + 2 * DIAGNOSTIC_RESOURCE_CAPABILITY_BYTES]
+            .copy_from_slice(&first);
+        assert_eq!(
+            decode_diagnostic_overview(&duplicate),
+            Err(CapabilityDocumentError::Diagnostic)
         );
     }
 
@@ -3057,7 +3500,7 @@ mod tests {
         assert_eq!(read.identity, identity);
         assert_eq!(read.byte_len, 32);
         assert!(!read.complete);
-        assert_eq!(&chunk[..8], b"ALMCAP02");
+        assert_eq!(&chunk[..8], b"ALMCAP03");
     }
 
     #[test]

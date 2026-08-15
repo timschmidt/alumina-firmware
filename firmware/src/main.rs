@@ -154,8 +154,13 @@ const EMPTY_OVERVIEW_SAMPLE: ResourceOverviewSample = ResourceOverviewSample {
 
 const _: [(); selected::SAFETY_INPUT_CAPACITY] = [(); TARGET_OVERVIEW_SAMPLES];
 const _: () = assert!(TARGET_REALTIME_INPUT_SNAPSHOT_BYTES <= TELEMETRY_PAYLOAD_BYTES);
-
-const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
+const MANAGEMENT_REPORT_PERIOD_MICROS: u32 = 100_000;
+const _: () = assert!(
+    !selected::DIAGNOSTIC_RESOURCE_OVERVIEW
+        || selected::DIAGNOSTIC_OVERVIEW_PERIOD_MICROS == MANAGEMENT_REPORT_PERIOD_MICROS
+);
+const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 =
+    Duration::from_micros(selected::DIAGNOSTIC_MAXIMUM_AGE_MICROS as u64).as_ticks();
 const RUNTIME_HEALTH_MAX_AGE_CYCLES: u64 = Duration::from_secs(2).as_ticks();
 /// Small general internal heap retained alongside the separate 64 KiB reclaimed region.
 ///

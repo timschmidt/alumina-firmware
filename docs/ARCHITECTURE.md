@@ -385,12 +385,18 @@ constructs owned resources, and returns separate `ServiceResources` and
 motion, network, or application code.
 
 `alumina-capability` serializes the same package as the canonical allocation-free
-`ALMCAP02` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
+`ALMCAP03` document defined in `CAPABILITIES.md`. The SHA-256 excludes only its
 own declared field, is compiled into the board package, and is recomputed by
 `xtask` and firmware. Public identity advertises digest/length; authenticated
 `CapabilitiesGet` reads contiguous bounded ranges through the single native
 control route. This document, not `xtask` JSON formatting or Rust memory layout,
 is the browser's immutable board authority.
+
+Its passive diagnostic-overview catalog is a read-only semantic observation
+authority separate from both the general resource ledger and graph opcode
+admission. It reports exact resource selectors, fixed queue budgets, record
+schema, cadence, freshness, and evidence without granting a pin lease, raw
+electrical sampling, interrupt configuration, output command, or safety role.
 
 `alumina-config` consumes that exact capability identity and streams canonical
 `ALMCFG06` bytes from an inert, content-addressed SD publication. Fixed resource

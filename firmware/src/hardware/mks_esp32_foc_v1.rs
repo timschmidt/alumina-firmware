@@ -85,14 +85,24 @@ pub const JOB_AXES: usize = 2;
 pub const CONFIGURATION_BINDINGS: usize = 64;
 /// This board currently exposes no configuration-derived safety-input route.
 pub const SAFETY_INPUT_CAPACITY: usize = 0;
-/// No target telemetry request storage is reserved before a provider is qualified.
-pub const DIAGNOSTIC_TELEMETRY_REQUEST_BYTES: usize = 0;
-/// No target telemetry event storage is reserved before a provider is qualified.
-pub const DIAGNOSTIC_TELEMETRY_EVENT_BYTES: usize = 0;
-/// No machine-domain stable Boolean input provider is composed yet.
-pub const DIAGNOSTIC_OVERVIEW_SAMPLES: usize = 0;
+/// Target request storage derived from the immutable board capability.
+pub const DIAGNOSTIC_TELEMETRY_REQUEST_BYTES: usize =
+    board_mks_esp32_foc_v1::DIAGNOSTIC_OVERVIEW.telemetry_request_bytes as usize;
+/// Target event storage derived from the immutable board capability.
+pub const DIAGNOSTIC_TELEMETRY_EVENT_BYTES: usize =
+    board_mks_esp32_foc_v1::DIAGNOSTIC_OVERVIEW.telemetry_event_bytes as usize;
+/// Exact passive observation palette compiled into this image.
+pub const DIAGNOSTIC_OVERVIEW_SAMPLES: usize =
+    board_mks_esp32_foc_v1::DIAGNOSTIC_OVERVIEW.resources.len();
 /// MKS ESP32 FOC does not yet compose a physical resource-overview provider.
-pub const DIAGNOSTIC_RESOURCE_OVERVIEW: bool = false;
+pub const DIAGNOSTIC_RESOURCE_OVERVIEW: bool =
+    board_mks_esp32_foc_v1::DIAGNOSTIC_OVERVIEW.is_implemented();
+/// Capability-published nominal overview period, zero while unsupported.
+pub const DIAGNOSTIC_OVERVIEW_PERIOD_MICROS: u32 =
+    board_mks_esp32_foc_v1::DIAGNOSTIC_OVERVIEW.nominal_period_micros;
+/// Capability-published freshness ceiling, zero while unsupported.
+pub const DIAGNOSTIC_MAXIMUM_AGE_MICROS: u32 =
+    board_mks_esp32_foc_v1::DIAGNOSTIC_OVERVIEW.maximum_age_micros;
 /// No MCPWM/ADC FOC backend is implemented in this safe-only composition.
 pub const MOTION_OUTPUT_IMPLEMENTED: bool = false;
 /// No physical PWM/current/sensor timing has been qualified.

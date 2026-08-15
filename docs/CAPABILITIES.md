@@ -1,6 +1,6 @@
-# Canonical board capability document V2
+# Canonical board capability document V3
 
-The `ALMCAP02` document is the immutable byte authority shared by firmware,
+The `ALMCAP03` document is the immutable byte authority shared by firmware,
 `xtask`, simulation, and the browser/WASM interface. It serializes the complete
 typed `BoardPackage` without Rust layout, JSON key ordering, allocation, or
 platform-width dependence. The package's declared capability digest is excluded
@@ -10,14 +10,22 @@ starts.
 
 Changing any serialized board fact, array order, string byte, visual digest,
 qualification, or armability requires a new capability digest. This is a
-deliberately conservative V2 compatibility identity. Cached machine partitions
+deliberately conservative V3 identity. Cached machine partitions
 bind that exact digest.
 
-V2 additionally publishes the exact fixed graph-executor arenas, implemented
+V3 publishes the exact fixed graph-executor arenas, implemented
 opcode palette, and graph-addressable physical-resource palette. A browser may
 lower only against the complete authenticated document for the selected device;
 an opcode existing in source code, a GPIO appearing in the general resource
 inventory, or spare nominal RAM is not deployment authority.
+
+V3 also adds an independently typed passive diagnostic-overview catalog. It
+publishes the exact semantic resources an image can observe, fixed request/event
+storage, nominal cadence, and freshness ceiling. This catalog grants no graph
+operation, GPIO lease, raw electrical acquisition, interrupt route, pin-mode
+change, output command, or safety authority. Raw digital/analog acquisition and
+waveform capture require a future separately bounded capability; they are not
+inferred from graph access or the descriptive resource inventory.
 
 Installed flash capacity is therefore an identity fact, not a boot-time hint.
 For example, the primary 8 MiB TinyBee and its opportunistic 4 MiB variant have
@@ -39,8 +47,8 @@ The fixed 16-byte header is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCAP02` |
-| 8 | 2 | exact schema version (`2`) |
+| 0 | 8 | ASCII `ALMCAP03` |
+| 8 | 2 | exact schema version (`3`) |
 | 10 | 2 | reserved zero |
 | 12 | 4 | complete document length including this header |
 
@@ -70,7 +78,8 @@ The header is followed by these fields with no implicit padding:
 4. realtime-PSRAM flag as one byte;
 5. service-core, realtime-core, and two reserved zero bytes;
 6. fixed graph-executor section;
-7. resources, aliases, buses, devices, flash regions, clocks, electrical
+7. fixed passive diagnostic-overview section;
+8. resources, aliases, buses, devices, flash regions, clocks, electrical
    constraints, interrupts, safe-output images, visuals, then HIL requirements.
 
 The graph-executor section begins with this fixed 72-byte header:
@@ -102,11 +111,41 @@ operation. Records are strictly ordered by unique nonzero opcode.
 Each 12-byte graph-resource record is a four-byte typed resource ID, access,
 support, two reserved zero bytes, and nonzero resource class `u32`. A resource
 record is authority only for the exact class/selector/access tuple and must be
-backed by a matching realtime opcode. V2 access value `1` means a read of the
+backed by a matching realtime opcode. Graph-subsection access value `1` means a read of the
 fresh debounced semantic state of a configured safety input. It grants no raw
 GPIO read and no output authority. TinyBee currently publishes class `1` for
 GPIO33, GPIO32, GPIO22, and GPIO35; T-Deck Pro and MKS ESP32 FOC publish no
 graph-addressable physical resources yet.
+
+The passive diagnostic-overview section begins with this fixed 48-byte header:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMDOV01` |
+| 8 | 2 | exact emitted `ALMOVW` schema, or zero when absent |
+| 10 | 1 | whole-provider support, or zero when absent |
+| 11 | 1 | reserved zero |
+| 12 | 2 | maximum resources per subscription |
+| 14 | 2 | diagnostic-resource-record count |
+| 16 | 4 | permanently reserved canonical subscription bytes |
+| 20 | 4 | permanently reserved canonical event bytes |
+| 24 | 4 | nominal publication period in microseconds |
+| 28 | 4 | maximum fresh physical-sample age in microseconds |
+| 32 | 16 | reserved zero |
+
+Each following 12-byte record is a four-byte typed resource ID, observation
+kind, support, and six reserved zero bytes. Records are strictly increasing by
+typed resource ID. Observation kind `1` is the freshness-bounded debounced
+Boolean state of a configured safety input. Every record must name a
+nonhazardous, high-impedance, realtime-owned GPIO or safety-input resource, and
+its evidence level must meet the whole-provider floor. It need not—and by
+itself cannot—appear in the graph palette.
+
+TinyBee publishes `GPIO22`, `GPIO32`, `GPIO33`, and `GPIO35`, schema 1, compile
+support, a maximum selection of four, 176 request bytes, 432 event bytes, a
+100,000 µs nominal period, and a 500,000 µs freshness ceiling. T-Deck Pro and
+MKS ESP32 FOC publish the canonical absent form: zero schema, support, budgets,
+timing, count, and records.
 
 The section entries are canonical as follows:
 
@@ -150,6 +189,7 @@ Enum values are explicitly assigned in schema order:
 | qualification | described, compiles, bench, motion-qualified, production-qualified |
 | safe value | not-applicable, high-impedance, low, high, engine-image |
 | support | described, compiles, bench, qualified |
+| diagnostic observation | stable Boolean input |
 | bus | I2C, SPI, UART |
 | device route | dedicated, I2C address, SPI chip select, UART |
 | flash region | bootloader, partition table, application, configuration, web bundle, update slot, crash log |
@@ -162,7 +202,7 @@ Enum values are explicitly assigned in schema order:
 ## Independent board-explorer decoding
 
 `decode_board_capability` is the allocation-free consumer boundary for a
-complete untrusted V2 document. It applies caller-owned limits before exposing
+complete untrusted V3 document. It applies caller-owned limits before exposing
 borrowed summary, resource, alias, visual, hotspot, and polygon iterators. The
 interactive policy permits at most 4 MiB of document bytes, 64 KiB per string,
 4,096 ordinary records per section, 32 visuals, 4,096 hotspots per visual, and
@@ -174,7 +214,8 @@ unknown or duplicate typed resources, missing resource references, invalid
 core ownership, unsafe shifted-output image coverage, duplicate
 aliases/interrupts/images/visuals/hotspots, out-of-plane points, strict prefixes,
 trailing bytes, and all caller-limit violations. It retains the existing
-independent graph-executor view as a separate, narrower access authority.
+independent graph-executor and passive diagnostic-overview views as separate,
+narrower authorities.
 
 The returned SHA-256 is content identity, never transport or device
 authentication. A live UI must compare it with the capability identity obtained
@@ -193,8 +234,8 @@ The exact 56-byte request body is:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCPQ02` |
-| 8 | 2 | version `2` |
+| 0 | 8 | ASCII `ALMCPQ03` |
+| 8 | 2 | version `3` |
 | 10 | 2 | reserved zero |
 | 12 | 4 | document offset |
 | 16 | 2 | requested bytes, `1..=240` |
@@ -207,8 +248,8 @@ document bytes:
 
 | Offset | Bytes | Meaning |
 | ---: | ---: | --- |
-| 0 | 8 | ASCII `ALMCPR02` |
-| 8 | 2 | version `2` |
+| 0 | 8 | ASCII `ALMCPR03` |
+| 8 | 2 | version `3` |
 | 10 | 1 | bit 0: this chunk reaches the document end |
 | 11 | 5 | reserved zero |
 | 16 | 4 | complete document length |
@@ -228,7 +269,7 @@ Current identities are:
 
 | Board | Bytes | SHA-256 |
 | --- | ---: | --- |
-| MKS TinyBee V1.x, 8 MiB primary | 3,435 | `0e82513896e52e0a58fb92de9130c446d590bf649fbc22742209b2d04c8cb0a5` |
-| MKS TinyBee V1.x, 4 MiB variant | 3,448 | `ba06ffad44125a4cf5b72ba1a14296a0fb3d91f4364af050616bdf0cebb0ed04` |
-| T-Deck Pro | 2,725 | `6c37b509080f40a0ea54e86b9f9aadfed4d284c97494f7e3275af6b3905a8061` |
-| MKS ESP32 FOC V1.0 | 2,928 | `627b2c018f44013dec83f1ff118f4158b4de31bb2db6d022c2979a8fd053107f` |
+| MKS TinyBee V1.x, 8 MiB primary | 3,531 | `27dcdd9ea4a1f9fcb1a4aeefb34984a4e4a0ca146c660f669bf632f98cac74af` |
+| MKS TinyBee V1.x, 4 MiB variant | 3,544 | `0c1a0b1bc8a92e24ad0b7f68fa92171e1fbe724507269ac785787f16d384e13b` |
+| T-Deck Pro | 2,773 | `835faa62f3d2a623a75db1a45135b267943130172de0d0e4c4308148a3331b21` |
+| MKS ESP32 FOC V1.0 | 2,976 | `f7bcc15848aac2ad750dbf078bc29daac3042a60c680999cc80ee54980fd9f52` |

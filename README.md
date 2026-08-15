@@ -285,7 +285,7 @@ publishes correlated status. Core 1 retains one initial block, or two for a
 multi-block job, without acknowledging or executing them. See the
 [cross-block prefill evidence](docs/evidence/M6-CROSS-BLOCK-PREFILL.md).
 `alumina-capability` now encodes every typed board
-fact as an allocation-free canonical `ALMCAP02` document. Both first packages
+fact as an allocation-free canonical `ALMCAP03` document. All current packages
 compile its independently recomputed SHA-256, firmware verifies it before Wi-Fi,
 identity advertises it, and authenticated `CapabilitiesGet` returns bounded
 digest-stable ranges. Preparation still returns `Unsupported` on both current
@@ -293,8 +293,11 @@ images because neither board package is armable; configuration commit and
 hardware qualification remain separate closed gates. A complete bounded
 consumer decoder now exposes borrowed resource, alias, visual and hotspot views
 without allocation; the interface uses it for a searchable TinyBee ledger that
-keeps all descriptive facts separate from the four explicitly graph-readable
-inputs and draws no physical overlay while the package has no licensed photo.
+keeps descriptive facts, passive diagnostic observations, and explicitly
+graph-readable inputs as three separate authorities. TinyBee publishes four
+passive semantic inputs plus their fixed queue budgets, cadence, and freshness
+ceiling; the UI draws no physical overlay while the package has no licensed
+photo.
 The capability range service is now shared by firmware and the authenticated
 HTTP simulator. A retry-safe browser client assembles one bounded contiguous
 document, holds its digest stable after discovery, independently decodes and

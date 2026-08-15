@@ -223,7 +223,7 @@ cannot yield a start cycle.
 
 ## Board capabilities
 
-`CapabilitiesGet` reads the immutable canonical `ALMCAP02` board document in
+`CapabilitiesGet` reads the immutable canonical `ALMCAP03` board document in
 authenticated ranges of at most 240 bytes. Public identity reports its SHA-256
 and total length; every range repeats both, and the browser verifies the complete
 reassembly before decoding or caching by digest. Request/response layouts, enum
@@ -232,6 +232,9 @@ assignments, and the complete serialization order are normative in
 aliases, buses/devices, memory/clock/electrical constraints, safe images,
 licensed visual metadata, HIL requirements, qualification, and armability. Its
 own declared digest is the sole excluded field, avoiding circular identity.
+The V3 document also carries a passive semantic-observation palette with fixed
+telemetry storage, cadence, and freshness. That palette is distinct from graph
+execution authority and from any future raw acquisition/capture capability.
 
 ## Storage bodies and content identity
 

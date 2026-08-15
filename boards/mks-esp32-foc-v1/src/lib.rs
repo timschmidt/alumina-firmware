@@ -4,10 +4,10 @@
 use alumina_board::{
     AliasDescriptor, BoardDescriptor, BoardPackage, BusDescriptor, BusKind, Chip, ClockDescriptor,
     ClockDomain, ClockSource, CoreAssignment, DeviceDescriptor, DeviceRoute,
-    ElectricalConstraintDescriptor, ElectricalConstraintKind, GraphExecutorDescriptor,
-    GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass, HilKind, HilRequirement,
-    InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain, Qualification,
-    ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
+    DiagnosticOverviewDescriptor, ElectricalConstraintDescriptor, ElectricalConstraintKind,
+    GraphExecutorDescriptor, GraphOpcodeDescriptor, GraphResourceAccess, GraphResourceClass,
+    HilKind, HilRequirement, InterruptDescriptor, InterruptTrigger, MemoryDescriptor, OwnerDomain,
+    Qualification, ResourceDescriptor, ResourceId, SafeValue, SupportLevel,
 };
 use alumina_protocol::Digest;
 
@@ -61,10 +61,13 @@ pub const GRAPH_EXECUTOR: GraphExecutorDescriptor<'static> = GraphExecutorDescri
     opcodes: GRAPH_OPCODES,
     resources: &[],
 };
-/// SHA-256 of the canonical `ALMCAP02` V2 document exported by this package.
+/// This safe-only image currently composes no passive input overview provider.
+pub const DIAGNOSTIC_OVERVIEW: DiagnosticOverviewDescriptor<'static> =
+    DiagnosticOverviewDescriptor::NONE;
+/// SHA-256 of the canonical `ALMCAP03` V3 document exported by this package.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x62, 0x7b, 0x2c, 0x01, 0x8f, 0x44, 0x01, 0x3d, 0xec, 0x83, 0xf1, 0xff, 0x11, 0x8f, 0x41, 0x58,
-    0xb4, 0xde, 0x31, 0xbb, 0x2d, 0xb6, 0xd0, 0x22, 0xc2, 0x97, 0x9a, 0x8f, 0xd0, 0x53, 0x10, 0x7f,
+    0xf7, 0xbc, 0xc1, 0x58, 0x48, 0xaa, 0xc2, 0xad, 0x75, 0x0d, 0xbf, 0x07, 0x8b, 0xc2, 0x9d, 0xaa,
+    0xc3, 0x04, 0x2a, 0x60, 0xc6, 0x80, 0x99, 0x9c, 0xc8, 0x0e, 0xe5, 0x49, 0x80, 0xfd, 0x9f, 0x52,
 ]);
 
 /// Stable board-local fitted-device namespace.
@@ -853,6 +856,7 @@ pub static PACKAGE: BoardPackage<'static> = BoardPackage {
         realtime_core: 1,
     },
     graph: GRAPH_EXECUTOR,
+    diagnostic_overview: DIAGNOSTIC_OVERVIEW,
     aliases: ALIASES,
     buses: BUSES,
     devices: DEVICES,

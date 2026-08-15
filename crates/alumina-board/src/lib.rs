@@ -190,6 +190,75 @@ pub struct GraphExecutorDescriptor<'a> {
     pub resources: &'a [GraphResourceDescriptor],
 }
 
+/// Passive semantic value exposed by one diagnostic-overview record.
+///
+/// This is observation authority only. It neither admits a graph operation nor
+/// grants a lease, pin-mode change, interrupt route, or output capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum DiagnosticObservationKind {
+    /// Freshness-bounded, debounced state of a configured safety input.
+    StableBooleanInput = 1,
+}
+
+/// One typed resource admitted to the passive diagnostic-overview provider.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticResourceDescriptor {
+    /// Exact physical or board-semantic resource represented in samples.
+    pub resource: ResourceId,
+    /// Semantic observation produced for this resource.
+    pub observation: DiagnosticObservationKind,
+    /// Evidence level for the complete resource-to-overview path.
+    pub support: SupportLevel,
+}
+
+/// Exact fixed-memory passive overview provider published by one board image.
+///
+/// Unsupported images use [`Self::NONE`]. The timing values are expressed in
+/// microseconds so a browser can reconcile them with authenticated device-clock
+/// evidence without importing an ESP- or Embassy-specific tick rate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiagnosticOverviewDescriptor<'a> {
+    /// Exact `ALMOVW` record schema emitted by this provider, or zero if absent.
+    pub schema_version: u16,
+    /// Whole-provider evidence floor, absent when no provider is composed.
+    pub support: Option<SupportLevel>,
+    /// Largest resource selection admitted by one subscription.
+    pub maximum_resources: u16,
+    /// Permanently reserved canonical subscription bytes.
+    pub telemetry_request_bytes: u32,
+    /// Permanently reserved canonical event bytes.
+    pub telemetry_event_bytes: u32,
+    /// Nominal interval between provider publications.
+    pub nominal_period_micros: u32,
+    /// Oldest physical sample that may still be reported as fresh.
+    pub maximum_age_micros: u32,
+    /// Strictly ordered passive observation palette.
+    pub resources: &'a [DiagnosticResourceDescriptor],
+}
+
+impl DiagnosticOverviewDescriptor<'_> {
+    /// Canonical declaration for an image with no passive overview provider.
+    pub const NONE: Self = Self {
+        schema_version: 0,
+        support: None,
+        maximum_resources: 0,
+        telemetry_request_bytes: 0,
+        telemetry_event_bytes: 0,
+        nominal_period_micros: 0,
+        maximum_age_micros: 0,
+        resources: &[],
+    };
+
+    /// Whether this exact image has at least a compiling overview provider.
+    pub const fn is_implemented(self) -> bool {
+        matches!(
+            self.support,
+            Some(SupportLevel::Compiles | SupportLevel::Bench | SupportLevel::Qualified)
+        )
+    }
+}
+
 /// Compile-time flash and RAM facts for one PCB/module revision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryDescriptor {
@@ -544,6 +613,8 @@ pub struct BoardPackage<'a> {
     pub cores: CoreAssignment,
     /// Fixed graph executor, arenas, opcodes, and resource palette.
     pub graph: GraphExecutorDescriptor<'a>,
+    /// Passive diagnostic-overview provider and observation palette.
+    pub diagnostic_overview: DiagnosticOverviewDescriptor<'a>,
     /// Canonical configuration aliases.
     pub aliases: &'a [AliasDescriptor<'a>],
     /// Routed controller/pin groups.
@@ -649,6 +720,7 @@ impl BoardPackage<'_> {
         }
 
         self.validate_graph_executor()?;
+        self.validate_diagnostic_overview()?;
 
         for (index, alias) in self.aliases.iter().enumerate() {
             if alias.name.is_empty() {
@@ -1082,6 +1154,65 @@ impl BoardPackage<'_> {
         }
         Ok(())
     }
+
+    fn validate_diagnostic_overview(&self) -> Result<(), BoardError> {
+        let overview = self.diagnostic_overview;
+        let has_nonzero_fact = overview.schema_version != 0
+            || overview.maximum_resources != 0
+            || overview.telemetry_request_bytes != 0
+            || overview.telemetry_event_bytes != 0
+            || overview.nominal_period_micros != 0
+            || overview.maximum_age_micros != 0
+            || !overview.resources.is_empty();
+        let Some(support) = overview.support else {
+            return if has_nonzero_fact {
+                Err(BoardError::IncompleteDiagnosticOverview)
+            } else {
+                Ok(())
+            };
+        };
+        if overview.schema_version == 0
+            || overview.maximum_resources == 0
+            || usize::from(overview.maximum_resources) < overview.resources.len()
+            || overview.telemetry_request_bytes == 0
+            || overview.telemetry_event_bytes == 0
+            || overview.nominal_period_micros == 0
+            || overview.maximum_age_micros < overview.nominal_period_micros
+            || overview.resources.is_empty()
+        {
+            return Err(BoardError::IncompleteDiagnosticOverview);
+        }
+        for (index, resource) in overview.resources.iter().copied().enumerate() {
+            let physical = self.resource(resource.resource).ok_or(
+                BoardError::DiagnosticOverviewMissingResource {
+                    index,
+                    resource: resource.resource,
+                },
+            )?;
+            if resource.support < support
+                || physical.owner != OwnerDomain::Realtime
+                || physical.hazardous_output
+                || physical.safe_value != SafeValue::HighImpedance
+                || !matches!(
+                    resource.resource,
+                    ResourceId::Gpio(_) | ResourceId::SafetyInput(_)
+                )
+                || resource.observation != DiagnosticObservationKind::StableBooleanInput
+            {
+                return Err(BoardError::InvalidDiagnosticOverviewResource {
+                    index,
+                    resource: resource.resource,
+                });
+            }
+            if index != 0 && overview.resources[index - 1].resource >= resource.resource {
+                return Err(BoardError::NoncanonicalDiagnosticOverviewResource {
+                    index,
+                    resource: resource.resource,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 const fn bus_kind_matches(kind: BusKind, resource: ResourceId) -> bool {
@@ -1166,6 +1297,29 @@ pub enum BoardError {
     /// One class exposed the same physical resource more than once.
     DuplicateGraphResource {
         /// Duplicate resource.
+        resource: ResourceId,
+    },
+    /// Passive overview support and its fixed budgets/timing were inconsistent.
+    IncompleteDiagnosticOverview,
+    /// A passive overview record referenced no typed board resource.
+    DiagnosticOverviewMissingResource {
+        /// Diagnostic observation palette index.
+        index: usize,
+        /// Missing typed resource.
+        resource: ResourceId,
+    },
+    /// A passive overview resource was hazardous, misowned, or semantically invalid.
+    InvalidDiagnosticOverviewResource {
+        /// Diagnostic observation palette index.
+        index: usize,
+        /// Rejected resource.
+        resource: ResourceId,
+    },
+    /// Passive overview resources were duplicated or not strictly ordered.
+    NoncanonicalDiagnosticOverviewResource {
+        /// Diagnostic observation palette index.
+        index: usize,
+        /// Rejected resource.
         resource: ResourceId,
     },
     /// Alias was empty.
@@ -1527,6 +1681,7 @@ mod tests {
                 realtime_core: 1,
             },
             graph: TEST_GRAPH,
+            diagnostic_overview: DiagnosticOverviewDescriptor::NONE,
             aliases,
             buses,
             devices,
@@ -1674,6 +1829,83 @@ mod tests {
         assert_eq!(
             duplicate.validate(),
             Err(BoardError::DuplicateGraphResource { resource: input.id })
+        );
+    }
+
+    #[test]
+    fn passive_diagnostics_are_distinct_from_graph_authority() {
+        let first = ResourceDescriptor {
+            id: ResourceId::Gpio(22),
+            owner: OwnerDomain::Realtime,
+            safe_value: SafeValue::HighImpedance,
+            hazardous_output: false,
+        };
+        let second = ResourceDescriptor {
+            id: ResourceId::Gpio(33),
+            ..first
+        };
+        let resources = [first, second];
+        let observations = [
+            DiagnosticResourceDescriptor {
+                resource: first.id,
+                observation: DiagnosticObservationKind::StableBooleanInput,
+                support: SupportLevel::Compiles,
+            },
+            DiagnosticResourceDescriptor {
+                resource: second.id,
+                observation: DiagnosticObservationKind::StableBooleanInput,
+                support: SupportLevel::Bench,
+            },
+        ];
+        let mut valid = package(&resources, &[], &[], &[], &[]);
+        valid.diagnostic_overview = DiagnosticOverviewDescriptor {
+            schema_version: 1,
+            support: Some(SupportLevel::Compiles),
+            maximum_resources: 2,
+            telemetry_request_bytes: 168,
+            telemetry_event_bytes: 392,
+            nominal_period_micros: 100_000,
+            maximum_age_micros: 500_000,
+            resources: &observations,
+        };
+        assert!(valid.graph.resources.is_empty());
+        assert_eq!(valid.validate(), Ok(()));
+
+        let mut unsupported_with_budget = valid;
+        unsupported_with_budget.diagnostic_overview.support = None;
+        assert_eq!(
+            unsupported_with_budget.validate(),
+            Err(BoardError::IncompleteDiagnosticOverview)
+        );
+
+        let reversed = [observations[1], observations[0]];
+        let mut noncanonical = valid;
+        noncanonical.diagnostic_overview.resources = &reversed;
+        assert_eq!(
+            noncanonical.validate(),
+            Err(BoardError::NoncanonicalDiagnosticOverviewResource {
+                index: 1,
+                resource: first.id,
+            })
+        );
+
+        let hazardous = [ResourceDescriptor {
+            hazardous_output: true,
+            ..first
+        }];
+        let one_observation = [observations[0]];
+        let mut unsafe_overview = package(&hazardous, &[], &[], &[], &[]);
+        unsafe_overview.diagnostic_overview = DiagnosticOverviewDescriptor {
+            maximum_resources: 1,
+            resources: &one_observation,
+            ..valid.diagnostic_overview
+        };
+        assert_eq!(
+            unsafe_overview.validate(),
+            Err(BoardError::InvalidDiagnosticOverviewResource {
+                index: 0,
+                resource: first.id,
+            })
         );
     }
 

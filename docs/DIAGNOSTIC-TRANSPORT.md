@@ -119,6 +119,11 @@ envelope plus a 320-byte four-sample overview. The provider consumes a distinct
 inter-core payload; it does not reuse or weaken the canonical safety snapshot.
 Only configured stable-input semantics are translated. Waveform configure and
 record storage remain zero, so every capture operation returns `Unsupported`.
+The same facts are serialized in the `ALMDOV01` section of capability-document
+V3. Firmware queue reservations and freshness timing derive from that board
+descriptor, and the browser checks its selection and encoded request/event
+sizes against the authenticated catalog. This is passive observation authority,
+not graph access or raw pin acquisition.
 
 T-Deck Pro and MKS ESP32 FOC retain the authenticated dispatcher and context
 reconciliation, but subscribe and configure return `Unsupported` rather than
