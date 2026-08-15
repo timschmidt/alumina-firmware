@@ -36,6 +36,7 @@ struct ServerOptions {
     drop_operation_request: Option<Operation>,
     drop_operation_request_count: u64,
     drop_operation_response: Option<Operation>,
+    duplicate_operation_request: Option<Operation>,
     reboot_control_request: Option<u64>,
 }
 
@@ -55,6 +56,7 @@ impl ServerOptions {
             drop_operation_request: None,
             drop_operation_request_count: 1,
             drop_operation_response: None,
+            duplicate_operation_request: None,
             reboot_control_request: None,
         };
         let mut arguments = std::env::args().skip(1);
@@ -123,6 +125,9 @@ impl ServerOptions {
                 "--drop-operation-response" => {
                     options.drop_operation_response = Some(parse_operation(&value, &argument)?);
                 }
+                "--duplicate-operation-request" => {
+                    options.duplicate_operation_request = Some(parse_operation(&value, &argument)?);
+                }
                 "--reboot-control-request" => {
                     options.reboot_control_request = Some(nonzero_u64(&value, &argument)?);
                 }
@@ -171,7 +176,8 @@ fn print_help() {
          [--drop-initial-control-requests N] [--drop-control-request N] \
          [--drop-operation-request NAME_OR_WIRE] \
          [--drop-operation-request-count N] \
-         [--drop-operation-response NAME_OR_WIRE] [--reboot-control-request N]"
+         [--drop-operation-response NAME_OR_WIRE] \
+         [--duplicate-operation-request NAME_OR_WIRE] [--reboot-control-request N]"
     );
 }
 
@@ -283,6 +289,7 @@ struct FaultState {
     single_drop_completed: bool,
     operation_request_drops: u64,
     operation_response_drop_completed: bool,
+    operation_request_duplicate_completed: bool,
     rebooted: bool,
 }
 
@@ -300,6 +307,19 @@ impl FaultState {
             return None;
         }
         self.operation_request_drops = self.operation_request_drops.saturating_add(1);
+        observed
+    }
+
+    fn take_operation_request_duplicate(
+        &mut self,
+        selected: Option<Operation>,
+        observed: Option<Operation>,
+    ) -> Option<Operation> {
+        if self.operation_request_duplicate_completed || selected.is_none() || selected != observed
+        {
+            return None;
+        }
+        self.operation_request_duplicate_completed = true;
         observed
     }
 }
@@ -380,7 +400,30 @@ fn handle_connection(
         std::thread::sleep(Duration::from_millis(options.processing_delay_ms));
     }
     let transmit_cycle = clock.cycle();
-    let response = fixture.handle(&request, clock.elapsed_ms(), receive_cycle, transmit_cycle);
+    let mut response = fixture.handle(&request, clock.elapsed_ms(), receive_cycle, transmit_cycle);
+    if control
+        && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
+        && let Some(operation) =
+            faults.take_operation_request_duplicate(options.duplicate_operation_request, operation)
+    {
+        let replay_receive_cycle = clock.cycle();
+        let replay_transmit_cycle = clock.cycle();
+        response = fixture.handle(
+            &request,
+            clock.elapsed_ms(),
+            replay_receive_cycle,
+            replay_transmit_cycle,
+        );
+        if response.status != 401 {
+            return Err(ServerError::Fixture(
+                "duplicated authenticated request was not rejected as replay".to_owned(),
+            ));
+        }
+        eprintln!(
+            "fault injection: duplicated applied request for operation 0x{:04x}; replay rejected",
+            operation.wire_value()
+        );
+    }
     let initial_outage =
         control && faults.control_requests <= options.drop_initial_control_requests;
     let single_drop = control
@@ -652,6 +695,10 @@ mod tests {
             parse_operation("1289", "--drop-operation-response").unwrap(),
             Operation::JobConfirm
         );
+        assert_eq!(
+            parse_operation("job-abort", "--duplicate-operation-request").unwrap(),
+            Operation::JobAbort
+        );
         assert!(parse_operation("0x090b", "--drop-operation-request").is_err());
         assert!(parse_operation("put-something", "--drop-operation-response").is_err());
     }
@@ -689,6 +736,34 @@ mod tests {
             faults.take_operation_request_drop(
                 Some(Operation::JobAbort),
                 2,
+                Some(Operation::JobAbort),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn operation_request_duplicate_is_exact_and_one_shot() {
+        let mut faults = FaultState::default();
+        assert_eq!(
+            faults.take_operation_request_duplicate(
+                Some(Operation::JobAbort),
+                Some(Operation::JobStatus),
+            ),
+            None
+        );
+        assert!(!faults.operation_request_duplicate_completed);
+        assert_eq!(
+            faults.take_operation_request_duplicate(
+                Some(Operation::JobAbort),
+                Some(Operation::JobAbort),
+            ),
+            Some(Operation::JobAbort)
+        );
+        assert!(faults.operation_request_duplicate_completed);
+        assert_eq!(
+            faults.take_operation_request_duplicate(
+                Some(Operation::JobAbort),
                 Some(Operation::JobAbort),
             ),
             None
