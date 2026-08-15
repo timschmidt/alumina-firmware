@@ -33,6 +33,7 @@ struct ServerOptions {
     drift_ppm: i32,
     drop_initial_control_requests: u64,
     drop_control_request: Option<u64>,
+    drop_operation_request: Option<Operation>,
     drop_operation_response: Option<Operation>,
     reboot_control_request: Option<u64>,
 }
@@ -50,6 +51,7 @@ impl ServerOptions {
             drift_ppm: 37,
             drop_initial_control_requests: 0,
             drop_control_request: None,
+            drop_operation_request: None,
             drop_operation_response: None,
             reboot_control_request: None,
         };
@@ -108,8 +110,11 @@ impl ServerOptions {
                 "--drop-control-request" => {
                     options.drop_control_request = Some(nonzero_u64(&value, &argument)?);
                 }
+                "--drop-operation-request" => {
+                    options.drop_operation_request = Some(parse_operation(&value, &argument)?);
+                }
                 "--drop-operation-response" => {
-                    options.drop_operation_response = Some(parse_operation(&value)?);
+                    options.drop_operation_response = Some(parse_operation(&value, &argument)?);
                 }
                 "--reboot-control-request" => {
                     options.reboot_control_request = Some(nonzero_u64(&value, &argument)?);
@@ -152,11 +157,12 @@ fn print_help() {
         "alumina-sim-http [--bind IP:PORT] [--device-id 32_HEX_DIGITS] [--secret TEXT] \
          [--processing-delay-ms N] [--response-delay-ms N] [--drift-ppm N] \
          [--drop-initial-control-requests N] [--drop-control-request N] \
+         [--drop-operation-request NAME_OR_WIRE] \
          [--drop-operation-response NAME_OR_WIRE] [--reboot-control-request N]"
     );
 }
 
-fn parse_operation(value: &str) -> Result<Operation, ServerError> {
+fn parse_operation(value: &str, argument: &str) -> Result<Operation, ServerError> {
     let named = match value {
         "storage-inspect" => Some(Operation::StorageInspect),
         "storage-begin-upload" => Some(Operation::StorageBeginUpload),
@@ -179,10 +185,9 @@ fn parse_operation(value: &str) -> Result<Operation, ServerError> {
         .and_then(|digits| u16::from_str_radix(digits, 16).ok())
         .or_else(|| value.parse::<u16>().ok());
     wire.and_then(Operation::from_wire).ok_or_else(|| {
-        ServerError::Argument(
-            "--drop-operation-response requires a supported canonical name or assigned u16 wire value"
-                .to_owned(),
-        )
+        ServerError::Argument(format!(
+            "{argument} requires a supported canonical name or assigned u16 wire value"
+        ))
     })
 }
 
@@ -263,8 +268,23 @@ impl AffineHostClock {
 struct FaultState {
     control_requests: u64,
     single_drop_completed: bool,
-    operation_drop_completed: bool,
+    operation_request_drop_completed: bool,
+    operation_response_drop_completed: bool,
     rebooted: bool,
+}
+
+impl FaultState {
+    fn take_operation_request_drop(
+        &mut self,
+        selected: Option<Operation>,
+        observed: Option<Operation>,
+    ) -> Option<Operation> {
+        if self.operation_request_drop_completed || selected.is_none() || selected != observed {
+            return None;
+        }
+        self.operation_request_drop_completed = true;
+        observed
+    }
 }
 
 fn main() -> Result<(), ServerError> {
@@ -320,6 +340,15 @@ fn handle_connection(
     let operation = control.then(|| request_operation(&request)).flatten();
     if control {
         faults.control_requests = faults.control_requests.saturating_add(1);
+        if let Some(operation) =
+            faults.take_operation_request_drop(options.drop_operation_request, operation)
+        {
+            eprintln!(
+                "fault injection: dropped unapplied request for operation 0x{:04x}",
+                operation.wire_value()
+            );
+            return Ok(());
+        }
         if !faults.rebooted && options.reboot_control_request == Some(faults.control_requests) {
             fixture
                 .reboot([0x52; 16])
@@ -341,12 +370,12 @@ fn handle_connection(
     if single_drop {
         faults.single_drop_completed = true;
     }
-    let operation_drop = !faults.operation_drop_completed
+    let operation_drop = !faults.operation_response_drop_completed
         && options.drop_operation_response.is_some()
         && options.drop_operation_response == operation
         && operation.is_some_and(|operation| native_response_succeeded(&response, operation));
     if operation_drop {
-        faults.operation_drop_completed = true;
+        faults.operation_response_drop_completed = true;
         if let Some(operation) = operation {
             eprintln!(
                 "fault injection: dropped applied response for operation 0x{:04x}",
@@ -593,13 +622,43 @@ mod tests {
     #[test]
     fn operation_selector_accepts_names_and_assigned_wire_values_only() {
         assert_eq!(
-            parse_operation("storage-put-chunk").unwrap(),
+            parse_operation("storage-put-chunk", "--drop-operation-request").unwrap(),
             Operation::StoragePutChunk
         );
-        assert_eq!(parse_operation("0x0503").unwrap(), Operation::JobCommit);
-        assert_eq!(parse_operation("1289").unwrap(), Operation::JobConfirm);
-        assert!(parse_operation("0x090b").is_err());
-        assert!(parse_operation("put-something").is_err());
+        assert_eq!(
+            parse_operation("0x0503", "--drop-operation-response").unwrap(),
+            Operation::JobCommit
+        );
+        assert_eq!(
+            parse_operation("1289", "--drop-operation-response").unwrap(),
+            Operation::JobConfirm
+        );
+        assert!(parse_operation("0x090b", "--drop-operation-request").is_err());
+        assert!(parse_operation("put-something", "--drop-operation-response").is_err());
+    }
+
+    #[test]
+    fn operation_request_drop_is_exact_one_shot_and_precedes_application() {
+        let mut faults = FaultState::default();
+        assert_eq!(
+            faults.take_operation_request_drop(
+                Some(Operation::JobAbort),
+                Some(Operation::JobStatus),
+            ),
+            None
+        );
+        assert!(!faults.operation_request_drop_completed);
+        assert_eq!(
+            faults
+                .take_operation_request_drop(Some(Operation::JobAbort), Some(Operation::JobAbort),),
+            Some(Operation::JobAbort)
+        );
+        assert!(faults.operation_request_drop_completed);
+        assert_eq!(
+            faults
+                .take_operation_request_drop(Some(Operation::JobAbort), Some(Operation::JobAbort),),
+            None
+        );
     }
 
     #[test]
