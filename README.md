@@ -97,12 +97,16 @@ evidence](docs/evidence/M9-OFFLINE-DIAGNOSTIC-EXPLORER.md).
 Authenticated V1 telemetry/capture transport now binds those records to exact
 device/boot/capability/configuration context and SHA-256 request/record identity.
 A fixed-memory core-0 owner implements idempotent lifecycle, latest-only loss
-accounting, retained capture, 168-byte native ranges, and retry reconciliation;
-the typed interface client passes both in-memory and real localhost HTTP/HMAC
-flows. TinyBee and T-Deck Pro compile the dispatcher but honestly return
+accounting, retry-safe authenticated event polling, retained capture, 168-byte
+native ranges, and retry reconciliation. The typed interface client passes both
+in-memory and real localhost HTTP/HMAC flows; its production worker now admits
+complete simulated events into a live status/logic view and reattaches across a
+same-boot worker replacement without consuming unseen evidence. TinyBee and
+T-Deck Pro compile the dispatcher but honestly return
 `Unsupported` until a physical provider is connected. See the [transport
 contract](docs/DIAGNOSTIC-TRANSPORT.md) and [offline authenticated transport
-evidence](docs/evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md).
+evidence](docs/evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), plus the
+[authenticated live-telemetry evidence](docs/evidence/M10-AUTHENTICATED-LIVE-TELEMETRY.md).
 
 The first deployed graphical-control path is also portable end to end. The
 interface lowers one audited Boolean Service-to-Realtime graph into a fixed
@@ -288,10 +292,11 @@ The capability range service is now shared by firmware and the authenticated
 HTTP simulator. A retry-safe browser client assembles one bounded contiguous
 document, holds its digest stable after discovery, independently decodes and
 hashes the complete bytes, and transfers them once through worker schema v3.
-The live MCU panel then renders board/revision/chip/core/memory/resource/hazard/
-visual/HIL facts while explicitly granting no lease, command, arm, or safety
-authority. See the [authenticated capability worker/UI
-evidence](docs/evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
+Current schema v5 preserves that one-time capability contract while adding
+complete telemetry and waveform documents. The live MCU panel then renders
+board/revision/chip/core/memory/resource/hazard/visual/HIL facts while
+explicitly granting no lease, command, arm, or safety authority. See the
+[authenticated capability worker/UI evidence](docs/evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
 See the
 [portable lifecycle evidence](docs/evidence/M3-JOB-PREFETCH-LIFECYCLE.md) and
 [firmware wiring evidence](docs/evidence/M3-FIRMWARE-JOB-PREFETCH.md), plus the
@@ -322,12 +327,14 @@ prepare/install/confirm-or-abort transitions without confirming before all
 installs. The browser now creates a dedicated control worker that owns
 independent authenticated sessions, exact causal clock models, bounded history,
 retry-safe redacted diagnostic panels, passive runtime health, and canonical
-board-capability acquisition; its module lifecycle reaches a rendered
-worker-ready state in Chromium. That production worker now exchanges real
-authenticated browser HTTP/CORS clock, health, and bounded capability traffic
-with a deterministic host MCU fixture. It recovers from clock/health response
-loss, a finite outage, reboot, and an ambiguous capability range without
-cross-contaminating the three models, and refuses an excessive causal interval.
+board-capability acquisition, capability-bound live input telemetry, and
+retained waveform capture; its module lifecycle reaches a rendered worker-ready
+state in Chromium. That production worker now exchanges real authenticated
+browser HTTP/CORS clock, health, bounded capability, telemetry, and waveform
+traffic with a deterministic host MCU fixture. It recovers from clock/health
+response loss, a finite outage, reboot, ambiguous capability ranges and
+diagnostic responses, and refuses an excessive causal interval without
+cross-contaminating the independent models.
 Physical radio and timing qualification remain closed. The same coordinator
 now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped

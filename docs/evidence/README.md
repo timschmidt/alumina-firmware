@@ -389,3 +389,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   input capture, an opt-in deterministic simulator provider, retry-safe
   retained-record release, schema-v4 exact trace admission/rendering, and
   repeated loopback Chromium lifecycle evidence.
+- [`M10-AUTHENTICATED-LIVE-TELEMETRY.md`](M10-AUTHENTICATED-LIVE-TELEMETRY.md)
+  — canonical retry-safe authenticated event polling, client-evidence-only
+  acknowledgement, schema-v5 capability-bound live input status and sampled
+  logic lanes, plus fresh and same-boot replacement-worker Chromium evidence.

@@ -22,6 +22,7 @@ captures, and retained bytes.
 | `TelemetryUnsubscribe` (`0x0702`) | fixed 56-byte `ALMTLR01` reference | fixed status |
 | `TelemetryEvent` (`0x0703`) | variable `ALMTEV01` event | device-originated event, no response |
 | `TelemetryStatus` (`0x0704`) | fixed session reference | fixed status |
+| `TelemetryPoll` (`0x0705`) | fixed 72-byte `ALMTPR01` acknowledgement/fetch | retained event or empty success |
 
 The subscribe header is 160 bytes followed by strictly increasing four-byte
 typed resource IDs. It binds a nonzero subscription ID, full context, minimum
@@ -46,6 +47,15 @@ next_sequence - 1 = published + dropped + pending(0 or 1)
 Production before the admitted minimum period is rejected. Sending does not
 clear the slot; only acknowledgement of the exact current sequence does. This
 makes loss and retry observable without allowing an unbounded queue.
+
+`TelemetryPoll` carries the immutable subscription ID/digest and the newest
+event sequence the caller has completely validated. If that sequence is the
+current retained event, the service acknowledges it before returning any newer
+retained event. Repeating a poll after an ambiguous response is idempotent, and
+an already acknowledged sequence remains valid. Sequence zero makes no
+acknowledgement claim; a reconstructed page/worker can therefore reattach to the
+same exact subscription and receive an event it has not yet seen. Any other
+sequence conflicts instead of guessing caller progress.
 
 ## Digital-capture lifecycle
 
@@ -76,8 +86,10 @@ flags.
 
 Each chunk has a 144-byte envelope binding capture ID, configuration digest,
 complete record length/digest, offset, range length, range digest, and canonical
-final-range flag. The current 384-byte service response leaves 312 bytes for an
-operation body, so native range payloads are at most 168 bytes. Live delivery
+final-range flag. The current 512-byte service response leaves 440 bytes for an
+operation body and admits the 432-byte four-input telemetry event. Waveform
+range envelopes deliberately retain their 312-byte bound, so native range
+payloads remain at most 168 bytes. Live delivery
 advances only after exact acknowledgement or an explicit drop transition;
 dropped live ranges remain recoverable with side-effect-free `WaveformRead`.
 The client accepts ranges only at its contiguous expected offset and validates
@@ -106,10 +118,14 @@ labels every document/sample/source accordingly.
 Host tests cover canonical round trips, hostile lengths/flags/order, context
 substitution, digest tampering, exact lifecycle accounting, minimum-rate
 enforcement, idempotent mutation retry, ambiguous-response reconciliation,
-latest-only loss, live-chunk loss, range retry, full-record validation, and a
-real localhost HTTP/HMAC/native-frame exchange. TinyBee and T-Deck Pro target
-checks prove composition only.
+latest-only loss, retained-event replay, zero-claim worker reattachment,
+live-chunk loss, range retry, full-record validation, and a real localhost
+HTTP/HMAC/native-frame exchange. The production browser worker and rendering
+realm also pass fresh and same-boot replacement Chromium telemetry runs over
+loopback. TinyBee and T-Deck Pro target checks prove composition only.
 
 No physical Wi-Fi, AP association, serial link, GPIO, SLogic capture, or board
-reset is part of this checkpoint. Physical acquisition and WebSocket event
-delivery remain explicit HIL/integration gates.
+reset is part of this checkpoint. Physical acquisition remains an explicit HIL
+gate. A future authenticated WebSocket may carry the same canonical event
+contract at higher rates; the current authenticated polling path is complete
+without it.

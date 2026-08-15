@@ -1059,8 +1059,10 @@ repeats the exact range after ambiguity, freezes identity after discovery,
 revalidates the complete canonical bytes, and emits them once through strict
 schema v3. The rendering realm revalidates again before building the
 board-name-independent explorer and displaying exact connected-board facts.
-Physical Wi-Fi, live resource telemetry, annotated photography, and every
-control/safety authority remain open. See
+Current schema v5 preserves that capability transfer and adds authenticated
+simulator-backed live telemetry and retained capture documents. Physical Wi-Fi,
+physical resource acquisition, annotated photography, and every control/safety
+authority remain open. See
 [`M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md`](evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
 
 Exit gate:
@@ -1159,7 +1161,15 @@ only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
 composite and identity-bearing parameter editors, label/domain editing,
-collaboration/conflict handling, and live telemetry event delivery remain open.
+collaboration/conflict handling, and higher-rate triggered acquisition remain
+open.
+Authenticated latest-only telemetry delivery is now connected through a fixed
+retry-safe HTTP poll: it acknowledges only client-admitted evidence, supports
+zero-claim same-subscription worker reattachment, and admits exact events into
+schema-v5 live status and bounded sampled logic lanes. A pushed WebSocket
+transport remains optional future performance work rather than a prerequisite.
+See
+[`M10-AUTHENTICATED-LIVE-TELEMETRY.md`](evidence/M10-AUTHENTICATED-LIVE-TELEMETRY.md).
 The diagnostic path now adds canonical bounded overview and digital-edge
 capture records, exact authenticated session/event/chunk/range bodies, a
 fixed-memory core-0 owner, retry-safe typed browser state, and a deterministic
@@ -1167,15 +1177,15 @@ four-input TinyBee fixture. In-memory and localhost HTTP/HMAC tests cover exact
 identity, loss, mutation retry, and complete range recovery. The capability-
 reconciled interface plot retains its exact cycle cursor, trigger, source,
 quality, and loss facts. This is simulation evidence only; hardware provider
-policies remain unsupported, and physical acquisition/WebSocket/SLogic
-qualification remain open.
+policies remain unsupported, and physical acquisition/SLogic qualification
+remain open.
 The production browser worker now also downloads the complete authenticated
 capability document in bounded ranges, survives one deliberately lost range,
 and admits the independently revalidated board-name-independent explorer into
-the visible live-MCU panel. This establishes the immutable resource context
-needed by later live telemetry; it does not yet connect the subscription or
-capture state machines, render an annotated photograph, or grant a diagnostic
-lease.
+the visible live-MCU panel. That immutable resource context now gates both the
+connected telemetry subscription/event-poll state machine and the connected
+retained-capture state machine. Neither path renders an annotated photograph,
+grants a diagnostic output lease, or creates arm/safety authority.
 The editor now intersects the complete caller-authenticated graph-executor
 capability with the reviewed deployment registry and materializes only exact
 matching resource handles. Its visible offline TinyBee target draft offers

@@ -68,7 +68,7 @@ the `/api/v1/control` path, so a proof cannot be replayed against another route.
 | configuration `0x04xx` | get, validate, commit, rollback |
 | job `0x05xx` | inspect, prepare, commit, confirm, abort, hold, resume, cancel, status |
 | command `0x06xx` | scheduled batch, diagnostic lease/release |
-| telemetry `0x07xx` | subscribe, unsubscribe, event, status |
+| telemetry `0x07xx` | subscribe, unsubscribe, event, status, retry-safe acknowledgement/poll |
 | network `0x08xx` | status, scan, join, leave, recover protected AP |
 | storage `0x09xx` | status, list, begin, put chunk, finalize, read, delete, scrub, explicit provision |
 | health `0x0axx` | bounded health snapshot |
