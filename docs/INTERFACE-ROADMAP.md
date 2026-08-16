@@ -442,10 +442,17 @@ HTTP 401 before second native dispatch, and the worker preserves ambiguity
 while reopening authenticated session authority before status proves the exact
 terminal state. See the [browser abort-duplicate
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md).
-Attended-policy controls, full control/status outage, reordered traffic,
-duplication outside that exact case, faulted or other terminal mixtures,
-broader network/storage faults, background-throttling qualification, and
-physical qualification remain open.
+A bounded complete schedule-operation outage is now qualified after global
+confirmation. Both actors discard exactly 24 schedule requests before
+application while unrelated diagnostic traffic remains live. The worker
+retains last-authoritative facts and requires a wholly successful
+all-participant status sweep before any later schedule mutation; completion is
+accepted only from exact local reports. See the [browser abort/status-outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md).
+Attended-policy controls, indefinite schedule or total endpoint outage,
+authentication/bootstrap loss, reordered traffic, duplication outside that
+exact case, faulted or other terminal mixtures, broader network/storage faults,
+background-throttling qualification, and physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
 uses an all-participant read-only status round and exact retained descriptor
 tokens; it exposes `retained_complete`, preserves local start cycles, carries no

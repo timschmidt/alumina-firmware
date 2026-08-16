@@ -785,13 +785,20 @@ authenticated `JobAbort`, rejects the byte-identical replay with HTTP 401
 before native redispatch, and the browser abandons that pending exchange,
 reopens authenticated session authority, and reconciles through status to
 exact all-participant `aborted`. See the [browser abort-duplicate
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). Full
-control/status outage, reordered traffic, duplication outside that exact
-one-shot case, faulted or other terminal mixtures, broader packet stress,
-background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
-backend, and the physical exit gate remain open; current board packages are
-non-armable. Fresh-owner same-attempt terminal reattachment is now exact and
-bounded: schedule-report V4 retains the
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). A bounded
+complete schedule-operation outage is now closed as well: after both actors
+successfully confirm, each discards exactly 24 schedule mutation/status
+requests while unrelated traffic continues. The worker retains exact facts,
+requires a clean all-participant reconciliation sweep before any later
+mutation, and reaches `completed_after_stop_request` only after both local
+cached actors autonomously complete. See the [browser abort/status-outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). Indefinite
+schedule loss, total endpoint or authentication/bootstrap loss, reordered
+traffic, duplication outside the exact one-shot case, faulted or other terminal
+mixtures, broader packet stress, background-throttling, attended-policy
+controls, HIL runs, a qualified I²S/DMA backend, and the physical exit gate
+remain open; current board packages are non-armable. Fresh-owner same-attempt
+terminal reattachment is now exact and bounded: schedule-report V4 retains the
 boot/descriptor token, the worker polls all actors before any prepare mutation,
 and an exact all-complete set becomes
 `retained_complete` with local cycles but no fabricated UI epoch or new start

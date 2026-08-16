@@ -432,6 +432,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — byte-identical replay of an applied authenticated abort, replay-window 401
   rejection before second native dispatch, and reopened-session status
   reconciliation to exact all-participant abort.
+- [`M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md`](M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md)
+  — bounded post-confirmation loss of every canonical schedule operation on
+  both actors, autonomous local completion, repeated ambiguity retention, and
+  a clean all-participant reconciliation sweep before truthful terminal state.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

@@ -370,9 +370,16 @@ ambiguous first application, spends the failed counter, reopens authenticated
 session authority, reconciles through status, and reaches exact
 all-participant `aborted`. See the
 [abort-duplicate
-evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). General
-reordering, concurrent duplication, and full control/status outage remain
-open.
+evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md).
+The browser is also qualified through a bounded post-confirmation outage of
+every job-schedule mutation and status operation on both simulator actors. Each
+actor discards exactly 24 schedule requests while unrelated diagnostic traffic
+remains live; the worker requires a clean all-participant status sweep before
+any later mutation and reports `completed_after_stop_request` only after both
+locally clocked schedules are exactly complete. See the [abort/status-outage
+evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md).
+Indefinite schedule loss, total endpoint loss, reordering, and concurrent or
+general duplication remain open.
 Physical radio and timing qualification remain closed. The same coordinator
 now consumes canonical first-output
 observations, maps their exact device-cycle bounds back through the boot-scoped

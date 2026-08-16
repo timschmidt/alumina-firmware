@@ -340,9 +340,19 @@ the second native dispatch; the browser then abandons the ambiguous exchange,
 spends its counter, reopens a boot-correlated authenticated session, and uses
 status to recover the exact already-aborted participant state before advancing.
 See the [abort-duplicate
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). Full
-control/status outage, reordered traffic, duplicates outside that one-shot
-exact request boundary, and faulted or other terminal mixtures remain open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-DUPLICATE.md). A bounded
+post-confirmation outage of the complete canonical schedule-operation class is
+now qualified separately. Each actor discards 24 `JobAbort`/`JobStatus`
+requests before authentication or application while unrelated diagnostic
+traffic remains live. Any ambiguous schedule exchange gates later mutation on
+a wholly successful all-participant status sweep; simulator schedule time
+advances independently of polling, and the browser admits
+`completed_after_stop_request` only after both exact local states are
+`Complete`. See the [abort/status-outage
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). An
+indefinite schedule outage, total endpoint or authentication/bootstrap loss,
+reordered traffic, duplicates outside the one-shot exact replay boundary, and
+faulted or other terminal mixtures remain open.
 
 ## Operation after network loss
 
