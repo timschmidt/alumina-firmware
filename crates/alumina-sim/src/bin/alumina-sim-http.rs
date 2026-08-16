@@ -37,6 +37,7 @@ struct ServerOptions {
     drop_operation_request_count: u64,
     drop_operation_response: Option<Operation>,
     duplicate_operation_request: Option<Operation>,
+    replay_response_after_operation: Option<Operation>,
     drop_schedule_after_operation: Option<Operation>,
     drop_schedule_after_operation_count: u64,
     reboot_control_request: Option<u64>,
@@ -59,6 +60,7 @@ impl ServerOptions {
             drop_operation_request_count: 1,
             drop_operation_response: None,
             duplicate_operation_request: None,
+            replay_response_after_operation: None,
             drop_schedule_after_operation: None,
             drop_schedule_after_operation_count: 1,
             reboot_control_request: None,
@@ -133,6 +135,10 @@ impl ServerOptions {
                 "--duplicate-operation-request" => {
                     options.duplicate_operation_request = Some(parse_operation(&value, &argument)?);
                 }
+                "--replay-response-after-operation" => {
+                    options.replay_response_after_operation =
+                        Some(parse_operation(&value, &argument)?);
+                }
                 "--drop-schedule-after-operation" => {
                     options.drop_schedule_after_operation =
                         Some(parse_operation(&value, &argument)?);
@@ -199,6 +205,7 @@ fn print_help() {
          [--drop-operation-request-count N] \
          [--drop-operation-response NAME_OR_WIRE] \
          [--duplicate-operation-request NAME_OR_WIRE] \
+         [--replay-response-after-operation NAME_OR_WIRE] \
          [--drop-schedule-after-operation NAME_OR_WIRE] \
          [--drop-schedule-after-operation-count N] [--reboot-control-request N]"
     );
@@ -313,6 +320,8 @@ struct FaultState {
     operation_request_drops: u64,
     operation_response_drop_completed: bool,
     operation_request_duplicate_completed: bool,
+    stale_response: Option<(Operation, FixtureHttpResponse)>,
+    stale_response_replay_completed: bool,
     schedule_outage_armed: bool,
     schedule_outage_drops: u64,
     rebooted: bool,
@@ -346,6 +355,37 @@ impl FaultState {
         }
         self.operation_request_duplicate_completed = true;
         observed
+    }
+
+    fn arm_stale_response(
+        &mut self,
+        selected: Option<Operation>,
+        observed: Option<Operation>,
+        response: &FixtureHttpResponse,
+    ) -> Option<Operation> {
+        if self.stale_response.is_some()
+            || self.stale_response_replay_completed
+            || selected.is_none()
+            || selected != observed
+        {
+            return None;
+        }
+        let operation = observed?;
+        self.stale_response = Some((operation, response.clone()));
+        Some(operation)
+    }
+
+    fn take_stale_response(
+        &mut self,
+        observed: Option<Operation>,
+    ) -> Option<(Operation, Operation, FixtureHttpResponse)> {
+        let observed = observed?;
+        if self.stale_response_replay_completed || !is_job_schedule_operation(observed) {
+            return None;
+        }
+        let (retained_operation, response) = self.stale_response.take()?;
+        self.stale_response_replay_completed = true;
+        Some((retained_operation, observed, response))
     }
 
     fn arm_schedule_outage(
@@ -512,10 +552,35 @@ fn handle_connection(
     if initial_outage || single_drop || operation_drop {
         return Ok(());
     }
+    if control
+        && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
+        && let Some((retained_operation, observed_operation, stale_response)) =
+            faults.take_stale_response(operation)
+    {
+        response = stale_response;
+        eprintln!(
+            "fault injection: replayed stale response for operation 0x{:04x} in place of applied operation 0x{:04x}",
+            retained_operation.wire_value(),
+            observed_operation.wire_value()
+        );
+    }
     if !options.response_delay_ms.eq(&0) {
         std::thread::sleep(Duration::from_millis(options.response_delay_ms));
     }
     write_response(stream, &response)?;
+    if control
+        && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
+        && let Some(operation) = faults.arm_stale_response(
+            options.replay_response_after_operation,
+            operation,
+            &response,
+        )
+    {
+        eprintln!(
+            "fault injection: retained successful response after operation 0x{:04x} for one stale replay",
+            operation.wire_value()
+        );
+    }
     if control
         && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
         && let Some(operation) =
@@ -853,6 +918,53 @@ mod tests {
             faults.take_operation_request_duplicate(
                 Some(Operation::JobAbort),
                 Some(Operation::JobAbort),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn post_operation_stale_response_is_exact_one_shot_and_schedule_only() {
+        let retained = FixtureHttpResponse {
+            status: 200,
+            reason: "OK",
+            headers: vec![("X-Alumina-Auth-Counter".to_owned(), "17".to_owned())],
+            body: vec![0x05, 0x09, 0xaa],
+        };
+        let mut faults = FaultState::default();
+
+        assert_eq!(
+            faults.arm_stale_response(
+                Some(Operation::JobConfirm),
+                Some(Operation::JobCommit),
+                &retained,
+            ),
+            None
+        );
+        assert!(faults.stale_response.is_none());
+        assert_eq!(
+            faults.arm_stale_response(
+                Some(Operation::JobConfirm),
+                Some(Operation::JobConfirm),
+                &retained,
+            ),
+            Some(Operation::JobConfirm)
+        );
+        assert_eq!(
+            faults.take_stale_response(Some(Operation::ClockHeartbeat)),
+            None
+        );
+        assert_eq!(
+            faults.take_stale_response(Some(Operation::JobAbort)),
+            Some((Operation::JobConfirm, Operation::JobAbort, retained.clone(),))
+        );
+        assert!(faults.stale_response_replay_completed);
+        assert_eq!(faults.take_stale_response(Some(Operation::JobStatus)), None);
+        assert_eq!(
+            faults.arm_stale_response(
+                Some(Operation::JobConfirm),
+                Some(Operation::JobConfirm),
+                &retained,
             ),
             None
         );
