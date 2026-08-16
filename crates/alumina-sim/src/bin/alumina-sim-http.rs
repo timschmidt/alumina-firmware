@@ -37,6 +37,8 @@ struct ServerOptions {
     drop_operation_request_count: u64,
     drop_operation_response: Option<Operation>,
     duplicate_operation_request: Option<Operation>,
+    drop_schedule_after_operation: Option<Operation>,
+    drop_schedule_after_operation_count: u64,
     reboot_control_request: Option<u64>,
 }
 
@@ -57,10 +59,13 @@ impl ServerOptions {
             drop_operation_request_count: 1,
             drop_operation_response: None,
             duplicate_operation_request: None,
+            drop_schedule_after_operation: None,
+            drop_schedule_after_operation_count: 1,
             reboot_control_request: None,
         };
         let mut arguments = std::env::args().skip(1);
         let mut drop_operation_request_count_set = false;
+        let mut drop_schedule_after_operation_count_set = false;
         while let Some(argument) = arguments.next() {
             if argument == "--help" {
                 print_help();
@@ -128,6 +133,14 @@ impl ServerOptions {
                 "--duplicate-operation-request" => {
                     options.duplicate_operation_request = Some(parse_operation(&value, &argument)?);
                 }
+                "--drop-schedule-after-operation" => {
+                    options.drop_schedule_after_operation =
+                        Some(parse_operation(&value, &argument)?);
+                }
+                "--drop-schedule-after-operation-count" => {
+                    options.drop_schedule_after_operation_count = nonzero_u64(&value, &argument)?;
+                    drop_schedule_after_operation_count_set = true;
+                }
                 "--reboot-control-request" => {
                     options.reboot_control_request = Some(nonzero_u64(&value, &argument)?);
                 }
@@ -141,6 +154,14 @@ impl ServerOptions {
         if drop_operation_request_count_set && options.drop_operation_request.is_none() {
             return Err(ServerError::Argument(
                 "--drop-operation-request-count requires --drop-operation-request".to_owned(),
+            ));
+        }
+        if drop_schedule_after_operation_count_set
+            && options.drop_schedule_after_operation.is_none()
+        {
+            return Err(ServerError::Argument(
+                "--drop-schedule-after-operation-count requires --drop-schedule-after-operation"
+                    .to_owned(),
             ));
         }
         Ok(options)
@@ -177,7 +198,9 @@ fn print_help() {
          [--drop-operation-request NAME_OR_WIRE] \
          [--drop-operation-request-count N] \
          [--drop-operation-response NAME_OR_WIRE] \
-         [--duplicate-operation-request NAME_OR_WIRE] [--reboot-control-request N]"
+         [--duplicate-operation-request NAME_OR_WIRE] \
+         [--drop-schedule-after-operation NAME_OR_WIRE] \
+         [--drop-schedule-after-operation-count N] [--reboot-control-request N]"
     );
 }
 
@@ -290,6 +313,8 @@ struct FaultState {
     operation_request_drops: u64,
     operation_response_drop_completed: bool,
     operation_request_duplicate_completed: bool,
+    schedule_outage_armed: bool,
+    schedule_outage_drops: u64,
     rebooted: bool,
 }
 
@@ -321,6 +346,34 @@ impl FaultState {
         }
         self.operation_request_duplicate_completed = true;
         observed
+    }
+
+    fn arm_schedule_outage(
+        &mut self,
+        selected: Option<Operation>,
+        observed: Option<Operation>,
+    ) -> Option<Operation> {
+        if self.schedule_outage_armed || selected.is_none() || selected != observed {
+            return None;
+        }
+        self.schedule_outage_armed = true;
+        observed
+    }
+
+    fn take_schedule_outage_drop(
+        &mut self,
+        selected_count: u64,
+        observed: Option<Operation>,
+    ) -> Option<(u64, Operation)> {
+        let observed = observed?;
+        if !self.schedule_outage_armed
+            || self.schedule_outage_drops >= selected_count
+            || !is_job_schedule_operation(observed)
+        {
+            return None;
+        }
+        self.schedule_outage_drops = self.schedule_outage_drops.saturating_add(1);
+        Some((self.schedule_outage_drops, observed))
     }
 }
 
@@ -373,10 +426,21 @@ fn handle_connection(
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let request = read_request(stream)?;
+    fixture.advance_cached_job(clock.cycle());
     let control = request.method == HttpMethod::Post && request.path == "/api/v1/control";
     let operation = control.then(|| request_operation(&request)).flatten();
     if control {
         faults.control_requests = faults.control_requests.saturating_add(1);
+        if let Some((drop_index, operation)) =
+            faults.take_schedule_outage_drop(options.drop_schedule_after_operation_count, operation)
+        {
+            eprintln!(
+                "fault injection: dropped unapplied schedule request {drop_index}/{} for operation 0x{:04x}",
+                options.drop_schedule_after_operation_count,
+                operation.wire_value()
+            );
+            return Ok(());
+        }
         if let Some(operation) = faults.take_operation_request_drop(
             options.drop_operation_request,
             options.drop_operation_request_count,
@@ -451,7 +515,19 @@ fn handle_connection(
     if !options.response_delay_ms.eq(&0) {
         std::thread::sleep(Duration::from_millis(options.response_delay_ms));
     }
-    write_response(stream, &response)
+    write_response(stream, &response)?;
+    if control
+        && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
+        && let Some(operation) =
+            faults.arm_schedule_outage(options.drop_schedule_after_operation, operation)
+    {
+        eprintln!(
+            "fault injection: armed {}-request schedule outage after operation 0x{:04x}",
+            options.drop_schedule_after_operation_count,
+            operation.wire_value()
+        );
+    }
+    Ok(())
 }
 
 fn request_operation(request: &FixtureHttpRequest) -> Option<Operation> {
@@ -460,6 +536,18 @@ fn request_operation(request: &FixtureHttpRequest) -> Option<Operation> {
     }
     let message = native_message(&request.body)?;
     (message.direction == MessageDirection::Request).then_some(message.operation)
+}
+
+const fn is_job_schedule_operation(operation: Operation) -> bool {
+    matches!(
+        operation,
+        Operation::JobPrepare
+            | Operation::JobStatus
+            | Operation::JobCommit
+            | Operation::JobConfirm
+            | Operation::JobAbort
+            | Operation::JobCancel
+    )
 }
 
 fn native_response_succeeded(response: &FixtureHttpResponse, operation: Operation) -> bool {
@@ -766,6 +854,46 @@ mod tests {
                 Some(Operation::JobAbort),
                 Some(Operation::JobAbort),
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn post_operation_schedule_outage_is_exact_bounded_and_unapplied() {
+        let mut faults = FaultState::default();
+        assert_eq!(
+            faults.arm_schedule_outage(Some(Operation::JobConfirm), Some(Operation::JobCommit),),
+            None
+        );
+        assert!(!faults.schedule_outage_armed);
+        assert_eq!(
+            faults.arm_schedule_outage(Some(Operation::JobConfirm), Some(Operation::JobConfirm),),
+            Some(Operation::JobConfirm)
+        );
+        assert!(faults.schedule_outage_armed);
+        assert_eq!(
+            faults.take_schedule_outage_drop(3, Some(Operation::ClockHeartbeat)),
+            None
+        );
+        assert_eq!(faults.schedule_outage_drops, 0);
+        assert_eq!(
+            faults.take_schedule_outage_drop(3, Some(Operation::JobAbort)),
+            Some((1, Operation::JobAbort))
+        );
+        assert_eq!(
+            faults.take_schedule_outage_drop(3, Some(Operation::JobStatus)),
+            Some((2, Operation::JobStatus))
+        );
+        assert_eq!(
+            faults.take_schedule_outage_drop(3, Some(Operation::JobStatus)),
+            Some((3, Operation::JobStatus))
+        );
+        assert_eq!(
+            faults.take_schedule_outage_drop(3, Some(Operation::JobStatus)),
+            None
+        );
+        assert_eq!(
+            faults.arm_schedule_outage(Some(Operation::JobConfirm), Some(Operation::JobConfirm),),
             None
         );
     }

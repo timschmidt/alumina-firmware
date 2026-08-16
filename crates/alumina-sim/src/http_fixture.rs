@@ -267,6 +267,11 @@ impl ClockHttpFixture {
         self.diagnostics.context()
     }
 
+    /// Advances cached autonomous schedule state outside authenticated job polling.
+    pub fn advance_cached_job(&mut self, now: DeviceCycle) {
+        self.cached_job_service.advance(now);
+    }
+
     /// Reboots into an explicit new nonzero identity and clears replay state.
     ///
     /// # Errors

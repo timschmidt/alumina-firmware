@@ -119,6 +119,13 @@ impl SimulatedCachedJobService {
         self.cache.reboot()
     }
 
+    /// Advances the locally owned cached schedule independently of HTTP job traffic.
+    pub(crate) fn advance(&mut self, now: DeviceCycle) {
+        if let Some(job) = self.job.as_mut() {
+            job.advance(now);
+        }
+    }
+
     pub(crate) fn dispatch(
         &mut self,
         native: NativeRequest<'_>,
@@ -217,9 +224,7 @@ impl SimulatedCachedJobService {
         if native.frame.config_digest != self.active_config {
             return native_response(native, now, StatusCode::Integrity, &[]);
         }
-        if let Some(job) = self.job.as_mut() {
-            job.advance(now);
-        }
+        self.advance(now);
         let status = match native.message.operation {
             Operation::JobPrepare => self.prepare(native.body),
             Operation::JobStatus if native.body.is_empty() => Ok(()),
@@ -903,22 +908,15 @@ mod tests {
             JobScheduleState::Confirmed
         );
 
-        let (_, body) = dispatch(
-            &mut service,
-            FrameKind::Job,
-            Operation::JobStatus,
-            active.digest(),
-            &[],
-            DeviceCycle(4_000_000),
-            34,
-        );
+        service.advance(DeviceCycle(4_000_000));
         assert_eq!(
-            JobStatusReport::decode(&body)
-                .unwrap()
-                .schedule
-                .unwrap()
-                .state,
+            service.job.as_ref().unwrap().schedule.report().state,
             JobScheduleState::Primed
+        );
+        service.advance(DeviceCycle(5_000_000));
+        assert_eq!(
+            service.job.as_ref().unwrap().schedule.report().state,
+            JobScheduleState::Complete
         );
         let (status, body) = dispatch(
             &mut service,
@@ -927,7 +925,7 @@ mod tests {
             active.digest(),
             &[],
             DeviceCycle(5_000_000),
-            35,
+            34,
         );
         assert_eq!(status, StatusCode::Ok);
         let complete = JobStatusReport::decode(&body).unwrap();
@@ -945,7 +943,7 @@ mod tests {
             active.digest(),
             &descriptor.encode::<2>().unwrap(),
             DeviceCycle(5_000_001),
-            36,
+            35,
         );
         assert_eq!(status, StatusCode::Ok);
         assert_eq!(
