@@ -349,10 +349,21 @@ a wholly successful all-participant status sweep; simulator schedule time
 advances independently of polling, and the browser admits
 `completed_after_stop_request` only after both exact local states are
 `Complete`. See the [abort/status-outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). An
-indefinite schedule outage, total endpoint or authentication/bootstrap loss,
-reordered traffic, duplicates outside the one-shot exact replay boundary, and
-faulted or other terminal mixtures remain open.
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). A distinct
+stale-response qualification now retains each actor's valid signed
+`JobConfirm` response and returns it once in place of a later applied schedule
+operation's response. Exact pending-counter checks reject both the substituted
+`JobAbort` response and the substituted reconciliation `JobStatus` response;
+the worker spends each ambiguous request, reopens session authority, and
+requires another complete all-participant status round before reaching exact
+global `Aborted`. See the [abort/stale-response
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md). Production
+job I/O is serialized to one fetch globally and one pending request per
+session, so this is deliberately not described as arbitrary packet reordering.
+An indefinite schedule outage, total endpoint or authentication/bootstrap
+loss, arbitrary concurrent reordering or substitution beyond this one-shot
+boundary, duplicates outside the exact replay boundary, and faulted or other
+terminal mixtures remain open.
 
 ## Operation after network loss
 

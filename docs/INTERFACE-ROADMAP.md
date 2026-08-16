@@ -448,10 +448,20 @@ application while unrelated diagnostic traffic remains live. The worker
 retains last-authoritative facts and requires a wholly successful
 all-participant status sweep before any later schedule mutation; completion is
 accepted only from exact local reports. See the [browser abort/status-outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md).
-Attended-policy controls, indefinite schedule or total endpoint outage,
-authentication/bootstrap loss, reordered traffic, duplication outside that
-exact case, faulted or other terminal mixtures, broader network/storage faults,
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). A one-shot
+stale-response substitution is now qualified independently. Each simulator
+retains a valid signed confirmation response, applies the next schedule
+operation, and returns the old response; exact counter mismatch handling rejects
+it without consuming pending state. The worker then spends the ambiguous
+request, reopens session authority, and requires another whole-participant
+status sweep. The run covers substitution for both `JobAbort` and the
+reconciliation `JobStatus`; see the [browser abort/stale-response
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md). Cached-job
+fetch ownership is serial, so arbitrary concurrent packet or response
+reordering is not claimed. Attended-policy controls, indefinite schedule or
+total endpoint outage, authentication/bootstrap loss, broader
+reordering/substitution, duplication outside the exact one-shot cases, faulted
+or other terminal mixtures, broader network/storage faults,
 background-throttling qualification, and physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
 uses an all-participant read-only status round and exact retained descriptor

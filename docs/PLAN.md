@@ -792,12 +792,23 @@ requests while unrelated traffic continues. The worker retains exact facts,
 requires a clean all-participant reconciliation sweep before any later
 mutation, and reaches `completed_after_stop_request` only after both local
 cached actors autonomously complete. See the [browser abort/status-outage
-evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). Indefinite
-schedule loss, total endpoint or authentication/bootstrap loss, reordered
-traffic, duplication outside the exact one-shot case, faulted or other terminal
-mixtures, broader packet stress, background-throttling, attended-policy
-controls, HIL runs, a qualified I²S/DMA backend, and the physical exit gate
-remain open; current board packages are non-armable. Fresh-owner same-attempt
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STATUS-OUTAGE.md). A one-shot
+stale signed-response substitution is now closed separately: each actor first
+returns and retains a valid `JobConfirm` response, applies a later schedule
+operation, and substitutes the old response. The browser rejects the old
+counter before native acceptance, spends the ambiguous request, reopens
+session authority, and requires a clean all-participant status sweep; the run
+exercises both an applied `JobAbort` and an applied reconciliation `JobStatus`
+before exact global `aborted`. See the [browser abort/stale-response
+evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md). Because the
+production owner serializes job fetches and permits only one pending request
+per session, arbitrary concurrent response reordering remains outside this
+claim. Indefinite schedule loss, total endpoint or authentication/bootstrap
+loss, broader reordering/substitution, duplication outside the exact one-shot
+cases, faulted or other terminal mixtures, broader packet stress,
+background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
+backend, and the physical exit gate remain open; current board packages are
+non-armable. Fresh-owner same-attempt
 terminal reattachment is now exact and bounded: schedule-report V4 retains the
 boot/descriptor token, the worker polls all actors before any prepare mutation,
 and an exact all-complete set becomes
