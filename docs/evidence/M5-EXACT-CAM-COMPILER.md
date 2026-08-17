@@ -9,7 +9,7 @@ compiler release, browser-workflow qualification, or hardware qualification.
 
 The coordinated `alumina-interface` checkpoint is commit
 `ed512177b200c3737857e1b77bbd67f471197539`. It consumes the real
-`alumina-machine-ir` crate from this `aluminafw` tree at
+`alumina-machine-ir` crate from this `alumina-firmware` tree at
 `9d5fb750a0408c5f9bfb7151d809f43f4e67eecb` and has no copied UI-side machine
 schema.
 

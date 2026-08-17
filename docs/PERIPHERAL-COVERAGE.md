@@ -24,7 +24,7 @@ or arbitrary third-party wire protocol is production-ready.
 At the pinned toolchain revision, `xtask` should combine:
 
 - `esp-metadata`/`esp-hal` chip and peripheral metadata;
-- aluminafw driver registrations and stability annotations;
+- alumina-firmware driver registrations and stability annotations;
 - board routing, fitted devices, reserved pins, and electrical constraints;
 - selected feature flags and memory/runtime requirements;
 - registered protocol adapters and graph-node schemas; and

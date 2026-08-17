@@ -14,13 +14,13 @@ machine configuration.
 
 The reviewed implementation commits are:
 
-- `aluminafw` `5fa19688ccff3ab748c6b449f916fa07ab51407e`
+- `alumina-firmware` `5fa19688ccff3ab748c6b449f916fa07ab51407e`
   (`Journal durable graph selections`);
-- `aluminafw` `722b91d1f348a208280a9d62381a3061bc721ab0`
+- `alumina-firmware` `722b91d1f348a208280a9d62381a3061bc721ab0`
   (`Recover durable graph selections`);
-- `aluminafw` `1616c26a48ce8ca4b366c8188a16904ea5c1143c`
+- `alumina-firmware` `1616c26a48ce8ca4b366c8188a16904ea5c1143c`
   (`Keep classic ESP32 pre-init calls in range`);
-- `aluminafw` `e539f10766c0cb1ea7c90856513aa1acfc87d657`
+- `alumina-firmware` `e539f10766c0cb1ea7c90856513aa1acfc87d657`
   (`Replay durable graph lifecycle in simulation`); and
 - `alumina-interface` `01396472d87728dbcfc1cbb6aae6efa8211687b7`
   (`Reconcile durable graph activation`).

@@ -118,7 +118,7 @@ same recorded content fingerprint before and after snapshot construction:
 3748aea9d177e5adbe4d9f4e5d66e4c1f4e7e74a14c9e62be8f45f3fdcd631a5
 ```
 
-After the firmware implementation was sealed, only `aluminafw` and
+After the firmware implementation was sealed, only `alumina-firmware` and
 `alumina-interface` were resynchronized into that layout, excluding their
 build targets. The frozen Hyper sources were not recopied. All final interface
 commands below therefore used the coordinated commits against one unchanged

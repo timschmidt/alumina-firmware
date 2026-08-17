@@ -7,7 +7,7 @@ Date: 2026-08-12
 This checkpoint extends the canonical in-memory graph workspace with bounded
 node lifecycle and exact scalar parameter editing. The implementation is
 `alumina-interface` commit
-`0b3375c6c11c1abae680864e59edb27e5d733536`, against preceding `aluminafw`
+`0b3375c6c11c1abae680864e59edb27e5d733536`, against preceding `alumina-firmware`
 evidence commit `0e17f5311108c3e8fa27c5581f23c7b7c473c39b`. It changes no
 firmware source, target image, board configuration, workstation network
 configuration, or physical I/O.

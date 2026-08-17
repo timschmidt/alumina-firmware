@@ -18,7 +18,7 @@ dependency or compatibility path. Alumina Interface remains unchanged at
 
 This slice deliberately has no Hyper/CSGRS input. `cargo metadata --no-deps`
 reports 35 firmware workspace packages, all with manifests below the
-`aluminafw` repository, and every declared dependency path is repository-local.
+`alumina-firmware` repository, and every declared dependency path is repository-local.
 Consequently continued Hypercurve editing cannot change these firmware build
 results. During this work Hypercurve remained at HEAD
 `3ef8689ff2c33ad9fd0c9eb7fbdf9fa015fc395c`, while its independent tracked

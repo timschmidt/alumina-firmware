@@ -15,7 +15,7 @@ feasibility. Alumina Interface commit
 `b282018fbc810ba6fef885da9b6f8bbc580fac24` enables positive caller ceilings
 only for lossless source-line pairs and lowers a positive G1 fixture through
 the production stepper preflight. The coordinated firmware, cache, executor,
-and safety baseline before this evidence record is `aluminafw` commit
+and safety baseline before this evidence record is `alumina-firmware` commit
 `4adbad85299491eca7711de254dd12429bfcf00c`.
 
 The final native/WASM gates and optimized browser build completed against
@@ -133,7 +133,7 @@ wasm-tools validate dist/alumina-interface_bg.wasm
 gzip -t dist/alumina-interface_bg.wasm.gz
 brotli -t dist/alumina-interface_bg.wasm.br
 
-# unchanged aluminafw portable baseline
+# unchanged alumina-firmware portable baseline
 cargo test --locked --offline
 ```
 

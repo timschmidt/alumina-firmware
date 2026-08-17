@@ -13,7 +13,7 @@ fixed opcodes in those live tasks or claim a physical graph side effect.
 
 The reviewed implementation commits are:
 
-- `aluminafw`
+- `alumina-firmware`
   `cc216f259105df287cee5a6f52d9abf1b6f095b7`
   (`Deploy authenticated graph packages on both cores`); and
 - `alumina-interface`

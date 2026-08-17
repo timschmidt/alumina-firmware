@@ -8,7 +8,7 @@ flowchart LR
     HP --> MIR[Certified global job + per-MCU IR]
     UI[Alumina interface / authoritative WASM compiler] <-->|HTTP + WebSocket over Wi-Fi| SVC
 
-    subgraph ESP32[aluminafw on a dual-core ESP32]
+    subgraph ESP32[alumina-firmware on a dual-core ESP32]
         subgraph C0[Core 0 — service executor]
             SVC[Wi-Fi / network / web API]
             BG[Display, touch, keyboard, GPS, LoRa, SD, idle]
@@ -291,7 +291,7 @@ ledger explains the rejection.
 ## Proposed workspace
 
 ```text
-aluminafw/
+alumina-firmware/
 ├── Cargo.toml                   # virtual workspace, shared lints/dependencies
 ├── rust-toolchain.toml
 ├── LICENSE-MIT
@@ -645,7 +645,7 @@ EPD redraws. Retain that pattern on core 0.
 - EPD refresh is coalesced and deprioritized behind network admission.
 - GPS and LoRa can publish timestamps/telemetry, but do not acquire motion-core
   resources unless a board profile explicitly assigns a real-time function.
-- Driver APIs remain usable outside `aluminafw`; application policy belongs in
+- Driver APIs remain usable outside `alumina-firmware`; application policy belongs in
   adapter tasks, not imported protocol drivers.
 
 ## Safety kernel

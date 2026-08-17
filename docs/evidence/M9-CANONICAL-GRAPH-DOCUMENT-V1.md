@@ -13,7 +13,7 @@ The coordinated implementation points are:
 
 - `alumina-interface` commit
   `6c07c2f729d9511faa8e973102beed637543a107`;
-- `aluminafw` protocol/storage source at
+- `alumina-firmware` protocol/storage source at
   `95df11968ecd28f7e1915258c42bc060556c2439`; and
 - the current sibling CSGRS/Hyper repositories selected by local path and
   checked by the interface source-policy audit. In particular, exact graph

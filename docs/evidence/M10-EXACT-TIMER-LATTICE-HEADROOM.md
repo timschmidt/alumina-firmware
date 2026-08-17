@@ -156,7 +156,7 @@ project control.
 The following completed offline:
 
 ```sh
-# aluminafw timing classification and portable baseline
+# alumina-firmware timing classification and portable baseline
 cargo test -p alumina-motion --locked --offline
 cargo test --locked --offline
 cargo fmt --all -- --check

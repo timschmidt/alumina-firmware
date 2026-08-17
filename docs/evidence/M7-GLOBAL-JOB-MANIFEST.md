@@ -9,7 +9,7 @@ transport, physical synchronization, armability, or motion-output evidence.
 
 ## Source identity
 
-The firmware schema checkpoint is `aluminafw`
+The firmware schema checkpoint is `alumina-firmware`
 `eecbccd85d1cd424ed33873f044bdb3d76a90138`. It adds canonical allocation-free
 `ALMJMF01` construction and decode to `alumina-job`. The coordinated interface
 checkpoint is `alumina-interface`
@@ -125,7 +125,7 @@ gzip -t dist/index.html.gz dist/alumina-interface.js.gz \
 brotli -t dist/alumina-interface_bg.wasm.br
 ```
 
-Run from `aluminafw` at the firmware revision above:
+Run from `alumina-firmware` at the firmware revision above:
 
 ```console
 cargo fmt --all -- --check

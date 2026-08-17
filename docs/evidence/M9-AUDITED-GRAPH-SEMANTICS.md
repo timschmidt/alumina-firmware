@@ -14,7 +14,7 @@ The coordinated source points are:
 - `alumina-interface` commit
   `9f8462ada9a9fd8e8df4d849115cdb9a1bc52c05`;
 - the preceding canonical document checkpoint at interface commit `6c07c2f`;
-- `aluminafw` protocol/storage source at `089cd65`; and
+- `alumina-firmware` protocol/storage source at `089cd65`; and
 - the current sibling CSGRS/Hyper stack selected by the interface's local-path
   source audit. No published legacy CSGRS release or GPL-family source is used.
 

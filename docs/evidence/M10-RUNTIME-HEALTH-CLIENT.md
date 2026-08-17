@@ -4,7 +4,7 @@
 
 The coordinated boundary consists of:
 
-- `aluminafw` implementation
+- `alumina-firmware` implementation
   `12e2e6ff1ac4a541b0db11f63321ea4e02585cf2`, which produces the fixed
   passive health response; and
 - `alumina-interface` implementation

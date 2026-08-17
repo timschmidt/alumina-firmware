@@ -7,7 +7,7 @@ Date: 2026-08-12
 This checkpoint adds the first reusable component/front-panel authoring
 boundary without changing `ALGR` V1, `ALGW` V1, firmware graph IR, or any
 firmware source. The implementation is `alumina-interface` commit
-`d326bd42dac1c608e1594f0f9069a0b575fdd2e9`, against preceding `aluminafw`
+`d326bd42dac1c608e1594f0f9069a0b575fdd2e9`, against preceding `alumina-firmware`
 evidence commit `fb5f0cdeb2fa0fc8cf46084a2f1b8027edd4044b`.
 
 The interface continued to compile against the checked-out workspace stack:

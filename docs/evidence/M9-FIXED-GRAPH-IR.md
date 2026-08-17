@@ -6,12 +6,12 @@ Date: 2026-08-12
 
 This checkpoint establishes the first complete browser-compiler-to-portable-
 firmware boundary for a deliberately tiny deployed graph subset. It adds a
-fixed `no_std` package and independent decoder in `aluminafw`, then lowers an
+fixed `no_std` package and independent decoder in `alumina-firmware`, then lowers an
 audited structural graph into those exact bytes in `alumina-interface`.
 
 The two reviewed commits are:
 
-- `aluminafw`
+- `alumina-firmware`
   `a5a56bd7e34d8f4948f058e1f2fec7cf3ddcf906` (`Define fixed deployed graph IR`);
   and
 - `alumina-interface`
@@ -173,6 +173,6 @@ No physical I/O, timing, motion, synchronization, FOC, or safety claim is made.
 The new firmware crate is independently authored under `MIT OR Apache-2.0` and
 depends only on the existing local `alumina-protocol` crate and permissively
 licensed `sha2`. The interface source audit now requires `alumina-graph-ir` to
-resolve from the same sibling `aluminafw` checkout and confirms the current
+resolve from the same sibling `alumina-firmware` checkout and confirms the current
 native/WASM inventory. No GPL-family source, asset, or dependency was added or
 consulted.

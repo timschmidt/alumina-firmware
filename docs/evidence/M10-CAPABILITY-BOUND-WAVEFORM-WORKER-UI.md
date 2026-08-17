@@ -15,7 +15,7 @@ machine-arm, and safety claim remains closed.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` `c4e8e94cc6989afce73bd59c2322c104ccf0a77b`;
+- `alumina-firmware` `c4e8e94cc6989afce73bd59c2322c104ccf0a77b`;
 - `alumina-interface` `8444d3a073cb789c2edeb4920f688d03e245e56a`.
 
 ## Narrow simulator provider seam
@@ -199,7 +199,7 @@ At the commits above:
 
 - package-scoped `cargo fmt` and repository `git diff --check`: passed without
   formatting sibling Hyper repositories;
-- `cargo test --locked --offline` in `aluminafw`: 540 tests passed, including
+- `cargo test --locked --offline` in `alumina-firmware`: 540 tests passed, including
   57 `alumina-sim` tests;
 - firmware default-member warnings-denied Clippy and rustdoc: passed;
 - all five board descriptors validated;

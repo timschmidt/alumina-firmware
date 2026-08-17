@@ -7,7 +7,7 @@ Date: 2026-08-12
 This checkpoint extends the bounded `HostExact` graph simulator with a small,
 reviewed control palette and uses it to construct a visible multi-rate discrete
 PID plus safety permit interlock. The implementation is `alumina-interface`
-commit `e35f57b853f667092a4a04122075ea2824dde38c`, against `aluminafw`
+commit `e35f57b853f667092a4a04122075ea2824dde38c`, against `alumina-firmware`
 `75af1ca1b78834dcc18f1e18e1a24eff32d2a856`. It changes no firmware source,
 target image, board configuration, network configuration, or physical I/O.
 

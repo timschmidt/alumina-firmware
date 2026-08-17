@@ -160,7 +160,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
 }
 
 fn print_help() {
-    println!("aluminafw repository tasks");
+    println!("alumina-firmware repository tasks");
     println!();
     println!("  cargo xtask board list");
     println!("  cargo xtask board check <board-id>");
@@ -328,7 +328,7 @@ fn validate_board(board: &Board) -> Result<(), String> {
     }
     if board.cores < 2 {
         return Err(format!(
-            "{}: `{}` has {} core(s); aluminafw requires two",
+            "{}: `{}` has {} core(s); alumina-firmware requires two",
             board.source.display(),
             board.id,
             board.cores

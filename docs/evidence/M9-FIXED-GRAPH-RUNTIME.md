@@ -13,7 +13,7 @@ resource operation.
 
 The reviewed commits are:
 
-- `aluminafw`
+- `alumina-firmware`
   `d45939c6f20fd5244e46d7a9aaaa528614804095`
   (`Execute fixed graph IR in preallocated runtime`); and
 - `alumina-interface`

@@ -7,7 +7,7 @@ started_utc = "REPLACE"
 operator = "REPLACE"
 reviewer = "REPLACE"
 disposition = "inconclusive"
-aluminafw_commit = "0000000000000000000000000000000000000000"
+alumina-firmware_commit = "0000000000000000000000000000000000000000"
 
 board_id = "mks-tinybee-v1"
 pcb_marking = "MKS TinyBee v1.0"

@@ -14,7 +14,7 @@ remained untouched.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` commit `0796303`;
+- `alumina-firmware` commit `0796303`;
 - `alumina-interface` commit `b4310e7`.
 
 ## Replacement contract

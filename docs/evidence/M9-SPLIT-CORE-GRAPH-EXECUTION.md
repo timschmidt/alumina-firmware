@@ -13,11 +13,11 @@ reconcile an exact stop before the shared bridge can be reused.
 
 The reviewed implementation commits are:
 
-- `aluminafw` `a14786b517fc9b326dc25e5bcb65eb6d8a82c461`
+- `alumina-firmware` `a14786b517fc9b326dc25e5bcb65eb6d8a82c461`
   (`Add reloadable split-core graph actors`);
-- `aluminafw` `64739e92c5e52d8a193b37e29ea69267125bc360`
+- `alumina-firmware` `64739e92c5e52d8a193b37e29ea69267125bc360`
   (`Install graph actors in split-core firmware`);
-- `aluminafw` `64fcfacfce947b31418973980309975048bc0345`
+- `alumina-firmware` `64fcfacfce947b31418973980309975048bc0345`
   (`Schedule exact split-core graph runs`); and
 - `alumina-interface` `1bcdbaebbb7dac9bbc0a945aa54be317fe55670d`
   (`Drive exact graph runs from the browser`).

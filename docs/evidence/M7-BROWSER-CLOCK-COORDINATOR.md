@@ -12,7 +12,7 @@ qualification.
 
 The coordinated source checkpoints are:
 
-- `aluminafw` clock contract commit `3d7671b`;
+- `alumina-firmware` clock contract commit `3d7671b`;
 - `alumina-interface` coordinator commit `003bafa`, operator-fixture commit
   `4f467c4`, and live-worker commit `84b3b97`; and
 - the current sibling CSGRS/Hyper workspace selected by the interface lockfile
@@ -154,7 +154,7 @@ release, WASM validation, and compression integrity all pass.
 | `index.html` | 1,295 | `285e1728baa5b59b2d5b12b6ae42e5d89a6e7223238f50ecedcfa226de2f3d68` |
 | `Cargo.lock` | - | `30d1bc8c99384ec1b54e073b96587b932fcc842143fe12c844bb3dd041b50363` |
 
-From `aluminafw`:
+From `alumina-firmware`:
 
 ```console
 cargo fmt --all -- --check

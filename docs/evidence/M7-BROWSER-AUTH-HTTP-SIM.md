@@ -11,7 +11,7 @@ motion, process-energy, or safety qualification.
 
 The coordinated source checkpoints are:
 
-- `aluminafw` simulator commit `ba888db`;
+- `alumina-firmware` simulator commit `ba888db`;
 - `alumina-interface` worker/harness commit `0e0a53e`; and
 - the current sibling CSGRS/Hyper workspace resolved by the interface lockfile
   and source-policy audit. No published legacy CSGRS release is used.
@@ -86,7 +86,7 @@ chromium-browser --headless=new --disable-gpu --no-sandbox \
   http://127.0.0.1:8097/tests/browser/worker-clock-harness.html
 ```
 
-Run one simulator case at a time from `aluminafw`, restarting it between cases:
+Run one simulator case at a time from `alumina-firmware`, restarting it between cases:
 
 ```console
 cargo run --locked --offline -p alumina-sim --bin alumina-sim-http
@@ -119,7 +119,7 @@ declared expectation.
 
 ## Reproduced checks
 
-From `aluminafw`:
+From `alumina-firmware`:
 
 ```console
 cargo fmt --all -- --check

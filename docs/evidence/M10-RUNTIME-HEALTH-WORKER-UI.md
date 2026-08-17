@@ -12,7 +12,7 @@ physical MCU, radio, output, motion, and safety claim remains closed.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` `db623eb3b6dbd7566e47c7fd7e4f4e14d8203d25`;
+- `alumina-firmware` `db623eb3b6dbd7566e47c7fd7e4f4e14d8203d25`;
 - `alumina-interface` `6df1b5bab8a4d652a75f643a4a1e6daf3310a716`.
 
 ## Worker contract
@@ -135,7 +135,7 @@ worker events rather than reading application pixels.
 
 At the checkpoints above:
 
-- `cargo test --locked --offline` in `aluminafw`: 538 tests passed, including
+- `cargo test --locked --offline` in `alumina-firmware`: 538 tests passed, including
   55 `alumina-sim` tests;
 - `cargo clippy --all-targets --locked --offline -- -D warnings`: passed;
 - `cargo test --workspace --all-targets --locked --offline` in

@@ -12,7 +12,7 @@ motors, motor power, and every physical output/safety path remained untouched.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` protocol commit `a02a877`; and
+- `alumina-firmware` protocol commit `a02a877`; and
 - `alumina-interface` implementation/qualification commit `c7fda5b`.
 
 The interface resolved the actively edited sibling CSGRS/Hyper workspace
@@ -91,7 +91,7 @@ claim; the phase sequence alone is only browser-visible corroboration.
 Representative commands were:
 
 ```console
-# aluminafw terminals
+# alumina-firmware terminals
 target/debug/alumina-sim-http --bind 127.0.0.1:8098 \
   --device-id 414c554d2d53494d3a54494e59424545
 target/debug/alumina-sim-http --bind 127.0.0.1:8099 \

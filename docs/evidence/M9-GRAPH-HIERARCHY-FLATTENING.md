@@ -7,7 +7,7 @@ Date: 2026-08-12
 This checkpoint makes the preceding canonical component packages reusable as
 collapsed authoring instances and deterministically lowers them back to an
 ordinary graph workspace. The implementation is `alumina-interface` commit
-`51fc8e1ef107a6b65de812803e3c20f3e80dab28`, against preceding `aluminafw`
+`51fc8e1ef107a6b65de812803e3c20f3e80dab28`, against preceding `alumina-firmware`
 evidence commit `59ec9c3`. It changes no firmware source or wire format.
 
 The build continued to use the checked-out sibling stack: CSGRS

@@ -126,7 +126,7 @@ electrical behavior.
 
 ## Reproducible verification
 
-Run from the `aluminafw` repository at the implementation commit:
+Run from the `alumina-firmware` repository at the implementation commit:
 
 ```sh
 cargo fmt --all -- --check

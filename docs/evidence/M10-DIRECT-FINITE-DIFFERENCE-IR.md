@@ -142,7 +142,7 @@ transactions, and the expected terminal block identity.
 The following completed offline:
 
 ```sh
-# aluminafw at ebe860bcbeae2fb5c9fb6680e43e95073a379356
+# alumina-firmware at ebe860bcbeae2fb5c9fb6680e43e95073a379356
 cargo fmt --all -- --check
 cargo test --locked --offline
 cargo clippy --all-targets --locked --offline -- -D warnings

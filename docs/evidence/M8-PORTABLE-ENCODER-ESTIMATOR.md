@@ -15,7 +15,7 @@ documents this boundary. Alumina Interface is unchanged and clean at
 
 This checkpoint has no Hyper/CSGRS build input. `cargo metadata --no-deps`
 reports 35 firmware workspace packages, and every manifest path is beneath the
-`aluminafw` repository. No manifest, lockfile, configuration wire version, or
+`alumina-firmware` repository. No manifest, lockfile, configuration wire version, or
 dependency policy changed. Hypercurve is an intentionally moving sibling
 worktree; this work did not edit, format, reset, pin, or otherwise constrain it,
 and no transient Hypercurve result was admitted into firmware evidence.

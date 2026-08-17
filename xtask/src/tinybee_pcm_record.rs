@@ -38,7 +38,7 @@ const FIELDS: &[&str] = &[
     "operator",
     "reviewer",
     "disposition",
-    "aluminafw_commit",
+    "alumina-firmware_commit",
     "board_id",
     "pcb_marking",
     "fixture_serial",
@@ -153,7 +153,7 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<TinyBeePcmRunSummary,
     if !matches!(disposition.as_str(), "pass" | "fail" | "inconclusive") {
         return Err(record.error("disposition", "must be pass, fail, or inconclusive"));
     }
-    require_hex(&record, "aluminafw_commit", 40)?;
+    require_hex(&record, "alumina-firmware_commit", 40)?;
     if record.string("board_id")? != BOARD_ID {
         return Err(record.error("board_id", "does not select the 8 MiB primary package"));
     }
@@ -662,7 +662,7 @@ mod tests {
             ("operator", quoted("operator")),
             ("reviewer", quoted("reviewer")),
             ("disposition", quoted("pass")),
-            ("aluminafw_commit", quoted(&"1".repeat(40))),
+            ("alumina-firmware_commit", quoted(&"1".repeat(40))),
             ("board_id", quoted(BOARD_ID)),
             ("pcb_marking", quoted("MKS TinyBee v1.0")),
             ("fixture_serial", quoted("tinybee-fixture")),

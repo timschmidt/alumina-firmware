@@ -7,7 +7,7 @@ Date: 2026-08-12
 This checkpoint adds the first canonical editing envelope around an exact graph
 and uses it for bounded native/WASM placement and typed-wire editing. The
 implementation is `alumina-interface` commit
-`e5511fcd630dd038afdfd298130d0bea2776d379`, against preceding `aluminafw`
+`e5511fcd630dd038afdfd298130d0bea2776d379`, against preceding `alumina-firmware`
 evidence commit `5e190527e8b412674e4ee6ac4337b25975e5ff5d`. It changes no
 firmware source, target image, board configuration, workstation network
 configuration, or physical I/O.

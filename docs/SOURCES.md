@@ -224,7 +224,7 @@ code cannot override those revision-specific hardware facts.
   to remain serviceable while flash cache is unavailable.
 
 These IDF documents describe the underlying ESP32 hardware/cache behavior even
-though aluminafw will not use ESP-IDF services.
+though alumina-firmware will not use ESP-IDF services.
 
 ## Logic-analyzer fixture
 

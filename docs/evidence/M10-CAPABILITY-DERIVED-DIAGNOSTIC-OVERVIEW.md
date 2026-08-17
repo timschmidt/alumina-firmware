@@ -10,7 +10,7 @@ compatibility interface.
 
 The reviewed source commits are:
 
-- `aluminafw`:
+- `alumina-firmware`:
   `bb7c59a02a0cb1e7a1ab4511e6fa1efe3f89d3dc`
 - `alumina-interface`:
   `9f7befe1fc363937ccfd7500ae35b51b7e785bf7`
@@ -136,7 +136,7 @@ temporary browser profile was removed.
 At the source commits above:
 
 - explicit-file Rustfmt checks and repository `git diff --check`: passed;
-- `cargo test --locked --offline` in `aluminafw`: 548 tests passed;
+- `cargo test --locked --offline` in `alumina-firmware`: 548 tests passed;
 - firmware portable warnings-denied Clippy and no-dependency warnings-denied
   rustdoc: passed;
 - hostile capability tests reject reserved bytes, absent-with-facts,

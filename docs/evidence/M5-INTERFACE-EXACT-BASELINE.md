@@ -12,7 +12,7 @@ greenfield native/browser workspace at commit
 `640e9987414eb3eb02f70a3e42ee9c13ce31e4e5` and adds the checked native
 Hypermesh adapter to Hypergraphics at commit
 `b7f197dfe8ddac5112a4411db33815598905f973`. It consumes the real protocol and
-machine-IR crates from the sibling `aluminafw` tree at
+machine-IR crates from the sibling `alumina-firmware` tree at
 `188f212d6f838cacfa103fb2f82300b4b5523ea2`.
 
 CSGRS is the sibling working tree at

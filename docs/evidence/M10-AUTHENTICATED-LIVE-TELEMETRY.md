@@ -14,7 +14,7 @@ timing, output, motor, and safety claim remains closed.
 
 The coordinated source checkpoints are:
 
-- `aluminafw` `49df459d5a33e13d4f40955e37615b7557c01b22`;
+- `alumina-firmware` `49df459d5a33e13d4f40955e37615b7557c01b22`;
 - `alumina-interface` `c94f4c1d8565420fcd081c76ae752a59f0de4209`.
 
 ## Canonical retry-safe poll
@@ -154,7 +154,7 @@ At the source commits above:
 
 - package-scoped `cargo fmt` and repository `git diff --check`: passed without
   formatting sibling Hyper repositories;
-- `cargo test --locked --offline` in `aluminafw`: 541 tests passed, including 58
+- `cargo test --locked --offline` in `alumina-firmware`: 541 tests passed, including 58
   `alumina-sim` tests;
 - firmware warnings-denied Clippy and rustdoc with dependencies excluded from
   the warning policy: passed;

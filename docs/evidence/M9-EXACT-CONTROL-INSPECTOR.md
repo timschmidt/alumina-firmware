@@ -8,7 +8,7 @@ This checkpoint makes the existing representative `HostExact` control graph
 visible in the real native/browser application without duplicating its
 authority in UI code. The implementation is `alumina-interface` commit
 `bec1f96a42be82fe9a1fa3df4e2f61188d124440`, against the preceding
-`aluminafw` evidence commit
+`alumina-firmware` evidence commit
 `6924a0db2bc26d33ed2040933387a34211bf869c`. It changes no firmware source,
 target image, board configuration, workstation network configuration, or
 physical I/O.

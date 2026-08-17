@@ -15,7 +15,7 @@ TinyBee V1.0, workstation WLAN, GPIO, motors, motor power, and every physical
 output or safety path remained untouched.
 
 The implementation checkpoint is `alumina-interface` commit `ae5ed87`. No
-`aluminafw` source change was required; the existing authenticated simulator at
+`alumina-firmware` source change was required; the existing authenticated simulator at
 checkpoint `fe93c24` already implemented terminal-only job replacement and
 canonical cancellation. The interface resolved the actively edited sibling
 CSGRS/Hyper workspace directly. No published legacy CSGRS release was used and

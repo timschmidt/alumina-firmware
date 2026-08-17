@@ -172,7 +172,7 @@ The following completed offline for the committed Alumina code and isolated
 source graph above:
 
 ```sh
-# aluminafw code commit da60adc9a07eab678aed0f0b93cd57c1051ab650
+# alumina-firmware code commit da60adc9a07eab678aed0f0b93cd57c1051ab650
 cargo fmt --all -- --check
 cargo test --locked --offline
 cargo clippy --all-targets --locked --offline -- -D warnings

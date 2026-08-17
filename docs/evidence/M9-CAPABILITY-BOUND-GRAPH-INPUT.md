@@ -11,8 +11,8 @@ network, or arbitrary-code authority.
 
 The reviewed implementation commits are:
 
-- `aluminafw` `772cea7` (`Publish exact graph executor capabilities`);
-- `aluminafw` `e64671f6fd692d8905c9540c2764d83905149d2c`
+- `alumina-firmware` `772cea7` (`Publish exact graph executor capabilities`);
+- `alumina-firmware` `e64671f6fd692d8905c9540c2764d83905149d2c`
   (`Admit capability-bound graph safety inputs`); and
 - `alumina-interface` `9088e9ceb5d7dae428412dc129c530b67d213cb0`
   (`Lower capability-bound graph inputs`).

@@ -17,7 +17,7 @@ schema surfaces and deliberately adds no compatibility path.
 
 The firmware workspace remains isolated from CSGRS and the Hyper stack.
 `cargo metadata --no-deps` reports 35 packages, with every manifest beneath
-`aluminafw`; neither firmware manifest nor `Cargo.lock` changed in this
+`alumina-firmware`; neither firmware manifest nor `Cargo.lock` changed in this
 checkpoint. The browser continues to use the current local sibling Hyper stack
 as its source authority.
 

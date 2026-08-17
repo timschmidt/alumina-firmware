@@ -15,7 +15,7 @@ power, and every physical output or safety path remained untouched.
 
 The implementation checkpoints are:
 
-- `aluminafw` pre-application operation selector commit `bf34d4f`; and
+- `alumina-firmware` pre-application operation selector commit `bf34d4f`; and
 - `alumina-interface` native and Chromium qualification commit `0675bee`.
 
 The interface resolved the actively edited sibling CSGRS/Hyper workspace
@@ -114,7 +114,7 @@ epoch was `64,995,600,002 ns`, mapping to local cycles `112,615,587` and
 Representative commands were:
 
 ```console
-# two aluminafw terminals
+# two alumina-firmware terminals
 target/debug/alumina-sim-http --bind 127.0.0.1:8098 \
   --device-id 414c554d2d53494d3a54494e59424545 \
   --drop-operation-request job-abort
@@ -132,7 +132,7 @@ node tests/browser/read-cached-job-result.mjs 9224 \
 The following passed on the recorded source:
 
 - `cargo test --locked --offline` and warnings-denied all-target Clippy over
-  `aluminafw` portable default members;
+  `alumina-firmware` portable default members;
 - the focused simulator selector tests and package-scoped formatting;
 - `cargo test --workspace --locked --offline` in `alumina-interface`: 37
   application, 70 client, 125 core, and one integration test, plus the

@@ -159,7 +159,7 @@ The following completed offline at the interface revision and coherent sibling
 snapshot above:
 
 ```sh
-# aluminafw portable baseline and coordinated evidence
+# alumina-firmware portable baseline and coordinated evidence
 cargo fmt --all -- --check
 cargo test --locked --offline
 cargo clippy --all-targets --locked --offline -- -D warnings

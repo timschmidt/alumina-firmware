@@ -18,7 +18,7 @@ path remained untouched.
 
 The implementation checkpoints are:
 
-- `aluminafw` bounded pre-application operation-outage selector commit
+- `alumina-firmware` bounded pre-application operation-outage selector commit
   `a4772a8`; and
 - `alumina-interface` worker schema-V8 missed-stop terminal and qualification
   commit `60377a3`.
@@ -137,7 +137,7 @@ epoch was `51,295,900,002 ns`, mapping to local cycles `88,614,029` and
 Representative commands were:
 
 ```console
-# each aluminafw actor, with its own bind/device/drift arguments
+# each alumina-firmware actor, with its own bind/device/drift arguments
 target/debug/alumina-sim-http --bind 127.0.0.1:8098 \
   --device-id 414c554d2d53494d3a54494e59424545 \
   --drop-operation-request job-abort \
@@ -152,7 +152,7 @@ node tests/browser/read-cached-job-result.mjs 9224 abort-guard-outage
 The following passed on the recorded source:
 
 - `cargo test --locked --offline` and warnings-denied all-target Clippy over
-  `aluminafw` portable default members;
+  `alumina-firmware` portable default members;
 - `cargo test --workspace --locked --offline --quiet` in `alumina-interface`:
   38 application, 71 client, 125 core, and one integration test, plus the
   compile-fail documentation test;

@@ -21,7 +21,7 @@ const FIELDS: &[&str] = &[
     "reviewer",
     "disposition",
     "wifi_condition",
-    "aluminafw_commit",
+    "alumina-firmware_commit",
     "alumina_interface_commit",
     "hazardous_loads_disconnected",
     "tinybee_board_id",
@@ -186,7 +186,7 @@ pub fn validate(root: &Path, record_path: &Path) -> Result<HilRunSummary, String
     if !matches!(wifi_condition.as_str(), "nominal" | "saturated") {
         return Err(record.error("wifi_condition", "must be nominal or saturated"));
     }
-    require_hex(&record, "aluminafw_commit", 40)?;
+    require_hex(&record, "alumina-firmware_commit", 40)?;
     require_hex(&record, "alumina_interface_commit", 40)?;
     if !record.boolean("hazardous_loads_disconnected")? {
         return Err(record.error(
@@ -610,7 +610,7 @@ mod tests {
             ("reviewer", quoted("reviewer")),
             ("disposition", quoted("pass")),
             ("wifi_condition", quoted("nominal")),
-            ("aluminafw_commit", quoted(&"1".repeat(40))),
+            ("alumina-firmware_commit", quoted(&"1".repeat(40))),
             ("alumina_interface_commit", quoted(&"2".repeat(40))),
             ("hazardous_loads_disconnected", "true".to_owned()),
             ("tinybee_board_id", quoted(TINYBEE_ID)),

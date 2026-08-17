@@ -16,7 +16,7 @@ remains closed.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` `0f727a2b88b45d32448429cc730209e09bb7e5d8`;
+- `alumina-firmware` `0f727a2b88b45d32448429cc730209e09bb7e5d8`;
 - `alumina-interface` `8282e457797f2a8b6f54cb248159a99f5cdd033b`.
 
 ## One production capability dispatcher
@@ -195,7 +195,7 @@ At the commits above:
 
 - `cargo fmt --all -- --check` and `git diff --check`: passed in both
   repositories;
-- `cargo test --locked --offline` in `aluminafw`: 539 tests passed, including
+- `cargo test --locked --offline` in `alumina-firmware`: 539 tests passed, including
   56 `alumina-sim` tests;
 - firmware default-member warnings-denied Clippy and rustdoc: passed;
 - all four board descriptors validated and `cargo xtask check --board ...`

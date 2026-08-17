@@ -3,7 +3,7 @@
 Date: 2026-08-12
 
 Status: the disconnected-load, Wi-Fi-loaded graph-input timing fixture and its
-strict capture/record tooling were first implemented at `aluminafw`
+strict capture/record tooling were first implemented at `alumina-firmware`
 `73fa08933b5b75f1a93e6f05aed6d00c5a8825f4`. Subsequent prequalification on the
 available bare `MKS TinyBee v1.0` reached `3ee2369` and established the boot and
 executor facts recorded below. The board had no StepSticks, motors, motor

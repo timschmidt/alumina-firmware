@@ -140,7 +140,7 @@ barrier.
 
 ## Reproduction
 
-From the `aluminafw` repository at the implementation commit:
+From the `alumina-firmware` repository at the implementation commit:
 
 ```sh
 cargo fmt --all -- --check

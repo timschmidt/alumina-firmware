@@ -12,7 +12,7 @@ of the M5/M10 exit gates.
 `8bff44aee840741a0c00b068534a051d2c34c7cd` extends the authoritative
 browser/WASM Machine/CAM path from lossless lines/arcs to retained polynomial
 cubic Beziers. The coordinated firmware-schema, executor, cache, and safety
-baseline before this evidence record is `aluminafw` commit
+baseline before this evidence record is `alumina-firmware` commit
 `9454cd917138955340c8746f53ac71a137032cb5`.
 
 Hyperpath commit `c65e0136514637305e99e3eadd5432ef5e234e68` supplies exact

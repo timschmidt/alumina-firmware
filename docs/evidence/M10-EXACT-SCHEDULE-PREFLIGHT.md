@@ -65,7 +65,7 @@ and rejects transcript tampering.
 # hyperpath
 cargo test --locked --offline
 
-# aluminafw portable and target compositions
+# alumina-firmware portable and target compositions
 cargo test --locked --offline
 cargo clippy --all-targets --locked --offline -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --offline
@@ -104,7 +104,7 @@ Observed on the reviewed source tree:
   `wasm32-unknown-unknown`, including the machine-bound scheduling fixture;
 - all 425 Hyperpath unit/integration/README tests passed, including the new
   zero-radius exact-stop and nonzero-feed rejection case;
-- the complete portable `aluminafw` default-member suite passed, including all
+- the complete portable `alumina-firmware` default-member suite passed, including all
   23 configuration tests and the production-executor preflight test;
 - strict host, WASM, TinyBee, and T-Deck Pro Clippy passed, as did strict
   Rustdoc and workspace formatting;

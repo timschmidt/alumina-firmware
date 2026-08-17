@@ -13,7 +13,7 @@ path remained untouched.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` commit `1bedfa7`;
+- `alumina-firmware` commit `1bedfa7`;
 - `alumina-interface` commit `dbdfa9b`; and
 - the current sibling CSGRS/Hyper workspace resolved directly by the interface.
   No published legacy CSGRS release is used.
@@ -97,7 +97,7 @@ cycles `71,159,501` and `71,163,621`.
 Representative commands for the faulted case were:
 
 ```console
-# from aluminafw
+# from alumina-firmware
 cargo build -p alumina-sim --bin alumina-sim-http --locked --offline
 target/debug/alumina-sim-http --bind 127.0.0.1:8098 \
   --drop-operation-response storage-put-chunk

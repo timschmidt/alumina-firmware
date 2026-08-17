@@ -10,7 +10,7 @@ translation shim, or compatibility interface.
 
 The reviewed implementation commits are:
 
-- `aluminafw`:
+- `alumina-firmware`:
   `7f34731da8a489e927362c2e2d279c39111fc8e3`
 - `alumina-interface`:
   `b5b710ad7a5155d80dc3fdf296c4eea86113d109`
@@ -168,7 +168,7 @@ At the implementation commits named above:
 
 - repository-owned Rust files passed formatting checks, and both repositories
   passed `git diff --check`;
-- `cargo test --locked --offline` in `aluminafw` enumerated and passed 552
+- `cargo test --locked --offline` in `alumina-firmware` enumerated and passed 552
   tests, including 13 board, 9 capability, and 60 simulator tests;
 - firmware portable warnings-denied Clippy and no-dependency warnings-denied
   Rustdoc passed;

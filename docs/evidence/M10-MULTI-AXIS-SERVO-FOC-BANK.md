@@ -121,7 +121,7 @@ jitter, and commit-report latency before an implementation gate can open.
 
 ## Reproduction
 
-From the `aluminafw` repository at the implementation commit:
+From the `alumina-firmware` repository at the implementation commit:
 
 ```sh
 cargo fmt --all -- --check

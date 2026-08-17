@@ -13,7 +13,7 @@ Hyperpath commit `b8b4503d92cabcc5c6917969cf293aeac0035ae4`
 adds the exact forward/reverse speed-node proposer. Alumina Interface commit
 `b3eb40b122b0d4961f2a6f17f7fb97ae1f69c71e` routes the existing conservative
 machine schedule through that proposer. The coordinated firmware, cache,
-executor, and safety baseline before this evidence record is `aluminafw`
+executor, and safety baseline before this evidence record is `alumina-firmware`
 commit `e1fc13f2c925d62203164acaa0a1827908911135`.
 
 The final native/WASM gates and optimized browser build completed against
@@ -142,7 +142,7 @@ cargo test --locked --offline
 cargo clippy --all-targets --locked --offline -- -D warnings
 RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --locked --offline
 
-# unchanged aluminafw portable baseline
+# unchanged alumina-firmware portable baseline
 cargo test --locked --offline
 
 # alumina-interface
@@ -162,7 +162,7 @@ wasm-tools validate dist/alumina-interface_bg.wasm
 Observed results:
 
 - Hyperpath passed 2 unit, 426 integration/property, and 2 README tests;
-- the unchanged `aluminafw` default-member portable and doc-test suite passed;
+- the unchanged `alumina-firmware` default-member portable and doc-test suite passed;
 - Alumina Interface passed 28 application, 37 protocol-client, 112 exact-core,
   1 cross-crate integration, and 1 compile-fail Rustdoc test;
 - strict Hyperpath and interface native/WASM Clippy, strict Rustdoc, formatting,

@@ -63,7 +63,7 @@ SLogic analyzer.
 ## Verification commands
 
 ```sh
-# aluminafw (portable default-members; target-only ESP crates are explicit)
+# alumina-firmware (portable default-members; target-only ESP crates are explicit)
 cargo test --locked --offline
 cargo clippy --all-targets --locked --offline -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked --offline
@@ -82,7 +82,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked --offline
 Observed on the final source tree:
 
 - formatting passed in both repositories;
-- the complete portable `aluminafw` default-member test suite passed, including
+- the complete portable `alumina-firmware` default-member test suite passed, including
   10 diagnostic-codec, 14 service, and 37 simulator tests;
 - all 153 native interface unit/integration tests passed, as did the compile-fail
   Rustdoc test and all package doc tests;

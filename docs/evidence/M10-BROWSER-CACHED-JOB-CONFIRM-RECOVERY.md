@@ -13,7 +13,7 @@ untouched.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` simulator commit `1bedfa7`; and
+- `alumina-firmware` simulator commit `1bedfa7`; and
 - `alumina-interface` qualification commit `f98012d`.
 
 The interface resolved the current sibling CSGRS/Hyper workspace directly; it
@@ -84,7 +84,7 @@ recovery flag. Its shared epoch was `43,527,800,001 ns`, mapping to local cycles
 Representative faulted commands were:
 
 ```console
-# two aluminafw terminals
+# two alumina-firmware terminals
 target/debug/alumina-sim-http --bind 127.0.0.1:8098 \
   --drop-operation-response job-confirm
 target/debug/alumina-sim-http --bind 127.0.0.1:8099 \
@@ -112,7 +112,7 @@ reattachment, including bounded terminal treatment instead of an unbounded
 retry loop, remains explicit follow-on work.
 
 That boundary was subsequently closed by schedule/status schema replacement and
-replacement-worker qualification at `aluminafw` commit `a02a877` and
+replacement-worker qualification at `alumina-firmware` commit `a02a877` and
 `alumina-interface` commit `c7fda5b`. See
 [`M10-BROWSER-CACHED-JOB-REATTACHMENT.md`](M10-BROWSER-CACHED-JOB-REATTACHMENT.md).
 Applied pre-confirm abort-response loss was subsequently qualified separately

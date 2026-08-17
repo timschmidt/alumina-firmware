@@ -7,7 +7,7 @@ Date: 2026-08-12
 This checkpoint makes the editable `ALGW` control workspace durable without
 changing the canonical workspace format or granting deployment authority. The
 implementation is `alumina-interface` commit
-`8ab0d6c9b0f0112e56de2ebd72c7afcae8809f89`, against preceding `aluminafw`
+`8ab0d6c9b0f0112e56de2ebd72c7afcae8809f89`, against preceding `alumina-firmware`
 evidence commit `a2471647185f77779a34c835fc81faa98b72fae7`. It changes no
 firmware source, board image, target configuration, workstation network
 configuration, or physical I/O.

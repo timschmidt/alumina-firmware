@@ -13,7 +13,7 @@ is claimed.
 
 The coordinated source checkpoints are:
 
-- `aluminafw` `4ae9e09a11b1a655be6e84875bb477c4a35e5c84`;
+- `alumina-firmware` `4ae9e09a11b1a655be6e84875bb477c4a35e5c84`;
 - `alumina-interface` `2880fd761b9b270de83fb1ab0e76244ed997f758`.
 
 The interface checkpoint changes only its lockfile to record
@@ -119,7 +119,7 @@ and projection rather than reserving dormant state.
 
 ## Reproducible verification
 
-Run from `aluminafw` at the implementation commit:
+Run from `alumina-firmware` at the implementation commit:
 
 ```sh
 cargo fmt --all -- --check

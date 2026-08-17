@@ -11,7 +11,7 @@ qualification.
 `alumina-interface` commit
 `a0072f77c78633369b457c86beba5329d5e72dc2` adds a bounded optional source
 adapter and connects it to the existing authoritative Machine/CAM transaction.
-The coordinated firmware-schema and motion baseline is `aluminafw` commit
+The coordinated firmware-schema and motion baseline is `alumina-firmware` commit
 `80928dad5fca4234fad9e4c3d912dce14d728502`.
 
 The final native/WASM checks and optimized bundle observed the shared Hypercurve

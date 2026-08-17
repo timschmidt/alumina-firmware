@@ -16,7 +16,7 @@ safety path remained untouched.
 
 The implementation checkpoints are:
 
-- `aluminafw` bounded pre-application operation-outage selector commit
+- `alumina-firmware` bounded pre-application operation-outage selector commit
   `a4772a8`; and
 - `alumina-interface` exact split terminal, schema-V9 worker/UI contract, and
   Chromium qualification commit `d748081`.

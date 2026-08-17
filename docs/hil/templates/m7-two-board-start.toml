@@ -8,7 +8,7 @@ operator = "REPLACE"
 reviewer = "REPLACE"
 disposition = "inconclusive"
 wifi_condition = "nominal"
-aluminafw_commit = "0000000000000000000000000000000000000000"
+alumina-firmware_commit = "0000000000000000000000000000000000000000"
 alumina_interface_commit = "0000000000000000000000000000000000000000"
 hazardous_loads_disconnected = false
 

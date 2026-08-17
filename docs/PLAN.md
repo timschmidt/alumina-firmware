@@ -13,7 +13,7 @@ diagnostic, and graphical-programming environment.
 
 The coordinated products are:
 
-1. `aluminafw`: thin embedded drivers, dual-core runtime, safety, Wi-Fi/web
+1. `alumina-firmware`: thin embedded drivers, dual-core runtime, safety, Wi-Fi/web
    service, native protocol, SD job cache, bounded command queues, real-time
    interpolation, step/FOC control, and telemetry.
 2. `alumina-interface`: browser/WASM exact modeling and CAM, machine/job

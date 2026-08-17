@@ -11,7 +11,7 @@ or motion-output claim.
 
 ## Source identity
 
-The firmware boundary is `aluminafw`
+The firmware boundary is `alumina-firmware`
 `ee1e0ece0cf19bf9645b43118c8d099007939ecd`. The coordinated browser client is
 `alumina-interface` `05e06fb22abe29450bae0a2179f76162584c7be2`.
 The interface depends directly on the sibling `alumina-net`,
@@ -128,7 +128,7 @@ WASM validation, and all compression integrity checks pass.
 | `index.html` | 1,290 | `3751ce62d375decc3524d0e2894ff713d88ec88225d6e0c9f3d36d20b9c0b8fd` |
 | `Cargo.lock` | - | `d4f70c403885669ef4358c58379c70cbad5e980761277360dd140309ff638159` |
 
-Run the split firmware gates from `aluminafw`:
+Run the split firmware gates from `alumina-firmware`:
 
 ```console
 cargo fmt --all -- --check

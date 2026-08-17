@@ -288,7 +288,7 @@ TinyBee, MKS DLC32, BlackBox X32, 6 Pack variants, Jackpot CNC Controller,
 FYSETC E4, and TMC2130/TMC2209 examples.
 
 For this greenfield plan, “FluidNC compatible hardware” means only that
-`aluminafw` has an independently reviewed board package for the same physical PCB
+`alumina-firmware` has an independently reviewed board package for the same physical PCB
 and revision. FluidNC configuration files are valuable evidence for pin maps,
 aliases, bus engines, and hardware use, but are not an accepted or converted
 Alumina format. No binary, WebUI, protocol, YAML, or GRBL compatibility is

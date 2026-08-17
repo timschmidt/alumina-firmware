@@ -10,7 +10,7 @@ qualification; neither board was connected, flashed, armed, or energized.
 
 The coordinated implementation checkpoints are:
 
-- `aluminafw` commit `93c3d10`;
+- `alumina-firmware` commit `93c3d10`;
 - `alumina-interface` commit `6e9aeab`; and
 - the current sibling CSGRS/Hyper workspace resolved by the interface lockfile
   and source-policy audit. No published legacy CSGRS release is used.
@@ -96,7 +96,7 @@ Focused tests additionally prove:
 
 ## Reproduced checks
 
-From `aluminafw`:
+From `alumina-firmware`:
 
 ```console
 cargo fmt --all -- --check

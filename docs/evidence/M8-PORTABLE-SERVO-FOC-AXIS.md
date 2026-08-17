@@ -12,9 +12,9 @@ motor, or energization claim.
 
 ## Source and dependency boundary
 
-This checkpoint changes only `aluminafw`. Firmware remains independent of
+This checkpoint changes only `alumina-firmware`. Firmware remains independent of
 CSGRS and the Hyper stack: `cargo metadata --no-deps` reports 35 workspace
-packages and every manifest is below the `aluminafw` root. No manifest or lock
+packages and every manifest is below the `alumina-firmware` root. No manifest or lock
 file changed.
 
 Hypercurve is an intentionally moving, user-owned worktree. It was not read,

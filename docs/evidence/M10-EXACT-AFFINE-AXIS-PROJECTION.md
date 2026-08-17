@@ -16,7 +16,7 @@ derives exact Cartesian line directions from retained Hyperpath geometry,
 projects canonical Configuration V5 limits, displays the retained report, and
 lowers a diagonal positive-G1 regression through the production stepper
 preflight. The coordinated firmware, cache, executor, and safety baseline
-before this evidence record is `aluminafw` commit
+before this evidence record is `alumina-firmware` commit
 `1a112288eb82e9fb65660a774e78f7a158e7207b`.
 
 The final Hyperpath and Interface gates completed against Hypercurve HEAD
@@ -140,7 +140,7 @@ wasm-tools validate dist/alumina-interface_bg.wasm
 gzip -t dist/alumina-interface_bg.wasm.gz
 brotli -t dist/alumina-interface_bg.wasm.br
 
-# unchanged aluminafw portable baseline plus this evidence record
+# unchanged alumina-firmware portable baseline plus this evidence record
 cargo test --locked --offline
 cargo fmt --all -- --check
 git diff --check

@@ -18,7 +18,7 @@ This is localhost software evidence only. The connected bare MKS TinyBee V1.0,
 workstation WLAN, GPIO, motors, motor power, and every physical output or safety
 path remained untouched.
 
-The implementation checkpoints are `aluminafw` commit `ca3d4d3` and
+The implementation checkpoints are `alumina-firmware` commit `ca3d4d3` and
 `alumina-interface` commit `b082438`. The interface resolved the actively edited
 sibling CSGRS/Hyper workspace directly. No published legacy CSGRS release was
 used and no sibling source was modified or pinned.
@@ -176,7 +176,7 @@ no terminal error, and no recovery flag.
 The following passed on the final implementation checkpoints:
 
 - the simulator binary's six HTTP fault-selector tests and the full locked,
-  offline `aluminafw` default-member test suite;
+  offline `alumina-firmware` default-member test suite;
 - `cargo test --workspace --locked --offline --quiet` in
   `alumina-interface`: 41 application, 75 client, 125 core, integration, and
   compile-fail documentation coverage;

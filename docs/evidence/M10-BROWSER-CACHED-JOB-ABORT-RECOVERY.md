@@ -16,11 +16,11 @@ untouched.
 
 The implementation checkpoints are:
 
-- `aluminafw` operation-specific simulator selector commit `1bedfa7`; and
+- `alumina-firmware` operation-specific simulator selector commit `1bedfa7`; and
 - `alumina-interface` installed-state qualification commit `205e059`; and
 - `alumina-interface` confirmed-state qualification commit `b670a0e`.
 
-The current run used the exact schedule/status schemas from `aluminafw` commit
+The current run used the exact schedule/status schemas from `alumina-firmware` commit
 `a02a877`. The interface resolved the actively edited sibling CSGRS/Hyper
 workspace directly, without a published legacy CSGRS release or any sibling
 source pin/modification.
@@ -120,7 +120,7 @@ for operation `0x0504`.
 Representative commands were:
 
 ```console
-# two aluminafw terminals
+# two alumina-firmware terminals
 target/debug/alumina-sim-http --bind 127.0.0.1:8098 \
   --device-id 414c554d2d53494d3a54494e59424545 \
   --drop-operation-response job-abort

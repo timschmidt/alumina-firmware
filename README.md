@@ -1,6 +1,6 @@
-# aluminafw
+# alumina-firmware
 
-`aluminafw` is the greenfield Embassy firmware platform planned for Alumina
+`alumina-firmware` is the greenfield Embassy firmware platform planned for Alumina
 machines, instruments, controllers, and embedded operator interfaces. It combines
 the async driver structure of `t-deck-async-drivers-rs` with the useful embedded
 web-serving behavior demonstrated by `alumina-firmware`, while putting all

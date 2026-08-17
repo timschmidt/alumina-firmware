@@ -15,7 +15,7 @@ layers. Alumina Interface commit
 `4a84d2542aa77f8f5e4ce40d75e96604effdf62a` selects phases from the exact
 lookahead boundary nodes while preserving its reachable all-zero policy. The
 coordinated firmware, cache, executor, and safety baseline before this evidence
-record is `aluminafw` commit
+record is `alumina-firmware` commit
 `ee93126035d408ae9aa4b7c5de299643ccbec474`.
 
 The final native/WASM gates and optimized browser build completed against
@@ -129,7 +129,7 @@ wasm-tools validate dist/alumina-interface_bg.wasm
 gzip -t dist/alumina-interface_bg.wasm.gz
 brotli -t dist/alumina-interface_bg.wasm.br
 
-# unchanged aluminafw portable baseline
+# unchanged alumina-firmware portable baseline
 cargo test --locked --offline
 ```
 
