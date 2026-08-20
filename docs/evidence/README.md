@@ -223,6 +223,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-PROBE-TYPE-PANES.md`](M9-EXACT-PROBE-TYPE-PANES.md) — stable
   registered-type analog panes, independent certified-enclosure scales, one
   exact root-time cursor, and an explicit bounded display policy.
+- [`M9-EXACT-PHYSICAL-SCALAR-PROBES.md`](M9-EXACT-PHYSICAL-SCALAR-PROBES.md) —
+  exact rational/interval/lattice scalar plots, registered quantum/unit
+  retention, outward display enclosures, and closed non-scalar conversion.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
