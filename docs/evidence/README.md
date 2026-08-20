@@ -220,6 +220,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-MULTIRATE-PROBE-AXIS.md`](M9-EXACT-MULTIRATE-PROBE-AXIS.md) —
   exact rational shared-root axis/cursor, same-root mixed-rate probes,
   external-source provenance, and explicit retained sample-and-hold.
+- [`M9-EXACT-PROBE-TYPE-PANES.md`](M9-EXACT-PROBE-TYPE-PANES.md) — stable
+  registered-type analog panes, independent certified-enclosure scales, one
+  exact root-time cursor, and an explicit bounded display policy.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
