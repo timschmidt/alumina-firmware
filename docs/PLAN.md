@@ -1342,7 +1342,12 @@ enclosures and causally ordered high/low lanes share one exact-time cursor.
 and bounded retained-sample window. Its reference falling edge on the
 measurement-range probe resolves to exact tick/sequence 3 and a complete
 two-sample pre/post window spanning ticks 1–5. This is bounded HostExact replay
-authority, not live telemetry or device-trigger configuration. The reusable
+authority, not live telemetry or device-trigger configuration. The browser now
+persists exact ALGW/ALGP state as one versioned pair and restores neither
+artifact until both replay canonically and the sidecar proves its workspace
+binding. Separate bounded `.algp` exchange replays only against the exact
+current ALGW; malformed or foreign sidecars preserve both prior documents, and
+canonical no-op sidecar edits do not cause redundant persistence. The reusable
 component exposes all seven outputs as replay-only indicators while retaining
 eight exact parameter controls. A complete bounded allocation-free
 `ALMCAP04` decoder now
@@ -1366,7 +1371,8 @@ creation/deletion and exact scalar parameter editing now exist through a
 measurement-range predicate with the external permit through an audited Boolean
 conjunction; both exact range limits are front-panel controls. Bounded
 canonical snapshots add replay-backed undo/redo; browser storage and
-native/browser `.algw` exchange preserve only fully replayed, audited drafts. A
+native/browser `.algw` plus `.algp` exchange preserve only fully replayed,
+identity-bound drafts and sidecars. A
 disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed
 radio-startup suspension and proved that an ordinary core-1 executor could miss
 the 200 us dispatch reserve. The fixture now discards and re-debounces input
@@ -1387,6 +1393,7 @@ See the
 [mixed-signal control trace](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [interlock cause trace](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
 [exact replay probe trigger](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
+[exact graph/probe pair persistence](evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

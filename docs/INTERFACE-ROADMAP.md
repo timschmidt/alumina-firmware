@@ -573,11 +573,13 @@ resource opcodes, nested component dependencies, general hierarchy/panel
 editing, front-panel runtime inputs, live device telemetry, and device-trigger
 capture plots remain open. Replay-only probe triggers are separately
 implemented below. Canonical placement/wiring and a 13-kind audited palette now
-support
-node create/delete and exact scalar parameter replacement. Bounded complete
-`ALGW` snapshots now provide replay-backed undo/redo, origin-local browser
-persistence preserves only the current document, and native/browser `.algw`
-exchange crosses the same canonical and audited draft-admission boundary.
+support node create/delete and exact scalar parameter replacement. Bounded complete
+`ALGW` snapshots now provide replay-backed undo/redo. Origin-local browser
+persistence stores the exact current ALGW/ALGP pair in one versioned value and
+commits neither restored artifact until both canonical replays and their
+identity binding succeed. Native/browser `.algw` and `.algp` exchange crosses
+the corresponding bounded replay boundary; ALGP import can change only the
+sidecar bound to the current workspace.
 A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
 maps public connector terminals to exact internal endpoints, and binds integer
 front-panel controls/indicators to public terminals or retained exact
@@ -604,6 +606,12 @@ removing the source atomically clears the trigger, and exact resolution uses a
 bounded waiting ring after the declared stride. It reports graph clock,
 tick/sequence, available window endpoints/counts, and completeness only after
 the simulation graph identity matches the bound workspace.
+Probe and trigger identity changes now participate in browser persistence,
+while canonical no-op edits do not cause redundant writes. A malformed stored
+sidecar or one bound to another valid ALGW rejects the complete pair rather
+than partially restoring the graph. A graph edit that removes an observed
+endpoint visibly installs an empty canonical sidecar bound to the revised
+workspace instead of retaining unbound probe intent.
 The reference plot selects four exact-rational outputs and the independently
 resampled external permit, measurement-range predicate, and conjunction. It
 displays certified analog enclosures and causally ordered high/low lanes in the
@@ -631,6 +639,7 @@ annotated-photo rendering remain separate open gates. See the
 [`mixed-signal control trace`](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [`interlock cause trace`](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
 [`exact replay probe trigger`](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
+[`exact graph/probe pair persistence`](evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

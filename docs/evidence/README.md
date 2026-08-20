@@ -205,6 +205,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-REPLAY-PROBE-TRIGGER.md`](M9-EXACT-REPLAY-PROBE-TRIGGER.md) —
   canonical `ALGP` V2 Boolean edge triggers, bounded exact pre/post replay
   resolution, transactional authoring, and a qualified trigger-window UI.
+- [`M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md`](M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md)
+  — one bounded origin-local ALGW/ALGP pair, all-or-nothing bound replay,
+  exact no-op persistence, and native/browser `.algp` exchange.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
