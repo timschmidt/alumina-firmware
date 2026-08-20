@@ -476,6 +476,11 @@ abort response, retains exact `faulted`/`confirmed` ambiguity, and requires an
 authenticated read-only status report before terminal `faulted`/`aborted`. See
 the [automatic safety-fault propagation recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-RECOVERY.md).
+The request-recovery expectation instead drops the peer's first abort before
+authentication/application, requires status to retain `confirmed`, and permits
+`aborted` only after the exact retry. See the [automatic safety-fault
+propagation request-recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-REQUEST-RECOVERY.md).
 Attended-policy controls, indefinite schedule or total endpoint outage,
 authentication/bootstrap loss, broader reordering/substitution, duplication
 outside the exact one-shot cases, other fault families or terminal mixtures,

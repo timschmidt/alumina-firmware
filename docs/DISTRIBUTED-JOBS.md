@@ -385,6 +385,12 @@ any later mutation, and accepts global `Faulted` with
 `Faulted`/`Aborted` only from the peer's authenticated report. See the
 [automatic safety-fault propagation recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-RECOVERY.md).
+Initial request loss during the same cleanup is independently closed. The peer
+drops `JobAbort` before authentication or application; authenticated status
+must preserve `Confirmed`, and only the exact retried request may produce
+`Aborted` and terminal global `Faulted`. See the [automatic safety-fault
+propagation request-recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-REQUEST-RECOVERY.md).
 An indefinite schedule outage, total endpoint or authentication/bootstrap
 loss, arbitrary concurrent reordering or substitution beyond this one-shot
 boundary, duplicates outside the exact replay boundary, and fault families or

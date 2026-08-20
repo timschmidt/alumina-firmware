@@ -452,6 +452,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — loss of the remaining peer's successful applied-abort response during
   automatic cleanup, retained fault/ambiguity facts, mandatory read-only status
   reconciliation, and exact faulted/aborted recovery.
+- [`M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-REQUEST-RECOVERY.md`](M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-REQUEST-RECOVERY.md)
+  — loss of the remaining peer's abort request before authentication or
+  application, unchanged-state status reconciliation, exact retry, and
+  faulted/aborted recovery.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

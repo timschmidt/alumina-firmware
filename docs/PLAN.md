@@ -824,6 +824,12 @@ faulted/confirmed ambiguity and requires read-only status reconciliation before
 accepting faulted/aborted terminal state. See the [automatic safety-fault
 propagation recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-RECOVERY.md).
+The complementary initial-request-loss case is closed separately: the peer
+drops abort before authentication or application, status proves it remains
+confirmed, and only a byte-identical retry may advance it to aborted while the
+global result remains faulted. See the [automatic safety-fault propagation
+request-recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-REQUEST-RECOVERY.md).
 Indefinite schedule loss, total endpoint or authentication/bootstrap loss,
 broader reordering/substitution, duplication outside the exact one-shot cases,
 other fault families or terminal mixtures, broader packet stress,
