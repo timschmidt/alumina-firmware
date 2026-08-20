@@ -1291,10 +1291,11 @@ known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
-cache-derived job-handle and nested identity workflows, label/domain editing,
+cache-derived job-handle and nested identity workflows,
 collaboration/conflict handling, and higher-rate triggered acquisition remain
-open. Schema-directed scalar/composite literal editing and root resource-handle
-selection are now closed separately without widening firmware authority.
+open. Schema-directed scalar/composite literal editing, root resource-handle
+selection, and basic label/domain editing are now closed separately without
+widening firmware authority.
 The TinyBee image now also reports those same configuration-stable semantic
 inputs through a passive core-1-to-core-0 `ALMRTI01` bridge. Exact resource
 mapping, monitor masks/generation, and latest physical sample cycles are
@@ -1338,6 +1339,15 @@ only after complete semantic analysis plus canonical ALGW encoding. Raw
 identity text, duplicate handles, foreign catalogs, and kind substitution fail
 without mutation. Every descriptive-but-unadmitted ADC, UART, timer, shifted
 output, storage resource, other GPIO, and raw pin operation remains closed.
+The general selected-node inspector now also replaces bounded canonical UTF-8
+labels and concrete execution placement transactionally. Labels remain saved
+human metadata rather than behavior identity. Domain families come only from
+the reviewed node schema, and concrete device identities come only from
+existing graph device-cycle clocks or node placements; there is no raw identity
+field. Full semantic analysis and canonical ALGW encoding precede commit, while
+the existing ALGW/ALGP pair history and persistence retain exact undo/redo.
+The source checkpoint is committed, but its optimized bundle and browser rerun
+remain open while the shared live HyperCurve dependency is moving.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
 endpoints and filter host plots without mutating the graph or granting live
 telemetry. The reference sidecar now selects four exact-rational controller
@@ -1417,6 +1427,7 @@ See the
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
 [exact composite literals](evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md), and
 [capability resource selection](evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md), and
+[graph label/domain editing](evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), and
 [graph history/persistence](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md),
 and
 [graph components/front panels](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and

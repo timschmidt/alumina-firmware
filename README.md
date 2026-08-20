@@ -162,6 +162,11 @@ separate offline TinyBee target draft admits only four capability-derived
 stable-input handles and can rebind an existing managed node to an unused
 same-kind entry. Raw device IDs, digests, resource classes, and GPIO selectors
 remain non-editable, and the draft grants no live or deployment authority.
+The selected-node inspector now also transactionally edits bounded canonical
+UTF-8 labels and concrete execution placement. Domain families come from the
+reviewed node schema, device identities come only from existing graph clocks or
+placements, and complete audited analysis precedes every commit; no raw device
+identity field exists.
 Bounded canonical ALGW/ALGP
 pair snapshots now provide shared undo/redo across graph, probe, trigger, and
 sidecar-import edits; navigation replays both artifacts and their exact binding
@@ -199,7 +204,8 @@ evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
 palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md), plus
 the [exact composite-literal evidence](docs/evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md)
-and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md), plus
+and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md)
+and [graph label/domain editor evidence](docs/evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), plus
 the [graph history/persistence
 evidence](docs/evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md).
 

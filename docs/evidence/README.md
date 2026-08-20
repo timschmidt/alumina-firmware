@@ -235,6 +235,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-CAPABILITY-RESOURCE-SELECTOR.md`](M9-CAPABILITY-RESOURCE-SELECTOR.md)
   — exact capability-derived resource selection, stable node identity,
   transactional rollback, and closed raw-handle/deployment authority.
+- [`M9-GRAPH-LABEL-DOMAIN-EDITOR.md`](M9-GRAPH-LABEL-DOMAIN-EDITOR.md) —
+  bounded canonical node labels, schema-audited concrete execution choices,
+  pair history/persistence, closed raw-device authority, and an explicit open
+  production rerun against the moving live Hyper stack.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
