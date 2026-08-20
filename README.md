@@ -137,11 +137,14 @@ same static palette. No target timing, physical input HIL, or physical side
 effect is claimed. The native/WASM application now also opens a bounded,
 editable view of the shared exact PID/interlock fixture with audited semantic
 layers, explicit state feedback, typed ports, exact parameters, and exact-cursor
-plots. Canonical `ALGW` keeps presentation-only integer placement separate from
-the embedded `ALGR`; its 13-entry fixed-schema palette includes exact inclusive
-range predicates and Boolean conjunction and supports monotonic node
-creation, atomic node/incident-wire deletion, node moves, typed wire edits, and
-bounded exact scalar parameter replacement. Bounded canonical snapshots now
+plots. Its bound diagnostic sidecar selects four exact-rational signals and two
+Boolean interlock signals; the UI renders certified analog enclosures and
+aligned high/low lanes on one exact-time grid without giving those plots live
+telemetry authority. Canonical `ALGW` keeps presentation-only integer placement
+separate from the embedded `ALGR`; its 13-entry fixed-schema palette includes
+exact inclusive range predicates and Boolean conjunction and supports monotonic
+node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
+and bounded exact scalar parameter replacement. Bounded canonical snapshots now
 provide undo/redo, origin-local browser storage preserves only the current
 document, and native/browser `.algw` exchange requires full replay and audited
 draft admission. All edits are transactional, and graph changes detach the old
@@ -152,6 +155,7 @@ execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 [durable-selection evidence](docs/evidence/M9-DURABLE-GRAPH-SELECTION.md) and
 [capability-bound input evidence](docs/evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md),
 plus the [exact-interlock primitive evidence](docs/evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md)
+and [mixed-signal control-trace evidence](docs/evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md)
 and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph

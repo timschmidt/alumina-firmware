@@ -196,6 +196,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
   exact inclusive-range and Boolean-conjunction HostExact primitives,
   independently exercised fail-closed semantics, a 13-kind editor palette,
   and renewed graph/workspace/component identities.
+- [`M9-MIXED-SIGNAL-CONTROL-TRACE.md`](M9-MIXED-SIGNAL-CONTROL-TRACE.md) — six
+  canonical reference probes and component outputs, certified exact-rational
+  plots, aligned Boolean logic-analyzer lanes, and shared exact cursor evidence.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized

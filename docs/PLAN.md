@@ -1334,9 +1334,13 @@ GPIO22/32/33/35 and keeps every descriptive-but-unadmitted ADC, UART, timer,
 shifted output, storage resource, other GPIO, and raw pin operation closed.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
 endpoints and filter host plots without mutating the graph or granting live
-telemetry. A complete bounded allocation-free `ALMCAP04` decoder now feeds a
-board-name-independent owned explorer model. The visible TinyBee reference
-separates all 62 descriptive resources, aliases, owners, safe/hazard facts and
+telemetry. The reference sidecar now selects four exact-rational controller
+signals and two Boolean interlock results. Certified analog enclosures and
+aligned high/low lanes share one exact-time cursor; the reusable component
+exposes all six outputs as replay-only indicators while retaining eight exact
+parameter controls. A complete bounded allocation-free `ALMCAP04` decoder now
+feeds a board-name-independent owned explorer model. The visible TinyBee
+reference separates all 62 descriptive resources, aliases, owners, safe/hazard facts and
 supporting-ledger counts from the independent passive-overview,
 digital-capture, and graph palettes. The host simulator alone publishes four
 simulated capture sources and exact fixed-memory/timing limits; physical boards
@@ -1373,6 +1377,7 @@ See the
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [exact-control graph](evidence/M9-EXACT-CONTROL-GRAPH.md), and
 [exact-interlock primitives](evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md), and
+[mixed-signal control trace](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

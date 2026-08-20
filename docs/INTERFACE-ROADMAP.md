@@ -571,7 +571,7 @@ through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
 resource opcodes, nested component dependencies, general hierarchy/panel
 editing, front-panel runtime inputs, and live telemetry/trigger plots remain
-open. Canonical placement/wiring and an 11-kind audited palette now support
+open. Canonical placement/wiring and a 13-kind audited palette now support
 node create/delete and exact scalar parameter replacement. Bounded complete
 `ALGW` snapshots now provide replay-backed undo/redo, origin-local browser
 persistence preserves only the current document, and native/browser `.algw`
@@ -579,13 +579,14 @@ exchange crosses the same canonical and audited draft-admission boundary.
 A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
 maps public connector terminals to exact internal endpoints, and binds integer
 front-panel controls/indicators to public terminals or retained exact
-parameters. The first visible PID/interlock component has six exact controls
-and four replay-only indicators; invalidating a binding detaches the panel
+parameters. The first visible PID/interlock component has eight exact controls
+and six replay-only indicators: four exact-rational values and two Boolean
+interlock states. Invalidating a binding detaches the panel
 without weakening the workspace draft. Canonical `ALGH` now binds leaf
 component instances to exact `ALGC` digests, derives their typed collapsed port
 shape, and deterministically flattens connector wiring into an ordinary
 workspace with fresh monotonic node/wire identities. The visible proof expands
-one instance to 19 audited nodes and 22 wires; V1 rejects every nested instance
+one instance to 21 audited nodes and 25 wires; V1 rejects every nested instance
 until recursive depth/cycle authority is explicit. Composite or
 identity-bearing parameter editors, collaboration/conflict handling, editable
 component libraries/instances, and general panel authoring remain open. A
@@ -594,9 +595,11 @@ graph-executor document with reviewed deployment bindings and constructs only
 the four TinyBee stable Boolean input handles. A separate offline Realtime
 draft makes those nodes visible while showing that ADC, UART, timer, shifted
 output, storage, raw GPIO, and all other unadmitted access remain closed.
-Canonical `ALGP` sidecars now bind bounded probes to exact workspace outputs;
-the reference plot is probe-selected, but no live telemetry or trigger
-authority is implied. The complete capability document now also has a bounded
+Canonical `ALGP` sidecars now bind bounded probes to exact workspace outputs.
+The reference plot selects four exact-rational outputs and two Boolean
+interlocks, displaying certified analog enclosures and aligned high/low lanes
+on one exact-time cursor, but no live telemetry or trigger authority is implied.
+The complete capability document now also has a bounded
 allocation-free descriptive decoder and a board-name-independent owned explorer
 model. The visible TinyBee view exposes all 62 typed resources, 51 aliases,
 owners, safe states, hazards and supporting-section counts while keeping its
@@ -614,6 +617,7 @@ annotated-photo rendering remain separate open gates. See the
 [`bounded-channel`](evidence/M9-BOUNDED-GRAPH-CHANNELS.md), and
 [`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) and
 [`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
+[`mixed-signal control trace`](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
