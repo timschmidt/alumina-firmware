@@ -1343,8 +1343,11 @@ remain capture-absent. Searchable graph-closed, diagnostic-closed,
 capture-closed, and hazardous views do not create operations.
 See
 [`M10-CAPABILITY-DERIVED-DIGITAL-CAPTURE.md`](evidence/M10-CAPABILITY-DERIVED-DIGITAL-CAPTURE.md).
-Because the package
-publishes no licensed visual, the UI draws no board shape or hotspot and keeps
+The host simulator now publishes one unmistakably synthetic CC0 visual and
+four GPIO hotspot polygons. Authenticated immutable range acquisition and the
+browser's independently revalidated PNG/dimension/render/picking path exercise
+the generic annotated-resource pipeline. Every physical package still publishes
+no visual, so a connected board draws no inferred shape or hotspot and keeps
 the physical-reconciliation HIL gate visibly open. Canonical HostExact node
 creation/deletion and exact scalar parameter editing now exist through an
 11-kind audited palette. Bounded

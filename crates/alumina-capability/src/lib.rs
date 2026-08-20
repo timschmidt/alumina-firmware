@@ -24,6 +24,12 @@ pub const CAPABILITY_READ_REQUEST_BYTES: usize = 56;
 pub const CAPABILITY_READ_RESPONSE_PREFIX_BYTES: usize = 64;
 /// Largest capability range returned in one native response.
 pub const MAX_CAPABILITY_CHUNK_BYTES: usize = 240;
+/// Exact request length for one capability-bound visual-asset range.
+pub const VISUAL_ASSET_READ_REQUEST_BYTES: usize = 88;
+/// Exact response prefix before bounded visual-asset bytes.
+pub const VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES: usize = 96;
+/// Largest visual-asset range returned in one native response.
+pub const MAX_VISUAL_ASSET_CHUNK_BYTES: usize = 240;
 /// Bytes in the fixed graph-executor prefix before opcode/resource records.
 pub const GRAPH_EXECUTOR_HEADER_BYTES: usize = 72;
 /// Bytes in one graph opcode-capability record.
@@ -42,6 +48,9 @@ pub const DIGITAL_CAPTURE_RESOURCE_CAPABILITY_BYTES: usize = 12;
 const DOCUMENT_MAGIC: [u8; 8] = *b"ALMCAP04";
 const REQUEST_MAGIC: [u8; 8] = *b"ALMCPQ04";
 const RESPONSE_MAGIC: [u8; 8] = *b"ALMCPR04";
+const VISUAL_ASSET_REQUEST_MAGIC: [u8; 8] = *b"ALMVAQ01";
+const VISUAL_ASSET_RESPONSE_MAGIC: [u8; 8] = *b"ALMVAR01";
+const VISUAL_ASSET_WIRE_VERSION: u16 = 1;
 const GRAPH_EXECUTOR_MAGIC: [u8; 8] = *b"ALMGRC02";
 const DIAGNOSTIC_OVERVIEW_MAGIC: [u8; 8] = *b"ALMDOV01";
 const DIGITAL_CAPTURE_MAGIC: [u8; 8] = *b"ALMDCP01";
@@ -1932,6 +1941,198 @@ impl CapabilityReadResponse {
     }
 }
 
+/// Exact immutable identity of one capability-declared visual asset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VisualAssetIdentity {
+    /// Complete asset byte length.
+    pub byte_len: u32,
+    /// SHA-256 over every asset byte.
+    pub digest: Digest,
+}
+
+/// Exact authenticated range request for one capability-declared visual.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VisualAssetReadRequest {
+    /// Exact canonical capability document that declared the visual.
+    pub capability_digest: Digest,
+    /// Exact visual content digest selected from that document.
+    pub asset_digest: Digest,
+    /// Exact visual byte offset.
+    pub offset: u32,
+    /// Nonzero response-data budget, capped at 240 bytes.
+    pub maximum_bytes: u16,
+}
+
+impl VisualAssetReadRequest {
+    /// Encodes one canonical request body.
+    pub fn encode(self) -> Result<[u8; VISUAL_ASSET_READ_REQUEST_BYTES], CapabilityWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; VISUAL_ASSET_READ_REQUEST_BYTES];
+        encoded[0..8].copy_from_slice(&VISUAL_ASSET_REQUEST_MAGIC);
+        encoded[8..10].copy_from_slice(&VISUAL_ASSET_WIRE_VERSION.to_le_bytes());
+        // Bytes 10..12 and 18..24 are reserved zero.
+        encoded[12..16].copy_from_slice(&self.offset.to_le_bytes());
+        encoded[16..18].copy_from_slice(&self.maximum_bytes.to_le_bytes());
+        encoded[24..56].copy_from_slice(&self.capability_digest.0);
+        encoded[56..88].copy_from_slice(&self.asset_digest.0);
+        Ok(encoded)
+    }
+
+    /// Decodes only the exact V1 representation.
+    pub fn decode(encoded: &[u8]) -> Result<Self, CapabilityWireError> {
+        if encoded.len() != VISUAL_ASSET_READ_REQUEST_BYTES {
+            return Err(CapabilityWireError::Length);
+        }
+        if encoded[0..8] != VISUAL_ASSET_REQUEST_MAGIC {
+            return Err(CapabilityWireError::Magic);
+        }
+        if read_u16(encoded, 8) != VISUAL_ASSET_WIRE_VERSION {
+            return Err(CapabilityWireError::Version);
+        }
+        if encoded[10..12].iter().any(|byte| *byte != 0)
+            || encoded[18..24].iter().any(|byte| *byte != 0)
+        {
+            return Err(CapabilityWireError::Reserved);
+        }
+        let mut capability_digest = [0_u8; 32];
+        capability_digest.copy_from_slice(&encoded[24..56]);
+        let mut asset_digest = [0_u8; 32];
+        asset_digest.copy_from_slice(&encoded[56..88]);
+        let request = Self {
+            capability_digest: Digest(capability_digest),
+            asset_digest: Digest(asset_digest),
+            offset: read_u32(encoded, 12),
+            maximum_bytes: read_u16(encoded, 16),
+        };
+        request.validate()?;
+        if request.encode()? != encoded {
+            return Err(CapabilityWireError::Noncanonical);
+        }
+        Ok(request)
+    }
+
+    fn validate(self) -> Result<(), CapabilityWireError> {
+        if self.capability_digest.is_zero()
+            || self.asset_digest.is_zero()
+            || self.maximum_bytes == 0
+            || usize::from(self.maximum_bytes) > MAX_VISUAL_ASSET_CHUNK_BYTES
+        {
+            return Err(CapabilityWireError::ChunkLength);
+        }
+        Ok(())
+    }
+}
+
+/// Fixed response metadata preceding exactly `chunk_len` visual bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VisualAssetReadResponse {
+    /// Exact canonical capability document that declared the visual.
+    pub capability_digest: Digest,
+    /// Complete immutable visual identity.
+    pub asset: VisualAssetIdentity,
+    /// Offset of the following bytes.
+    pub offset: u32,
+    /// Exact following visual bytes.
+    pub chunk_len: u16,
+    /// True only for the range ending at `asset.byte_len`.
+    pub complete: bool,
+}
+
+impl VisualAssetReadResponse {
+    /// Encodes the canonical fixed response prefix.
+    pub fn encode(
+        self,
+    ) -> Result<[u8; VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES], CapabilityWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES];
+        encoded[0..8].copy_from_slice(&VISUAL_ASSET_RESPONSE_MAGIC);
+        encoded[8..10].copy_from_slice(&VISUAL_ASSET_WIRE_VERSION.to_le_bytes());
+        encoded[10] = u8::from(self.complete) * RESPONSE_FLAG_COMPLETE;
+        // Bytes 11..16 and 26..32 are reserved zero.
+        encoded[16..20].copy_from_slice(&self.asset.byte_len.to_le_bytes());
+        encoded[20..24].copy_from_slice(&self.offset.to_le_bytes());
+        encoded[24..26].copy_from_slice(&self.chunk_len.to_le_bytes());
+        encoded[32..64].copy_from_slice(&self.capability_digest.0);
+        encoded[64..96].copy_from_slice(&self.asset.digest.0);
+        Ok(encoded)
+    }
+
+    /// Decodes the exact fixed response prefix.
+    pub fn decode(encoded: &[u8]) -> Result<Self, CapabilityWireError> {
+        if encoded.len() != VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES {
+            return Err(CapabilityWireError::Length);
+        }
+        if encoded[0..8] != VISUAL_ASSET_RESPONSE_MAGIC {
+            return Err(CapabilityWireError::Magic);
+        }
+        if read_u16(encoded, 8) != VISUAL_ASSET_WIRE_VERSION {
+            return Err(CapabilityWireError::Version);
+        }
+        if encoded[10] & !RESPONSE_FLAG_COMPLETE != 0
+            || encoded[11..16].iter().any(|byte| *byte != 0)
+            || encoded[26..32].iter().any(|byte| *byte != 0)
+        {
+            return Err(CapabilityWireError::Reserved);
+        }
+        let mut capability_digest = [0_u8; 32];
+        capability_digest.copy_from_slice(&encoded[32..64]);
+        let mut asset_digest = [0_u8; 32];
+        asset_digest.copy_from_slice(&encoded[64..96]);
+        let response = Self {
+            capability_digest: Digest(capability_digest),
+            asset: VisualAssetIdentity {
+                byte_len: read_u32(encoded, 16),
+                digest: Digest(asset_digest),
+            },
+            offset: read_u32(encoded, 20),
+            chunk_len: read_u16(encoded, 24),
+            complete: encoded[10] & RESPONSE_FLAG_COMPLETE != 0,
+        };
+        response.validate()?;
+        if response.encode()? != encoded {
+            return Err(CapabilityWireError::Noncanonical);
+        }
+        Ok(response)
+    }
+
+    /// Decodes a complete response body and binds its exact following range.
+    pub fn decode_body(encoded: &[u8]) -> Result<(Self, &[u8]), CapabilityWireError> {
+        let prefix = encoded
+            .get(..VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES)
+            .ok_or(CapabilityWireError::Length)?;
+        let response = Self::decode(prefix)?;
+        let expected = VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES
+            .checked_add(usize::from(response.chunk_len))
+            .ok_or(CapabilityWireError::Length)?;
+        if encoded.len() != expected {
+            return Err(CapabilityWireError::Length);
+        }
+        Ok((
+            response,
+            &encoded[VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES..],
+        ))
+    }
+
+    fn validate(self) -> Result<(), CapabilityWireError> {
+        if self.capability_digest.is_zero()
+            || self.asset.byte_len == 0
+            || self.asset.digest.is_zero()
+            || self.chunk_len == 0
+            || usize::from(self.chunk_len) > MAX_VISUAL_ASSET_CHUNK_BYTES
+        {
+            return Err(CapabilityWireError::ChunkLength);
+        }
+        let end = self
+            .offset
+            .checked_add(u32::from(self.chunk_len))
+            .ok_or(CapabilityWireError::Range)?;
+        if end > self.asset.byte_len || self.complete != (end == self.asset.byte_len) {
+            return Err(CapabilityWireError::Range);
+        }
+        Ok(())
+    }
+}
+
 /// Canonical capability request/response rejection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CapabilityWireError {
@@ -3453,6 +3654,54 @@ mod tests {
         assert_eq!(
             CapabilityReadRequest::decode(&reserved),
             Err(CapabilityWireError::Reserved)
+        );
+
+        let visual_request = VisualAssetReadRequest {
+            capability_digest: Digest([0x77; 32]),
+            asset_digest: Digest([0x88; 32]),
+            offset: 240,
+            maximum_bytes: 240,
+        };
+        assert_eq!(
+            VisualAssetReadRequest::decode(&visual_request.encode().unwrap()),
+            Ok(visual_request)
+        );
+        let visual_response = VisualAssetReadResponse {
+            capability_digest: visual_request.capability_digest,
+            asset: VisualAssetIdentity {
+                byte_len: 480,
+                digest: visual_request.asset_digest,
+            },
+            offset: 240,
+            chunk_len: 240,
+            complete: true,
+        };
+        assert_eq!(
+            VisualAssetReadResponse::decode(&visual_response.encode().unwrap()),
+            Ok(visual_response)
+        );
+        let mut visual_body = vec![
+            0_u8;
+            VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES
+                + usize::from(visual_response.chunk_len)
+        ];
+        visual_body[..VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES]
+            .copy_from_slice(&visual_response.encode().unwrap());
+        visual_body[VISUAL_ASSET_READ_RESPONSE_PREFIX_BYTES..].fill(0x5a);
+        let (decoded, chunk) = VisualAssetReadResponse::decode_body(&visual_body).unwrap();
+        assert_eq!(decoded, visual_response);
+        assert_eq!(chunk, &[0x5a; 240]);
+        visual_body.push(0);
+        assert_eq!(
+            VisualAssetReadResponse::decode_body(&visual_body),
+            Err(CapabilityWireError::Length)
+        );
+
+        let mut wrong_identity = visual_request.encode().unwrap();
+        wrong_identity[24..56].fill(0);
+        assert_eq!(
+            VisualAssetReadRequest::decode(&wrong_identity),
+            Err(CapabilityWireError::ChunkLength)
         );
     }
 

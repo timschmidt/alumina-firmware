@@ -11,6 +11,11 @@ use alumina_board::{
     ResourceId, SupportLevel,
 };
 use alumina_protocol::Digest;
+use alumina_service::capability::CapabilityVisualAsset;
+#[cfg(test)]
+use alumina_service::capability::{CapabilityVisualCatalogError, VerifiedCapabilityVisualAssets};
+
+use crate::visual_fixture;
 
 /// Stable board identity for the host-only TinyBee topology model.
 pub const BOARD_ID: &str = "sim-mks-tinybee-v1";
@@ -58,8 +63,8 @@ pub const DIGITAL_CAPTURE: DigitalCaptureDescriptor<'static> = DigitalCaptureDes
 
 /// SHA-256 of the canonical simulator-specific `ALMCAP04` V4 document.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x4e, 0xa9, 0xbb, 0xf0, 0xb4, 0x4c, 0x86, 0x64, 0x80, 0x8b, 0x4e, 0x13, 0xb2, 0x02, 0x94, 0xa0,
-    0x00, 0x63, 0x71, 0xcf, 0xe1, 0xd8, 0x43, 0x47, 0x8a, 0x19, 0x7b, 0x37, 0xb6, 0xbe, 0x6c, 0xc7,
+    0x21, 0x8c, 0xc7, 0x58, 0xf4, 0x30, 0xf8, 0x89, 0x7f, 0x8c, 0x7d, 0xbc, 0xda, 0x6c, 0x1a, 0xf2,
+    0x07, 0x7f, 0xae, 0x5f, 0xc0, 0x06, 0x2c, 0xce, 0x2f, 0xe7, 0xcb, 0x49, 0xa0, 0x66, 0xaa, 0x79,
 ]);
 
 /// Builds the immutable simulator package without borrowing physical authority.
@@ -77,9 +82,15 @@ pub fn package() -> BoardPackage<'static> {
             ..physical.board
         },
         digital_capture: DIGITAL_CAPTURE,
+        visuals: visual_fixture::VISUALS,
         armable: false,
         ..physical
     }
+}
+
+/// Immutable simulation-only visual blobs matched by the package descriptors.
+pub const fn visual_assets() -> &'static [CapabilityVisualAsset<'static>] {
+    visual_fixture::ASSETS
 }
 
 #[cfg(test)]
@@ -97,9 +108,21 @@ mod tests {
         assert!(!board_mks_tinybee::PACKAGE.digital_capture.is_implemented());
         assert!(package.digital_capture.is_implemented());
         assert_eq!(package.digital_capture.resources, DIGITAL_CAPTURE_RESOURCES);
+        assert_eq!(package.visuals, visual_fixture::VISUALS);
+        assert_eq!(visual_assets(), visual_fixture::ASSETS);
+        assert!(VerifiedCapabilityVisualAssets::try_new(&package, visual_assets()).is_ok());
+
+        let invalid = [CapabilityVisualAsset {
+            digest: visual_fixture::ASSET_DIGEST,
+            bytes: b"not the declared PNG",
+        }];
+        assert!(matches!(
+            VerifiedCapabilityVisualAssets::try_new(&package, &invalid),
+            Err(CapabilityVisualCatalogError::Digest { .. })
+        ));
 
         let calculated = calculate_identity(&package).unwrap();
-        assert_eq!(calculated.byte_len, 3_655);
+        assert_eq!(calculated.byte_len, 4_028);
         assert_eq!(CAPABILITY_DIGEST.0, calculated.digest.0);
         assert_eq!(verify_declared_identity(&package), Ok(calculated));
     }

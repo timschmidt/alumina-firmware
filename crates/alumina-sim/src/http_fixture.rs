@@ -17,7 +17,7 @@ use alumina_net::{
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest, FrameKind, Operation, StatusCode};
 use alumina_runtime::stack::{StackDomain, StackWatermarkFlags, StackWatermarkSnapshot};
-use alumina_service::capability::CapabilityDocumentService;
+use alumina_service::capability::{CapabilityDocumentService, VerifiedCapabilityVisualAssets};
 use alumina_service::diagnostics::DiagnosticServiceState;
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
@@ -504,8 +504,13 @@ impl ClockHttpFixture {
             let Ok(request) = ServiceRequest::native(bytes) else {
                 return ServiceResponse::invalid_native();
             };
-            return CapabilityDocumentService::dispatch(
-                &capability::package(),
+            let package = capability::package();
+            let visual_assets =
+                VerifiedCapabilityVisualAssets::try_new(&package, capability::visual_assets())
+                    .expect("compiled simulator visual catalog is canonical");
+            return CapabilityDocumentService::dispatch_with_visual_assets(
+                &package,
+                visual_assets,
                 &request,
                 transmit_cycle,
             );
@@ -808,6 +813,7 @@ impl core::error::Error for ClockFixtureError {}
 mod tests {
     use alumina_capability::{
         CapabilityReadRequest, CapabilityReadResponse, MAX_CAPABILITY_CHUNK_BYTES,
+        MAX_VISUAL_ASSET_CHUNK_BYTES, VisualAssetReadRequest, VisualAssetReadResponse,
         calculate_identity,
     };
     use alumina_net::{
@@ -817,6 +823,7 @@ mod tests {
     };
     use alumina_protocol::{FrameHeader, MessageDirection, MessageHeader};
     use alumina_runtime::health::{RuntimeHealthFlags, RuntimeHealthSnapshot};
+    use alumina_storage::sha256;
 
     use super::*;
 
@@ -867,6 +874,28 @@ mod tests {
             counter,
             FrameKind::Capabilities,
             Operation::CapabilitiesGet,
+            &body,
+        )
+    }
+
+    fn native_visual_request(
+        counter: u64,
+        capability_digest: Digest,
+        asset_digest: Digest,
+        offset: u32,
+    ) -> FixtureHttpRequest {
+        let body = VisualAssetReadRequest {
+            capability_digest,
+            asset_digest,
+            offset,
+            maximum_bytes: u16::try_from(MAX_VISUAL_ASSET_CHUNK_BYTES).unwrap(),
+        }
+        .encode()
+        .unwrap();
+        native_request(
+            counter,
+            FrameKind::Capabilities,
+            Operation::CapabilityVisualGet,
             &body,
         )
     }
@@ -1189,6 +1218,40 @@ mod tests {
             CapabilityReadResponse::decode_body(&second.body[message_end..]).unwrap();
         assert_eq!(second_metadata.identity, identity);
         assert_eq!(second_metadata.offset, u32::from(metadata.chunk_len));
+    }
+
+    #[test]
+    fn authenticated_visual_range_is_capability_bound_and_byte_exact() {
+        let mut fixture = fixture();
+        let package = capability::package();
+        let capability_identity = calculate_identity(&package).unwrap();
+        let visual = package.visuals[0];
+        let response = fixture.handle(
+            &native_visual_request(76, capability_identity.digest, visual.asset_digest, 0),
+            12,
+            DeviceCycle(1_040_000),
+            DeviceCycle(1_040_100),
+        );
+        assert_eq!(response.status, 200);
+        let message_end = FrameHeader::WIRE_LEN + MessageHeader::WIRE_LEN;
+        let message = MessageHeader::decode_and_validate(
+            &response.body[FrameHeader::WIRE_LEN..message_end],
+            FrameKind::Capabilities,
+            u32::try_from(response.body.len() - FrameHeader::WIRE_LEN).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(message.operation, Operation::CapabilityVisualGet);
+        assert_eq!(message.status, StatusCode::Ok);
+        let (metadata, bytes) =
+            VisualAssetReadResponse::decode_body(&response.body[message_end..]).unwrap();
+        assert_eq!(metadata.capability_digest, capability_identity.digest);
+        assert_eq!(metadata.asset.digest, visual.asset_digest);
+        assert_eq!(
+            usize::try_from(metadata.asset.byte_len).unwrap(),
+            bytes.len()
+        );
+        assert!(metadata.complete);
+        assert_eq!(sha256(bytes).digest, visual.asset_digest);
     }
 
     #[test]

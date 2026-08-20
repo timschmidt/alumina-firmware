@@ -392,6 +392,19 @@ own declared field, is compiled into the board package, and is recomputed by
 control route. This document, not `xtask` JSON formatting or Rust memory layout,
 is the browser's immutable board authority.
 
+Large board visuals are not inlined into that document. A package may compose
+immutable bytes whose SHA-256 is already declared by one of its canonical visual
+records. A no-allocation startup verifier requires exact catalog coverage and
+hashes every complete asset once; `CapabilityVisualGet` then serves only
+bounded, capability-bound ranges from that retained verified catalog
+through the same authenticated control route. The browser pins total length on
+the first response and verifies complete content identity before media decode,
+dimension checking, texture creation, or normalized hotspot picking. Physical
+packages keep both tables empty until an operator-owned revision photograph and
+reviewed polygons exist. The host simulator alone carries a tiny, visibly
+synthetic CC0 raster to qualify transport and UI linkage without creating
+physical evidence or I/O authority.
+
 Its passive diagnostic-overview catalog is a read-only semantic observation
 authority separate from both the general resource ledger and graph opcode
 admission. It reports exact resource selectors, fixed queue budgets, record

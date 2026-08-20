@@ -297,13 +297,19 @@ keeps descriptive facts, passive diagnostic observations, and explicitly
 graph-readable inputs as three separate authorities. TinyBee publishes four
 passive semantic inputs plus their fixed queue budgets, cadence, and freshness
 ceiling; the UI draws no physical overlay while the package has no licensed
-photo.
+photo. The host-only simulator separately publishes one small CC0 diagnostic
+PNG with four normalized GPIO polygons. `CapabilityVisualGet` serves only
+immutable ranges bound to both the complete capability digest and its declared
+asset digest; the browser verifies SHA-256 and dimensions before drawing. This
+exercises annotated-resource transport without claiming a PCB photograph or
+physical reconciliation.
 The capability range service is now shared by firmware and the authenticated
 HTTP simulator. A retry-safe browser client assembles one bounded contiguous
 document, holds its digest stable after discovery, independently decodes and
 hashes the complete bytes, and transfers them once through worker schema v3.
-Current schema v5 preserves that one-time capability contract while adding
-complete telemetry and waveform documents. The live MCU panel then renders
+Current schema v13 preserves that one-time capability contract, adds bounded
+capability-derived visual progress and revalidated complete asset documents,
+and retains complete telemetry and waveform documents. The live MCU panel then renders
 board/revision/chip/core/memory/resource/hazard/visual/HIL facts while
 explicitly granting no lease, command, arm, or safety authority. See the
 [authenticated capability worker/UI evidence](docs/evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
@@ -353,7 +359,7 @@ of misreporting an abort or ordinary success. This remains localhost
 mutation-only fault evidence with status reads available; see the
 [abort-guard outage
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md).
-If only a subset aborts, current schema V12 retains the terminal participant
+If only a subset aborts, current schema V13 retains the terminal participant
 facts as `split_after_stop_request`, renders the machine state indeterminate,
 and stops status polling. The localhost asymmetric qualification is recorded in
 the [abort-split outage

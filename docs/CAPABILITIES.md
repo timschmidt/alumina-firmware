@@ -312,6 +312,61 @@ completion, and a final SHA-256 match before caching or interpreting the
 document. Range retrieval grants no configuration, arming, or execution
 authority.
 
+## Capability-bound visual transport
+
+Visual metadata stays inside the canonical document, while potentially larger
+raster bytes are served separately by the read-only `CapabilityVisualGet`
+operation. The capability's asset path is provenance only: neither firmware nor
+the browser treats it as a URL or filesystem authority. A request is admitted
+only when its nonzero capability digest equals the selected package and its
+asset digest occurs in that exact package's visual table. The immutable byte
+catalog must contain every declared digest exactly once and no others. Before
+serving, a no-allocation verifier rechecks the complete package identity,
+representable nonempty asset lengths, declaration coverage and SHA-256 over
+every compiled asset. The resulting verified catalog can be retained after boot
+so ranges do not rehash whole images. Physical board packages currently publish
+empty visual tables and compose no asset catalog, so they return
+`Unsupported`.
+
+The exact 88-byte request body is:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMVAQ01` |
+| 8 | 2 | version `1` |
+| 10 | 2 | reserved zero |
+| 12 | 4 | asset offset |
+| 16 | 2 | requested bytes, `1..=240` |
+| 18 | 6 | reserved zero |
+| 24 | 32 | exact declaring capability SHA-256 |
+| 56 | 32 | exact declared visual-asset SHA-256 |
+
+The response body is a fixed 96-byte prefix followed by exactly `chunk length`
+asset bytes:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | ASCII `ALMVAR01` |
+| 8 | 2 | version `1` |
+| 10 | 1 | bit 0: this chunk reaches the asset end |
+| 11 | 5 | reserved zero |
+| 16 | 4 | complete asset byte length |
+| 20 | 4 | returned offset |
+| 24 | 2 | following chunk bytes, `1..=240` |
+| 26 | 6 | reserved zero |
+| 32 | 32 | exact declaring capability SHA-256 |
+| 64 | 32 | complete asset SHA-256 |
+| 96 | variable | exact immutable asset bytes |
+
+The maximum 336-byte response body remains inside the fixed 512-byte Service
+response allocation. The first accepted range pins the complete asset length;
+every later range must repeat both identities and that length at the exact
+contiguous offset. Consumers must enforce their own complete-asset and aggregate
+memory ceilings, verify the final SHA-256 before exposure, then decode only the
+declared media type and require the exact declared pixel dimensions. Retrieval
+and hotspot selection grant no GPIO lease, command, configuration, arming,
+safety, or physical-reconciliation authority.
+
 Current identities are:
 
 | Board | Bytes | SHA-256 |
@@ -321,4 +376,4 @@ Current identities are:
 | T-Deck Pro | 2,837 | `1de707aa21a0f8427e619c6501836cb8b281ff59e7294707c24b766be4e163d5` |
 | MKS ESP32 FOC V1.0 | 3,040 | `cbe9b541f90a0f9a63487f7fc43855b742bc4e7c1bc4776aca27aea3fbc60384` |
 | T-LoRa Pager (current compile-only stub) | 3,157 | `38b450496cb2a53d188eff6f06061b68dffc6a29573a093d0e012ac1e7672d1a` |
-| Host TinyBee simulator | 3,655 | `4ea9bbf0b44c8664808b4e13b20294a0006371cfe1d843478a197b37b6be6cc7` |
+| Host TinyBee simulator | 4,028 | `218cc758f430f8897f8c7dbcda6c1af2077fae5fc0062cce2fe7cb49a066aa79` |

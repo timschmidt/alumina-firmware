@@ -331,6 +331,8 @@ pub enum Operation {
     IdentityGet = 0x0101,
     /// Fetch the canonical board capability document.
     CapabilitiesGet = 0x0201,
+    /// Read one immutable visual asset named by the canonical capability.
+    CapabilityVisualGet = 0x0202,
     /// Exchange timestamped local-cycle samples.
     ClockHeartbeat = 0x0301,
     /// Fetch active and candidate configuration identity.
@@ -463,7 +465,7 @@ impl Operation {
     pub const fn frame_kind(self) -> FrameKind {
         match self {
             Self::IdentityGet => FrameKind::Identity,
-            Self::CapabilitiesGet => FrameKind::Capabilities,
+            Self::CapabilitiesGet | Self::CapabilityVisualGet => FrameKind::Capabilities,
             Self::ClockHeartbeat => FrameKind::ClockSample,
             Self::ConfigurationGet
             | Self::ConfigurationValidate
@@ -532,6 +534,7 @@ impl Operation {
         match value {
             0x0101 => Some(Self::IdentityGet),
             0x0201 => Some(Self::CapabilitiesGet),
+            0x0202 => Some(Self::CapabilityVisualGet),
             0x0301 => Some(Self::ClockHeartbeat),
             0x0401 => Some(Self::ConfigurationGet),
             0x0402 => Some(Self::ConfigurationValidate),

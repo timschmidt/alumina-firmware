@@ -10,6 +10,7 @@ pub mod http_fixture;
 mod http_job;
 pub mod motion;
 pub mod shift_register;
+mod visual_fixture;
 
 use core::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

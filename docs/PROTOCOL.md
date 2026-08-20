@@ -237,6 +237,17 @@ digital edge-capture palettes with fixed storage, timing, trigger, and source
 facts. Both are distinct from graph execution authority, and neither is
 inferred from the descriptive resource ledger.
 
+`CapabilityVisualGet` reads immutable bytes only for an asset digest declared
+by that exact complete capability. Its canonical `ALMVAQ01` request binds the
+nonzero capability digest, asset digest, contiguous offset, and a range of at
+most 240 bytes. The `ALMVAR01` response repeats both digests, pins the complete
+asset length, and carries a fixed 96-byte prefix followed by the exact range.
+The client verifies complete SHA-256 before media decoding. Asset paths are
+provenance rather than transport authority, and visual retrieval or hotspot
+selection grants no resource, configuration, arming, or safety operation. The
+normative byte layouts and current empty physical-board policy are in
+[`CAPABILITIES.md`](CAPABILITIES.md).
+
 ## Storage bodies and content identity
 
 Storage V1 fixes canonical identities to SHA-256 and admits no per-connection

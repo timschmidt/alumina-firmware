@@ -665,7 +665,12 @@ pub struct HotspotDescriptor<'a> {
     pub polygon: &'a [NormalizedPoint],
 }
 
-/// Independently licensed board photograph and its resource overlay.
+/// Independently licensed board visual and its resource overlay.
+///
+/// Physical packages use reviewed, revision-specific photographs. A simulator
+/// package may instead declare an unmistakably synthetic fixture so the same
+/// acquisition and presentation boundary can be exercised without implying
+/// physical correspondence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoardVisualDescriptor<'a> {
     /// Stable view ID such as `top` or `connector-side`.
