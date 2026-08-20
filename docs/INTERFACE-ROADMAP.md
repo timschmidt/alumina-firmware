@@ -471,6 +471,11 @@ coordinator aborts the remaining confirmed peer, and the browser admits only
 zero-error global `faulted` with exact `faulted`/`aborted` participants. See the
 [automatic safety-fault propagation
 evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md).
+The paired recovery expectation drops the remaining peer's successful applied
+abort response, retains exact `faulted`/`confirmed` ambiguity, and requires an
+authenticated read-only status report before terminal `faulted`/`aborted`. See
+the [automatic safety-fault propagation recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-RECOVERY.md).
 Attended-policy controls, indefinite schedule or total endpoint outage,
 authentication/bootstrap loss, broader reordering/substitution, duplication
 outside the exact one-shot cases, other fault families or terminal mixtures,

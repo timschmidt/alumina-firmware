@@ -818,6 +818,12 @@ remaining confirmed peer, preserves global `faulted`, and reaches exact
 native coverage requires cancellation of every prepared actor while retaining
 the global fault. See the [automatic browser safety-fault propagation
 evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md).
+One applied-response-loss case during that automatic cleanup is also closed:
+the peer applies abort, its response is lost, the browser retains the exact
+faulted/confirmed ambiguity and requires read-only status reconciliation before
+accepting faulted/aborted terminal state. See the [automatic safety-fault
+propagation recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-RECOVERY.md).
 Indefinite schedule loss, total endpoint or authentication/bootstrap loss,
 broader reordering/substitution, duplication outside the exact one-shot cases,
 other fault families or terminal mixtures, broader packet stress,

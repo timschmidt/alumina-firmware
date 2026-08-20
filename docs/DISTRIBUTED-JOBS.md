@@ -378,6 +378,13 @@ cancels every prepared actor while preserving the initiating global fault. See
 the [automatic safety-fault propagation
 evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md). This
 adds no Wi-Fi safety or physical safe-output claim.
+Applied-response loss during that automatic cleanup is now closed for one exact
+case. The confirmed peer applies `JobAbort` but drops its response; the browser
+retains `Faulted`/`Confirmed`, performs read-only status reconciliation before
+any later mutation, and accepts global `Faulted` with
+`Faulted`/`Aborted` only from the peer's authenticated report. See the
+[automatic safety-fault propagation recovery
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-RECOVERY.md).
 An indefinite schedule outage, total endpoint or authentication/bootstrap
 loss, arbitrary concurrent reordering or substitution beyond this one-shot
 boundary, duplicates outside the exact replay boundary, and fault families or
