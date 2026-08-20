@@ -353,9 +353,9 @@ of misreporting an abort or ordinary success. This remains localhost
 mutation-only fault evidence with status reads available; see the
 [abort-guard outage
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md).
-If only a subset aborts, schema V9 now retains the terminal participant facts
-as `split_after_stop_request`, renders the machine state indeterminate, and
-stops status polling. The localhost asymmetric qualification is recorded in
+If only a subset aborts, current schema V10 retains the terminal participant
+facts as `split_after_stop_request`, renders the machine state indeterminate,
+and stops status polling. The localhost asymmetric qualification is recorded in
 the [abort-split outage
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md).
 Stopping during partial installation now aborts only the participant with an

@@ -4,7 +4,7 @@ use alumina_clock::BootId;
 use alumina_config::{
     CONFIGURATION_COORDINATOR_STATUS_BYTES, ConfigurationCoordinatorFault,
     ConfigurationCoordinatorFlags, ConfigurationCoordinatorPhase, ConfigurationCoordinatorStatus,
-    ConfigurationDocumentView, ConfigurationError, ConfigurationFaultCode,
+    ConfigurationDocumentView, ConfigurationError, ConfigurationFaultCode, ConfigurationFlags,
     MAX_CONFIGURATION_RECORDS, RealtimeConfigurationReport, RealtimeConfigurationState,
 };
 use alumina_job::{
@@ -34,6 +34,7 @@ const SIMULATED_OUTPUT_TOKEN: u32 = 1;
 /// Simulator-owned active configuration and exact encoded status.
 pub(crate) struct SimulatedActiveConfiguration {
     digest: Digest,
+    cached_autonomous: bool,
     status: [u8; CONFIGURATION_COORDINATOR_STATUS_BYTES],
 }
 
@@ -78,7 +79,14 @@ impl SimulatedActiveConfiguration {
         }
         .encode()
         .expect("independently validated simulator configuration forms canonical active status");
-        Ok(Self { digest, status })
+        Ok(Self {
+            digest,
+            cached_autonomous: identity
+                .summary
+                .flags
+                .contains(ConfigurationFlags::CACHED_AUTONOMOUS),
+            status,
+        })
     }
 
     pub(crate) const fn digest(&self) -> Digest {
@@ -88,6 +96,10 @@ impl SimulatedActiveConfiguration {
     pub(crate) const fn status(&self) -> &[u8; CONFIGURATION_COORDINATOR_STATUS_BYTES] {
         &self.status
     }
+
+    pub(crate) const fn cached_autonomous(&self) -> bool {
+        self.cached_autonomous
+    }
 }
 
 /// Host-only state behind authenticated storage and job frames.
@@ -95,17 +107,24 @@ pub(crate) struct SimulatedCachedJobService {
     device_id: DeviceId,
     boot_id: BootId,
     active_config: Digest,
+    cached_autonomous: bool,
     capability_digest: Digest,
     cache: CacheService,
     job: Option<SimulatedJob>,
 }
 
 impl SimulatedCachedJobService {
-    pub(crate) fn new(device_id: DeviceId, boot_id: BootId, active_config: Digest) -> Self {
+    pub(crate) fn new(
+        device_id: DeviceId,
+        boot_id: BootId,
+        active_config: Digest,
+        cached_autonomous: bool,
+    ) -> Self {
         Self {
             device_id,
             boot_id,
             active_config,
+            cached_autonomous,
             capability_digest: capability::CAPABILITY_DIGEST,
             cache: CacheService::empty(CACHE_LIMITS)
                 .expect("firmware cache limits are a valid simulator policy"),
@@ -329,7 +348,7 @@ impl SimulatedCachedJobService {
             minimum_prime_lead_cycles: minimum_lead_cycles,
             cache_ready: true,
             safety_ready: true,
-            autonomous_allowed: true,
+            autonomous_allowed: self.cached_autonomous,
         };
         self.job
             .as_mut()
@@ -729,7 +748,12 @@ mod tests {
         let device_id = DeviceId(*b"SIM-JOB-MCU-0001");
         let boot_id = BootId::new([0x31; 16]).unwrap();
         let active = SimulatedActiveConfiguration::new().unwrap();
-        let mut service = SimulatedCachedJobService::new(device_id, boot_id, active.digest());
+        let mut service = SimulatedCachedJobService::new(
+            device_id,
+            boot_id,
+            active.digest(),
+            active.cached_autonomous(),
+        );
         let stream_id = StreamId::new(*b"sim-job-stream01").unwrap();
         let block = ExecutionBlock::encode_motion(
             stream_id,
@@ -880,6 +904,18 @@ mod tests {
             required_sync_tolerance_cycles: 1_000,
             commit_id: JobCommitId::new([0x61; JOB_COMMIT_ID_BYTES]).unwrap(),
         };
+        service.cached_autonomous = false;
+        let (status, _) = dispatch(
+            &mut service,
+            FrameKind::Job,
+            Operation::JobCommit,
+            active.digest(),
+            &commit.encode().unwrap(),
+            DeviceCycle(1_100_000),
+            3_200,
+        );
+        assert_eq!(status, StatusCode::ForbiddenState);
+        service.cached_autonomous = true;
         let (status, body) = dispatch(
             &mut service,
             FrameKind::Job,

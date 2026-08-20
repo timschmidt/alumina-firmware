@@ -592,6 +592,7 @@ async fn service_task(
                     ServiceJobContext::new(
                         latest_probe,
                         storage.effective_safety(now).state,
+                        configurations.authorized_identity(),
                         configurations.authorized_servo_configuration(),
                     ),
                 )

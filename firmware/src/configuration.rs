@@ -199,6 +199,14 @@ impl ConfigurationService {
         }
     }
 
+    /// Exact service-core identity admitted to jobs only after the durable
+    /// selection and independently validated realtime identity agree.
+    pub fn authorized_identity(&self) -> Option<ConfigurationIdentity> {
+        let digest = self.authorized_digest();
+        self.active_identity
+            .filter(|identity| !digest.is_zero() && identity.digest == digest)
+    }
+
     /// Compact independently validated servo-admission facts paired with the
     /// durably authorized identity.
     ///

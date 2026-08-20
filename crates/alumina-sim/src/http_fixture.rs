@@ -208,8 +208,12 @@ impl ClockHttpFixture {
         let diagnostic_context = diagnostic_context(device_id, boot_id, policy.frequency_hz)?;
         let authentication = AuthenticationState::new(nonce, AuthRateLimit::INITIAL)
             .map_err(ClockFixtureError::Authentication)?;
-        let cached_job_service =
-            SimulatedCachedJobService::new(device_id, boot_id, active_configuration.digest());
+        let cached_job_service = SimulatedCachedJobService::new(
+            device_id,
+            boot_id,
+            active_configuration.digest(),
+            active_configuration.cached_autonomous(),
+        );
         Ok(Self {
             secret,
             nonce,

@@ -400,14 +400,20 @@ terminal mixtures beyond that one exact post-confirmation
 ## Operation after network loss
 
 A manifest declares either `network_attended` or `cached_autonomous` policy.
-Only finite attended commits are currently admitted by target firmware;
-cached-autonomous admission and attended lease renewal remain closed.
+The target admission path now recognizes both. A cached-autonomous commit is
+accepted only when the exact durably authorized core-0 configuration identity
+and the independently validated, authorized core-1 configuration both carry
+`ConfigurationFlags::CACHED_AUTONOMOUS`; the manifest policy is copied into the
+exact participant commit. Attended lease renewal remains closed.
 
 - An attended job holds or safely stops when its communication lease expires.
 - A cached autonomous job may finish without the browser only when all resource
   actions and maximum energization durations are locally bounded, storage is
   complete, safety inputs are local/hardwired, and no cross-MCU live feedback is
   required.
+- The finite `lease_expiry_cycle` remains mandatory for cached-autonomous jobs.
+  For that policy it is a local maximum execution/energization horizon, not
+  evidence of a live browser heartbeat.
 - UI hold/cancel remains idempotent and best effort. Physical E-stop, limit,
   driver fault, overcurrent, and other local safety inputs bypass Wi-Fi queues.
 - A reboot changes `boot_id`, invalidates the prepared epoch, and never resumes a
@@ -416,6 +422,19 @@ cached-autonomous admission and attended lease renewal remain closed.
 Initial cached multi-MCU support excludes live cross-MCU feedback loops and
 runtime repartitioning. Those require a separate control/stability and failure
 analysis rather than a larger message type.
+
+The browser/WASM CAM, schema-V10 worker, two-MCU HTTP simulator, and both target
+cores now carry this policy end to end. The simulator qualification proves
+exact policy/configuration admission, autonomous completion in software, and
+recovery after each actor discards 24 post-confirmation schedule requests. The
+worker retains the exact job through 48 consecutive failures, crosses
+`irrevocable` when the first local actor completes, and accepts `complete` only
+after both actors reconcile. This is a bounded schedule-route fault with the
+browser and actors still live, not browser/AP disappearance;
+see the [cached-autonomous job evidence](evidence/M10-CACHED-AUTONOMOUS-JOB.md).
+TinyBee and T-Deck Pro remain unable to reach physical `JobPrepare` because
+their output packages are still non-armable or unqualified; no radio-loss,
+SD-media, safe-output, motor, or physical autonomous-execution claim follows.
 
 ## Acceptance evidence
 

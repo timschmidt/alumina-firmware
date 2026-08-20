@@ -642,8 +642,10 @@ machine-output backend. Both packages therefore keep `JobPrepare` closed and
 remain non-armable. The target motion path is wired to publish the first
 qualified backend latch token and cycle, but neither first board can reach that
 path until its physical output backend is qualified. Hold degrades to a safe
-stop; constrained hold/resume, lease renewal, cached-autonomous authorization,
-and physical observed-edge qualification remain later operations.
+stop; constrained hold/resume, attended lease renewal, and physical
+observed-edge qualification remain later operations. Cached-autonomous policy
+is now admitted only from the matching exact configuration bit on each core;
+current non-armable board packages still close physical execution earlier.
 
 ## Real-time motion report
 

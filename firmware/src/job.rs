@@ -1,7 +1,7 @@
 //! Core-0 ownership and authenticated admission for cached machine jobs.
 
 use alumina_clock::BootId;
-use alumina_config::RealtimeConfiguration;
+use alumina_config::{ConfigurationFlags, ConfigurationIdentity, RealtimeConfiguration};
 use alumina_job::{
     AdmittedBlock, CoreJobCommand, JobCancelRequest, JobCommitRequest, JobDescriptor, JobError,
     JobNetworkPolicy, JobScheduleAction, JobScheduleAdmission, JobScheduleReference,
@@ -33,11 +33,29 @@ const fn minimum_prime_lead_cycles(kind: ExecutionKind) -> u64 {
     }
 }
 
+fn network_policy_allowed(
+    policy: JobNetworkPolicy,
+    config_digest: Digest,
+    active_configuration: Option<ConfigurationIdentity>,
+) -> bool {
+    match policy {
+        JobNetworkPolicy::NetworkAttended => true,
+        JobNetworkPolicy::CachedAutonomous => active_configuration.is_some_and(|identity| {
+            identity.digest == config_digest
+                && identity
+                    .summary
+                    .flags
+                    .contains(ConfigurationFlags::CACHED_AUTONOMOUS)
+        }),
+    }
+}
+
 /// Request-external facts sampled once for one service-core job dispatch.
 #[derive(Clone, Copy)]
 pub struct ServiceJobContext<'a> {
     latest_clock_probe_id: Option<u64>,
     safety_state: SafetyState,
+    active_configuration: Option<ConfigurationIdentity>,
     active_servo_configuration: Option<&'a CachedServoConfiguration<{ selected::JOB_AXES }>>,
 }
 
@@ -46,11 +64,13 @@ impl<'a> ServiceJobContext<'a> {
     pub const fn new(
         latest_clock_probe_id: Option<u64>,
         safety_state: SafetyState,
+        active_configuration: Option<ConfigurationIdentity>,
         active_servo_configuration: Option<&'a CachedServoConfiguration<{ selected::JOB_AXES }>>,
     ) -> Self {
         Self {
             latest_clock_probe_id,
             safety_state,
+            active_configuration,
             active_servo_configuration,
         }
     }
@@ -125,6 +145,7 @@ impl JobService {
                 now,
                 context.latest_clock_probe_id,
                 context.safety_state,
+                context.active_configuration,
             ),
             Operation::JobConfirm => self.confirm(endpoint, native, now, context.safety_state),
             Operation::JobAbort => self.abort(endpoint, native, now),
@@ -257,6 +278,7 @@ impl JobService {
         now: DeviceCycle,
         latest_clock_probe_id: Option<u64>,
         safety_state: SafetyState,
+        active_configuration: Option<ConfigurationIdentity>,
     ) -> ServiceResponse {
         let request = match JobCommitRequest::decode(native.body) {
             Ok(request) => request,
@@ -278,8 +300,12 @@ impl JobService {
         {
             return self.respond(endpoint, native, now, StatusCode::Conflict, false);
         }
-        if request.policy != JobNetworkPolicy::NetworkAttended {
-            return self.respond(endpoint, native, now, StatusCode::Unsupported, false);
+        if !network_policy_allowed(
+            request.policy,
+            descriptor.config_digest,
+            active_configuration,
+        ) {
+            return self.respond(endpoint, native, now, StatusCode::ForbiddenState, false);
         }
         if request.required_sync_tolerance_cycles > MAXIMUM_SYNC_TOLERANCE_CYCLES {
             return self.respond(endpoint, native, now, StatusCode::InvalidRequest, false);
@@ -921,7 +947,14 @@ impl RealtimeJobService {
                         safety_state,
                         SafetyState::Configured | SafetyState::Armed
                     ) && deadline_healthy,
-                    autonomous_allowed: false,
+                    autonomous_allowed: active_configuration.is_some_and(|configuration| {
+                        let identity = configuration.identity();
+                        identity.digest == self.active_config
+                            && identity
+                                .summary
+                                .flags
+                                .contains(ConfigurationFlags::CACHED_AUTONOMOUS)
+                    }),
                 };
                 self.schedule
                     .as_mut()

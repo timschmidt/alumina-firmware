@@ -378,7 +378,9 @@ Exit:
   `DISTRIBUTED-JOBS.md`, including idempotent retries, leases, point-of-no-return,
   and observed start-edge reconciliation.
 - Make partial readiness or version/config mismatch impossible to overlook.
-  Attended versus cached-autonomous network-loss policy is chosen explicitly.
+  Attended versus cached-autonomous network-loss policy is chosen explicitly;
+  schema V10 carries the manifest policy into validated snapshots, and exact
+  configuration bit 1 gates autonomous staging and both target-core admissions.
 - Show physical safety-chain coverage separately from Wi-Fi state. Never present
   a successful packet as an E-stop guarantee.
 
@@ -422,13 +424,13 @@ exact mutation is retried. See the [browser abort-request recovery
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-REQUEST-RECOVERY.md).
 A bounded repeated loss of that abort mutation is now qualified from confirmed
 state through the guard while status reads remain available. No abort is
-applied; worker schema V9 retains the accepted stop and terminates as
+applied; current worker schema V10 retains the accepted stop and terminates as
 `completed_after_stop_request` after exact all-participant completion. See the
 [browser abort-guard outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). A second
 qualification lets one actor apply abort while the other loses abort mutations
-through its guard. Schema V9 retains the exact `aborted`/`complete` split as
-terminal `split_after_stop_request`; see the [browser abort-split outage
+through its guard. Current schema V10 retains the exact `aborted`/`complete`
+split as terminal `split_after_stop_request`; see the [browser abort-split outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md).
 An installation-phase stop now uses emitted commit authority rather than the
 browser's complete planned set: it aborts an installed actor, cancels a ready

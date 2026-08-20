@@ -728,6 +728,15 @@ production-replays every MCU at every candidate, independently replays selected
 partitions, and derives global duration plus synchronization/error evidence
 from canonical `ALMSYN01`. Mixed clocks remain a later explicit-event model
 rather than a tolerance-based extension.
+Cached-autonomous policy selection and admission now run end to end through the
+authoritative CAM, schema-V10 worker, exact configuration bit, two-MCU
+simulator, and both firmware cores. A finite local execution horizon remains
+mandatory. A fresh production-worker run also retained the autonomous job
+through 48 consecutive post-confirmation schedule-route failures, recovered,
+crossed `irrevocable`, and completed both independently clocked actors. This is
+bounded software-route evidence; attended lease renewal, browser/AP loss, and
+physical radio-loss/output qualification remain open. See the
+[cached-autonomous job evidence](evidence/M10-CACHED-AUTONOMOUS-JOB.md).
 Origin-bound authenticated browser upload and retry-safe per-participant cache
 reconciliation are now implemented. A worker-capable conservative browser clock
 adapter and headless prepare/install/confirm-or-abort coordinator now enforce
@@ -770,7 +779,7 @@ cached schedules complete; a fresh no-fault run remains ordinary `complete`.
 See the [browser abort-guard outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). The
 complementary asymmetric case is now exact: one participant applies abort while
-the other loses 18 abort mutations through its guard, and schema V9 terminates
+the other loses 18 abort mutations through its guard, and schema V10 terminates
 with the retained `aborted`/`complete` facts as `split_after_stop_request`
 instead of polling forever. See the [browser abort-split outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). The exact
