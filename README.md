@@ -165,8 +165,11 @@ exchange requires full replay and audited draft admission. All edits are
 transactional, and graph changes detach the old graph-bound trace. A shared
 HostExact projection now applies each probe's stride, retention ceiling, and
 matched exact root-time trigger window under one aggregate memory bound; the
-mixed-signal plot consumes those projected entries directly and rejects local
-clock conflation. It grants no deployment or output authority. See
+mixed-signal plot consumes those projected entries directly. Its exact
+rational root-time axis aligns same-root local rates, snaps pointer selection
+to retained exact times, applies explicit per-series sample-and-hold, includes
+external-source provenance, and refuses incompatible analog sample types. It
+grants no deployment or output authority. See
 the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
 evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
 execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
@@ -184,6 +187,8 @@ and [bounded graph-probe metadata
 evidence](docs/evidence/M9-BOUNDED-GRAPH-PROBE-METADATA.md)
 and [bounded graph-probe projection
 evidence](docs/evidence/M9-BOUNDED-GRAPH-PROBE-PROJECTION.md)
+and [exact multi-rate probe-axis
+evidence](docs/evidence/M9-EXACT-MULTIRATE-PROBE-AXIS.md)
 and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
