@@ -573,8 +573,11 @@ resource opcodes, nested component dependencies, general hierarchy/panel
 editing, front-panel runtime inputs, live device telemetry, and device-trigger
 capture plots remain open. Replay-only probe triggers are separately
 implemented below. Canonical placement/wiring and a 13-kind audited palette now
-support node create/delete and exact scalar parameter replacement. Bounded complete
-`ALGW` snapshots now provide replay-backed undo/redo. Origin-local browser
+support node create/delete and exact scalar parameter replacement. Bounded
+complete `ALGW`/`ALGP` pair snapshots now provide replay-backed undo/redo across
+graph, probe, trigger, and sidecar-import edits. Pair navigation replays ALGW
+and then ALGP against that exact reconstructed workspace before changing either
+document or history state. Origin-local browser
 persistence stores the exact current ALGW/ALGP pair in one versioned value and
 commits neither restored artifact until both canonical replays and their
 identity binding succeed. Native/browser `.algw` and `.algp` exchange crosses
@@ -640,6 +643,7 @@ annotated-photo rendering remain separate open gates. See the
 [`interlock cause trace`](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
 [`exact replay probe trigger`](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
 [`exact graph/probe pair persistence`](evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md), and
+[`exact graph/probe pair history`](evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

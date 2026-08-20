@@ -154,10 +154,13 @@ placement separate from the embedded `ALGR`; its 13-entry fixed-schema palette
 includes
 exact inclusive range predicates and Boolean conjunction and supports monotonic
 node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
-and bounded exact scalar parameter replacement. Bounded canonical snapshots now
-provide undo/redo, and native/browser `.algw` exchange requires full replay and
-audited draft admission. All edits are transactional, and graph changes detach
-the old graph-bound trace. It grants no deployment or output authority. See
+and bounded exact scalar parameter replacement. Bounded canonical ALGW/ALGP
+pair snapshots now provide shared undo/redo across graph, probe, trigger, and
+sidecar-import edits; navigation replays both artifacts and their exact binding
+before changing either document or the history stacks. Native/browser `.algw`
+exchange requires full replay and audited draft admission. All edits are
+transactional, and graph changes detach the old graph-bound trace. It grants no
+deployment or output authority. See
 the [fixed graph-IR boundary](docs/GRAPH-IR.md), [deployment
 evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
 execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
@@ -169,6 +172,8 @@ and [interlock-causality evidence](docs/evidence/M9-INTERLOCK-CAUSE-TRACE.md)
 and [exact replay-trigger evidence](docs/evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md)
 and [exact graph/probe pair persistence
 evidence](docs/evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md)
+and [exact graph/probe pair history
+evidence](docs/evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md)
 and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
