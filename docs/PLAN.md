@@ -1403,6 +1403,7 @@ See the
 [exact graph/probe pair persistence](evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md), and
 [exact graph/probe pair history](evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md), and
 [bounded graph-probe metadata](evidence/M9-BOUNDED-GRAPH-PROBE-METADATA.md), and
+[bounded graph-probe projection](evidence/M9-BOUNDED-GRAPH-PROBE-PROJECTION.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
