@@ -1158,6 +1158,7 @@ mod tests {
             CoreJobCommand::Cancel { .. }
             | CoreJobCommand::Commit(_)
             | CoreJobCommand::Confirm(_)
+            | CoreJobCommand::RenewLease(_)
             | CoreJobCommand::Abort(_) => panic!("prepare command changed action"),
         };
         let mut prefetch = block_on(ServicePrefetch::<3>::open(&mut cache, descriptor)).unwrap();

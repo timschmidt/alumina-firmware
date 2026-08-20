@@ -51,12 +51,13 @@ const JOB_DESCRIPTOR_MAGIC: [u8; 8] = *b"ALMJOBD4";
 const JOB_DESCRIPTOR_VERSION: u16 = 4;
 const JOB_DESCRIPTOR_HASH_OFFSET: usize = JOB_DESCRIPTOR_WIRE_BYTES - 32;
 const CORE_JOB_COMMAND_MAGIC: [u8; 4] = *b"ALJC";
-const CORE_JOB_COMMAND_VERSION: u16 = 2;
+const CORE_JOB_COMMAND_VERSION: u16 = 3;
 const CORE_JOB_PREPARE: u8 = 1;
 const CORE_JOB_CANCEL: u8 = 2;
 const CORE_JOB_COMMIT: u8 = 3;
 const CORE_JOB_CONFIRM: u8 = 4;
 const CORE_JOB_ABORT: u8 = 5;
+const CORE_JOB_RENEW_LEASE: u8 = 6;
 const REALTIME_JOB_REPORT_MAGIC: [u8; 8] = *b"ALMJRT01";
 const REALTIME_JOB_REPORT_VERSION: u16 = 1;
 const SERVICE_JOB_REPORT_MAGIC: [u8; 8] = *b"ALMJSV01";
@@ -376,6 +377,8 @@ pub enum CoreJobCommand {
     Confirm(JobScheduleReference),
     /// Revoke an installed or confirmed schedule before its abort guard.
     Abort(JobScheduleReference),
+    /// Extend one exact network-attended lease without changing its commit.
+    RenewLease(JobLeaseRenewRequest),
 }
 
 impl CoreJobCommand {
@@ -433,6 +436,14 @@ impl CoreJobCommand {
                 encoded[6] = CORE_JOB_ABORT;
                 encoded[8..8 + JOB_SCHEDULE_REFERENCE_WIRE_BYTES].copy_from_slice(
                     &reference
+                        .encode()
+                        .map_err(CoreJobCommandWireError::Schedule)?,
+                );
+            }
+            Self::RenewLease(request) => {
+                encoded[6] = CORE_JOB_RENEW_LEASE;
+                encoded[8..8 + JOB_LEASE_RENEW_WIRE_BYTES].copy_from_slice(
+                    &request
                         .encode()
                         .map_err(CoreJobCommandWireError::Schedule)?,
                 );
@@ -510,6 +521,17 @@ impl CoreJobCommand {
                         JobScheduleWireError::Action,
                     )),
                 }
+            }
+            CORE_JOB_RENEW_LEASE => {
+                if encoded[8 + JOB_LEASE_RENEW_WIRE_BYTES..]
+                    .iter()
+                    .any(|byte| *byte != 0)
+                {
+                    return Err(CoreJobCommandWireError::Reserved);
+                }
+                JobLeaseRenewRequest::decode(&encoded[8..8 + JOB_LEASE_RENEW_WIRE_BYTES])
+                    .map(Self::RenewLease)
+                    .map_err(CoreJobCommandWireError::Schedule)
             }
             received => Err(CoreJobCommandWireError::Action { received }),
         }
@@ -2313,6 +2335,13 @@ mod tests {
         assert_eq!(
             CoreJobCommand::decode::<3>(&CoreJobCommand::Confirm(confirm).encode::<3>().unwrap()),
             Ok(CoreJobCommand::Confirm(confirm))
+        );
+        let renewal = JobLeaseRenewRequest::for_commit(commit, DeviceCycle(30_000)).unwrap();
+        assert_eq!(
+            CoreJobCommand::decode::<3>(
+                &CoreJobCommand::RenewLease(renewal).encode::<3>().unwrap()
+            ),
+            Ok(CoreJobCommand::RenewLease(renewal))
         );
         let abort =
             JobScheduleReference::for_commit(JobScheduleReferenceAction::Abort, commit).unwrap();

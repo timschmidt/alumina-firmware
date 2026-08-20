@@ -10,6 +10,8 @@ use crate::{JOB_DESCRIPTOR_WIRE_BYTES, JobDescriptor, JobDescriptorWireError};
 pub const JOB_COMMIT_WIRE_BYTES: usize = 240;
 /// Exact authenticated `JobConfirm`/`JobAbort` reference body.
 pub const JOB_SCHEDULE_REFERENCE_WIRE_BYTES: usize = 88;
+/// Exact authenticated attended-lease renewal body.
+pub const JOB_LEASE_RENEW_WIRE_BYTES: usize = 96;
 /// Exact schedule section appended to combined job status.
 pub const JOB_SCHEDULE_REPORT_WIRE_BYTES: usize = 128;
 /// Nonzero UI-selected commit identity bytes.
@@ -17,10 +19,12 @@ pub const JOB_COMMIT_ID_BYTES: usize = 16;
 
 const COMMIT_MAGIC: [u8; 8] = *b"ALMJCOM2";
 const REFERENCE_MAGIC: [u8; 8] = *b"ALMJREF2";
-const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH4";
+const LEASE_RENEW_MAGIC: [u8; 8] = *b"ALMJREN1";
+const REPORT_MAGIC: [u8; 8] = *b"ALMJSCH5";
 const COMMIT_VERSION: u16 = 2;
 const REFERENCE_VERSION: u16 = 2;
-const REPORT_VERSION: u16 = 4;
+const LEASE_RENEW_VERSION: u16 = 1;
+const REPORT_VERSION: u16 = 5;
 const PREPARED_TOKEN_DOMAIN: [u8; 16] = *b"ALM-PREPARED-V2\0";
 const REFERENCE_CONFIRM: u8 = 1;
 const REFERENCE_ABORT: u8 = 2;
@@ -337,6 +341,105 @@ impl JobScheduleReference {
     }
 }
 
+/// Exact idempotent extension of one installed network-attended lease.
+///
+/// The immutable commit remains unchanged. The request binds its full digest
+/// and chooses one absolute device-cycle expiry, so retrying identical bytes
+/// cannot extend authority a second time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct JobLeaseRenewRequest {
+    pub prepare_id: u64,
+    pub boot_id: BootId,
+    pub commit_id: JobCommitId,
+    pub commit_digest: Digest,
+    pub lease_expiry_cycle: DeviceCycle,
+}
+
+impl JobLeaseRenewRequest {
+    /// Constructs an exact renewal for one immutable attended commit.
+    pub fn for_commit(
+        commit: JobCommitRequest,
+        lease_expiry_cycle: DeviceCycle,
+    ) -> Result<Self, JobScheduleWireError> {
+        if commit.policy != JobNetworkPolicy::NetworkAttended {
+            return Err(JobScheduleWireError::Policy);
+        }
+        if lease_expiry_cycle.0 <= commit.lease_expiry_cycle.0 {
+            return Err(JobScheduleWireError::CycleOrder);
+        }
+        let request = Self {
+            prepare_id: commit.prepare_id,
+            boot_id: commit.boot_id,
+            commit_id: commit.commit_id,
+            commit_digest: commit.identity()?,
+            lease_expiry_cycle,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn encode(self) -> Result<[u8; JOB_LEASE_RENEW_WIRE_BYTES], JobScheduleWireError> {
+        self.validate()?;
+        let mut encoded = [0_u8; JOB_LEASE_RENEW_WIRE_BYTES];
+        encoded[0..8].copy_from_slice(&LEASE_RENEW_MAGIC);
+        encoded[8..10].copy_from_slice(&LEASE_RENEW_VERSION.to_le_bytes());
+        // Bytes 10..16 are reserved zero.
+        encoded[16..24].copy_from_slice(&self.prepare_id.to_le_bytes());
+        encoded[24..40].copy_from_slice(&self.boot_id.as_bytes());
+        encoded[40..56].copy_from_slice(&self.commit_id.as_bytes());
+        encoded[56..88].copy_from_slice(&self.commit_digest.0);
+        encoded[88..96].copy_from_slice(&self.lease_expiry_cycle.0.to_le_bytes());
+        Ok(encoded)
+    }
+
+    pub fn decode(encoded: &[u8]) -> Result<Self, JobScheduleWireError> {
+        if encoded.len() != JOB_LEASE_RENEW_WIRE_BYTES {
+            return Err(JobScheduleWireError::Length);
+        }
+        if encoded[0..8] != LEASE_RENEW_MAGIC {
+            return Err(JobScheduleWireError::Magic);
+        }
+        if read_u16(encoded, 8) != LEASE_RENEW_VERSION {
+            return Err(JobScheduleWireError::Version);
+        }
+        if encoded[10..16].iter().any(|byte| *byte != 0) {
+            return Err(JobScheduleWireError::Reserved);
+        }
+        let mut boot_id = [0_u8; BOOT_ID_BYTES];
+        boot_id.copy_from_slice(&encoded[24..40]);
+        let mut commit_id = [0_u8; JOB_COMMIT_ID_BYTES];
+        commit_id.copy_from_slice(&encoded[40..56]);
+        let mut commit_digest = [0_u8; 32];
+        commit_digest.copy_from_slice(&encoded[56..88]);
+        let request = Self {
+            prepare_id: read_u64(encoded, 16),
+            boot_id: BootId::new(boot_id).map_err(|_| JobScheduleWireError::BootId)?,
+            commit_id: JobCommitId::new(commit_id)?,
+            commit_digest: Digest(commit_digest),
+            lease_expiry_cycle: DeviceCycle(read_u64(encoded, 88)),
+        };
+        request.validate()?;
+        if request.encode()? != encoded {
+            return Err(JobScheduleWireError::Noncanonical);
+        }
+        Ok(request)
+    }
+
+    fn validate(self) -> Result<(), JobScheduleWireError> {
+        if self.prepare_id == 0 {
+            return Err(JobScheduleWireError::PrepareId);
+        }
+        JobCommitId::new(self.commit_id.as_bytes())?;
+        if self.commit_digest.is_zero() {
+            return Err(JobScheduleWireError::Digest);
+        }
+        if self.lease_expiry_cycle.0 == 0 {
+            return Err(JobScheduleWireError::CycleOrder);
+        }
+        Ok(())
+    }
+}
+
 /// Local schedule lifecycle, separate from stream-prefetch/ownership state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -474,6 +577,19 @@ pub struct JobScheduleAdmission {
     pub autonomous_allowed: bool,
 }
 
+/// Local facts bounding one authenticated network-attended lease extension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct JobLeaseRenewalAdmission {
+    /// Device cycle at which core 1 applies the request.
+    pub now: DeviceCycle,
+    /// Maximum new expiry displacement from `now`.
+    pub maximum_extension_cycles: u64,
+    /// Maximum absolute expiry displacement from the installed start cycle.
+    pub maximum_total_lease_cycles: u64,
+    /// Fresh local safety/deadline state required to extend energy authority.
+    pub safety_ready: bool,
+}
+
 /// One action the real-time timer/execution owner must perform.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JobScheduleAction {
@@ -504,6 +620,7 @@ pub struct PreparedJobSchedule {
     state: JobScheduleState,
     fault: JobScheduleFault,
     commit: Option<JobCommitRequest>,
+    lease_expiry_cycle: DeviceCycle,
     start_emitted: bool,
     start_observation: Option<JobStartObservation>,
 }
@@ -523,6 +640,7 @@ impl PreparedJobSchedule {
             state: JobScheduleState::Prepared,
             fault: JobScheduleFault::None,
             commit: None,
+            lease_expiry_cycle: DeviceCycle(0),
             start_emitted: false,
             start_observation: None,
         })
@@ -599,7 +717,67 @@ impl PreparedJobSchedule {
             return Err(JobScheduleError::Deadline);
         }
         self.commit = Some(request);
+        self.lease_expiry_cycle = request.lease_expiry_cycle;
         self.state = JobScheduleState::Installed;
+        Ok(self.report())
+    }
+
+    /// Idempotently extends only a network-attended lease under a fresh local cap.
+    pub fn renew_lease(
+        &mut self,
+        request: JobLeaseRenewRequest,
+        admission: JobLeaseRenewalAdmission,
+    ) -> Result<JobScheduleReport, JobScheduleError> {
+        request.validate().map_err(JobScheduleError::Wire)?;
+        let commit = self.commit.ok_or(JobScheduleError::State)?;
+        if commit.policy != JobNetworkPolicy::NetworkAttended {
+            return Err(JobScheduleError::Policy);
+        }
+        if request.prepare_id != self.prepare_id
+            || request.boot_id != self.boot_id
+            || request.commit_id != commit.commit_id
+            || request.commit_digest != commit.identity().map_err(JobScheduleError::Wire)?
+        {
+            return Err(JobScheduleError::Identity);
+        }
+        if !matches!(
+            self.state,
+            JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
+                | JobScheduleState::Running
+        ) {
+            return Err(JobScheduleError::State);
+        }
+        if !admission.safety_ready
+            || admission.maximum_extension_cycles == 0
+            || admission.maximum_total_lease_cycles == 0
+        {
+            return Err(JobScheduleError::Readiness);
+        }
+        if admission.now.0 >= self.lease_expiry_cycle.0 {
+            return Err(JobScheduleError::Deadline);
+        }
+        if request.lease_expiry_cycle == self.lease_expiry_cycle {
+            return Ok(self.report());
+        }
+        let extension = request
+            .lease_expiry_cycle
+            .0
+            .checked_sub(admission.now.0)
+            .ok_or(JobScheduleError::Deadline)?;
+        let total = request
+            .lease_expiry_cycle
+            .0
+            .checked_sub(commit.local_start_cycle.0)
+            .ok_or(JobScheduleError::Deadline)?;
+        if request.lease_expiry_cycle.0 <= self.lease_expiry_cycle.0
+            || extension > admission.maximum_extension_cycles
+            || total > admission.maximum_total_lease_cycles
+        {
+            return Err(JobScheduleError::Deadline);
+        }
+        self.lease_expiry_cycle = request.lease_expiry_cycle;
         Ok(self.report())
     }
 
@@ -673,7 +851,7 @@ impl PreparedJobSchedule {
             self.state = JobScheduleState::Priming;
             return JobScheduleAction::PrimeHardware {
                 scheduled_cycle: commit.local_start_cycle,
-                lease_expiry_cycle: commit.lease_expiry_cycle,
+                lease_expiry_cycle: self.lease_expiry_cycle,
             };
         }
         if self.state == JobScheduleState::Priming && now.0 >= commit.local_start_cycle.0 {
@@ -692,10 +870,10 @@ impl PreparedJobSchedule {
             self.start_emitted = true;
             return JobScheduleAction::Start {
                 scheduled_cycle: commit.local_start_cycle,
-                lease_expiry_cycle: commit.lease_expiry_cycle,
+                lease_expiry_cycle: self.lease_expiry_cycle,
             };
         }
-        if self.state == JobScheduleState::Running && now.0 >= commit.lease_expiry_cycle.0 {
+        if self.state == JobScheduleState::Running && now.0 >= self.lease_expiry_cycle.0 {
             self.state = JobScheduleState::Faulted;
             self.fault = JobScheduleFault::LeaseExpired;
             return JobScheduleAction::LeaseExpired;
@@ -761,8 +939,8 @@ impl PreparedJobSchedule {
         if self.state != JobScheduleState::Running || self.start_observation.is_none() {
             return Err(JobScheduleError::State);
         }
-        let commit = self.commit.ok_or(JobScheduleError::State)?;
-        if now.0 >= commit.lease_expiry_cycle.0 {
+        self.commit.ok_or(JobScheduleError::State)?;
+        if now.0 >= self.lease_expiry_cycle.0 {
             self.state = JobScheduleState::Faulted;
             self.fault = JobScheduleFault::LeaseExpired;
             return Err(JobScheduleError::Deadline);
@@ -817,7 +995,7 @@ impl PreparedJobSchedule {
                     commit.local_start_cycle.0,
                     commit.confirm_deadline_cycle.0,
                     commit.abort_guard_cycle.0,
-                    commit.lease_expiry_cycle.0,
+                    self.lease_expiry_cycle.0,
                     commit.commit_id.as_bytes(),
                 )
             },
@@ -1278,6 +1456,15 @@ mod tests {
         }
     }
 
+    fn renewal_admission(now: u64) -> JobLeaseRenewalAdmission {
+        JobLeaseRenewalAdmission {
+            now: DeviceCycle(now),
+            maximum_extension_cycles: 20_000,
+            maximum_total_lease_cycles: 30_000,
+            safety_ready: true,
+        }
+    }
+
     fn start_observation(lateness: u64) -> JobStartObservation {
         JobStartObservation {
             source: JobStartObservationSource::SimulatedLatch,
@@ -1320,12 +1507,19 @@ mod tests {
             Err(JobScheduleWireError::Magic)
         );
 
+        let renewal = JobLeaseRenewRequest::for_commit(commit, DeviceCycle(25_000)).unwrap();
+        let encoded = renewal.encode().unwrap();
+        assert_eq!(encoded.len(), JOB_LEASE_RENEW_WIRE_BYTES);
+        assert_eq!(&encoded[..8], b"ALMJREN1");
+        assert_eq!(&encoded[8..10], &1_u16.to_le_bytes());
+        assert_eq!(JobLeaseRenewRequest::decode(&encoded), Ok(renewal));
+
         let schedule = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
         let report = schedule.report();
         let encoded = report.encode().unwrap();
         assert_eq!(encoded.len(), JOB_SCHEDULE_REPORT_WIRE_BYTES);
-        assert_eq!(&encoded[..8], b"ALMJSCH4");
-        assert_eq!(&encoded[8..10], &4_u16.to_le_bytes());
+        assert_eq!(&encoded[..8], b"ALMJSCH5");
+        assert_eq!(&encoded[8..10], &5_u16.to_le_bytes());
         assert_eq!(JobScheduleReport::decode(&encoded), Ok(report));
         let mut legacy = encoded;
         legacy[..8].copy_from_slice(b"ALMJSCH1");
@@ -1333,6 +1527,44 @@ mod tests {
         assert_eq!(
             JobScheduleReport::decode(&legacy),
             Err(JobScheduleWireError::Magic)
+        );
+    }
+
+    #[test]
+    fn attended_lease_renewal_is_absolute_idempotent_and_locally_bounded() {
+        let commit = commit();
+        let mut schedule = PreparedJobSchedule::prepare::<3>(boot(0x66), descriptor()).unwrap();
+        schedule.install(commit, admission(1_000)).unwrap();
+        let confirm =
+            JobScheduleReference::for_commit(JobScheduleReferenceAction::Confirm, commit).unwrap();
+        schedule.confirm(confirm, DeviceCycle(7_000)).unwrap();
+
+        let renewal = JobLeaseRenewRequest::for_commit(commit, DeviceCycle(25_000)).unwrap();
+        let report = schedule
+            .renew_lease(renewal, renewal_admission(7_500))
+            .unwrap();
+        assert_eq!(report.lease_expiry_cycle, DeviceCycle(25_000));
+        assert_eq!(
+            schedule.renew_lease(renewal, renewal_admission(8_000)),
+            Ok(report)
+        );
+
+        let shorter = JobLeaseRenewRequest::for_commit(commit, DeviceCycle(24_000)).unwrap();
+        assert_eq!(
+            schedule.renew_lease(shorter, renewal_admission(8_100)),
+            Err(JobScheduleError::Deadline)
+        );
+        let too_far = JobLeaseRenewRequest::for_commit(commit, DeviceCycle(40_001)).unwrap();
+        assert_eq!(
+            schedule.renew_lease(too_far, renewal_admission(8_200)),
+            Err(JobScheduleError::Deadline)
+        );
+
+        let mut autonomous = commit;
+        autonomous.policy = JobNetworkPolicy::CachedAutonomous;
+        assert_eq!(
+            JobLeaseRenewRequest::for_commit(autonomous, DeviceCycle(25_000)),
+            Err(JobScheduleWireError::Policy)
         );
     }
 

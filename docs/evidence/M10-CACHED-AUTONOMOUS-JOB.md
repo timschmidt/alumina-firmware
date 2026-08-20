@@ -5,7 +5,7 @@ Date: 2026-08-20
 ## Closed software boundary
 
 The canonical `cached_autonomous` manifest policy now travels from the
-authoritative browser/WASM CAM compiler through schema-V10 worker state, exact
+authoritative browser/WASM CAM compiler through current schema-V11 worker state, exact
 multi-MCU commits, the HTTP simulator, and both target firmware cores.
 
 Admission is fail-closed at each independent authority boundary:
@@ -22,14 +22,16 @@ Admission is fail-closed at each independent authority boundary:
 
 `lease_expiry_cycle` remains finite and mandatory. Under cached-autonomous
 policy it is the local maximum execution/energization horizon, not a claim that
-the browser remains reachable. Attended lease renewal remains open.
+the browser remains reachable. The later attended-only renewal protocol does
+not alter this policy; see
+[`M10-ATTENDED-LEASE-RENEWAL.md`](M10-ATTENDED-LEASE-RENEWAL.md).
 
 ## Browser and operator boundary
 
 The live job panel defaults to `network_attended` and permits an explicit
 pre-staging selection of `cached_autonomous`. The exact manifest is recompiled
 when that selection changes. Replacement job snapshots now carry the decoded
-network policy, and the rendering realm validates schema V10 before display.
+network policy, and the rendering realm validates current schema V11 before display.
 The panel explicitly states that Wi-Fi stop is not a safety chain.
 
 The simulator fixture CLI and browser driver gained an explicit
@@ -146,7 +148,7 @@ stabilized.
 This closes exact software policy selection and admission, simulated
 completion, and recovery from the bounded schedule-route outage above. It does
 not qualify browser disappearance or AP loss over a real radio, an indefinite
-or total endpoint outage, attended lease renewal, physical SD persistence,
+or total endpoint outage, physical SD persistence,
 power loss, ESP reset, safe-output electrical state,
 E-stop/endstop/interlock latency, output timing, multi-board simultaneity,
 motors, motor power, or autonomous motion. TinyBee and T-Deck Pro remain

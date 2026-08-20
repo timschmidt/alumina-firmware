@@ -498,11 +498,12 @@ reconcile and reuse the same immutable cache bytes. Rendering-realm
 retained; it is not a native command to erase firmware evidence or bypass the
 replacement gate.
 
-The 344-byte intercore command begins with `ALJC`, version `2`, a one-byte action,
+The 344-byte intercore command begins with `ALJC`, version `3`, a one-byte action,
 and one reserved zero byte. Action `1` carries the 16-byte authentication boot ID
 at `8..24` and the complete descriptor at `24..344`. Action `2` contains only the
 nonzero prepare ID at `8..16`. Actions `3`, `4`, and `5` carry commit, confirm,
-and abort bodies beginning at byte 8. Every unused byte is zero. `JobCancel`
+and abort bodies beginning at byte 8. Action `6` carries the attended-lease
+renewal body below. Every unused byte is zero. `JobCancel`
 uses the same bare eight-byte prepare ID as its native body. The reviewed default
 runtime boundary occupies 13,184 bytes; together with the core-1 stack its
 45,952-byte requirement remains below the 64 KiB internal-memory budget.
@@ -543,6 +544,30 @@ version/action/reserved at `8..16`, prepare ID at 16, boot ID at 24, commit ID a
 Confirm is deliberately a distinct `0x0509` operation; merely delivering commit
 never grants start authority.
 
+`JobLeaseRenew` is the distinct `0x050a` operation. Its exact 96-byte
+`ALMJREN1` body extends only the mutable lease of one immutable
+network-attended commit:
+
+| Offset | Bytes | Meaning |
+| ---: | ---: | --- |
+| 0 | 8 | magic `ALMJREN1` |
+| 8 | 2 | exact version (`1`) |
+| 10 | 6 | reserved zero |
+| 16 | 8 | nonzero prepare ID |
+| 24 | 16 | exact current boot ID |
+| 40 | 16 | exact UI-selected commit ID |
+| 56 | 32 | SHA-256 identity of all 240 immutable commit bytes |
+| 88 | 8 | new absolute device-cycle lease expiry |
+
+The request is canonical and idempotent: identical bytes name the same absolute
+expiry and cannot compound authority. It is admitted only for the matching
+attended commit while the local schedule is confirmed, priming, primed, or
+running, before the currently reported lease expires, with fresh local safety
+and deadline health. Core 0 and core 1 independently enforce a maximum expiry
+15 seconds ahead of local admission time and a maximum total lease one hour
+after the scheduled start. Cached-autonomous commits reject this operation and
+retain their original finite execution horizon exactly.
+
 Core 1 owns `Prepared → Installed → Confirmed → Priming → Primed →
 Running → Complete/Faulted` plus safe `Aborted` and unconfirmed `Expired`
 terminals. Installation requires the exact active configuration, boot token,
@@ -563,8 +588,8 @@ timeline releases from the MCU clock at the exact epoch. The later `Start`
 action is one-shot software/safety-state reconciliation, not a Wi-Fi trigger or
 the source of the physical edge.
 
-The 128-byte `ALMJSCH4` schedule report uses a strict union. Its header holds
-version 4, state, fault, and commit/policy/start flags in bytes `8..16`. In
+The 128-byte `ALMJSCH5` schedule report uses a strict union. Its header holds
+version 5, state, fault, and commit/policy/start flags in bytes `8..16`. In
 `Prepared`, bytes `16..48` are the prepared token and `48..96` are zero. After
 commit, bytes `16..48` are start/confirmation/abort/lease cycles and `48..64`
 is the commit ID. A committed report never carries a prepared token. Bytes
@@ -584,7 +609,11 @@ token, including after commit and terminal completion. This retained identity
 lets a replacement browser owner prove that an authenticated report belongs to
 the exact compiled descriptor without fabricating the original browser commit
 or start epoch. It grants no prepare, install, confirmation, or start authority.
-The V4 decoder is exact; there is no V3 compatibility path.
+The V5 decoder is exact; there is no compatibility path for an earlier report.
+For an attended commit, the lease field is the current independently admitted
+expiry and may advance monotonically without changing any immutable commit
+field. For a cached-autonomous commit it must remain exactly equal to the
+original commit value.
 
 The observation is valid only after the one-shot start action. Its earliest
 cycle cannot precede the scheduled cycle and its latest cannot precede its
@@ -611,7 +640,7 @@ unchanged.
 | 11 | 5 | reserved zero |
 | 16 | 96 | `ALMJSV01` core-0 report, or all zero |
 | 112 | 128 | `ALMJRT01` core-1 report, or all zero |
-| 240 | 128 | `ALMJSCH4` core-1 schedule report, or all zero |
+| 240 | 128 | `ALMJSCH5` core-1 schedule report, or all zero |
 
 The service report carries state, axis width, validated/sent/total block counts,
 verified storage-chunk count, current ring credits/depth, and a terminal
@@ -621,11 +650,14 @@ executor owns a block, and admitted/completed tick-and-digest facts. Absent
 optional fields are zero-filled. Embedded stream reports must name the same nonzero
 prepare ID and block count; if both are complete, their independently derived
 terminal tick and block digest must also agree. Core 0 admits schedule reports
-only when their prepared token or every committed field matches its exact local
-descriptor/commit. While `Running`, it accepts exactly one monotonic
-no-observation-to-observation enrichment; it rejects later reports that erase or
-replace retained evidence. The browser's authenticated participant controller
-applies the same rule independently. Before any new prepare mutation it performs
+only when their prepared token or every immutable committed field matches its
+exact local descriptor/commit and the attended lease lies between the initial
+commit value and core 0's greatest explicitly authorized expiry. It accepts
+monotonic attended-lease advancement in any renewable state and, while
+`Running`, exactly one no-observation-to-observation enrichment; it rejects
+later reports that regress authority or erase or replace retained evidence. The
+browser's authenticated participant controller applies the same rule
+independently. Before any new prepare mutation it performs
 one complete read-only status round. A fresh owner may accept only an exact
 descriptor-token-matched terminal completion; mixed complete/empty participant
 sets fail closed, and the fresh owner reports no original UI epoch. `ALMJST03`
@@ -642,7 +674,7 @@ machine-output backend. Both packages therefore keep `JobPrepare` closed and
 remain non-armable. The target motion path is wired to publish the first
 qualified backend latch token and cycle, but neither first board can reach that
 path until its physical output backend is qualified. Hold degrades to a safe
-stop; constrained hold/resume, attended lease renewal, and physical
+stop; constrained hold/resume and physical
 observed-edge qualification remain later operations. Cached-autonomous policy
 is now admitted only from the matching exact configuration bit on each core;
 current non-armable board packages still close physical execution earlier.

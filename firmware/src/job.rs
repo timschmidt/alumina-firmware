@@ -4,10 +4,10 @@ use alumina_clock::BootId;
 use alumina_config::{ConfigurationFlags, ConfigurationIdentity, RealtimeConfiguration};
 use alumina_job::{
     AdmittedBlock, CoreJobCommand, JobCancelRequest, JobCommitRequest, JobDescriptor, JobError,
-    JobNetworkPolicy, JobScheduleAction, JobScheduleAdmission, JobScheduleReference,
-    JobScheduleReferenceAction, JobScheduleReport, JobScheduleState, JobStartObservation,
-    JobStatusReport, RealtimeJob, RealtimeJobReport, RealtimeJobState, RealtimePoll,
-    ServiceJobReport, ServiceJobState, ServicePrefetch,
+    JobLeaseRenewRequest, JobLeaseRenewalAdmission, JobNetworkPolicy, JobScheduleAction,
+    JobScheduleAdmission, JobScheduleReference, JobScheduleReferenceAction, JobScheduleReport,
+    JobScheduleState, JobStartObservation, JobStatusReport, RealtimeJob, RealtimeJobReport,
+    RealtimeJobState, RealtimePoll, ServiceJobReport, ServiceJobState, ServicePrefetch,
 };
 use alumina_machine_ir::ExecutionKind;
 use alumina_motion::{CachedServoConfiguration, cached_servo_admission_profile_from_configuration};
@@ -22,6 +22,8 @@ use crate::clock::{ClockJobFacts, MAXIMUM_START_HORIZON_CYCLES, MINIMUM_START_LE
 use crate::hardware::selected;
 
 const MAXIMUM_JOB_LEASE_CYCLES: u64 = embassy_time::Duration::from_secs(60 * 60).as_ticks();
+const MAXIMUM_ATTENDED_LEASE_EXTENSION_CYCLES: u64 =
+    embassy_time::Duration::from_secs(15).as_ticks();
 const MAXIMUM_SYNC_TOLERANCE_CYCLES: u64 = embassy_time::Duration::from_millis(5).as_ticks();
 
 const fn minimum_prime_lead_cycles(kind: ExecutionKind) -> u64 {
@@ -84,6 +86,7 @@ pub struct JobService {
     realtime: Option<RealtimeJobReport>,
     schedule: Option<JobScheduleReport>,
     commit: Option<JobCommitRequest>,
+    authorized_lease_expiry_cycle: DeviceCycle,
     command_sequence: u32,
     active_config: Digest,
     configuration_transition: bool,
@@ -99,6 +102,7 @@ impl JobService {
             realtime: None,
             schedule: None,
             commit: None,
+            authorized_lease_expiry_cycle: DeviceCycle(0),
             command_sequence: 0,
             active_config: Digest::ZERO,
             configuration_transition: false,
@@ -148,6 +152,9 @@ impl JobService {
                 context.active_configuration,
             ),
             Operation::JobConfirm => self.confirm(endpoint, native, now, context.safety_state),
+            Operation::JobLeaseRenew => {
+                self.renew_lease(endpoint, native, now, context.safety_state)
+            }
             Operation::JobAbort => self.abort(endpoint, native, now),
             Operation::JobCancel => self.cancel(endpoint, native, now),
             Operation::JobStatus if native.body.is_empty() => {
@@ -268,6 +275,7 @@ impl JobService {
         self.realtime = None;
         self.schedule = None;
         self.commit = None;
+        self.authorized_lease_expiry_cycle = DeviceCycle(0);
         self.respond(endpoint, native, now, StatusCode::Ok, true)
     }
 
@@ -359,6 +367,84 @@ impl JobService {
             return self.respond(endpoint, native, now, status, false);
         }
         self.commit = Some(request);
+        self.authorized_lease_expiry_cycle = request.lease_expiry_cycle;
+        self.respond(endpoint, native, now, StatusCode::Ok, true)
+    }
+
+    fn renew_lease(
+        &mut self,
+        endpoint: &mut DefaultServiceEndpoint,
+        native: NativeRequest<'_>,
+        now: DeviceCycle,
+        safety_state: SafetyState,
+    ) -> ServiceResponse {
+        let request = match JobLeaseRenewRequest::decode(native.body) {
+            Ok(request) => request,
+            Err(_) => {
+                return self.respond(endpoint, native, now, StatusCode::InvalidRequest, false);
+            }
+        };
+        let Some(descriptor) = self.descriptor else {
+            return self.respond(endpoint, native, now, StatusCode::NotFound, false);
+        };
+        let Some(commit) = self.commit else {
+            return self.respond(endpoint, native, now, StatusCode::NotFound, false);
+        };
+        if commit.policy != JobNetworkPolicy::NetworkAttended
+            || !matches!(safety_state, SafetyState::Armed | SafetyState::Running)
+        {
+            return self.respond(endpoint, native, now, StatusCode::ForbiddenState, true);
+        }
+        let expected = JobLeaseRenewRequest::for_commit(commit, request.lease_expiry_cycle);
+        if native.frame.config_digest != descriptor.config_digest || expected != Ok(request) {
+            return self.respond(endpoint, native, now, StatusCode::Conflict, false);
+        }
+        let Some(schedule) = self.schedule else {
+            return self.respond(endpoint, native, now, StatusCode::Busy, true);
+        };
+        if !matches!(
+            schedule.state,
+            JobScheduleState::Confirmed
+                | JobScheduleState::Priming
+                | JobScheduleState::Primed
+                | JobScheduleState::Running
+        ) {
+            return self.respond(endpoint, native, now, StatusCode::ForbiddenState, true);
+        }
+        if now.0 >= schedule.lease_expiry_cycle.0 {
+            return self.respond(endpoint, native, now, StatusCode::Deadline, true);
+        }
+        if request.lease_expiry_cycle == schedule.lease_expiry_cycle {
+            return self.respond(endpoint, native, now, StatusCode::Ok, true);
+        }
+        if request.lease_expiry_cycle == self.authorized_lease_expiry_cycle {
+            // A successful inter-core enqueue is itself retained authority;
+            // telemetry may legitimately lag the request response.
+            return self.respond(endpoint, native, now, StatusCode::Ok, true);
+        }
+        if request.lease_expiry_cycle.0 < self.authorized_lease_expiry_cycle.0 {
+            return self.respond(endpoint, native, now, StatusCode::Conflict, true);
+        }
+        let extension = request.lease_expiry_cycle.0.checked_sub(now.0);
+        let total = request
+            .lease_expiry_cycle
+            .0
+            .checked_sub(commit.local_start_cycle.0);
+        if request.lease_expiry_cycle.0 <= schedule.lease_expiry_cycle.0
+            || extension.is_none_or(|cycles| cycles > MAXIMUM_ATTENDED_LEASE_EXTENSION_CYCLES)
+            || total.is_none_or(|cycles| cycles > MAXIMUM_JOB_LEASE_CYCLES)
+        {
+            return self.respond(endpoint, native, now, StatusCode::Deadline, true);
+        }
+        if let Err(status) = self.enqueue(
+            endpoint,
+            descriptor,
+            CoreJobCommand::RenewLease(request),
+            now,
+        ) {
+            return self.respond(endpoint, native, now, status, false);
+        }
+        self.authorized_lease_expiry_cycle = request.lease_expiry_cycle;
         self.respond(endpoint, native, now, StatusCode::Ok, true)
     }
 
@@ -541,6 +627,7 @@ impl JobService {
         }
         self.commit = None;
         self.schedule = None;
+        self.authorized_lease_expiry_cycle = DeviceCycle(0);
         self.respond(endpoint, native, now, StatusCode::Ok, true)
     }
 
@@ -607,7 +694,7 @@ impl JobService {
                 if report.prepared_token != Some(expected) {
                     return Err(());
                 }
-            } else if !schedule_matches_commit(report, commit) {
+            } else if !schedule_matches_commit(report, commit, self.authorized_lease_expiry_cycle) {
                 return Err(());
             }
         } else {
@@ -975,6 +1062,23 @@ impl RealtimeJobService {
                     .confirm(reference, now)
                     .map_err(|_| ())?;
             }
+            CoreJobCommand::RenewLease(request) => {
+                if frame.header().config_digest != self.descriptor.ok_or(())?.config_digest {
+                    return Err(());
+                }
+                let admission = JobLeaseRenewalAdmission {
+                    now,
+                    maximum_extension_cycles: MAXIMUM_ATTENDED_LEASE_EXTENSION_CYCLES,
+                    maximum_total_lease_cycles: MAXIMUM_JOB_LEASE_CYCLES,
+                    safety_ready: matches!(safety_state, SafetyState::Armed | SafetyState::Running)
+                        && deadline_healthy,
+                };
+                self.schedule
+                    .as_mut()
+                    .ok_or(())?
+                    .renew_lease(request, admission)
+                    .map_err(|_| ())?;
+            }
             CoreJobCommand::Abort(reference) => {
                 if frame.header().config_digest != self.descriptor.ok_or(())?.config_digest {
                     return Err(());
@@ -1311,13 +1415,27 @@ impl Default for RealtimeJobService {
     }
 }
 
-fn schedule_matches_commit(report: JobScheduleReport, commit: JobCommitRequest) -> bool {
+fn schedule_matches_commit(
+    report: JobScheduleReport,
+    commit: JobCommitRequest,
+    authorized_lease_expiry_cycle: DeviceCycle,
+) -> bool {
+    let lease_matches = match commit.policy {
+        JobNetworkPolicy::NetworkAttended => {
+            report.lease_expiry_cycle.0 >= commit.lease_expiry_cycle.0
+                && report.lease_expiry_cycle.0 <= authorized_lease_expiry_cycle.0
+        }
+        JobNetworkPolicy::CachedAutonomous => {
+            report.lease_expiry_cycle == commit.lease_expiry_cycle
+                && authorized_lease_expiry_cycle == commit.lease_expiry_cycle
+        }
+    };
     report.policy == Some(commit.policy)
         && report.prepared_token.is_none()
         && report.local_start_cycle == commit.local_start_cycle
         && report.confirm_deadline_cycle == commit.confirm_deadline_cycle
         && report.abort_guard_cycle == commit.abort_guard_cycle
-        && report.lease_expiry_cycle == commit.lease_expiry_cycle
+        && lease_matches
         && report.commit_id == commit.commit_id.as_bytes()
 }
 
@@ -1325,14 +1443,27 @@ fn schedule_report_advances(previous: JobScheduleReport, next: JobScheduleReport
     if previous == next {
         return true;
     }
-    if previous.state == JobScheduleState::Running
-        && next.state == JobScheduleState::Running
-        && previous.start_observation.is_none()
-        && next.start_observation.is_some()
+    if previous.policy == Some(JobNetworkPolicy::NetworkAttended)
+        && next.lease_expiry_cycle.0 < previous.lease_expiry_cycle.0
     {
-        let mut without_observation = next;
-        without_observation.start_observation = None;
-        return without_observation == previous;
+        return false;
+    }
+    if previous.state == next.state {
+        let mut normalized = next;
+        if previous.policy == Some(JobNetworkPolicy::NetworkAttended)
+            && next.lease_expiry_cycle.0 > previous.lease_expiry_cycle.0
+        {
+            normalized.lease_expiry_cycle = previous.lease_expiry_cycle;
+        }
+        if previous.state == JobScheduleState::Running
+            && previous.start_observation.is_none()
+            && next.start_observation.is_some()
+        {
+            normalized.start_observation = None;
+        }
+        if normalized == previous {
+            return true;
+        }
     }
     match previous.state {
         JobScheduleState::Prepared => next.state != JobScheduleState::Prepared,

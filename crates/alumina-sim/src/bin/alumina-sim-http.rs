@@ -227,6 +227,7 @@ fn parse_operation(value: &str, argument: &str) -> Result<Operation, ServerError
         "job-status" => Some(Operation::JobStatus),
         "job-commit" => Some(Operation::JobCommit),
         "job-confirm" => Some(Operation::JobConfirm),
+        "job-lease-renew" => Some(Operation::JobLeaseRenew),
         "job-abort" => Some(Operation::JobAbort),
         "job-cancel" => Some(Operation::JobCancel),
         _ => None,
@@ -642,6 +643,7 @@ const fn is_job_schedule_operation(operation: Operation) -> bool {
             | Operation::JobStatus
             | Operation::JobCommit
             | Operation::JobConfirm
+            | Operation::JobLeaseRenew
             | Operation::JobAbort
             | Operation::JobCancel
     )
@@ -879,6 +881,10 @@ mod tests {
         assert_eq!(
             parse_operation("1289", "--drop-operation-response").unwrap(),
             Operation::JobConfirm
+        );
+        assert_eq!(
+            parse_operation("job-lease-renew", "--drop-operation-response").unwrap(),
+            Operation::JobLeaseRenew
         );
         assert_eq!(
             parse_operation("job-abort", "--duplicate-operation-request").unwrap(),

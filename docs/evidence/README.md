@@ -456,6 +456,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — loss of the remaining peer's abort request before authentication or
   application, unchanged-state status reconciliation, exact retry, and
   faulted/aborted recovery.
+- [`M10-ATTENDED-LEASE-RENEWAL.md`](M10-ATTENDED-LEASE-RENEWAL.md) — exact
+  immutable-commit/mutable-lease authority, all-participant browser renewal,
+  applied-response and pre-application request-loss reconciliation,
+  exact-duration execution, sustained-loss expiry, and autonomous control.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

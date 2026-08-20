@@ -9,9 +9,10 @@ use alumina_config::{
 };
 use alumina_job::{
     DecodedMachineJobManifest, JobCancelRequest, JobCommitRequest, JobDescriptor,
-    JobScheduleAction, JobScheduleAdmission, JobScheduleError, JobScheduleReference,
-    JobScheduleState, JobStartObservation, JobStartObservationSource, JobStatusReport,
-    PreparedJobSchedule, RealtimeJobReport, RealtimeJobState, ServiceJobReport, ServiceJobState,
+    JobLeaseRenewRequest, JobLeaseRenewalAdmission, JobScheduleAction, JobScheduleAdmission,
+    JobScheduleError, JobScheduleReference, JobScheduleState, JobStartObservation,
+    JobStartObservationSource, JobStatusReport, PreparedJobSchedule, RealtimeJobReport,
+    RealtimeJobState, ServiceJobReport, ServiceJobState,
 };
 use alumina_machine_ir::{
     BlockExpectation, EXECUTION_BLOCK_BYTES, ExecutionBlock, ExecutionKind, StreamTick,
@@ -265,6 +266,7 @@ impl SimulatedCachedJobService {
                 maximum_schedule_horizon_cycles,
             ),
             Operation::JobConfirm => self.confirm(native.body, now),
+            Operation::JobLeaseRenew => self.renew_lease(native.body, now, frequency_hz),
             Operation::JobAbort => self.abort(native.body, now),
             Operation::JobCancel => self.cancel(native.body),
             _ => Err(StatusCode::Unsupported),
@@ -319,6 +321,9 @@ impl SimulatedCachedJobService {
             descriptor,
             validation,
             schedule,
+            commit: None,
+            execution_duration_cycles: 0,
+            completion_cycle: None,
             cancelled: false,
         });
         Ok(())
@@ -333,7 +338,9 @@ impl SimulatedCachedJobService {
         maximum_schedule_horizon_cycles: u64,
     ) -> Result<(), StatusCode> {
         let commit = JobCommitRequest::decode(body).map_err(|_| StatusCode::InvalidRequest)?;
-        self.validate_manifest(commit)?;
+        let (duration_ticks, global_timebase_hz) = self.validate_manifest(commit)?;
+        let execution_duration_cycles =
+            ceil_product_ratio(duration_ticks, frequency_hz, global_timebase_hz)?;
         let maximum_lease_cycles = frequency_hz
             .checked_mul(3_600)
             .ok_or(StatusCode::Capacity)?;
@@ -350,13 +357,14 @@ impl SimulatedCachedJobService {
             safety_ready: true,
             autonomous_allowed: self.cached_autonomous,
         };
-        self.job
-            .as_mut()
-            .ok_or(StatusCode::NotFound)?
-            .schedule
+        let job = self.job.as_mut().ok_or(StatusCode::NotFound)?;
+        job.schedule
             .install(commit, admission)
-            .map(|_| ())
-            .map_err(job_schedule_error_status)
+            .map_err(job_schedule_error_status)?;
+        job.commit = Some(commit);
+        job.execution_duration_cycles = execution_duration_cycles;
+        job.completion_cycle = None;
+        Ok(())
     }
 
     fn confirm(&mut self, body: &[u8], now: DeviceCycle) -> Result<(), StatusCode> {
@@ -367,6 +375,39 @@ impl SimulatedCachedJobService {
             .ok_or(StatusCode::NotFound)?
             .schedule
             .confirm(reference, now)
+            .map(|_| ())
+            .map_err(job_schedule_error_status)
+    }
+
+    fn renew_lease(
+        &mut self,
+        body: &[u8],
+        now: DeviceCycle,
+        frequency_hz: u64,
+    ) -> Result<(), StatusCode> {
+        let request = JobLeaseRenewRequest::decode(body).map_err(|_| StatusCode::InvalidRequest)?;
+        let maximum_extension_cycles = frequency_hz.checked_mul(15).ok_or(StatusCode::Capacity)?;
+        let maximum_total_lease_cycles = frequency_hz
+            .checked_mul(3_600)
+            .ok_or(StatusCode::Capacity)?;
+        let job = self.job.as_mut().ok_or(StatusCode::NotFound)?;
+        let commit = job.commit.ok_or(StatusCode::NotFound)?;
+        if commit.policy != alumina_job::JobNetworkPolicy::NetworkAttended {
+            return Err(StatusCode::ForbiddenState);
+        }
+        if JobLeaseRenewRequest::for_commit(commit, request.lease_expiry_cycle) != Ok(request) {
+            return Err(StatusCode::Conflict);
+        }
+        job.schedule
+            .renew_lease(
+                request,
+                JobLeaseRenewalAdmission {
+                    now,
+                    maximum_extension_cycles,
+                    maximum_total_lease_cycles,
+                    safety_ready: true,
+                },
+            )
             .map(|_| ())
             .map_err(job_schedule_error_status)
     }
@@ -396,7 +437,7 @@ impl SimulatedCachedJobService {
         Ok(())
     }
 
-    fn validate_manifest(&self, commit: JobCommitRequest) -> Result<(), StatusCode> {
+    fn validate_manifest(&self, commit: JobCommitRequest) -> Result<(u64, u64), StatusCode> {
         let job = self.job.as_ref().ok_or(StatusCode::NotFound)?;
         if job.cancelled {
             return Err(StatusCode::ForbiddenState);
@@ -450,7 +491,10 @@ impl SimulatedCachedJobService {
         {
             return Err(StatusCode::Integrity);
         }
-        Ok(())
+        Ok((
+            manifest.global().duration_ticks,
+            manifest.global().global_timebase_hz,
+        ))
     }
 }
 
@@ -458,6 +502,9 @@ struct SimulatedJob {
     descriptor: JobDescriptor,
     validation: ValidatedPartition,
     schedule: PreparedJobSchedule,
+    commit: Option<JobCommitRequest>,
+    execution_duration_cycles: u64,
+    completion_cycle: Option<DeviceCycle>,
     cancelled: bool,
 }
 
@@ -492,13 +539,23 @@ impl SimulatedJob {
                     latest_cycle: scheduled_cycle,
                 };
                 if self.schedule.record_start_observation(observation).is_ok() {
-                    let _ = self.schedule.complete(now);
+                    self.completion_cycle = scheduled_cycle
+                        .0
+                        .checked_add(self.execution_duration_cycles)
+                        .map(DeviceCycle);
                 }
             }
             JobScheduleAction::None
             | JobScheduleAction::AbortUnconfirmed
             | JobScheduleAction::MissedStart
             | JobScheduleAction::LeaseExpired => {}
+        }
+        if self.schedule.report().state == JobScheduleState::Running
+            && self
+                .completion_cycle
+                .is_some_and(|completion| now.0 >= completion.0)
+        {
+            let _ = self.schedule.complete(now);
         }
     }
 
@@ -642,6 +699,26 @@ fn validate_partition(
     })
 }
 
+fn ceil_product_ratio(value: u64, multiplier: u64, divisor: u64) -> Result<u64, StatusCode> {
+    if divisor == 0 {
+        return Err(StatusCode::Integrity);
+    }
+    let numerator = u128::from(value)
+        .checked_mul(u128::from(multiplier))
+        .ok_or(StatusCode::Capacity)?;
+    let divisor = u128::from(divisor);
+    let rounded = numerator
+        .checked_add(divisor - 1)
+        .ok_or(StatusCode::Capacity)?
+        / divisor;
+    let cycles = u64::try_from(rounded).map_err(|_| StatusCode::Capacity)?;
+    if cycles == 0 {
+        Err(StatusCode::Integrity)
+    } else {
+        Ok(cycles)
+    }
+}
+
 fn decode_chunk(native: NativeRequest<'_>) -> Result<(ChunkUploadHeader, &[u8]), StatusCode> {
     let prefix = native
         .body
@@ -714,7 +791,7 @@ const fn cache_error_status(error: CacheError) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use alumina_job::{
-        JOB_COMMIT_ID_BYTES, JobCommitId, JobNetworkPolicy, JobScheduleFault,
+        JOB_COMMIT_ID_BYTES, JobCommitId, JobLeaseRenewRequest, JobNetworkPolicy, JobScheduleFault,
         JobScheduleReferenceAction, MachineJobGlobalFacts, MachineJobManifest,
         MachineJobParticipant,
     };
@@ -954,6 +1031,23 @@ mod tests {
                 .state,
             JobScheduleState::Confirmed
         );
+        let autonomous_renewal = JobLeaseRenewRequest {
+            prepare_id: commit.prepare_id,
+            boot_id: commit.boot_id,
+            commit_id: commit.commit_id,
+            commit_digest: commit.identity().unwrap(),
+            lease_expiry_cycle: DeviceCycle(commit.lease_expiry_cycle.0 + 1_000_000),
+        };
+        let (status, _) = dispatch(
+            &mut service,
+            FrameKind::Job,
+            Operation::JobLeaseRenew,
+            active.digest(),
+            &autonomous_renewal.encode().unwrap(),
+            DeviceCycle(1_300_000),
+            3_301,
+        );
+        assert_eq!(status, StatusCode::ForbiddenState);
 
         let confirmed_schedule = service.job.as_ref().unwrap().schedule;
         service.inject_safety_stop().unwrap();
@@ -974,6 +1068,11 @@ mod tests {
         service.advance(DeviceCycle(5_000_000));
         assert_eq!(
             service.job.as_ref().unwrap().schedule.report().state,
+            JobScheduleState::Running
+        );
+        service.advance(DeviceCycle(5_000_100));
+        assert_eq!(
+            service.job.as_ref().unwrap().schedule.report().state,
             JobScheduleState::Complete
         );
         let (status, body) = dispatch(
@@ -982,7 +1081,7 @@ mod tests {
             Operation::JobStatus,
             active.digest(),
             &[],
-            DeviceCycle(5_000_000),
+            DeviceCycle(5_000_100),
             34,
         );
         assert_eq!(status, StatusCode::Ok);

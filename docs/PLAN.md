@@ -716,8 +716,9 @@ install/confirm/abort state, dual-core firmware routing, and adversarial two-MCU
 simulation are present. Commit/reference wire version 2 adds board-qualified
 prime lead, one-shot local hardware priming at the abort guard, an explicit
 `Primed` acknowledgement, and fail-closed missed-start behavior. Schedule
-report version 3 adds immutable typed first-output observations and a dedicated
-retained tolerance fault. The target binds that
+schedule report version 5 retains immutable typed first-output observations,
+the descriptor token, and a monotonically renewable attended lease with a
+dedicated retained tolerance fault. The target binds that
 future horizon and confirmed local start to the exact scheduled step executor
 behind configuration, interlock, deadline, cached-work, package, and
 physical-output qualification gates. The interface now produces the canonical
@@ -729,14 +730,20 @@ partitions, and derives global duration plus synchronization/error evidence
 from canonical `ALMSYN01`. Mixed clocks remain a later explicit-event model
 rather than a tolerance-based extension.
 Cached-autonomous policy selection and admission now run end to end through the
-authoritative CAM, schema-V10 worker, exact configuration bit, two-MCU
+authoritative CAM, schema-V11 worker, exact configuration bit, two-MCU
 simulator, and both firmware cores. A finite local execution horizon remains
 mandatory. A fresh production-worker run also retained the autonomous job
 through 48 consecutive post-confirmation schedule-route failures, recovered,
 crossed `irrevocable`, and completed both independently clocked actors. This is
-bounded software-route evidence; attended lease renewal, browser/AP loss, and
-physical radio-loss/output qualification remain open. See the
+bounded software-route evidence; browser/AP loss and physical
+radio-loss/output qualification remain open. See the
 [cached-autonomous job evidence](evidence/M10-CACHED-AUTONOMOUS-JOB.md).
+Network-attended jobs now begin with a short finite lease and renew all
+participants as one browser-authorized round using exact absolute device-cycle
+expiries. Applied-response loss and pre-application request loss reconcile
+through complete status sweeps; sustained loss faults both simulated MCUs at
+their original lease while the longer exact-duration job remains incomplete.
+See the [attended lease evidence](evidence/M10-ATTENDED-LEASE-RENEWAL.md).
 Origin-bound authenticated browser upload and retry-safe per-participant cache
 reconciliation are now implemented. A worker-capable conservative browser clock
 adapter and headless prepare/install/confirm-or-abort coordinator now enforce
@@ -779,7 +786,7 @@ cached schedules complete; a fresh no-fault run remains ordinary `complete`.
 See the [browser abort-guard outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md). The
 complementary asymmetric case is now exact: one participant applies abort while
-the other loses 18 abort mutations through its guard, and schema V10 terminates
+the other loses 18 abort mutations through its guard, and schema V11 terminates
 with the retained `aborted`/`complete` facts as `split_after_stop_request`
 instead of polling forever. See the [browser abort-split outage
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-SPLIT-OUTAGE.md). The exact
@@ -842,10 +849,10 @@ evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION-REQUEST-RECOV
 Indefinite schedule loss, total endpoint or authentication/bootstrap loss,
 broader reordering/substitution, duplication outside the exact one-shot cases,
 other fault families or terminal mixtures, broader packet stress,
-background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
+background-throttling, broader attended-policy controls, HIL runs, a qualified I²S/DMA
 backend, and the physical exit gate remain open; current board packages are
 non-armable. Fresh-owner same-attempt
-terminal reattachment is now exact and bounded: schedule-report V4 retains the
+terminal reattachment is now exact and bounded: schedule-report V5 retains the
 boot/descriptor token, the worker polls all actors before any prepare mutation,
 and an exact all-complete set becomes
 `retained_complete` with local cycles but no fabricated UI epoch or new start

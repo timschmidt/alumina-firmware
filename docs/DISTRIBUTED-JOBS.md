@@ -207,7 +207,7 @@ an armable package, and a qualified output backend jointly gate the local
 bootstrap writer plus an unreachable compile-only PCM-short composition, and
 T-Deck Pro has no machine-output backend. Both first packages therefore remain
 non-armable and target preparation is fail-closed. Hold currently degrades to a
-safe stop; constrained hold/resume, lease renewal, target-timed refill, and
+safe stop; constrained hold/resume, target-timed refill, and
 physical observed-edge qualification remain open.
 
 The portable and target control boundaries now retain a canonical first-output
@@ -281,6 +281,21 @@ The UI orchestrates a bounded two-phase procedure:
    source authority; stale clocks, missing participants, changed boots, foreign
    commits, overwide mappings, or missing observations produce no aggregate.
 
+For `network_attended`, confirmation also opens rolling lease maintenance. The
+browser uses a fresh boot-scoped affine clock bound for every participant,
+constructs one exact absolute renewal for every MCU, and stages the complete
+set transactionally before issuing any request. The representative policy
+starts with a three-second post-start lease, renews toward a nine-second
+horizon when four seconds or less remain, and retries an already-authorized
+absolute expiry only while at least a one-second conservative guard remains.
+Any ambiguous mutation forces a complete all-participant `JobStatus` sweep;
+still-unissued peer mutations are abandoned rather than creating a partial
+authority round. Reported lease authority may advance only up to the greatest
+expiry the browser actually requested. Once the conservative local-cycle bound
+reaches a reported lease, the browser stops claiming renewal is admissible and
+polls for the MCU's exact terminal result. The MCU faults locally at expiry;
+Wi-Fi is neither a start edge nor a simultaneous-stop mechanism.
+
 This produces deterministic scheduled starts within a measured tolerance, not a
 mathematically atomic distributed transaction. Loss of confirm or abort delivery
 can leave participants in different local states; the explicit gap between
@@ -304,7 +319,7 @@ the simulation. Loopback browser qualification now also discards the successful
 view to advance through `0 -> 1 -> 2` status-reconciled confirmations, and then
 observes terminal completion. A later replacement-worker qualification reuses
 the exact compiled request against those unchanged terminal actors. The worker
-first performs a complete read-only status round, binds each `ALMJSCH4`
+first performs a complete read-only status round, binds each `ALMJSCH5`
 descriptor token, retains the reported local start cycles, and terminates as
 `retained_complete` without inventing the old browser epoch or issuing new
 schedule/start authority. Mixed terminal/empty participant state fails closed
@@ -404,9 +419,13 @@ The target admission path now recognizes both. A cached-autonomous commit is
 accepted only when the exact durably authorized core-0 configuration identity
 and the independently validated, authorized core-1 configuration both carry
 `ConfigurationFlags::CACHED_AUTONOMOUS`; the manifest policy is copied into the
-exact participant commit. Attended lease renewal remains closed.
+exact participant commit. An attended commit instead permits exact rolling
+`JobLeaseRenew` requests bound to the immutable commit digest. Both cores apply
+the same phase, deadline, safety, 15-second fresh-horizon, and one-hour total
+lease caps independently. Cached-autonomous policy rejects renewal.
 
-- An attended job holds or safely stops when its communication lease expires.
+- An attended job faults to its local safe outcome when its current rolling
+  communication lease expires. A late renewal cannot revive it.
 - A cached autonomous job may finish without the browser only when all resource
   actions and maximum energization durations are locally bounded, storage is
   complete, safety inputs are local/hardwired, and no cross-MCU live feedback is
@@ -423,7 +442,7 @@ Initial cached multi-MCU support excludes live cross-MCU feedback loops and
 runtime repartitioning. Those require a separate control/stability and failure
 analysis rather than a larger message type.
 
-The browser/WASM CAM, schema-V10 worker, two-MCU HTTP simulator, and both target
+The browser/WASM CAM, schema-V11 worker, two-MCU HTTP simulator, and both target
 cores now carry this policy end to end. The simulator qualification proves
 exact policy/configuration admission, autonomous completion in software, and
 recovery after each actor discards 24 post-confirmation schedule requests. The
@@ -432,6 +451,11 @@ worker retains the exact job through 48 consecutive failures, crosses
 after both actors reconcile. This is a bounded schedule-route fault with the
 browser and actors still live, not browser/AP disappearance;
 see the [cached-autonomous job evidence](evidence/M10-CACHED-AUTONOMOUS-JOB.md).
+The attended qualification uses a simulator that executes for the manifest's
+exact duration, so its 9.64-second representative stream requires multiple
+renewal rounds. Nominal, applied-response-loss, pre-application request-loss,
+and sustained-loss-to-expiry outcomes are recorded in the
+[attended lease evidence](evidence/M10-ATTENDED-LEASE-RENEWAL.md).
 TinyBee and T-Deck Pro remain unable to reach physical `JobPrepare` because
 their output packages are still non-armable or unqualified; no radio-loss,
 SD-media, safe-output, motor, or physical autonomous-execution claim follows.
