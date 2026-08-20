@@ -272,6 +272,16 @@ impl ClockHttpFixture {
         self.cached_job_service.advance(now);
     }
 
+    /// Models a simulator-only safe-output transaction and latches the current
+    /// cached schedule as a local safety stop.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an absent, cancelled, or already terminal schedule.
+    pub fn inject_cached_job_safety_stop(&mut self) -> Result<(), alumina_job::JobScheduleError> {
+        self.cached_job_service.inject_safety_stop()
+    }
+
     /// Reboots into an explicit new nonzero identity and clears replay state.
     ///
     /// # Errors

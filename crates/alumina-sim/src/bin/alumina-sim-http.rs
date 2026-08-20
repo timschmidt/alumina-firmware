@@ -38,6 +38,7 @@ struct ServerOptions {
     drop_operation_response: Option<Operation>,
     duplicate_operation_request: Option<Operation>,
     replay_response_after_operation: Option<Operation>,
+    safety_stop_after_operation: Option<Operation>,
     drop_schedule_after_operation: Option<Operation>,
     drop_schedule_after_operation_count: u64,
     reboot_control_request: Option<u64>,
@@ -61,6 +62,7 @@ impl ServerOptions {
             drop_operation_response: None,
             duplicate_operation_request: None,
             replay_response_after_operation: None,
+            safety_stop_after_operation: None,
             drop_schedule_after_operation: None,
             drop_schedule_after_operation_count: 1,
             reboot_control_request: None,
@@ -139,6 +141,9 @@ impl ServerOptions {
                     options.replay_response_after_operation =
                         Some(parse_operation(&value, &argument)?);
                 }
+                "--safety-stop-after-operation" => {
+                    options.safety_stop_after_operation = Some(parse_operation(&value, &argument)?);
+                }
                 "--drop-schedule-after-operation" => {
                     options.drop_schedule_after_operation =
                         Some(parse_operation(&value, &argument)?);
@@ -206,6 +211,7 @@ fn print_help() {
          [--drop-operation-response NAME_OR_WIRE] \
          [--duplicate-operation-request NAME_OR_WIRE] \
          [--replay-response-after-operation NAME_OR_WIRE] \
+         [--safety-stop-after-operation NAME_OR_WIRE] \
          [--drop-schedule-after-operation NAME_OR_WIRE] \
          [--drop-schedule-after-operation-count N] [--reboot-control-request N]"
     );
@@ -322,6 +328,7 @@ struct FaultState {
     operation_request_duplicate_completed: bool,
     stale_response: Option<(Operation, FixtureHttpResponse)>,
     stale_response_replay_completed: bool,
+    safety_stop_completed: bool,
     schedule_outage_armed: bool,
     schedule_outage_drops: u64,
     rebooted: bool,
@@ -386,6 +393,18 @@ impl FaultState {
         let (retained_operation, response) = self.stale_response.take()?;
         self.stale_response_replay_completed = true;
         Some((retained_operation, observed, response))
+    }
+
+    fn take_safety_stop_trigger(
+        &mut self,
+        selected: Option<Operation>,
+        observed: Option<Operation>,
+    ) -> Option<Operation> {
+        if self.safety_stop_completed || selected.is_none() || selected != observed {
+            return None;
+        }
+        self.safety_stop_completed = true;
+        observed
     }
 
     fn arm_schedule_outage(
@@ -568,6 +587,19 @@ fn handle_connection(
         std::thread::sleep(Duration::from_millis(options.response_delay_ms));
     }
     write_response(stream, &response)?;
+    if control
+        && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
+        && let Some(operation) =
+            faults.take_safety_stop_trigger(options.safety_stop_after_operation, operation)
+    {
+        fixture.inject_cached_job_safety_stop().map_err(|error| {
+            ServerError::Fixture(format!("safety-stop injection failed: {error:?}"))
+        })?;
+        eprintln!(
+            "fault injection: latched cached-job safety stop after operation 0x{:04x}",
+            operation.wire_value()
+        );
+    }
     if control
         && operation.is_some_and(|operation| native_response_succeeded(&response, operation))
         && let Some(operation) = faults.arm_stale_response(
@@ -965,6 +997,32 @@ mod tests {
                 Some(Operation::JobConfirm),
                 Some(Operation::JobConfirm),
                 &retained,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn post_operation_safety_stop_trigger_is_exact_and_one_shot() {
+        let mut faults = FaultState::default();
+        assert_eq!(
+            faults
+                .take_safety_stop_trigger(Some(Operation::JobConfirm), Some(Operation::JobCommit),),
+            None
+        );
+        assert!(!faults.safety_stop_completed);
+        assert_eq!(
+            faults.take_safety_stop_trigger(
+                Some(Operation::JobConfirm),
+                Some(Operation::JobConfirm),
+            ),
+            Some(Operation::JobConfirm)
+        );
+        assert!(faults.safety_stop_completed);
+        assert_eq!(
+            faults.take_safety_stop_trigger(
+                Some(Operation::JobConfirm),
+                Some(Operation::JobConfirm),
             ),
             None
         );

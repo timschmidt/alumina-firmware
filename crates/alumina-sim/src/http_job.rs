@@ -126,6 +126,16 @@ impl SimulatedCachedJobService {
         }
     }
 
+    /// Models a completed simulator safe-output transaction and latches its
+    /// current cached schedule as a local safety stop.
+    pub(crate) fn inject_safety_stop(&mut self) -> Result<(), JobScheduleError> {
+        let job = self.job.as_mut().ok_or(JobScheduleError::State)?;
+        if job.cancelled {
+            return Err(JobScheduleError::State);
+        }
+        job.schedule.fault_safety_stop().map(|_| ())
+    }
+
     pub(crate) fn dispatch(
         &mut self,
         native: NativeRequest<'_>,
@@ -685,8 +695,9 @@ const fn cache_error_status(error: CacheError) -> StatusCode {
 #[cfg(test)]
 mod tests {
     use alumina_job::{
-        JOB_COMMIT_ID_BYTES, JobCommitId, JobNetworkPolicy, JobScheduleReferenceAction,
-        MachineJobGlobalFacts, MachineJobManifest, MachineJobParticipant,
+        JOB_COMMIT_ID_BYTES, JobCommitId, JobNetworkPolicy, JobScheduleFault,
+        JobScheduleReferenceAction, MachineJobGlobalFacts, MachineJobManifest,
+        MachineJobParticipant,
     };
     use alumina_machine_ir::{
         BlockValidationLimits, ExecutionSegment, MAX_EXECUTION_AXES, StreamId, ValidationLimits,
@@ -907,6 +918,17 @@ mod tests {
                 .state,
             JobScheduleState::Confirmed
         );
+
+        let confirmed_schedule = service.job.as_ref().unwrap().schedule;
+        service.inject_safety_stop().unwrap();
+        let faulted = service.job.as_ref().unwrap().report();
+        assert_eq!(faulted.schedule.unwrap().state, JobScheduleState::Faulted);
+        assert_eq!(
+            faulted.schedule.unwrap().fault,
+            JobScheduleFault::SafetyStop
+        );
+        assert_eq!(service.inject_safety_stop(), Err(JobScheduleError::State));
+        service.job.as_mut().unwrap().schedule = confirmed_schedule;
 
         service.advance(DeviceCycle(4_000_000));
         assert_eq!(
