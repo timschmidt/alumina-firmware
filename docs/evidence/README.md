@@ -202,6 +202,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-INTERLOCK-CAUSE-TRACE.md`](M9-INTERLOCK-CAUSE-TRACE.md) — independently
   timed external/range/combined Boolean lanes, exact stop-cause attribution,
   seven stable probes/outputs, and no-op sidecar-identity preservation.
+- [`M9-EXACT-REPLAY-PROBE-TRIGGER.md`](M9-EXACT-REPLAY-PROBE-TRIGGER.md) —
+  canonical `ALGP` V2 Boolean edge triggers, bounded exact pre/post replay
+  resolution, transactional authoring, and a qualified trigger-window UI.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized

@@ -1337,9 +1337,14 @@ endpoints and filter host plots without mutating the graph or granting live
 telemetry. The reference sidecar now selects four exact-rational controller
 signals and three Boolean interlock signals: the independently resampled
 external permit, measurement-range predicate, and conjunction. Certified analog
-enclosures and causally ordered high/low lanes share one exact-time cursor; the
-reusable component exposes all seven outputs as replay-only indicators while
-retaining eight exact parameter controls. A complete bounded allocation-free
+enclosures and causally ordered high/low lanes share one exact-time cursor.
+`ALGP` V2 additionally retains one transactional Boolean-stream edge trigger
+and bounded retained-sample window. Its reference falling edge on the
+measurement-range probe resolves to exact tick/sequence 3 and a complete
+two-sample pre/post window spanning ticks 1–5. This is bounded HostExact replay
+authority, not live telemetry or device-trigger configuration. The reusable
+component exposes all seven outputs as replay-only indicators while retaining
+eight exact parameter controls. A complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
 reference separates all 62 descriptive resources, aliases, owners, safe/hazard facts and
@@ -1381,6 +1386,7 @@ See the
 [exact-interlock primitives](evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md), and
 [mixed-signal control trace](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [interlock cause trace](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
+[exact replay probe trigger](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

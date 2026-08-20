@@ -570,8 +570,10 @@ epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
 resource opcodes, nested component dependencies, general hierarchy/panel
-editing, front-panel runtime inputs, and live telemetry/trigger plots remain
-open. Canonical placement/wiring and a 13-kind audited palette now support
+editing, front-panel runtime inputs, live device telemetry, and device-trigger
+capture plots remain open. Replay-only probe triggers are separately
+implemented below. Canonical placement/wiring and a 13-kind audited palette now
+support
 node create/delete and exact scalar parameter replacement. Bounded complete
 `ALGW` snapshots now provide replay-backed undo/redo, origin-local browser
 persistence preserves only the current document, and native/browser `.algw`
@@ -595,11 +597,19 @@ graph-executor document with reviewed deployment bindings and constructs only
 the four TinyBee stable Boolean input handles. A separate offline Realtime
 draft makes those nodes visible while showing that ADC, UART, timer, shifted
 output, storage, raw GPIO, and all other unadmitted access remain closed.
-Canonical `ALGP` sidecars now bind bounded probes to exact workspace outputs.
+Canonical `ALGP` V2 sidecars now bind bounded probes to exact workspace outputs
+and retain one Boolean-stream rising, falling, or either-edge trigger with a
+bounded pre/post retained-sample window. Trigger edits are transactional,
+removing the source atomically clears the trigger, and exact resolution uses a
+bounded waiting ring after the declared stride. It reports graph clock,
+tick/sequence, available window endpoints/counts, and completeness only after
+the simulation graph identity matches the bound workspace.
 The reference plot selects four exact-rational outputs and the independently
 resampled external permit, measurement-range predicate, and conjunction. It
-displays certified analog enclosures and causally ordered high/low lanes on one
-exact-time cursor, but no live telemetry or trigger authority is implied.
+displays certified analog enclosures and causally ordered high/low lanes in the
+exact probe-5 falling-edge window from ticks 1–5, with the trigger and cursor at
+tick 3. No live telemetry, physical acquisition, or device-trigger authority is
+implied.
 The complete capability document now also has a bounded
 allocation-free descriptive decoder and a board-name-independent owned explorer
 model. The visible TinyBee view exposes all 62 typed resources, 51 aliases,
@@ -620,6 +630,7 @@ annotated-photo rendering remain separate open gates. See the
 [`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [`mixed-signal control trace`](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [`interlock cause trace`](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
+[`exact replay probe trigger`](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

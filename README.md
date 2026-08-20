@@ -140,8 +140,12 @@ layers, explicit state feedback, typed ports, exact parameters, and exact-cursor
 plots. Its bound diagnostic sidecar selects four exact-rational signals and
 three Boolean interlock signals: the independently resampled external permit,
 the measurement-range predicate, and their conjunction. The UI renders
-certified analog enclosures and aligned high/low lanes on one exact-time grid
-without granting live telemetry authority. Canonical `ALGW` keeps
+certified analog enclosures and aligned high/low lanes. Canonical `ALGP` V2 now
+adds one transactional Boolean-stream rising/falling/either trigger and bounded
+pre/post retained-sample window. The reference measurement-range falling edge
+matches exact control tick/sequence 3 and selects ticks 1–5 with a distinct
+trigger marker and shared exact cursor, without granting live telemetry or
+device-trigger authority. Canonical `ALGW` keeps
 presentation-only integer placement
 separate from the embedded `ALGR`; its 13-entry fixed-schema palette includes
 exact inclusive range predicates and Boolean conjunction and supports monotonic
@@ -159,6 +163,7 @@ execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 plus the [exact-interlock primitive evidence](docs/evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md)
 and [mixed-signal control-trace evidence](docs/evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md)
 and [interlock-causality evidence](docs/evidence/M9-INTERLOCK-CAUSE-TRACE.md)
+and [exact replay-trigger evidence](docs/evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md)
 and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
