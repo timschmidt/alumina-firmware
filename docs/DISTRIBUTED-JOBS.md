@@ -360,10 +360,20 @@ global `Aborted`. See the [abort/stale-response
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md). Production
 job I/O is serialized to one fetch globally and one pending request per
 session, so this is deliberately not described as arbitrary packet reordering.
+A distinct post-confirmation local-safety qualification now latches canonical
+`Faulted`/`SafetyStop` on one actor only after its successful `JobConfirm`
+response is written. The browser's later abort receives a native `Conflict`
+with that exact status, retains the local fault, skips a repeat mutation to the
+terminal actor, aborts the still-confirmed peer, and terminates as exact global
+`Faulted` with `Faulted`/`Aborted` participants. See the [confirmed safety-fault
+evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md). The
+simulator models completion of the local safe-output transaction; this is not
+physical safe-output evidence.
 An indefinite schedule outage, total endpoint or authentication/bootstrap
 loss, arbitrary concurrent reordering or substitution beyond this one-shot
-boundary, duplicates outside the exact replay boundary, and faulted or other
-terminal mixtures remain open.
+boundary, duplicates outside the exact replay boundary, and fault families or
+terminal mixtures beyond that one exact post-confirmation
+`SafetyStop`/`Aborted` case remain open.
 
 ## Operation after network loss
 

@@ -436,6 +436,14 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — bounded post-confirmation loss of every canonical schedule operation on
   both actors, autonomous local completion, repeated ambiguity retention, and
   a clean all-participant reconciliation sweep before truthful terminal state.
+- [`M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md`](M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md)
+  — one-shot substitution of valid old signed responses for later applied
+  schedule operations, exact counter rejection, spent-session recovery, and a
+  clean all-participant sweep before exact abort.
+- [`M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md`](M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md)
+  — one modeled post-confirmation local safety stop, canonical fault retention,
+  continued abort cleanup of the still-confirmed peer, exact faulted/aborted
+  terminal evidence, and a fresh no-fault Chromium control.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

@@ -458,10 +458,17 @@ status sweep. The run covers substitution for both `JobAbort` and the
 reconciliation `JobStatus`; see the [browser abort/stale-response
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md). Cached-job
 fetch ownership is serial, so arbitrary concurrent packet or response
-reordering is not claimed. Attended-policy controls, indefinite schedule or
-total endpoint outage, authentication/bootstrap loss, broader
-reordering/substitution, duplication outside the exact one-shot cases, faulted
-or other terminal mixtures, broader network/storage faults,
+reordering is not claimed. One named post-confirmation safety-fault expectation
+now retains a canonical local `SafetyStop`, skips a repeat abort to that
+terminal actor, aborts the remaining confirmed peer, and admits only exact
+global `faulted` with `faulted`/`aborted` participants; see the [browser
+confirmed safety-fault
+evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md). The
+safe-output transaction is modeled, so no physical safety claim follows.
+Attended-policy controls, indefinite schedule or total endpoint outage,
+authentication/bootstrap loss, broader reordering/substitution, duplication
+outside the exact one-shot cases, other fault families or terminal mixtures,
+broader network/storage faults,
 background-throttling qualification, and physical qualification remain open.
 Fresh-owner same-attempt terminal reattachment now
 uses an all-participant read-only status round and exact retained descriptor

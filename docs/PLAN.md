@@ -803,9 +803,17 @@ before exact global `aborted`. See the [browser abort/stale-response
 evidence](evidence/M10-BROWSER-CACHED-JOB-ABORT-STALE-RESPONSE.md). Because the
 production owner serializes job fetches and permits only one pending request
 per session, arbitrary concurrent response reordering remains outside this
-claim. Indefinite schedule loss, total endpoint or authentication/bootstrap
-loss, broader reordering/substitution, duplication outside the exact one-shot
-cases, faulted or other terminal mixtures, broader packet stress,
+claim. One exact faulted mixture is now closed independently: actor one latches
+canonical local `SafetyStop` only after its successful confirmation response;
+the browser retains the resulting native `Conflict` report, aborts the other
+confirmed actor without repeating the terminal mutation, and reports global
+`faulted` with exact `faulted`/`aborted` participants. See the [browser
+confirmed safety-fault
+evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md). This is a
+modeled simulator safe-output transaction, not physical safety evidence.
+Indefinite schedule loss, total endpoint or authentication/bootstrap loss,
+broader reordering/substitution, duplication outside the exact one-shot cases,
+other fault families or terminal mixtures, broader packet stress,
 background-throttling, attended-policy controls, HIL runs, a qualified I²S/DMA
 backend, and the physical exit gate remain open; current board packages are
 non-armable. Fresh-owner same-attempt
