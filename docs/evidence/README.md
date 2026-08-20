@@ -480,3 +480,7 @@ a hardware qualification: board promotion still follows the evidence ladder in
   pinned-MIT current Pager resource inventory, compile-selected closed dual-core
   image, exact capability/artifact identities, and explicit peripheral,
   storage, visual, hardware, and moving-Hyper boundaries.
+- [`M10-CAPABILITY-BOUND-VISUAL-ASSETS.md`](M10-CAPABILITY-BOUND-VISUAL-ASSETS.md)
+  — immutable capability-bound raster ranges, schema-V13 worker acquisition,
+  bounded PNG/hotspot rendering, synthetic simulator qualification, and an
+  explicit licensed-physical-photo gate.
