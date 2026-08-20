@@ -226,6 +226,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-PHYSICAL-SCALAR-PROBES.md`](M9-EXACT-PHYSICAL-SCALAR-PROBES.md) —
   exact rational/interval/lattice scalar plots, registered quantum/unit
   retention, outward display enclosures, and closed non-scalar conversion.
+- [`M9-EXACT-STATE-EVENT-PROBES.md`](M9-EXACT-STATE-EVENT-PROBES.md) — exact
+  canonical non-scalar identity, bounded categorical state/event lanes,
+  byte-exact change markers, and same-time sequence multiplicity.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
