@@ -149,7 +149,10 @@ device-trigger authority. One versioned origin-local application value now
 persists the exact current ALGW/ALGP pair and restores neither artifact until
 both canonical replays and the sidecar's workspace binding succeed. Separate
 bounded native/browser `.algp` exchange can change only the sidecar bound to
-the current workspace. Canonical `ALGW` keeps presentation-only integer
+the current workspace. Each probe row now transactionally edits its canonical
+name, host-retention ceiling, and event-decimation stride while preserving
+stable probe/source/type identity; invalid names, bounds, or active trigger
+windows fail without mutation. Canonical `ALGW` keeps presentation-only integer
 placement separate from the embedded `ALGR`; its 13-entry fixed-schema palette
 includes
 exact inclusive range predicates and Boolean conjunction and supports monotonic
@@ -174,6 +177,8 @@ and [exact graph/probe pair persistence
 evidence](docs/evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md)
 and [exact graph/probe pair history
 evidence](docs/evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md)
+and [bounded graph-probe metadata
+evidence](docs/evidence/M9-BOUNDED-GRAPH-PROBE-METADATA.md)
 and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph

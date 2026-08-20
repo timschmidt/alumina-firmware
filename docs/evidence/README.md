@@ -211,6 +211,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md`](M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md)
   — bounded ephemeral ALGW/ALGP pair snapshots, transactional bound replay,
   shared graph/probe/trigger/import navigation, and paired eviction.
+- [`M9-BOUNDED-GRAPH-PROBE-METADATA.md`](M9-BOUNDED-GRAPH-PROBE-METADATA.md)
+  — transactional canonical probe names, retention ceilings, event strides,
+  trigger-window validation, pair history, and visible bounded editors.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized

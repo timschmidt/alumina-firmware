@@ -1351,7 +1351,10 @@ canonical no-op sidecar edits do not cause redundant persistence. Ephemeral
 undo/redo now retains complete canonical ALGW/ALGP pairs rather than only the
 workspace. Graph, probe, trigger, and changed sidecar-import edits share one
 bounded timeline; each navigation replays ALGW, then ALGP against that exact
-workspace, before changing either document or the history stacks. The reusable
+workspace, before changing either document or the history stacks. Per-probe
+canonical name, retained-sample ceiling, and event-stride replacement is now
+transactional and pair-historical; stable probe/source/type identity is fixed,
+and an active trigger must still fit the revised retention bound. The reusable
 component exposes all seven outputs as replay-only indicators while retaining
 eight exact parameter controls. A complete bounded allocation-free
 `ALMCAP04` decoder now
@@ -1399,6 +1402,7 @@ See the
 [exact replay probe trigger](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
 [exact graph/probe pair persistence](evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md), and
 [exact graph/probe pair history](evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md), and
+[bounded graph-probe metadata](evidence/M9-BOUNDED-GRAPH-PROBE-METADATA.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

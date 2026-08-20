@@ -614,7 +614,11 @@ while canonical no-op edits do not cause redundant writes. A malformed stored
 sidecar or one bound to another valid ALGW rejects the complete pair rather
 than partially restoring the graph. A graph edit that removes an observed
 endpoint visibly installs an empty canonical sidecar bound to the revised
-workspace instead of retaining unbound probe intent.
+workspace instead of retaining unbound probe intent. Canonical probe names,
+host-retention ceilings, and event-decimation strides are now editable with
+stable probe/source/type identity. Complete candidate validation rejects
+duplicate/malformed names, invalid bounds, and any active trigger window that
+no longer fits; exact reapplication is a no-op.
 The reference plot selects four exact-rational outputs and the independently
 resampled external permit, measurement-range predicate, and conjunction. It
 displays certified analog enclosures and causally ordered high/low lanes in the
@@ -644,6 +648,7 @@ annotated-photo rendering remain separate open gates. See the
 [`exact replay probe trigger`](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and
 [`exact graph/probe pair persistence`](evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md), and
 [`exact graph/probe pair history`](evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md), and
+[`bounded graph-probe metadata`](evidence/M9-BOUNDED-GRAPH-PROBE-METADATA.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
