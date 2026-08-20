@@ -1291,9 +1291,10 @@ known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
-composite and identity-bearing parameter editors, label/domain editing,
+cache-derived job-handle and nested identity workflows, label/domain editing,
 collaboration/conflict handling, and higher-rate triggered acquisition remain
-open.
+open. Schema-directed scalar/composite literal editing and root resource-handle
+selection are now closed separately without widening firmware authority.
 The TinyBee image now also reports those same configuration-stable semantic
 inputs through a passive core-1-to-core-0 `ALMRTI01` bridge. Exact resource
 mapping, monitor masks/generation, and latest physical sample cycles are
@@ -1330,8 +1331,13 @@ grants a diagnostic output lease, or creates arm/safety authority.
 The editor now intersects the complete caller-authenticated graph-executor
 capability with the reviewed deployment registry and materializes only exact
 matching resource handles. Its visible offline TinyBee target draft offers
-GPIO22/32/33/35 and keeps every descriptive-but-unadmitted ADC, UART, timer,
-shifted output, storage resource, other GPIO, and raw pin operation closed.
+GPIO22/32/33/35. A public transactional selector requires the existing node to
+match an offered catalog entry exactly, retains node/placement/allocation
+identity, admits only an unused entry of the same reviewed kind, and commits
+only after complete semantic analysis plus canonical ALGW encoding. Raw
+identity text, duplicate handles, foreign catalogs, and kind substitution fail
+without mutation. Every descriptive-but-unadmitted ADC, UART, timer, shifted
+output, storage resource, other GPIO, and raw pin operation remains closed.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
 endpoints and filter host plots without mutating the graph or granting live
 telemetry. The reference sidecar now selects four exact-rational controller
@@ -1373,9 +1379,10 @@ browser's independently revalidated PNG/dimension/render/picking path exercise
 the generic annotated-resource pipeline. Every physical package still publishes
 no visual, so a connected board draws no inferred shape or hotspot and keeps
 the physical-reconciliation HIL gate visibly open. Canonical HostExact node
-creation/deletion and exact scalar parameter editing now exist through a
-13-kind audited palette. The representative interlock composes an exact
-measurement-range predicate with the external permit through an audited Boolean
+creation/deletion and schema-directed exact scalar/composite parameter editing
+now exist through a 13-kind audited palette. The representative interlock
+composes an exact measurement-range predicate with the external permit through
+an audited Boolean
 conjunction; both exact range limits are front-panel controls. Bounded
 canonical snapshots add replay-backed undo/redo; browser storage and
 native/browser `.algw` plus `.algp` exchange preserve only fully replayed,
@@ -1408,6 +1415,8 @@ See the
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
+[exact composite literals](evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md), and
+[capability resource selection](evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md), and
 [graph history/persistence](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md),
 and
 [graph components/front panels](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and

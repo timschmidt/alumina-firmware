@@ -157,7 +157,12 @@ placement separate from the embedded `ALGR`; its 13-entry fixed-schema palette
 includes
 exact inclusive range predicates and Boolean conjunction and supports monotonic
 node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
-and bounded exact scalar parameter replacement. Bounded canonical ALGW/ALGP
+and bounded schema-directed exact scalar/composite parameter replacement. A
+separate offline TinyBee target draft admits only four capability-derived
+stable-input handles and can rebind an existing managed node to an unused
+same-kind entry. Raw device IDs, digests, resource classes, and GPIO selectors
+remain non-editable, and the draft grants no live or deployment authority.
+Bounded canonical ALGW/ALGP
 pair snapshots now provide shared undo/redo across graph, probe, trigger, and
 sidecar-import edits; navigation replays both artifacts and their exact binding
 before changing either document or the history stacks. Native/browser `.algw`
@@ -193,6 +198,8 @@ and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
 palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md), plus
+the [exact composite-literal evidence](docs/evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md)
+and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md), plus
 the [graph history/persistence
 evidence](docs/evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md).
 
