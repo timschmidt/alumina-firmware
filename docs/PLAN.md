@@ -811,6 +811,13 @@ confirmed actor without repeating the terminal mutation, and reports global
 confirmed safety-fault
 evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md). This is a
 modeled simulator safe-output transaction, not physical safety evidence.
+Ordinary authenticated status now also propagates that exact modeled fault
+without an operator stop request: the coordinator automatically aborts the
+remaining confirmed peer, preserves global `faulted`, and reaches exact
+`faulted`/`aborted` terminal state with zero transport failures. Precommit
+native coverage requires cancellation of every prepared actor while retaining
+the global fault. See the [automatic browser safety-fault propagation
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md).
 Indefinite schedule loss, total endpoint or authentication/bootstrap loss,
 broader reordering/substitution, duplication outside the exact one-shot cases,
 other fault families or terminal mixtures, broader packet stress,

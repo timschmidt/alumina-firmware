@@ -465,6 +465,12 @@ global `faulted` with `faulted`/`aborted` participants; see the [browser
 confirmed safety-fault
 evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md). The
 safe-output transaction is modeled, so no physical safety claim follows.
+The named automatic-propagation expectation now sends no operator stop command:
+an ordinary authenticated status report exposes the same modeled fault, the
+coordinator aborts the remaining confirmed peer, and the browser admits only
+zero-error global `faulted` with exact `faulted`/`aborted` participants. See the
+[automatic safety-fault propagation
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md).
 Attended-policy controls, indefinite schedule or total endpoint outage,
 authentication/bootstrap loss, broader reordering/substitution, duplication
 outside the exact one-shot cases, other fault families or terminal mixtures,

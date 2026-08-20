@@ -444,6 +444,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — one modeled post-confirmation local safety stop, canonical fault retention,
   continued abort cleanup of the still-confirmed peer, exact faulted/aborted
   terminal evidence, and a fresh no-fault Chromium control.
+- [`M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md`](M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md)
+  — ordinary authenticated status discovery of that modeled fault, automatic
+  peer cleanup without an operator stop request, exact faulted/aborted terminal
+  evidence, and a fresh no-fault Chromium control.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact

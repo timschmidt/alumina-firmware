@@ -369,6 +369,15 @@ terminal actor, aborts the still-confirmed peer, and terminates as exact global
 evidence](evidence/M10-BROWSER-CACHED-JOB-CONFIRMED-SAFETY-FAULT.md). The
 simulator models completion of the local safe-output transaction; this is not
 physical safe-output evidence.
+The same exact mixture is now qualified without an operator stop request.
+Ordinary authenticated status discovers the modeled local `SafetyStop`; the
+coordinator latches fault cleanup, remains nonterminal while the confirmed peer
+is abortable, sends the peer's exact abort, and preserves global `Faulted` after
+terminal `Faulted`/`Aborted` reconciliation. Precommit native coverage instead
+cancels every prepared actor while preserving the initiating global fault. See
+the [automatic safety-fault propagation
+evidence](evidence/M10-BROWSER-CACHED-JOB-SAFETY-FAULT-PROPAGATION.md). This
+adds no Wi-Fi safety or physical safe-output claim.
 An indefinite schedule outage, total endpoint or authentication/bootstrap
 loss, arbitrary concurrent reordering or substitution beyond this one-shot
 boundary, duplicates outside the exact replay boundary, and fault families or
