@@ -199,6 +199,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-MIXED-SIGNAL-CONTROL-TRACE.md`](M9-MIXED-SIGNAL-CONTROL-TRACE.md) — six
   canonical reference probes and component outputs, certified exact-rational
   plots, aligned Boolean logic-analyzer lanes, and shared exact cursor evidence.
+- [`M9-INTERLOCK-CAUSE-TRACE.md`](M9-INTERLOCK-CAUSE-TRACE.md) — independently
+  timed external/range/combined Boolean lanes, exact stop-cause attribution,
+  seven stable probes/outputs, and no-op sidecar-identity preservation.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized

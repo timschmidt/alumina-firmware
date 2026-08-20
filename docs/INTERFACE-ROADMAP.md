@@ -580,7 +580,7 @@ A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
 maps public connector terminals to exact internal endpoints, and binds integer
 front-panel controls/indicators to public terminals or retained exact
 parameters. The first visible PID/interlock component has eight exact controls
-and six replay-only indicators: four exact-rational values and two Boolean
+and seven replay-only indicators: four exact-rational values and three Boolean
 interlock states. Invalidating a binding detaches the panel
 without weakening the workspace draft. Canonical `ALGH` now binds leaf
 component instances to exact `ALGC` digests, derives their typed collapsed port
@@ -596,9 +596,10 @@ the four TinyBee stable Boolean input handles. A separate offline Realtime
 draft makes those nodes visible while showing that ADC, UART, timer, shifted
 output, storage, raw GPIO, and all other unadmitted access remain closed.
 Canonical `ALGP` sidecars now bind bounded probes to exact workspace outputs.
-The reference plot selects four exact-rational outputs and two Boolean
-interlocks, displaying certified analog enclosures and aligned high/low lanes
-on one exact-time cursor, but no live telemetry or trigger authority is implied.
+The reference plot selects four exact-rational outputs and the independently
+resampled external permit, measurement-range predicate, and conjunction. It
+displays certified analog enclosures and causally ordered high/low lanes on one
+exact-time cursor, but no live telemetry or trigger authority is implied.
 The complete capability document now also has a bounded
 allocation-free descriptive decoder and a board-name-independent owned explorer
 model. The visible TinyBee view exposes all 62 typed resources, 51 aliases,
@@ -618,6 +619,7 @@ annotated-photo rendering remain separate open gates. See the
 [`exact-rate`](evidence/M9-EXACT-GRAPH-RATES.md) and
 [`deterministic-simulation`](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [`mixed-signal control trace`](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
+[`interlock cause trace`](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
 [`exact-control inspector`](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [`canonical graph workspace`](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [`graph palette/parameters`](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

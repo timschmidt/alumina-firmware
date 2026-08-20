@@ -137,10 +137,12 @@ same static palette. No target timing, physical input HIL, or physical side
 effect is claimed. The native/WASM application now also opens a bounded,
 editable view of the shared exact PID/interlock fixture with audited semantic
 layers, explicit state feedback, typed ports, exact parameters, and exact-cursor
-plots. Its bound diagnostic sidecar selects four exact-rational signals and two
-Boolean interlock signals; the UI renders certified analog enclosures and
-aligned high/low lanes on one exact-time grid without giving those plots live
-telemetry authority. Canonical `ALGW` keeps presentation-only integer placement
+plots. Its bound diagnostic sidecar selects four exact-rational signals and
+three Boolean interlock signals: the independently resampled external permit,
+the measurement-range predicate, and their conjunction. The UI renders
+certified analog enclosures and aligned high/low lanes on one exact-time grid
+without granting live telemetry authority. Canonical `ALGW` keeps
+presentation-only integer placement
 separate from the embedded `ALGR`; its 13-entry fixed-schema palette includes
 exact inclusive range predicates and Boolean conjunction and supports monotonic
 node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
@@ -156,6 +158,7 @@ execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 [capability-bound input evidence](docs/evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md),
 plus the [exact-interlock primitive evidence](docs/evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md)
 and [mixed-signal control-trace evidence](docs/evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md)
+and [interlock-causality evidence](docs/evidence/M9-INTERLOCK-CAUSE-TRACE.md)
 and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
