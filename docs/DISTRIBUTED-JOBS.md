@@ -442,7 +442,7 @@ Initial cached multi-MCU support excludes live cross-MCU feedback loops and
 runtime repartitioning. Those require a separate control/stability and failure
 analysis rather than a larger message type.
 
-The browser/WASM CAM, schema-V11 worker, two-MCU HTTP simulator, and both target
+The browser/WASM CAM, schema-V12 worker, two-MCU HTTP simulator, and both target
 cores now carry this policy end to end. The simulator qualification proves
 exact policy/configuration admission, autonomous completion in software, and
 recovery after each actor discards 24 post-confirmation schedule requests. The
@@ -456,6 +456,14 @@ exact duration, so its 9.64-second representative stream requires multiple
 renewal rounds. Nominal, applied-response-loss, pre-application request-loss,
 and sustained-loss-to-expiry outcomes are recorded in the
 [attended lease evidence](evidence/M10-ATTENDED-LEASE-RENEWAL.md).
+The replacement-owner qualification additionally removes the browser worker
+after both attended actors are running and reconnects only after the leases are
+past. A complete initial status round reports both local expiry faults. The new
+owner retains authenticated device-reported expiries but no prior browser
+authority, original UI epoch, or renewal history; it does not manufacture a
+continuation or start a new attempt.
+See the
+[worker-loss reattachment evidence](evidence/M10-BROWSER-WORKER-LEASE-EXPIRY-REATTACHMENT.md).
 TinyBee and T-Deck Pro remain unable to reach physical `JobPrepare` because
 their output packages are still non-armable or unqualified; no radio-loss,
 SD-media, safe-output, motor, or physical autonomous-execution claim follows.

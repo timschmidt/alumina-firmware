@@ -353,7 +353,7 @@ of misreporting an abort or ordinary success. This remains localhost
 mutation-only fault evidence with status reads available; see the
 [abort-guard outage
 evidence](docs/evidence/M10-BROWSER-CACHED-JOB-ABORT-GUARD-OUTAGE.md).
-If only a subset aborts, current schema V11 retains the terminal participant
+If only a subset aborts, current schema V12 retains the terminal participant
 facts as `split_after_stop_request`, renders the machine state indeterminate,
 and stops status polling. The localhost asymmetric qualification is recorded in
 the [abort-split outage
@@ -364,6 +364,12 @@ lost requests and responses through complete status sweeps, and leaves each MCU
 to fault locally if renewal cannot arrive before its current lease. Nominal,
 loss-recovery, sustained-expiry, and cached-autonomous control results are in
 the [attended lease evidence](docs/evidence/M10-ATTENDED-LEASE-RENEWAL.md).
+A distinct localhost qualification now terminates the production worker after
+both actors are running, waits beyond their renewable horizon, and attaches a
+fresh owner. Both MCUs report local lease faults; the replacement UI retains
+those exact reported expiries while leaving the prior browser-authority ceiling,
+UI epoch, and renewal count unknown; see the
+[worker-loss reattachment evidence](docs/evidence/M10-BROWSER-WORKER-LEASE-EXPIRY-REATTACHMENT.md).
 Stopping during partial installation now aborts only the participant with an
 emitted local commit and cancels the never-installed participant. The latter
 retains no fabricated local cycle, and a second job completes on the same

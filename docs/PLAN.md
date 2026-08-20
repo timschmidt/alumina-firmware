@@ -730,7 +730,7 @@ partitions, and derives global duration plus synchronization/error evidence
 from canonical `ALMSYN01`. Mixed clocks remain a later explicit-event model
 rather than a tolerance-based extension.
 Cached-autonomous policy selection and admission now run end to end through the
-authoritative CAM, schema-V11 worker, exact configuration bit, two-MCU
+authoritative CAM, schema-V12 worker, exact configuration bit, two-MCU
 simulator, and both firmware cores. A finite local execution horizon remains
 mandatory. A fresh production-worker run also retained the autonomous job
 through 48 consecutive post-confirmation schedule-route failures, recovered,
@@ -744,6 +744,14 @@ expiries. Applied-response loss and pre-application request loss reconcile
 through complete status sweeps; sustained loss faults both simulated MCUs at
 their original lease while the longer exact-duration job remains incomplete.
 See the [attended lease evidence](evidence/M10-ATTENDED-LEASE-RENEWAL.md).
+A fresh-owner loss checkpoint now terminates the production browser worker only
+after both attended actors are running, leaves the local actors uncontacted past
+their finite authority, and starts a new worker. Complete passive status
+reconciliation retains both exact `LeaseExpired` faults without inventing the
+old browser-authorized ceilings, UI epoch, commit, or renewal-round history.
+This is deterministic localhost process-loss evidence, not actual browser
+backgrounding, AP/radio loss, or physical safe-output qualification. See the
+[worker-loss reattachment evidence](evidence/M10-BROWSER-WORKER-LEASE-EXPIRY-REATTACHMENT.md).
 Origin-bound authenticated browser upload and retry-safe per-participant cache
 reconciliation are now implemented. A worker-capable conservative browser clock
 adapter and headless prepare/install/confirm-or-abort coordinator now enforce

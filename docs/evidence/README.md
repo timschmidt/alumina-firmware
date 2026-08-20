@@ -460,6 +460,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   immutable-commit/mutable-lease authority, all-participant browser renewal,
   applied-response and pre-application request-loss reconciliation,
   exact-duration execution, sustained-loss expiry, and autonomous control.
+- [`M10-BROWSER-WORKER-LEASE-EXPIRY-REATTACHMENT.md`](M10-BROWSER-WORKER-LEASE-EXPIRY-REATTACHMENT.md)
+  — production-worker termination after exact all-running state, finite local
+  lease expiry, complete fresh-owner status reconciliation, and explicit loss
+  of browser-only authority without fabricated continuation.
 - [`M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md`](M10-TINYBEE-REALTIME-INPUT-TELEMETRY.md)
   — bounded canonical core-1 input snapshots, freshness- and mapping-checked
   core-0 translation into existing authenticated overview events, exact
