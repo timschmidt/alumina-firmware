@@ -192,6 +192,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   arithmetic, explicit unit-delay state, fail-safe permit gating, and a
   deterministic visible multi-rate PID/interlock fixture with `ALSI` V2
   context binding.
+- [`M9-EXACT-INTERLOCK-PRIMITIVES.md`](M9-EXACT-INTERLOCK-PRIMITIVES.md) —
+  exact inclusive-range and Boolean-conjunction HostExact primitives,
+  independently exercised fail-closed semantics, a 13-kind editor palette,
+  and renewed graph/workspace/component identities.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized

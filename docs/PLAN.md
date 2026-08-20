@@ -1240,9 +1240,10 @@ ownership. Cross-clock Stream feedthrough now requires an audited exact
 latest-at-or-before transition: rational clock analysis proves one shared root,
 the smallest repeating schedule, minimum queue capacity, and bounded held
 sample storage. A separate fixed HostExact implementation registry and bounded
-simulator now execute nine reviewed behaviors: external Stream source, that
+simulator now execute eleven reviewed behaviors: external Stream source, that
 audited transition, Stream sink, exact add/subtract/dimensionless scale/clamp,
-explicit read-before-write unit delay, and fail-safe exact permit gating. Its
+an exact inclusive-range predicate, Boolean conjunction, explicit
+read-before-write unit delay, and fail-safe exact permit gating. Its
 `ALSI` V2 identity binds the complete unit/type and clock context. A visible
 50 Hz to 10 Hz fixture composes those primitives into a discrete
 PID/interlock, keeps both state values explicit, applies exact registered unit
@@ -1349,8 +1350,10 @@ browser's independently revalidated PNG/dimension/render/picking path exercise
 the generic annotated-resource pipeline. Every physical package still publishes
 no visual, so a connected board draws no inferred shape or hotspot and keeps
 the physical-reconciliation HIL gate visibly open. Canonical HostExact node
-creation/deletion and exact scalar parameter editing now exist through an
-11-kind audited palette. Bounded
+creation/deletion and exact scalar parameter editing now exist through a
+13-kind audited palette. The representative interlock composes an exact
+measurement-range predicate with the external permit through an audited Boolean
+conjunction; both exact range limits are front-panel controls. Bounded
 canonical snapshots add replay-backed undo/redo; browser storage and
 native/browser `.algw` exchange preserve only fully replayed, audited drafts. A
 disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed
@@ -1369,6 +1372,7 @@ See the
 [exact-rate](evidence/M9-EXACT-GRAPH-RATES.md) and
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [exact-control graph](evidence/M9-EXACT-CONTROL-GRAPH.md), and
+[exact-interlock primitives](evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md), and
 [exact-control inspector](evidence/M9-EXACT-CONTROL-INSPECTOR.md), and
 [canonical graph workspace](evidence/M9-CANONICAL-GRAPH-WORKSPACE.md), and
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and

@@ -138,7 +138,8 @@ effect is claimed. The native/WASM application now also opens a bounded,
 editable view of the shared exact PID/interlock fixture with audited semantic
 layers, explicit state feedback, typed ports, exact parameters, and exact-cursor
 plots. Canonical `ALGW` keeps presentation-only integer placement separate from
-the embedded `ALGR`; its 11-entry fixed-schema palette supports monotonic node
+the embedded `ALGR`; its 13-entry fixed-schema palette includes exact inclusive
+range predicates and Boolean conjunction and supports monotonic node
 creation, atomic node/incident-wire deletion, node moves, typed wire edits, and
 bounded exact scalar parameter replacement. Bounded canonical snapshots now
 provide undo/redo, origin-local browser storage preserves only the current
@@ -150,7 +151,8 @@ evidence](docs/evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md), and [split-core
 execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 [durable-selection evidence](docs/evidence/M9-DURABLE-GRAPH-SELECTION.md) and
 [capability-bound input evidence](docs/evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md),
-and the [exact-control inspector
+plus the [exact-interlock primitive evidence](docs/evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md)
+and [exact-control inspector
 evidence](docs/evidence/M9-EXACT-CONTROL-INSPECTOR.md) plus the [canonical graph
 workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
 palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md), plus
