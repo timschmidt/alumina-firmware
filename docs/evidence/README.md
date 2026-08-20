@@ -229,6 +229,9 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-EXACT-STATE-EVENT-PROBES.md`](M9-EXACT-STATE-EVENT-PROBES.md) — exact
   canonical non-scalar identity, bounded categorical state/event lanes,
   byte-exact change markers, and same-time sequence multiplicity.
+- [`M9-EXACT-COMPOSITE-LITERAL-EDITOR.md`](M9-EXACT-COMPOSITE-LITERAL-EDITOR.md)
+  — bounded schema-directed scalar/composite text, exact round trips,
+  transactional UI integration, and closed handle/runtime authority.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
