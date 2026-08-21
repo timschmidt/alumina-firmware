@@ -300,6 +300,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   exact bound-root placement, typed monotonic root wiring, complete
   `ALGH`/`ALGM`/`ALGS` admission, and optimized pointer-drag undo/redo/reload
   evidence.
+- [`M9-EXACT-FRONT-PANEL-AUTHORING.md`](M9-EXACT-FRONT-PANEL-AUTHORING.md) —
+  monotonic bound-item creation, exact metadata/layout update and removal,
+  authored-panel retention, and optimized pointer-drag history/persistence
+  evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
