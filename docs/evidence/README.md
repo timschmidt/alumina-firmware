@@ -280,6 +280,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   total node/wire root-or-occurrence provenance, canonical bounded `ALGM` V1
   replay by fresh hierarchy flattening, UI correlation, and exact browser
   sidecar download evidence.
+- [`M9-CANONICAL-GRAPH-AUTHORING-SESSION.md`](M9-CANONICAL-GRAPH-AUTHORING-SESSION.md)
+  — one bounded `ALGS` V1 identity over control/probe/cached-job/hierarchy
+  authoring state, exact cross-artifact replay, atomic browser persistence and
+  `.algs` exchange, and explicit retirement of the provisional bundle format.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
