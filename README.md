@@ -145,9 +145,11 @@ adds one transactional Boolean-stream rising/falling/either trigger and bounded
 pre/post retained-sample window. The reference measurement-range falling edge
 matches exact control tick/sequence 3 and selects ticks 1–5 with a distinct
 trigger marker and shared exact cursor, without granting live telemetry or
-device-trigger authority. One versioned origin-local application value now
-persists the exact current ALGW/ALGP pair and restores neither artifact until
-both canonical replays and the sidecar's workspace binding succeed. Separate
+device-trigger authority. One greenfield versioned origin-local application
+value now persists the exact control `ALGW`, bound `ALGP`, and separate
+catalog-bound cached-job `ALGW` as an `algwb1:` bundle. Restore replaces none
+of the three until every canonical replay, the sidecar's workspace binding, and
+current cached-job catalog membership succeed. Separate
 bounded native/browser `.algp` exchange can change only the sidecar bound to
 the current workspace. Each probe row now transactionally edits its canonical
 name, host-retention ceiling, and event-decimation stride while preserving
@@ -162,6 +164,15 @@ separate offline TinyBee target draft admits only four capability-derived
 stable-input handles and can rebind an existing managed node to an unused
 same-kind entry. Raw device IDs, digests, resource classes, and GPIO selectors
 remain non-editable, and the draft grants no live or deployment authority.
+A separate offline two-MCU authoring proof drives the real deterministic
+partition-then-manifest cache-delivery state machines, joins their private
+cache-ready evidence against the complete canonical global job, and exposes
+only exact inert `JobHandle` choices. Each entry retains its MCU, global job,
+partition, capability, configuration, size/block, and local-timer facts; the UI
+accepts no raw identity, path, or command text. Transactional add/rebind and
+canonical replay-backed history preserve stable graph identities, while
+prepare, arm, start, deployment, and live-session authority remain separate and
+closed.
 The selected-node inspector now also transactionally edits bounded canonical
 UTF-8 labels and concrete execution placement. Domain families come from the
 reviewed node schema, device identities come only from existing graph clocks or
@@ -206,6 +217,8 @@ palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md), plus
 the [exact composite-literal evidence](docs/evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md)
 and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md)
 and [graph label/domain editor evidence](docs/evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), plus
+the [cache-derived graph job-handle
+evidence](docs/evidence/M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md), plus
 the [graph history/persistence
 evidence](docs/evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md).
 

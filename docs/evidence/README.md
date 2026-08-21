@@ -239,6 +239,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   bounded canonical node labels, schema-audited concrete execution choices,
   pair history/persistence, closed raw-device authority, and optimized
   localhost browser interaction evidence.
+- [`M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md`](M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md)
+  — exact canonical-job/cache-ready joins, inert catalog-bound `JobHandle`
+  selection, atomic three-artifact browser persistence, and optimized
+  edit/reload evidence with execution authority closed.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
