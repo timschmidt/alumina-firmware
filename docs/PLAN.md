@@ -1353,6 +1353,18 @@ required sink, and leaves GPIO33/GPIO35 free. Rebinding only the interlock to
 GPIO35 preserves the GPIO22 sibling and changes both ALGW and package identity.
 Raw identity text, duplicates across root or composite leaves, foreign
 catalogs, wrong leaf types, and invalid/inactive paths fail without mutation.
+The interface now exposes a bounded Realtime-only offline replay API that
+installs an already lowered package independently into the actual portable
+fixed-memory Service and Realtime actors with the selected board's exact static
+opcode/resource palette. It records provider calls in executor order, completed
+release reports or the terminal first-cause fault, and a domain-separated
+`ALGRREP1` evidence digest over all exact inputs and outputs. The TinyBee draft
+transaction runs the four conjunction cases plus an unavailable-first-input
+case before committing ALGW, ALGR, and replay evidence together. Caller sample
+order is deliberately non-authoritative: the firmware actor still reads the
+stable record-field pair in lowered GPIO order and retains both reads before
+`ResourceUnavailable`. See
+[`M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md).
 Every descriptive-but-unadmitted ADC, UART, timer, shifted output, storage
 resource, other GPIO, raw pin operation, and broader executable composite-
 resource consumer remains closed.

@@ -603,8 +603,18 @@ graph-executor document with reviewed deployment bindings and constructs only
 the four TinyBee stable Boolean input handles. A separate offline Realtime
 draft consumes two selected handles in one reviewed conjunction node, feeds a
 required sink, and re-lowers every accepted selector edit into independently
-decoded fixed firmware bytes. ADC, UART, timer, shifted output, storage, raw
-GPIO, and all other unadmitted access remain closed.
+decoded fixed firmware bytes. A public bounded native/WASM replay boundary now
+installs those exact bytes independently into the same portable fixed-memory
+Service and Realtime actor types used by firmware, binds the target's static
+opcode/resource palette, performs the actor lifecycle, and retains actual
+provider-call order plus completed reports or the first terminal fault. Its
+domain-separated `ALGRREP1` digest commits the exact target, implementation,
+package, run, limits, canonicalized caller inputs, actual reads, and outcomes.
+The visible TinyBee transaction commits neither ALGW nor ALGR until four
+conjunction releases and one unavailable-input fault replay match exactly.
+This is offline evidence and grants no session, GPIO, deployment, start, or
+safety authority. ADC, UART, timer, shifted output, storage, raw GPIO, and all
+other unadmitted access remain closed.
 Canonical `ALGP` V2 sidecars now bind bounded probes to exact workspace outputs
 and retain one Boolean-stream rising, falling, or either-edge trigger with a
 bounded pre/post retained-sample window. Trigger edits are transactional,
@@ -668,7 +678,11 @@ and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`portable graph-runtime`](evidence/M9-FIXED-GRAPH-RUNTIME.md), and
 [`authenticated deployment`](evidence/M9-AUTHENTICATED-GRAPH-DEPLOYMENT.md)
 and [`durable selection`](evidence/M9-DURABLE-GRAPH-SELECTION.md), plus
-[`capability-bound input`](evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md) evidence.
+[`capability-bound input`](evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md),
+[`executable composite input`](evidence/M9-EXECUTABLE-COMPOSITE-RESOURCE-CONSUMER.md),
+and
+[`browser firmware-actor replay`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md)
+evidence.
 
 ### Execution semantics
 

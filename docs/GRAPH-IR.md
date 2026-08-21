@@ -218,6 +218,17 @@ and MKS ESP32 FOC currently expose no physical graph resource. Measured
 deadline/WCET evidence, output opcodes, physical input HIL, physical telemetry,
 and HIL timing remain later work.
 
+The browser/native core now also has a bounded Realtime-only offline replay
+boundary over those portable actor types. It independently installs the exact
+lowered package into empty-Service and Realtime actors, applies the target's
+static opcode/resource palette, performs prepare/activate/observe, and retains
+actual resource-provider call order with each completed report or terminal
+execution fault. `ALGRREP1` evidence binds the target and package identities,
+run, limits, canonicalized input states, actual reads, and outcomes. This path
+does not contact a device or acquire deployment, start, resource, or safety
+authority. Its reproduced native/WASM and browser evidence is recorded in
+[`evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md).
+
 The reproduced compiler/runtime fixtures, target link results, artifact hashes,
 and closed claims are recorded in
 [`evidence/M9-FIXED-GRAPH-RUNTIME.md`](evidence/M9-FIXED-GRAPH-RUNTIME.md).
