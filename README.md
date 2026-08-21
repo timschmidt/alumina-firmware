@@ -145,13 +145,15 @@ adds one transactional Boolean-stream rising/falling/either trigger and bounded
 pre/post retained-sample window. The reference measurement-range falling edge
 matches exact control tick/sequence 3 and selects ticks 1–5 with a distinct
 trigger marker and shared exact cursor, without granting live telemetry or
-device-trigger authority. One greenfield versioned origin-local application
-value now persists the exact control `ALGW`, bound `ALGP`, and separate
-catalog-bound cached-job `ALGW` as an `algwb1:` bundle. Restore replaces none
-of the three until every canonical replay, the sidecar's workspace binding, and
-current cached-job catalog membership succeed. Separate
-bounded native/browser `.algp` exchange can change only the sidecar bound to
-the current workspace. Each probe row now transactionally edits its canonical
+device-trigger authority. One canonical bounded `ALGS` V1 authoring session
+now persists the exact control `ALGW`, bound `ALGP`, separate catalog-bound
+cached-job `ALGW`, selected `ALGC`, complete `ALGH`, and regenerated `ALGM`.
+Restore replaces nothing until every nested replay, cross-artifact identity,
+audited graph, and current cached-job catalog check succeeds. The retired
+three-section bundle is not decoded or migrated. Complete `.algs` and separate
+bounded `.algw`/`.algp`/`.algm` exchange use their corresponding replay
+boundaries; focused ALGP exchange can change only the sidecar bound to the
+current workspace. Each probe row now transactionally edits its canonical
 name, host-retention ceiling, and event-decimation stride while preserving
 stable probe/source/type identity; invalid names, bounds, or active trigger
 windows fail without mutation. Canonical `ALGW` keeps presentation-only integer

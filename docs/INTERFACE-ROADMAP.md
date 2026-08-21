@@ -579,12 +579,15 @@ palette now supports node create/delete and exact scalar parameter replacement.
 Bounded complete `ALGW`/`ALGP` pair snapshots now provide replay-backed undo/redo across
 graph, probe, trigger, and sidecar-import edits. Pair navigation replays ALGW
 and then ALGP against that exact reconstructed workspace before changing either
-document or history state. Origin-local browser
-persistence stores the exact current ALGW/ALGP pair in one versioned value and
-commits neither restored artifact until both canonical replays and their
-identity binding succeed. Native/browser `.algw` and `.algp` exchange crosses
-the corresponding bounded replay boundary; ALGP import can change only the
-sidecar bound to the current workspace.
+document or history state. Origin-local browser persistence now stores one
+canonical bounded `ALGS` V1 over the current control ALGW, bound ALGP,
+catalog-bound cached-job ALGW, selected ALGC, complete ALGH, and regenerated
+ALGM. It commits no restored state until every nested replay, cross-artifact
+identity, audited graph, and catalog-membership check succeeds. The retired
+three-section value is not a compatibility input. Native/browser `.algs`,
+`.algw`, `.algp`, and `.algm` exchange crosses the corresponding bounded replay
+boundary; ALGP import can change only the sidecar bound to the current
+workspace.
 A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
 maps public connector terminals to exact internal endpoints, and binds integer
 front-panel controls/indicators to public terminals or retained exact
@@ -599,8 +602,8 @@ fresh monotonic node/wire identities. The visible proof expands a wrapper and
 its PID leaf at depth two to 21 audited nodes and 25 wires, retaining stable
 source paths `[1]` and `[1, 1]`. Composite or identity-bearing parameter
 editors, collaboration/conflict handling, editable component libraries and
-instances, hierarchy-aware persistence, and general panel authoring remain
-open. A separate canonical `ALGM` V1 sidecar now maps every final node and wire
+instances, hierarchy-aware undo/redo, and general panel authoring remain open.
+A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
 source `ALGH` and flattened `ALGW`. Its bounded replay freshly flattens the
 caller-supplied hierarchy and regenerates every byte before returning
@@ -688,6 +691,7 @@ and
 [`graph hierarchy flattening`](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [`bounded recursive graph hierarchy`](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [`exact hierarchy source map`](evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), and
+[`canonical graph authoring session`](evidence/M9-CANONICAL-GRAPH-AUTHORING-SESSION.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

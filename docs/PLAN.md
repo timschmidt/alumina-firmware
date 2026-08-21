@@ -1410,11 +1410,13 @@ and bounded retained-sample window. Its reference falling edge on the
 measurement-range probe resolves to exact tick/sequence 3 and a complete
 two-sample pre/post window spanning ticks 1–5. This is bounded HostExact replay
 authority, not live telemetry or device-trigger configuration. The browser now
-persists exact control ALGW, bound ALGP, and catalog-bound cached-job ALGW state
-as one greenfield `algwb1:` bundle and restores none until all three replay
-canonically, the sidecar proves its workspace binding, and every job handle at
-every reviewed composite leaf still belongs to the newly derived catalog.
-Separate bounded `.algp` exchange
+persists one canonical bounded `ALGS` V1 over the exact control ALGW, bound
+ALGP, catalog-bound cached-job ALGW, selected ALGC, complete ALGH, and freshly
+regenerated ALGM. Restore changes nothing until every nested artifact replays,
+all cross-artifact identities and audited graph semantics pass, and every job
+handle at every reviewed composite leaf still belongs to the newly derived
+catalog. The retired three-section bundle is not decoded or migrated. Separate
+bounded `.algp` exchange
 replays only against the exact
 current ALGW; malformed or foreign sidecars preserve both prior documents, and
 canonical no-op sidecar edits do not cause redundant persistence. Ephemeral
@@ -1457,9 +1459,9 @@ composes an exact measurement-range predicate with the external permit through
 an audited Boolean
 conjunction; both exact range limits are front-panel controls. Bounded
 canonical snapshots add replay-backed undo/redo; browser storage atomically
-retains the control ALGW, bound ALGP, and catalog-bound cached-job ALGW, while
-native/browser `.algw` plus `.algp` exchange preserves only fully replayed,
-identity-bound control drafts and sidecars. A
+retains one complete ALGS authoring session, while native/browser `.algs`,
+`.algw`, `.algp`, and `.algm` exchange preserves only fully replayed,
+identity-bound artifacts. A
 disconnected TinyBee prequalification run exposed a roughly 54 ms unarmed
 radio-startup suspension and proved that an ordinary core-1 executor could miss
 the 200 us dispatch reserve. The fixture now discards and re-debounces input
@@ -1500,6 +1502,7 @@ and
 [graph hierarchy flattening](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [bounded recursive graph hierarchy](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [exact hierarchy source map](evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), and
+[canonical graph authoring session](evidence/M9-CANONICAL-GRAPH-AUTHORING-SESSION.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [authenticated diagnostic transport](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and
