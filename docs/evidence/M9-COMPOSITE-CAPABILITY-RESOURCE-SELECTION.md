@@ -21,6 +21,9 @@ workspace before committing a reconstructed root value.
   (`feat: select capability resources in composite values`).
 - Preceding qualified interface checkpoint:
   `cd0a1389bc8c70e1e7503a4724e03d26b58a3f7b`.
+- Exact firmware documentation checkpoint:
+  `92437ba42d0db22ef30d32535d37773dae0631fa`
+  (`docs: record composite capability resource selection`).
 - Preceding qualified firmware checkpoint:
   `cf84d7a6da0e4b309a5ffb0639561f354c08a947`.
 - Both repositories remained on `agent/zizmor-ci-hardening`.
@@ -218,11 +221,47 @@ device, or WLAN error appeared.
 
 ## Firmware documentation qualification
 
-The exact documentation checkpoint will be qualified with the complete locked
-portable firmware suite, warnings-denied Clippy, all five dual-core board
-definitions, the three bounded capability assertions, whitespace checks, and a
-fresh full Cargo-metadata license/source audit. No firmware manifest or lockfile
-changed in this documentation-only slice.
+The exact documentation checkpoint above was clean before and after
+qualification. Run from `alumina-firmware`:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo xtask board list
+cargo xtask board check mks-tinybee-v1
+cargo xtask board check mks-tinybee-v1-4mb
+cargo xtask board check t-deck-pro
+cargo xtask board check mks-esp32-foc-v1
+cargo xtask board check t-lora-pager-current
+cargo xtask capabilities --board mks-tinybee --json | jq -e '
+  .id == "mks-tinybee-v1" and .armable == false and
+  (.clocks | length == 2) and (.hil_requirements | length == 8)'
+cargo xtask capabilities --board mks-tinybee-4mb --json | jq -e '
+  .id == "mks-tinybee-v1-4mb" and .flash_bytes == 4194304 and
+  .armable == false and .capability_digest_verified == true'
+cargo xtask capabilities --board t-deck-pro --json | jq -e '
+  .id == "t-deck-pro" and .armable == false and
+  (.devices | length == 12) and (.hil_requirements | length == 7)'
+git diff --check
+```
+
+Formatting, the complete portable firmware test suite, warnings-denied Clippy,
+all five dual-core board definitions, all three capability assertions, and
+repository whitespace checks pass. The board registry reports the 8 MiB
+TinyBee primary, 4 MiB TinyBee variant, T-Deck Pro, MKS ESP32 FOC V1, and
+current T-LoRa Pager late stub; all remain dual-core and non-armable according
+to their existing packages.
+
+The local host still has no `cargo-deny` executable, so no local `cargo deny`
+result is claimed. A fresh locked full Cargo-metadata audit covered 275
+packages and reported zero missing license declarations, zero GPL-family
+license expressions, and zero non-crates.io external sources. The slice changed
+only `README.md`, `docs/PLAN.md`, the evidence index, and this evidence file; no
+manifest or lockfile changed. The unchanged `Cargo.lock` has SHA-256
+`b356c38c2fe8188c98288e1015bebeefc8d8865037174848d80a0eb87e8a7c16`.
+Checked-in CI remains configured to run `cargo deny check bans licenses
+sources` against the repository's permissive allowlist.
 
 ## Closed claims and licensing
 
