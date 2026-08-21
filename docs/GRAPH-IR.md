@@ -223,11 +223,17 @@ boundary over those portable actor types. It independently installs the exact
 lowered package into empty-Service and Realtime actors, applies the target's
 static opcode/resource palette, performs prepare/activate/observe, and retains
 actual resource-provider call order with each completed report or terminal
-execution fault. `ALGRREP1` evidence binds the target and package identities,
-run, limits, canonicalized input states, actual reads, and outcomes. This path
-does not contact a device or acquire deployment, start, resource, or safety
-authority. Its reproduced native/WASM and browser evidence is recorded in
-[`evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md).
+execution fault. Complete bounded canonical `ALGRREP1` bytes bind the target and
+package identities, run, limits, canonicalized input states, actual reads, and
+outcomes. Raw import checks size, digest, identities, declared limits, and
+canonical inputs, then fresh actors must reproduce every byte. The TinyBee UI
+can export or verification-only import its success/fault transcripts without
+changing the draft or opening a session. This path does not contact a device or
+acquire deployment, start, resource, or safety authority. Its initial replay
+evidence is recorded in
+[`evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md);
+the canonical artifact/import qualification is in
+[`evidence/M9-CANONICAL-GRAPH-REPLAY-EVIDENCE.md`](evidence/M9-CANONICAL-GRAPH-REPLAY-EVIDENCE.md).
 
 The reproduced compiler/runtime fixtures, target link results, artifact hashes,
 and closed claims are recorded in

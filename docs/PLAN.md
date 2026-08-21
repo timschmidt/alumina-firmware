@@ -1,4 +1,4 @@
-# Aluminafw delivery plan
+# Alumina firmware delivery plan
 
 Research and decision snapshot: 2026-08-10.
 
@@ -1358,13 +1358,18 @@ installs an already lowered package independently into the actual portable
 fixed-memory Service and Realtime actors with the selected board's exact static
 opcode/resource palette. It records provider calls in executor order, completed
 release reports or the terminal first-cause fault, and a domain-separated
-`ALGRREP1` evidence digest over all exact inputs and outputs. The TinyBee draft
+`ALGRREP1` artifact over all exact inputs and outputs. Raw imports are bounded
+before hashing, identity/canonical-input checked, and accepted only when fresh
+portable actors regenerate every byte. The TinyBee UI exports its current
+success and fault transcripts and imports them only for verification. The draft
 transaction runs the four conjunction cases plus an unavailable-first-input
 case before committing ALGW, ALGR, and replay evidence together. Caller sample
 order is deliberately non-authoritative: the firmware actor still reads the
 stable record-field pair in lowered GPIO order and retains both reads before
 `ResourceUnavailable`. See
-[`M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md).
+[`M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md`](evidence/M9-BROWSER-FIRMWARE-ACTOR-REPLAY.md)
+and
+[`M9-CANONICAL-GRAPH-REPLAY-EVIDENCE.md`](evidence/M9-CANONICAL-GRAPH-REPLAY-EVIDENCE.md).
 Every descriptive-but-unadmitted ADC, UART, timer, shifted output, storage
 resource, other GPIO, raw pin operation, and broader executable composite-
 resource consumer remains closed.
