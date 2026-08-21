@@ -570,16 +570,16 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, main-canvas/nested/general-library hierarchy editing, general
-panel editing, interactive traversal from flattened items into nested editable
-canvases, front-panel runtime inputs, live device telemetry, and
+resource opcodes, main-canvas/nested/component-creation hierarchy editing,
+general panel editing, interactive traversal from flattened items into nested
+editable canvases, front-panel runtime inputs, live device telemetry, and
 device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. Canonical placement/wiring and a 13-kind audited
 palette now supports node create/delete and exact scalar parameter replacement.
 Bounded complete canonical `ALGS` snapshots now provide replay-backed
 undo/redo across graph, probe, trigger, sidecar-import, cached-job, selected
-component, direct root-instance, hierarchy, and source-map state. Navigation
-replays every nested artifact, then reruns UI semantic and cached-job catalog
+component, component-library, direct root-instance, hierarchy, and source-map
+state. Navigation replays every nested artifact, then reruns UI semantic and cached-job catalog
 admission before changing either authoring state or history stacks.
 Origin-local browser persistence now stores one canonical bounded `ALGS` V1
 over the current control ALGW, bound ALGP,
@@ -587,9 +587,9 @@ catalog-bound cached-job ALGW, selected ALGC, complete ALGH, and regenerated
 ALGM. It commits no restored state until every nested replay, cross-artifact
 identity, audited graph, and catalog-membership check succeeds. The retired
 three-section value is not a compatibility input. Native/browser `.algs`,
-`.algw`, `.algp`, and `.algm` exchange crosses the corresponding bounded replay
-boundary; ALGP import can change only the sidecar bound to the current
-workspace.
+`.algw`, `.algp`, `.algc`, and `.algm` exchange crosses the corresponding
+bounded replay boundary; ALGP import can change only the sidecar bound to the
+current workspace.
 A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
 maps public connector terminals to exact internal endpoints, and binds integer
 front-panel controls/indicators to public terminals or retained exact
@@ -603,15 +603,18 @@ and recursively flattens the dependency DAG into an ordinary workspace with
 fresh monotonic node/wire identities. The visible proof expands a wrapper and
 its PID leaf at depth two to 21 audited nodes and 25 wires, retaining stable
 source paths `[1]` and `[1, 1]`. Broader identity-bearing parameter editors and
-general panel authoring remain open. A dedicated library panel now
-selects only exact dependencies already admitted by `ALGH`, adds them as root
+general panel authoring remain open. A dedicated library panel now selects
+exact dependencies admitted by `ALGH`, exports the selected canonical `ALGC`,
+imports a bounded semantically audited standalone leaf, removes only an
+unreferenced non-authoritative dependency, adds dependencies as root
 occurrences with monotonic root node identities, and deletes selected root
-occurrences plus incident root wires. The UI regenerates the complete
-`ALGH`/flattened `ALGW`/`ALGM` branch, reruns semantic admission, and commits
+occurrences plus incident root wires. Exact duplicate import is a no-op. The UI
+regenerates the complete `ALGH`/flattened `ALGW`/`ALGM` branch, reruns semantic
+admission, and commits
 through unified complete-`ALGS` history and persistence only after every check
 passes. Compatible selected-component edits remap old digest bindings while
 preserving root state and unrelated dependency encodings. Main-canvas instance
-wiring/movement, nested definition canvases, general library import/creation,
+wiring/movement, nested definition/binding exchange, general library creation,
 connector/panel authoring, and collaboration/conflict handling remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
@@ -704,6 +707,7 @@ and
 [`canonical graph authoring session`](evidence/M9-CANONICAL-GRAPH-AUTHORING-SESSION.md), and
 [`unified graph authoring history`](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [`direct root-instance authoring`](evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md), and
+[`exact component-library exchange`](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

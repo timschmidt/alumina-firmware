@@ -257,7 +257,9 @@ hierarchy evidence](docs/evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [exact hierarchy source-map
 evidence](docs/evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), plus the [direct
 root-instance authoring
-evidence](docs/evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md). The source map is
+evidence](docs/evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md) and [exact
+component-library exchange
+evidence](docs/evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md). The source map is
 host-only correlation metadata and grants no firmware execution authority.
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded

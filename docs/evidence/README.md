@@ -292,6 +292,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — exact embedded-library selection, transactional root occurrence
   add/delete, monotonic hierarchy identities, selected-component digest remap,
   and complete-session native/WASM/browser qualification.
+- [`M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md`](M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md)
+  — bounded standalone `ALGC` leaf import/export, whole-library semantic
+  admission, exact duplicate no-op, reference-safe removal, and complete-ALGS
+  native/WASM/browser history and persistence qualification.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
