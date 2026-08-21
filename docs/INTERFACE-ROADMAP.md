@@ -557,10 +557,11 @@ arenas. Production lowering now derives those arenas and the exact opcode and
 typed resource/class/access palettes from the authenticated target capability
 document. A portable firmware runtime transactionally admits those exact
 bytes/identities and every node capability into const-generic storage, primes
-Service tick zero, splits unique Service/Realtime owners, executes four fixed
+Service tick zero, splits unique Service/Realtime owners, executes five fixed
 opcodes at exact release cycles, and shares only the bounded bridge and
-first-cause fault latch. The first resource opcode can read only known, fresh,
-debounced TinyBee safety-input semantics and fails closed when unavailable.
+first-cause fault latch. The resource opcodes can read only known, fresh,
+debounced TinyBee safety-input semantics; the paired form reads both ordered
+selectors every release, and either form fails closed when unavailable.
 The headless browser/WASM client now publishes that package through the
 resumable SD cache and drives authenticated install/status/activate operations.
 Firmware independently replays it on core 0 and core 1, retains distinct
@@ -600,8 +601,10 @@ component libraries/instances, and general panel authoring remain open. A
 capability-derived catalog now intersects the complete caller-authenticated
 graph-executor document with reviewed deployment bindings and constructs only
 the four TinyBee stable Boolean input handles. A separate offline Realtime
-draft makes those nodes visible while showing that ADC, UART, timer, shifted
-output, storage, raw GPIO, and all other unadmitted access remain closed.
+draft consumes two selected handles in one reviewed conjunction node, feeds a
+required sink, and re-lowers every accepted selector edit into independently
+decoded fixed firmware bytes. ADC, UART, timer, shifted output, storage, raw
+GPIO, and all other unadmitted access remain closed.
 Canonical `ALGP` V2 sidecars now bind bounded probes to exact workspace outputs
 and retain one Boolean-stream rising, falling, or either-edge trigger with a
 bounded pre/post retained-sample window. Trigger edits are transactional,

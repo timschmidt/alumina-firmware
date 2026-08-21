@@ -75,6 +75,7 @@ V2 intentionally admits only:
 | `BooleanLatest` | Realtime | one Boolean Stream input/output | exactly 5 retained bytes; immediate zero |
 | `BooleanStreamSink` | Realtime | one Boolean Stream input, no output | no state; immediate zero; no modeled side effect |
 | `StableBooleanInput` | Realtime | no input, one Boolean Stream output | no state; immediate is one canonical typed resource selector |
+| `StableBooleanPairAll` | Realtime | no input, one Boolean Stream output | no state; immediate retains two ordered, distinct canonical typed resource selectors |
 
 `BooleanLatest` embodies the separately audited
 `LatestAtOrBeforeSourceFirst` contract. It is not a general resampler opcode.
@@ -83,7 +84,12 @@ capability document with the opcode's class and `StableBooleanInput` access.
 Firmware resolves it through the fixed safety-input monitor after normal
 sampling and reconciliation. Unknown, not-yet-debounced, future-dated, or stale
 samples fail the release with `ResourceUnavailable`; they never become an
-implicit clear value. No raw GPIO, output, PWM, ADC, motion, FOC, storage,
+implicit clear value. `StableBooleanPairAll` independently admits and reads both
+ordered selectors on every release, even when the first value is false, and
+collects both observations before evaluating availability. It emits their
+conjunction only after both fresh states are present. A duplicate,
+malformed, unadvertised, or unavailable selector fails closed before emission.
+No raw GPIO, output, PWM, ADC, motion, FOC, storage,
 network, or other resource operation is in V2.
 
 ## Channel records

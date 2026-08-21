@@ -161,16 +161,17 @@ exact inclusive range predicates and Boolean conjunction and supports monotonic
 node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
 and bounded schema-directed exact scalar/composite parameter replacement. A
 separate offline TinyBee target draft admits only four capability-derived
-stable-input handles. One non-deployable HostExact reference-set node retains
-GPIO22 as its primary handle, GPIO32 in an active optional fallback, and GPIO33
-in a bounded mirror array, leaving GPIO35 free. The same greenfield selector
-can replace a root or one explicit nested leaf only when both handles belong to
-the exact catalog and the destination identity is unused across every root and
-composite leaf in the workspace. Rebinding only the fallback to GPIO35 leaves
-its siblings exact and releases GPIO32 for one concrete Realtime input node.
+stable-input handles. One executable Realtime pair node initially retains
+GPIO22 as `permit` and GPIO32 as `interlock`, then feeds a required Boolean
+Stream sink. The same greenfield selector can replace either stable field only
+when both handles belong to the exact catalog and the destination identity is
+unused across the workspace. Every accepted edit is re-lowered through the
+complete TinyBee capability into the fixed 4 KiB package and independently
+decoded before ALGW/ALGR identities commit. Rebinding only the interlock to
+GPIO35 leaves the permit exact; attempting to duplicate GPIO35 fails atomically.
 Raw device IDs, digests, resource classes, field names, array indices, and GPIO
-selectors remain non-editable, and the draft grants no live or deployment
-authority.
+selectors remain non-editable, and the offline draft grants no live session,
+upload, install, start, configuration, or physical-read authority.
 A separate offline two-MCU authoring proof drives the real deterministic
 partition-then-manifest cache-delivery state machines, joins their private
 cache-ready evidence against the complete canonical global job, and exposes
@@ -230,6 +231,7 @@ the [exact composite-literal evidence](docs/evidence/M9-EXACT-COMPOSITE-LITERAL-
 and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md)
 and [composite capability-resource selection
 evidence](docs/evidence/M9-COMPOSITE-CAPABILITY-RESOURCE-SELECTION.md)
+and [executable paired-resource evidence](docs/evidence/M9-EXECUTABLE-COMPOSITE-RESOURCE-CONSUMER.md)
 and [graph label/domain editor evidence](docs/evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), plus
 the [cache-derived graph job-handle
 evidence](docs/evidence/M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md), plus

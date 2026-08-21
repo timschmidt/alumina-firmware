@@ -4176,7 +4176,7 @@ mod tests {
         let document = complete_document(package);
         let graph_offset = graph_section_offset(package);
         let graph = decode_graph_execution(&document).unwrap();
-        assert_eq!(graph.opcode_count(), 4);
+        assert_eq!(graph.opcode_count(), 5);
         assert_eq!(graph.resource_count(), 4);
         assert!(graph.resources().eq([
             GraphResourceDescriptor {

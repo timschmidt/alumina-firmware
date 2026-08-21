@@ -121,6 +121,10 @@ fresh debounced semantic state of a configured safety input. It grants no raw
 GPIO read and no output authority. TinyBee currently publishes class `1` for
 GPIO33, GPIO32, GPIO22, and GPIO35; T-Deck Pro, MKS ESP32 FOC, and the current
 T-LoRa Pager stub publish no graph-addressable physical resources yet.
+TinyBee advertises both opcode 4 for one stable Boolean read and opcode 5 for an
+ordered conjunction of two distinct members of that same palette. The second
+opcode adds no resource identity or access mode: admission still checks each
+selector independently against the four class/access tuples.
 
 The passive diagnostic-overview section begins with this fixed 48-byte header:
 
@@ -371,9 +375,9 @@ Current identities are:
 
 | Board | Bytes | SHA-256 |
 | --- | ---: | --- |
-| MKS TinyBee V1.x, 8 MiB primary | 3,595 | `4c7054f601d16887c2c2cc8598cc3019c624904800cecca4f982af7bb45b7c57` |
-| MKS TinyBee V1.x, 4 MiB variant | 3,608 | `eb123ad7b5641e36d5fe7eb74c4ab5724d13f3dd15aa2c23b8a61160f69b9091` |
+| MKS TinyBee V1.x, 8 MiB primary | 3,607 | `24c011c210b7a7efc3a027c926053b9ac1090f49b79b510487328887ceae5cfd` |
+| MKS TinyBee V1.x, 4 MiB variant | 3,620 | `bbffb55926e95aefbbae6f39c369f7e6376dc06a531447bfa5ae57508877dc6a` |
 | T-Deck Pro | 2,837 | `1de707aa21a0f8427e619c6501836cb8b281ff59e7294707c24b766be4e163d5` |
 | MKS ESP32 FOC V1.0 | 3,040 | `cbe9b541f90a0f9a63487f7fc43855b742bc4e7c1bc4776aca27aea3fbc60384` |
 | T-LoRa Pager (current compile-only stub) | 3,157 | `38b450496cb2a53d188eff6f06061b68dffc6a29573a093d0e012ac1e7672d1a` |
-| Host TinyBee simulator | 4,028 | `218cc758f430f8897f8c7dbcda6c1af2077fae5fc0062cce2fe7cb49a066aa79` |
+| Host TinyBee simulator | 4,040 | `cd79743abb05c28500dedca7fb075433922528ea4e269dfbe53287f7aa77026c` |

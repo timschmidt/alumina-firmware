@@ -1534,7 +1534,8 @@ mod tests {
     use alumina_graph_ir::{
         BOOLEAN_LATEST_STATE_BYTES, BOOLEAN_STREAM_ITEM_BYTES, GraphIrChannel, GraphIrChannelOwner,
         GraphIrDomain, GraphIrFullPolicy, GraphIrHeader, GraphIrNode, GraphIrOpcode,
-        GraphIrSchedule, encode_graph_resource_parameter, graph_ir_content_digest,
+        GraphIrSchedule, encode_graph_resource_pair_parameter, encode_graph_resource_parameter,
+        graph_ir_content_digest,
     };
     use alumina_protocol::DeviceId;
 
@@ -1567,13 +1568,28 @@ mod tests {
             resource_class: Some(INPUT_CLASS),
             resource_access: Some(GraphResourceAccess::StableBooleanInput),
         },
+        GraphOpcodeDescriptor {
+            opcode: GraphIrOpcode::StableBooleanPairAll as u8,
+            domain: OwnerDomain::Realtime,
+            support: SupportLevel::Compiles,
+            resource_class: Some(INPUT_CLASS),
+            resource_access: Some(GraphResourceAccess::StableBooleanInput),
+        },
     ];
-    const INPUT_RESOURCES: &[GraphResourceDescriptor] = &[GraphResourceDescriptor {
-        resource: ResourceId::Gpio(33),
-        class: INPUT_CLASS,
-        access: GraphResourceAccess::StableBooleanInput,
-        support: SupportLevel::Compiles,
-    }];
+    const INPUT_RESOURCES: &[GraphResourceDescriptor] = &[
+        GraphResourceDescriptor {
+            resource: ResourceId::Gpio(33),
+            class: INPUT_CLASS,
+            access: GraphResourceAccess::StableBooleanInput,
+            support: SupportLevel::Compiles,
+        },
+        GraphResourceDescriptor {
+            resource: ResourceId::Gpio(35),
+            class: INPUT_CLASS,
+            access: GraphResourceAccess::StableBooleanInput,
+            support: SupportLevel::Compiles,
+        },
+    ];
     const WRONG_INPUT_RESOURCES: &[GraphResourceDescriptor] = &[GraphResourceDescriptor {
         resource: ResourceId::Gpio(32),
         class: INPUT_CLASS,
@@ -1753,6 +1769,18 @@ mod tests {
             }],
         )
         .unwrap()
+    }
+
+    fn paired_input_package() -> GraphIrPackage {
+        let mut package = input_package();
+        let header = package.header();
+        let mut nodes = package.nodes().collect::<std::vec::Vec<_>>();
+        let channels = package.channels().collect::<std::vec::Vec<_>>();
+        nodes[0].opcode = GraphIrOpcode::StableBooleanPairAll;
+        nodes[0].parameter =
+            encode_graph_resource_pair_parameter(ResourceId::Gpio(33), ResourceId::Gpio(35));
+        package = GraphIrPackage::encode(header, &nodes, &channels).unwrap();
+        package
     }
 
     fn install(
@@ -1963,6 +1991,104 @@ mod tests {
         let unavailable = realtime
             .release(DeviceCycle(12_000), true, |_| None)
             .unwrap_err();
+        assert!(matches!(
+            unavailable,
+            GraphLiveError::Execution(GraphExecutionError {
+                observation: GraphFaultObservation {
+                    fault: GraphExecutionFault::ResourceUnavailable,
+                    detail: 0,
+                    ..
+                },
+                ..
+            })
+        ));
+        assert_eq!(realtime.phase(), GraphActorPhase::Faulted);
+    }
+
+    #[test]
+    fn paired_stable_inputs_read_both_in_order_and_fault_before_emitting_on_absence() {
+        let package = paired_input_package();
+        let one_resource_limits = GraphRuntimeLimits {
+            resources: &INPUT_RESOURCES[..1],
+            ..INPUT_LIMITS
+        };
+        assert_eq!(
+            match super::super::admit_package(
+                package.bytes(),
+                package.digest(),
+                authority(),
+                one_resource_limits,
+            ) {
+                Ok(_) => panic!("paired input passed with only its first resource"),
+                Err(error) => error,
+            },
+            GraphRuntimeError::ResourceCapability {
+                node: 0,
+                resource: ResourceId::Gpio(35),
+            }
+        );
+
+        let bridge = ReloadableGraphBridge::<42>::new();
+        let mut service = ServiceActor::new(&bridge);
+        let mut realtime = RealtimeActor::new(&bridge);
+        let content = graph_ir_content_digest(package.bytes());
+        service
+            .install(
+                package.bytes(),
+                52,
+                content,
+                package.digest(),
+                authority(),
+                INPUT_LIMITS,
+                true,
+            )
+            .unwrap();
+        realtime
+            .install(
+                package.bytes(),
+                52,
+                content,
+                package.digest(),
+                authority(),
+                INPUT_LIMITS,
+                true,
+            )
+            .unwrap();
+        let identity = service.installed_identity().unwrap();
+        let run = run(identity, 1, 10_000);
+        service.prepare_start(run, true).unwrap();
+        realtime.prepare_start(run, true).unwrap();
+        realtime.activate(run).unwrap();
+        service.observe_realtime_started(run).unwrap();
+
+        let mut observed = std::vec::Vec::new();
+        let false_report = realtime
+            .release(DeviceCycle(10_000), true, |resource| {
+                observed.push(resource);
+                Some(resource == ResourceId::Gpio(33))
+            })
+            .unwrap();
+        assert_eq!(observed, [ResourceId::Gpio(33), ResourceId::Gpio(35)]);
+        assert_eq!(false_report.last_sink_value, Some(false));
+
+        observed.clear();
+        let true_report = realtime
+            .release(DeviceCycle(12_000), true, |resource| {
+                observed.push(resource);
+                Some(true)
+            })
+            .unwrap();
+        assert_eq!(observed, [ResourceId::Gpio(33), ResourceId::Gpio(35)]);
+        assert_eq!(true_report.last_sink_value, Some(true));
+
+        observed.clear();
+        let unavailable = realtime
+            .release(DeviceCycle(14_000), true, |resource| {
+                observed.push(resource);
+                (resource == ResourceId::Gpio(35)).then_some(true)
+            })
+            .unwrap_err();
+        assert_eq!(observed, [ResourceId::Gpio(33), ResourceId::Gpio(35)]);
         assert!(matches!(
             unavailable,
             GraphLiveError::Execution(GraphExecutionError {

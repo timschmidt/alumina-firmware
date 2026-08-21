@@ -11,7 +11,7 @@ use alumina_graph_ir::{
     BOOLEAN_LATEST_STATE_BYTES, BOOLEAN_STREAM_ITEM_BYTES, GraphIrBooleanStreamItem,
     GraphIrBooleanValue, GraphIrChannel, GraphIrChannelOwner, GraphIrDomain, GraphIrError,
     GraphIrFullPolicy, GraphIrOpcode, GraphIrPackage, GraphIrSummary, MAX_GRAPH_IR_CHANNELS,
-    MAX_GRAPH_IR_NODES, decode_graph_resource_parameter,
+    MAX_GRAPH_IR_NODES, decode_graph_resource_pair_parameter, decode_graph_resource_parameter,
 };
 use alumina_protocol::{DeviceCycle, DeviceId, Digest};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
@@ -894,6 +894,35 @@ fn validate_capability_palette(
                     });
                 }
             }
+            GraphIrOpcode::StableBooleanPairAll => {
+                let (first, second) = decode_graph_resource_pair_parameter(node.parameter)
+                    .map_err(|_| GraphRuntimeError::RuntimeShape)?;
+                let Some(class) = descriptor.resource_class else {
+                    return Err(GraphRuntimeError::OpcodeCapability {
+                        node: index,
+                        opcode,
+                    });
+                };
+                if descriptor.resource_access != Some(GraphResourceAccess::StableBooleanInput) {
+                    return Err(GraphRuntimeError::OpcodeCapability {
+                        node: index,
+                        opcode,
+                    });
+                }
+                for resource in [first, second] {
+                    if !limits.resources.iter().any(|candidate| {
+                        candidate.resource == resource
+                            && candidate.class == class
+                            && candidate.access == GraphResourceAccess::StableBooleanInput
+                            && candidate.support >= SupportLevel::Compiles
+                    }) {
+                        return Err(GraphRuntimeError::ResourceCapability {
+                            node: index,
+                            resource,
+                        });
+                    }
+                }
+            }
             GraphIrOpcode::BooleanStreamConstant
             | GraphIrOpcode::BooleanLatest
             | GraphIrOpcode::BooleanStreamSink => {
@@ -1262,6 +1291,44 @@ where
                     fault,
                     GraphIrBooleanStreamItem {
                         value,
+                        source_tick: tick,
+                        sequence: tick,
+                    },
+                    &mut report,
+                )?;
+            }
+            GraphIrOpcode::StableBooleanPairAll => {
+                let node_index = usize::from(index);
+                if metadata.input_channel[node_index] != NO_CHANNEL {
+                    return Err(latch_fault(
+                        fault,
+                        GraphExecutionFault::RuntimeShape,
+                        index,
+                        None,
+                    ));
+                }
+                let (first_resource, second_resource) =
+                    decode_graph_resource_pair_parameter(node.parameter).map_err(|_| {
+                        latch_fault(fault, GraphExecutionFault::RuntimeShape, index, None)
+                    })?;
+                let first = resource_input(first_resource);
+                let second = resource_input(second_resource);
+                let (Some(first), Some(second)) = (first, second) else {
+                    return Err(latch_fault(
+                        fault,
+                        GraphExecutionFault::ResourceUnavailable,
+                        index,
+                        None,
+                    ));
+                };
+                emit_realtime_outputs(
+                    package,
+                    metadata.output_channels[node_index],
+                    channels,
+                    queues,
+                    fault,
+                    GraphIrBooleanStreamItem {
+                        value: first && second,
                         source_tick: tick,
                         sequence: tick,
                     },

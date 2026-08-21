@@ -1596,7 +1596,8 @@ execute in the real-time graph.
 The current portable boundary is the fixed 4 KiB `ALGRIR02` package documented in
 [`GRAPH-IR.md`](GRAPH-IR.md). Its allocation-free decoder admits only a
 Service Boolean Stream constant, a Realtime latest-at-or-before Boolean
-transition, a Realtime sink, and a Realtime stable Boolean safety-input read,
+transition, a Realtime sink, a Realtime stable Boolean safety-input read, and
+an ordered distinct two-input stable-Boolean conjunction,
 with fault-on-full realtime queues, one-way Service-to-Realtime bridges,
 contiguous arenas, and one integer device-cycle schedule per active domain. A
 separate browser compiler registry now binds the complete audited semantic and
@@ -1607,7 +1608,7 @@ decoder. A portable runtime now admits the requested package and exact
 device/capability/configuration/implementation identities into const-generic
 state and queue arrays, independently checks each opcode and resource tuple
 against the image's static board palette, primes Service tick zero, uniquely
-splits core-local owners, and executes the four fixed opcodes with a bounded
+splits core-local owners, and executes the five fixed opcodes with a bounded
 critical-section bridge and first-cause fault latch.
 
 The package lifecycle is now composed into the actual split-core firmware. The
@@ -1623,7 +1624,8 @@ selection uses a two-phase raw-media journal: prepare precedes core-1 selection,
 commit precedes authorization, and boot repeats byte-for-byte admission only
 after the committed configuration is authorized. TinyBee's first resource
 opcode can read only known, fresh, debounced semantics for the four configured
-safety inputs; unavailable state faults rather than becoming clear. T-Deck Pro
+safety inputs; its paired form reads both ordered selectors on every release
+and unavailable state faults rather than becoming clear. T-Deck Pro
 and MKS ESP32 FOC expose no graph-addressable physical resource yet. There is
 still no graph output opcode, measured WCET, physical-input HIL, or physical
 timing claim at this checkpoint.

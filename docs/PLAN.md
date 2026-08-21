@@ -1291,10 +1291,13 @@ known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
-prepare/start nodes, executable composite-resource consumers, and executable
-job workflows,
+prepare/start nodes, broader executable composite-resource consumers, and
+executable job workflows,
 collaboration/conflict handling, and higher-rate triggered acquisition remain
-open. Schema-directed scalar/composite literal editing, root resource-handle
+open. One bounded two-input stable-Boolean conjunction is now closed: its
+opcode retains two ordered distinct selectors, admits and reads both against
+the same TinyBee stable-input palette on every release, and faults before
+emission when either is absent. Schema-directed scalar/composite literal editing, root resource-handle
 selection, bounded schema-aware nested physical-resource and cached-job-handle
 selection, and basic label/domain editing are now closed separately without
 widening firmware authority.
@@ -1343,15 +1346,16 @@ explicit already-active option/result branches select one existing leaf; no
 branch, array element, display label, or raw identity is synthesized. The
 selector reconstructs and validates the complete root, retains
 node/placement/allocation identity and untouched siblings, then commits only
-after complete semantic analysis plus canonical ALGW encoding. The visible
-non-deployable reference set starts with primary GPIO22, optional fallback
-GPIO32, and mirror GPIO33, leaving GPIO35 free. Rebinding only the fallback to
-GPIO35 releases GPIO32 for one separate concrete Realtime stable-input node.
+after complete semantic analysis, canonical ALGW encoding, capability-derived
+fixed-package lowering, and independent pair decoding. The visible executable
+Realtime pair starts with GPIO22 `permit` and GPIO32 `interlock`, feeds a
+required sink, and leaves GPIO33/GPIO35 free. Rebinding only the interlock to
+GPIO35 preserves the GPIO22 sibling and changes both ALGW and package identity.
 Raw identity text, duplicates across root or composite leaves, foreign
 catalogs, wrong leaf types, and invalid/inactive paths fail without mutation.
 Every descriptive-but-unadmitted ADC, UART, timer, shifted output, storage
-resource, other GPIO, raw pin operation, and executable composite-resource
-consumer remains closed.
+resource, other GPIO, raw pin operation, and broader executable composite-
+resource consumer remains closed.
 A separate offline HostExact graph now derives exact inert `JobHandle` choices
 only after the deterministic partition-then-manifest cache coordinator produces
 private readiness tokens for every participant and a window-free join matches

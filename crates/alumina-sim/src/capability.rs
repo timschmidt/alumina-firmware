@@ -63,8 +63,8 @@ pub const DIGITAL_CAPTURE: DigitalCaptureDescriptor<'static> = DigitalCaptureDes
 
 /// SHA-256 of the canonical simulator-specific `ALMCAP04` V4 document.
 pub const CAPABILITY_DIGEST: Digest = Digest([
-    0x21, 0x8c, 0xc7, 0x58, 0xf4, 0x30, 0xf8, 0x89, 0x7f, 0x8c, 0x7d, 0xbc, 0xda, 0x6c, 0x1a, 0xf2,
-    0x07, 0x7f, 0xae, 0x5f, 0xc0, 0x06, 0x2c, 0xce, 0x2f, 0xe7, 0xcb, 0x49, 0xa0, 0x66, 0xaa, 0x79,
+    0xcd, 0x79, 0x74, 0x3a, 0xbb, 0x05, 0xc2, 0x85, 0x00, 0xde, 0xdc, 0xa7, 0xfb, 0x07, 0x54, 0x33,
+    0x92, 0x25, 0x28, 0xea, 0x4e, 0x26, 0x9d, 0xfb, 0xe5, 0x32, 0x87, 0xf7, 0xaa, 0x77, 0x02, 0x6c,
 ]);
 
 /// Builds the immutable simulator package without borrowing physical authority.
@@ -110,6 +110,10 @@ mod tests {
         assert_eq!(package.digital_capture.resources, DIGITAL_CAPTURE_RESOURCES);
         assert_eq!(package.visuals, visual_fixture::VISUALS);
         assert_eq!(visual_assets(), visual_fixture::ASSETS);
+        let calculated = calculate_identity(&package).unwrap();
+        assert_eq!(calculated.byte_len, 4_040);
+        assert_eq!(CAPABILITY_DIGEST.0, calculated.digest.0);
+        assert_eq!(verify_declared_identity(&package), Ok(calculated));
         assert!(VerifiedCapabilityVisualAssets::try_new(&package, visual_assets()).is_ok());
 
         let invalid = [CapabilityVisualAsset {
@@ -120,10 +124,5 @@ mod tests {
             VerifiedCapabilityVisualAssets::try_new(&package, &invalid),
             Err(CapabilityVisualCatalogError::Digest { .. })
         ));
-
-        let calculated = calculate_identity(&package).unwrap();
-        assert_eq!(calculated.byte_len, 4_028);
-        assert_eq!(CAPABILITY_DIGEST.0, calculated.digest.0);
-        assert_eq!(verify_declared_identity(&package), Ok(calculated));
     }
 }

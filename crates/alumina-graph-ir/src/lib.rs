@@ -724,6 +724,8 @@ pub enum GraphIrOpcode {
     BooleanStreamSink = 3,
     /// Read one capability-admitted fresh debounced safety-input state.
     StableBooleanInput = 4,
+    /// Read two distinct capability-admitted stable inputs and emit their conjunction.
+    StableBooleanPairAll = 5,
 }
 
 impl GraphIrOpcode {
@@ -733,6 +735,7 @@ impl GraphIrOpcode {
             2 => Some(Self::BooleanLatest),
             3 => Some(Self::BooleanStreamSink),
             4 => Some(Self::StableBooleanInput),
+            5 => Some(Self::StableBooleanPairAll),
             _ => None,
         }
     }
@@ -743,7 +746,10 @@ impl GraphIrOpcode {
     }
 
     const fn has_input(self) -> bool {
-        !matches!(self, Self::BooleanStreamConstant | Self::StableBooleanInput)
+        !matches!(
+            self,
+            Self::BooleanStreamConstant | Self::StableBooleanInput | Self::StableBooleanPairAll
+        )
     }
 
     const fn has_output(self) -> bool {
@@ -774,6 +780,43 @@ pub enum GraphIrResourceParameterError {
     Reserved,
     /// The low four bytes were not one canonical typed resource ID.
     Resource(ResourceWireError),
+}
+
+/// Encode two ordered typed physical-resource selectors into one node parameter.
+///
+/// The first selector occupies the low 32 bits and the second occupies the high
+/// 32 bits. Decoding independently validates both resource IDs and rejects an
+/// exact duplicate. Ordering is retained because the reviewed graph fields are
+/// identity-bearing even when a particular opcode has commutative behavior.
+pub const fn encode_graph_resource_pair_parameter(first: ResourceId, second: ResourceId) -> u64 {
+    let first = u32::from_le_bytes(encode_resource_id(first)) as u64;
+    let second = u32::from_le_bytes(encode_resource_id(second)) as u64;
+    first | (second << 32)
+}
+
+/// Decode two exact ordered and distinct typed physical-resource selectors.
+pub fn decode_graph_resource_pair_parameter(
+    parameter: u64,
+) -> Result<(ResourceId, ResourceId), GraphIrResourcePairParameterError> {
+    let first = decode_resource_id(&(parameter as u32).to_le_bytes())
+        .map_err(GraphIrResourcePairParameterError::First)?;
+    let second = decode_resource_id(&((parameter >> 32) as u32).to_le_bytes())
+        .map_err(GraphIrResourcePairParameterError::Second)?;
+    if first == second {
+        return Err(GraphIrResourcePairParameterError::Duplicate);
+    }
+    Ok((first, second))
+}
+
+/// Canonical graph resource-pair parameter rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphIrResourcePairParameterError {
+    /// The low ordered resource ID was malformed.
+    First(ResourceWireError),
+    /// The high ordered resource ID was malformed.
+    Second(ResourceWireError),
+    /// Both fields selected the same physical resource.
+    Duplicate,
 }
 
 /// Fixed owner of one preallocated channel arena.
@@ -1651,6 +1694,12 @@ fn validate_node(
         {
             Ok(())
         }
+        (GraphIrDomain::Realtime, GraphIrOpcode::StableBooleanPairAll)
+            if node.state_bytes == 0
+                && decode_graph_resource_pair_parameter(node.parameter).is_ok() =>
+        {
+            Ok(())
+        }
         _ => Err(node_error(index, "opcode/domain/state/parameter")),
     }
 }
@@ -2118,6 +2167,55 @@ mod tests {
         malformed_parameter[0].parameter = 0;
         assert_eq!(
             GraphIrPackage::encode(header, &malformed_parameter, &channels),
+            Err(GraphIrError::Node {
+                index: 0,
+                aspect: "opcode/domain/state/parameter",
+            })
+        );
+    }
+
+    #[test]
+    fn stable_boolean_pair_parameter_is_ordered_distinct_and_canonical() {
+        let first = ResourceId::Gpio(22);
+        let second = ResourceId::Gpio(35);
+        let parameter = encode_graph_resource_pair_parameter(first, second);
+        assert_eq!(
+            decode_graph_resource_pair_parameter(parameter),
+            Ok((first, second))
+        );
+        assert_ne!(
+            parameter,
+            encode_graph_resource_pair_parameter(second, first)
+        );
+        assert_eq!(
+            decode_graph_resource_pair_parameter(encode_graph_resource_pair_parameter(
+                first, first,
+            )),
+            Err(GraphIrResourcePairParameterError::Duplicate)
+        );
+        assert_eq!(
+            decode_graph_resource_pair_parameter(parameter & !u64::from(u32::MAX)),
+            Err(GraphIrResourcePairParameterError::First(
+                ResourceWireError::Kind(0)
+            ))
+        );
+        assert_eq!(
+            decode_graph_resource_pair_parameter(parameter & u64::from(u32::MAX)),
+            Err(GraphIrResourcePairParameterError::Second(
+                ResourceWireError::Kind(0)
+            ))
+        );
+
+        let (header, nodes, channels) = safety_input_fixture();
+        let mut pair = nodes;
+        pair[0].opcode = GraphIrOpcode::StableBooleanPairAll;
+        pair[0].parameter = parameter;
+        let package = GraphIrPackage::encode(header, &pair, &channels).unwrap();
+        assert_eq!(package.node(0), Some(pair[0]));
+
+        pair[0].parameter = encode_graph_resource_pair_parameter(first, first);
+        assert_eq!(
+            GraphIrPackage::encode(header, &pair, &channels),
             Err(GraphIrError::Node {
                 index: 0,
                 aspect: "opcode/domain/state/parameter",
