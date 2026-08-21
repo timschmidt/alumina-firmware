@@ -161,9 +161,16 @@ exact inclusive range predicates and Boolean conjunction and supports monotonic
 node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
 and bounded schema-directed exact scalar/composite parameter replacement. A
 separate offline TinyBee target draft admits only four capability-derived
-stable-input handles and can rebind an existing managed node to an unused
-same-kind entry. Raw device IDs, digests, resource classes, and GPIO selectors
-remain non-editable, and the draft grants no live or deployment authority.
+stable-input handles. One non-deployable HostExact reference-set node retains
+GPIO22 as its primary handle, GPIO32 in an active optional fallback, and GPIO33
+in a bounded mirror array, leaving GPIO35 free. The same greenfield selector
+can replace a root or one explicit nested leaf only when both handles belong to
+the exact catalog and the destination identity is unused across every root and
+composite leaf in the workspace. Rebinding only the fallback to GPIO35 leaves
+its siblings exact and releases GPIO32 for one concrete Realtime input node.
+Raw device IDs, digests, resource classes, field names, array indices, and GPIO
+selectors remain non-editable, and the draft grants no live or deployment
+authority.
 A separate offline two-MCU authoring proof drives the real deterministic
 partition-then-manifest cache-delivery state machines, joins their private
 cache-ready evidence against the complete canonical global job, and exposes
@@ -221,6 +228,8 @@ workspace evidence](docs/evidence/M9-CANONICAL-GRAPH-WORKSPACE.md) and [graph
 palette/parameter evidence](docs/evidence/M9-GRAPH-PALETTE-PARAMETERS.md), plus
 the [exact composite-literal evidence](docs/evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md)
 and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md)
+and [composite capability-resource selection
+evidence](docs/evidence/M9-COMPOSITE-CAPABILITY-RESOURCE-SELECTION.md)
 and [graph label/domain editor evidence](docs/evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), plus
 the [cache-derived graph job-handle
 evidence](docs/evidence/M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md), plus

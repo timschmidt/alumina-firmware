@@ -235,6 +235,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-CAPABILITY-RESOURCE-SELECTOR.md`](M9-CAPABILITY-RESOURCE-SELECTOR.md)
   — exact capability-derived resource selection, stable node identity,
   transactional rollback, and closed raw-handle/deployment authority.
+- [`M9-COMPOSITE-CAPABILITY-RESOURCE-SELECTION.md`](M9-COMPOSITE-CAPABILITY-RESOURCE-SELECTION.md)
+  — bounded schema-aware nested physical-resource selection, whole-workspace
+  uniqueness, exact sibling preservation, and optimized reset/reload evidence
+  with all live and deployment authority closed.
 - [`M9-GRAPH-LABEL-DOMAIN-EDITOR.md`](M9-GRAPH-LABEL-DOMAIN-EDITOR.md) —
   bounded canonical node labels, schema-audited concrete execution choices,
   pair history/persistence, closed raw-device authority, and optimized

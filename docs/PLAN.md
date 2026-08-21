@@ -1291,13 +1291,13 @@ known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
-prepare/start nodes, nested identity-bearing resource selectors, and executable
+prepare/start nodes, executable composite-resource consumers, and executable
 job workflows,
 collaboration/conflict handling, and higher-rate triggered acquisition remain
 open. Schema-directed scalar/composite literal editing, root resource-handle
-selection, bounded schema-aware composite cached-job-handle selection, and
-basic label/domain editing are now closed separately without widening firmware
-authority.
+selection, bounded schema-aware nested physical-resource and cached-job-handle
+selection, and basic label/domain editing are now closed separately without
+widening firmware authority.
 The TinyBee image now also reports those same configuration-stable semantic
 inputs through a passive core-1-to-core-0 `ALMRTI01` bridge. Exact resource
 mapping, monitor masks/generation, and latest physical sample cycles are
@@ -1334,13 +1334,24 @@ grants a diagnostic output lease, or creates arm/safety authority.
 The editor now intersects the complete caller-authenticated graph-executor
 capability with the reviewed deployment registry and materializes only exact
 matching resource handles. Its visible offline TinyBee target draft offers
-GPIO22/32/33/35. A public transactional selector requires the existing node to
-match an offered catalog entry exactly, retains node/placement/allocation
-identity, admits only an unused entry of the same reviewed kind, and commits
-only after complete semantic analysis plus canonical ALGW encoding. Raw
-identity text, duplicate handles, foreign catalogs, and kind substitution fail
-without mutation. Every descriptive-but-unadmitted ADC, UART, timer, shifted
-output, storage resource, other GPIO, and raw pin operation remains closed.
+GPIO22/32/33/35. A public transactional selector accepts a stable parameter ID
+and bounded schema-aware path. The existing leaf and replacement must both be
+exact members of the same catalog, and the selected physical identity must be
+unused across every root and recursively nested parameter leaf in the complete
+workspace. Stable record-field IDs, checked retained-array indices, and
+explicit already-active option/result branches select one existing leaf; no
+branch, array element, display label, or raw identity is synthesized. The
+selector reconstructs and validates the complete root, retains
+node/placement/allocation identity and untouched siblings, then commits only
+after complete semantic analysis plus canonical ALGW encoding. The visible
+non-deployable reference set starts with primary GPIO22, optional fallback
+GPIO32, and mirror GPIO33, leaving GPIO35 free. Rebinding only the fallback to
+GPIO35 releases GPIO32 for one separate concrete Realtime stable-input node.
+Raw identity text, duplicates across root or composite leaves, foreign
+catalogs, wrong leaf types, and invalid/inactive paths fail without mutation.
+Every descriptive-but-unadmitted ADC, UART, timer, shifted output, storage
+resource, other GPIO, raw pin operation, and executable composite-resource
+consumer remains closed.
 A separate offline HostExact graph now derives exact inert `JobHandle` choices
 only after the deterministic partition-then-manifest cache coordinator produces
 private readiness tokens for every participant and a window-free join matches
@@ -1450,6 +1461,7 @@ See the
 [graph palette/parameters](evidence/M9-GRAPH-PALETTE-PARAMETERS.md), and
 [exact composite literals](evidence/M9-EXACT-COMPOSITE-LITERAL-EDITOR.md), and
 [capability resource selection](evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md), and
+[composite capability-resource selection](evidence/M9-COMPOSITE-CAPABILITY-RESOURCE-SELECTION.md), and
 [graph label/domain editing](evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), and
 [cache-derived graph job handles](evidence/M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md), and
 [composite cached-job selection](evidence/M9-COMPOSITE-CACHED-JOB-SELECTION.md), and
