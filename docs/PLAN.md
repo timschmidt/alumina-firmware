@@ -1346,8 +1346,8 @@ the reviewed node schema, and concrete device identities come only from
 existing graph device-cycle clocks or node placements; there is no raw identity
 field. Full semantic analysis and canonical ALGW encoding precede commit, while
 the existing ALGW/ALGP pair history and persistence retain exact undo/redo.
-The source checkpoint is committed, but its optimized bundle and browser rerun
-remain open while the shared live HyperCurve dependency is moving.
+The exact source commit, current live-stack native/WASM checks, optimized
+bundle, and localhost label-edit interaction are qualified independently.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
 endpoints and filter host plots without mutating the graph or granting live
 telemetry. The reference sidecar now selects four exact-rational controller

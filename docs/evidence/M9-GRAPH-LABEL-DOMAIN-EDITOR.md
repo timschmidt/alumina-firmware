@@ -2,8 +2,8 @@
 
 Date: 2026-08-20
 
-Checkpoint state: source implementation committed; optimized bundle and browser
-rerun still open against the moving live Hyper stack.
+Checkpoint state: source implementation, exact-commit native/WASM
+qualification, optimized bundle, and localhost browser interaction complete.
 
 This checkpoint adds the two remaining basic node-metadata operations to the
 canonical graph workspace without turning either field into hidden execution
@@ -17,7 +17,7 @@ already established by the graph.
   `f96fadda31b1ac4c1869691eeca342112f328690`
   (`feat: edit graph labels and execution domains`).
 - Preceding firmware evidence checkpoint:
-  `c5188b38ed05e05bd61852385c86a711d8345ef7`.
+  `b09fc8e518e03fb20a1a183b08cac05ddbd424d3`.
 - Both repositories remained on `agent/zizmor-ci-hardening` throughout the
   checkpoint. `alumina-firmware` is the canonical firmware repository; the
   retired `aluminafw` path was not used.
@@ -82,28 +82,88 @@ UI regression tests prove:
   three reviewed families are requested; and
 - a headless egui frame renders the selected-node label/domain controls.
 
-During the worktree qualification, the complete native suite passed with 304
-tests: 70 application/coordinator, 82 protocol-client, 151 core, and one public
-exact-control integration test. Warnings-denied native and WASM Clippy passed,
-all six WASM test artifacts linked, strict rustdoc passed, and the local-source
-and permissive-license audit passed. Those runs covered the transactional core,
-the extracted UI controls, and all new tests; the final source-only adjustment
-added the visible current UTF-8 byte count.
+## Reproduced checks
 
-## Open production rerun
+Run from `alumina-interface` at the implementation commit against the then-live
+workspace Hyper/CSGRS paths:
 
-The optimized Trunk build was then interrupted inside the concurrently edited
-live `hypercurve` path dependency before a final Alumina bundle existed. A
-subsequent native rerun likewise stopped in HyperCurve before compiling Alumina;
-the observed upstream compiler diagnostic changed between attempts, confirming
-that the shared dependency was moving. The sibling repository was intentionally
-left untouched and no old release was pinned or substituted.
+```console
+cargo fmt --package alumina-interface-core --package alumina-interface -- --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --no-deps --locked -- -D warnings
+cargo clippy --workspace --target wasm32-unknown-unknown --no-deps \
+  --locked -- -D warnings
+cargo test --workspace --target wasm32-unknown-unknown --no-run --locked
+env RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps --locked
+bash scripts/audit-source-policy.sh
+env -u NO_COLOR trunk build --release --locked --offline
+wasm-tools validate dist/alumina-interface_bg.wasm
+gzip -t dist/index.html.gz dist/alumina-interface.js.gz \
+  dist/alumina-interface_bg.wasm.gz
+brotli --test dist/alumina-interface_bg.wasm.br
+git diff --check
+```
 
-Consequently this record does **not** claim a final production WASM artifact,
-compression hashes, localhost browser click-through, or exact-commit full-suite
-rerun yet. Those checks remain an explicit follow-up gate against the live
-workspace stack. The previously qualified canonical HostExact reference ALGW
-and ALGP values are not asserted as fresh artifact evidence by this checkpoint.
+All 304 executable workspace tests pass: 70 application/coordinator, 82
+protocol-client, 151 core, and one public exact-control integration test. Both
+warnings-denied Alumina Clippy commands, all six WASM test-target links, strict
+Alumina rustdoc, package-scoped formatting, the local-source/permissive-license
+audit, optimized Trunk assembly, WASM validation, and gzip/Brotli integrity
+pass. The exact implementation commit remained clean after qualification.
+
+The unchanged canonical reference pair is:
+
+| Canonical object | Bytes | SHA-256 |
+| --- | ---: | --- |
+| reference `ALGW` | 3,755 | `bf5135c39b67c46a3a5908d4d0d8a1d13d065b59231890e8fbdda818f064ae16` |
+| seven-series triggered `ALGP` V2 | 407 | `50955da7b4464a02f6e3eace1d51a3e9d08f56cdfa9c661259c33195b15ef223` |
+
+The optimized application artifacts are:
+
+| Interface artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `alumina-interface_bg.wasm` | 6,369,964 | `01ec4202f923379d22ce4dab579125302c4b553cd8fa6e6592e218390a714dbf` |
+| `alumina-interface_bg.wasm.gz` | 2,823,281 | `76f37215232d84b8c3519430aa36f9238ec1673e14be3a53bbb460c8cdecd1f0` |
+| `alumina-interface_bg.wasm.br` | 2,229,808 | `fbcd5cefc53984becf8baab1a7fed1db60616ef7bb0f24e147f61401fc4c0965` |
+| `alumina-interface.js` | 91,816 | `6f42722097eee9fcd9f701df8287ad303d8655fc59f21af7e7d8b6f7b732b1be` |
+| `index.html` | 1,295 | `718a4a0602c90ecfb2692c8fbff6e1d3a970ee62db3181a4b9366f89ddf5d754` |
+
+The unchanged 99,392-byte `Cargo.lock` has SHA-256
+`e36aac3c277ef7e0b89a2aa319593deae02073c91d8fcb235affa2499f41029c`.
+
+## Browser runtime evidence
+
+The optimized bundle and worker loaded from `127.0.0.1:8765` in an isolated
+Chromium profile after clearing that profile's application pair. The browser
+opened the actual Control graph tab, scrolled to the graph, selected stable node
+`#1`, focused the egui label field, selected the prior text, entered
+`Browser source α`, and clicked `apply label`.
+
+The visible result retained node `#1`, its ports, kind, and canvas placement;
+advanced the draft to revision 2; displayed the exact `17 / 256 UTF-8 bytes`;
+and offered only `HostExact` with `1 audited concrete choice(s)`. The adjacent
+wording states that device identities come only from graph clocks/placements.
+The sidebar retained one 4,162-byte undo snapshot and no redo snapshot. The
+component refreshed, while both its indicator and the workspace status visibly
+reported that the old exact replay was detached after the graph edit.
+
+Origin-local persistence contained an `algwp1:` pair with these independently
+hashed canonical artifacts after the click:
+
+| Edited browser object | Bytes | SHA-256 |
+| --- | ---: | --- |
+| label-edited `ALGW` | 3,757 | `a4bbb9c2ca70d526252454f0ceb23fcabc67d427c01964141099241f42d084d2` |
+| rebound `ALGP` V2 | 407 | `5c245cfc5df101f3d6374563c4341645f7d4a31b778218f86bd38e6c5c9a98f2` |
+
+The complete persisted text was 8,336 characters. The 1,440-by-913 final
+capture `/tmp/alumina-label-domain-browser.png` is 293,872 bytes with SHA-256
+`a30d38524984f8d14a7e13ca6a4ab0ec4cfb76be8a7fc2233caee6e0b8e7e8e4`.
+It visibly contains the selected renamed node, exact byte counter, audited
+domain selector, stable placement, pair history, and detached-trace evidence.
+
+Chromium and the localhost server were stopped afterward. Software-WebGL
+readback/performance notices and background Google registration failures were
+emitted; no Alumina application, device, or WLAN error appeared.
 
 ## Closed claims and licensing
 

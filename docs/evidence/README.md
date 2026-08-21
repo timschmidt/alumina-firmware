@@ -237,8 +237,8 @@ a hardware qualification: board promotion still follows the evidence ladder in
   transactional rollback, and closed raw-handle/deployment authority.
 - [`M9-GRAPH-LABEL-DOMAIN-EDITOR.md`](M9-GRAPH-LABEL-DOMAIN-EDITOR.md) —
   bounded canonical node labels, schema-audited concrete execution choices,
-  pair history/persistence, closed raw-device authority, and an explicit open
-  production rerun against the moving live Hyper stack.
+  pair history/persistence, closed raw-device authority, and optimized
+  localhost browser interaction evidence.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized
