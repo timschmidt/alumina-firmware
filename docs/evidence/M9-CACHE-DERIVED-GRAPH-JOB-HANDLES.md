@@ -20,6 +20,9 @@ coordinator's cache-ready observations agree exactly.
 - Docs-only interface closure:
   `d0a71319c17e265f5ecba5c62446ede7743e5847`
   (`docs: close cached job-handle planning gap`).
+- Firmware documentation checkpoint:
+  `466e2f45016dff3d033059a17b4cb634e5922dec`
+  (`docs: record cache-derived graph job handles`).
 - Preceding firmware evidence checkpoint:
   `2b10e346acee54679c1b02fe903b18cd01b35a2b`.
 - Both repositories remained on `agent/zizmor-ci-hardening` throughout the
@@ -149,6 +152,39 @@ audit, optimized Trunk assembly, WASM validation, and gzip/Brotli integrity
 pass. The implementation commit remained clean after qualification. The later
 interface checkpoint changes only the two stale open-scope documentation
 sentences recorded above.
+
+The exact firmware documentation checkpoint was also checked independently:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo xtask board list
+cargo xtask board check mks-tinybee-v1
+cargo xtask board check mks-tinybee-v1-4mb
+cargo xtask board check t-deck-pro
+cargo xtask board check mks-esp32-foc-v1
+cargo xtask board check t-lora-pager-current
+cargo xtask capabilities --board mks-tinybee --json | jq -e '
+  .id == "mks-tinybee-v1" and .armable == false and
+  (.clocks | length == 2) and (.hil_requirements | length == 8)'
+cargo xtask capabilities --board mks-tinybee-4mb --json | jq -e '
+  .id == "mks-tinybee-v1-4mb" and .flash_bytes == 4194304 and
+  .armable == false and .capability_digest_verified == true'
+cargo xtask capabilities --board t-deck-pro --json | jq -e '
+  .id == "t-deck-pro" and .armable == false and
+  (.devices | length == 12) and (.hil_requirements | length == 7)'
+git diff --check
+```
+
+Formatting, the complete portable firmware test suite, warnings-denied Clippy,
+all five board validations, all three capability assertions, and repository
+whitespace checks pass. The local host did not have the `cargo-deny` subcommand,
+so no local `cargo deny` result is claimed. A locked full Cargo-metadata audit
+instead reported zero missing license declarations, zero GPL-family license
+expressions, zero non-crates.io external sources, and no manifest or lockfile
+change. The checked-in CI remains configured to run `cargo deny check bans
+licenses sources` against the repository's explicit permissive allowlist.
 
 The unchanged control artifacts and new startup cached-job artifact are:
 
