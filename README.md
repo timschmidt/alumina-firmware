@@ -167,12 +167,17 @@ remain non-editable, and the draft grants no live or deployment authority.
 A separate offline two-MCU authoring proof drives the real deterministic
 partition-then-manifest cache-delivery state machines, joins their private
 cache-ready evidence against the complete canonical global job, and exposes
-only exact inert `JobHandle` choices. Each entry retains its MCU, global job,
+exact inert `JobHandle` choices only through bounded schema-aware value paths.
+Its reviewed node retains a record containing a primary handle, an active
+optional fallback, and a bounded handle array. Stable record-field IDs,
+explicit existing branches, and checked array indices select a leaf; complete
+root validation, catalog membership, semantic analysis, and canonical encoding
+precede every replacement. Each catalog entry retains its MCU, global job,
 partition, capability, configuration, size/block, and local-timer facts; the UI
-accepts no raw identity, path, or command text. Transactional add/rebind and
-canonical replay-backed history preserve stable graph identities, while
-prepare, arm, start, deployment, and live-session authority remain separate and
-closed.
+accepts no raw identity, path, or command text. Transactional nested rebind,
+canonical replay-backed history, and all-or-nothing bundle restore preserve
+untouched siblings and stable graph identities, while prepare, arm, start,
+deployment, and live-session authority remain separate and closed.
 The selected-node inspector now also transactionally edits bounded canonical
 UTF-8 labels and concrete execution placement. Domain families come from the
 reviewed node schema, device identities come only from existing graph clocks or
@@ -219,6 +224,8 @@ and [capability resource-selector evidence](docs/evidence/M9-CAPABILITY-RESOURCE
 and [graph label/domain editor evidence](docs/evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), plus
 the [cache-derived graph job-handle
 evidence](docs/evidence/M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md), plus
+the [composite cached-job selection
+evidence](docs/evidence/M9-COMPOSITE-CACHED-JOB-SELECTION.md), plus
 the [graph history/persistence
 evidence](docs/evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md).
 

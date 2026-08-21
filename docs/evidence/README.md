@@ -243,6 +243,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — exact canonical-job/cache-ready joins, inert catalog-bound `JobHandle`
   selection, atomic three-artifact browser persistence, and optimized
   edit/reload evidence with execution authority closed.
+- [`M9-COMPOSITE-CACHED-JOB-SELECTION.md`](M9-COMPOSITE-CACHED-JOB-SELECTION.md)
+  — bounded schema-aware value paths, exact nested `JobHandle` replacement,
+  composite reference-set authoring, and optimized undo/redo/reload evidence
+  with all execution authority closed.
 - [`M9-EXACT-CONTROL-INSPECTOR.md`](M9-EXACT-CONTROL-INSPECTOR.md) — one shared
   fallible exact-control fixture, deterministic bounded semantic layout,
   explicit feedback/state inspection, exact-cursor traces, and optimized

@@ -1291,11 +1291,12 @@ known, fresh, debounced safety-input semantic state; the TinyBee image admits
 only GPIO33, GPIO32, GPIO22, and GPIO35, while the T-Deck Pro and MKS ESP32 FOC
 palettes remain empty. Measured executor timing, physical input HIL, deployed
 control/output opcodes, capability nodes beyond stable Boolean inputs,
-prepare/start nodes and nested identity-bearing job workflows,
+prepare/start nodes, nested identity-bearing resource selectors, and executable
+job workflows,
 collaboration/conflict handling, and higher-rate triggered acquisition remain
 open. Schema-directed scalar/composite literal editing, root resource-handle
-selection, basic cache-derived inert job-handle selection, and basic
-label/domain editing are now closed separately without widening firmware
+selection, bounded schema-aware composite cached-job-handle selection, and
+basic label/domain editing are now closed separately without widening firmware
 authority.
 The TinyBee image now also reports those same configuration-stable semantic
 inputs through a passive core-1-to-core-0 `ALMRTI01` bridge. Exact resource
@@ -1347,10 +1348,16 @@ their complete partition and shared-manifest publications against the canonical
 global job. Entries retain the full canonical participant record, including
 MCU, capability/configuration, partition size/block count, and local timer
 facts. The transactional selector first requires the current value to belong to
-that same catalog, permits duplicate immutable references, and commits a rebind
-only after full semantic analysis and canonical ALGW encoding. The visible
-two-MCU simulation exposes no raw device/digest/path/command field and grants no
-prepare, arm, start, deployment, or live-session authority.
+that same catalog. It follows a caller-supplied bounded path through stable
+record-field IDs, checked array indices, and explicit existing option/result
+branches, then requires the selected leaf to be the registered job-handle type.
+Replacement revalidates the complete reconstructed root, permits duplicate
+immutable references, and commits only after full semantic analysis and
+canonical ALGW encoding. The visible two-MCU proof uses one record with primary,
+active optional fallback, and bounded-array mirror leaves; it can select and
+rebind each exact leaf while preserving every sibling. It exposes no raw
+device/digest/path/command field and grants no prepare, arm, start, deployment,
+or live-session authority.
 The general selected-node inspector now also replaces bounded canonical UTF-8
 labels and concrete execution placement transactionally. Labels remain saved
 human metadata rather than behavior identity. Domain families come only from
@@ -1373,8 +1380,9 @@ two-sample pre/post window spanning ticks 1–5. This is bounded HostExact repla
 authority, not live telemetry or device-trigger configuration. The browser now
 persists exact control ALGW, bound ALGP, and catalog-bound cached-job ALGW state
 as one greenfield `algwb1:` bundle and restores none until all three replay
-canonically, the sidecar proves its workspace binding, and every job handle
-still belongs to the newly derived catalog. Separate bounded `.algp` exchange
+canonically, the sidecar proves its workspace binding, and every job handle at
+every reviewed composite leaf still belongs to the newly derived catalog.
+Separate bounded `.algp` exchange
 replays only against the exact
 current ALGW; malformed or foreign sidecars preserve both prior documents, and
 canonical no-op sidecar edits do not cause redundant persistence. Ephemeral
@@ -1444,6 +1452,7 @@ See the
 [capability resource selection](evidence/M9-CAPABILITY-RESOURCE-SELECTOR.md), and
 [graph label/domain editing](evidence/M9-GRAPH-LABEL-DOMAIN-EDITOR.md), and
 [cache-derived graph job handles](evidence/M9-CACHE-DERIVED-GRAPH-JOB-HANDLES.md), and
+[composite cached-job selection](evidence/M9-COMPOSITE-CACHED-JOB-SELECTION.md), and
 [graph history/persistence](evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md),
 and
 [graph components/front panels](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
