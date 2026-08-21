@@ -296,6 +296,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — bounded standalone `ALGC` leaf import/export, whole-library semantic
   admission, exact duplicate no-op, reference-safe removal, and complete-ALGS
   native/WASM/browser history and persistence qualification.
+- [`M9-EXACT-ROOT-HIERARCHY-CANVAS.md`](M9-EXACT-ROOT-HIERARCHY-CANVAS.md) —
+  exact bound-root placement, typed monotonic root wiring, complete
+  `ALGH`/`ALGM`/`ALGS` admission, and optimized pointer-drag undo/redo/reload
+  evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
