@@ -197,8 +197,15 @@ Bounded complete canonical `ALGS` snapshots now provide shared undo/redo across
 graph, probe, trigger, sidecar-import, cached-job, selected-component,
 hierarchy, and source-map state; navigation replays every nested artifact and
 reruns UI semantic/catalog admission before changing authoring state or the
-history stacks. Native/browser `.algw`
-exchange requires full replay and audited draft admission. All edits are
+history stacks. A dedicated component-library panel now selects only exact
+dependencies already admitted by the current `ALGH`, adds them as root
+occurrences, and deletes selected root occurrences. Every action freshly
+encodes and flattens `ALGH`, regenerates `ALGM`, admits the flattened draft,
+and commits through the same complete-`ALGS` history/persistence transaction.
+Root identities remain monotonic, invalid selections fail without mutation,
+and compatible selected-component edits remap exact digest bindings while
+preserving authored root state and unrelated library bytes. Native/browser
+`.algw` exchange requires full replay and audited draft admission. All edits are
 transactional, and graph changes detach the old graph-bound trace. A shared
 HostExact projection now applies each probe's stride, retention ceiling, and
 matched exact root-time trigger window under one aggregate memory bound; the
@@ -248,7 +255,9 @@ The reusable graph boundary now also has [component/front-panel
 evidence](docs/evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), [bounded recursive
 hierarchy evidence](docs/evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [exact hierarchy source-map
-evidence](docs/evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md). The source map is
+evidence](docs/evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), plus the [direct
+root-instance authoring
+evidence](docs/evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md). The source map is
 host-only correlation metadata and grants no firmware execution authority.
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded

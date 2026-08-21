@@ -288,6 +288,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — one bounded ephemeral timeline of complete canonical `ALGS` snapshots,
   atomic mixed graph/probe/cached-job/hierarchy undo/redo, exact replay plus UI
   catalog admission, and retirement of split pair/job histories.
+- [`M9-DIRECT-ROOT-INSTANCE-AUTHORING.md`](M9-DIRECT-ROOT-INSTANCE-AUTHORING.md)
+  — exact embedded-library selection, transactional root occurrence
+  add/delete, monotonic hierarchy identities, selected-component digest remap,
+  and complete-session native/WASM/browser qualification.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate

@@ -1422,11 +1422,12 @@ current ALGW; malformed or foreign sidecars preserve both prior documents, and
 canonical no-op sidecar edits do not cause redundant persistence. Ephemeral
 undo/redo now retains complete canonical `ALGS` sessions rather than a subset
 of authoring state. Graph, probe, trigger, changed sidecar-import, cached-job,
-selected-component, hierarchy, and source-map state share one bounded timeline;
-each navigation replays every nested artifact and reruns UI semantic/catalog
-admission before changing authoring state or the history stacks. Per-probe
-canonical name, retained-sample ceiling, and event-stride replacement is now
-transactional and pair-historical; stable probe/source/type identity is fixed,
+selected-component, direct root-instance, hierarchy, and source-map state share
+one bounded timeline; each navigation replays every nested artifact and reruns
+UI semantic/catalog admission before changing authoring state or the history
+stacks. Per-probe canonical name, retained-sample ceiling, and event-stride
+replacement is now transactional and pair-historical; stable probe/source/type
+identity is fixed,
 and an active trigger must still fit the revised retention bound. The reusable
 component exposes all seven outputs as replay-only indicators while retaining
 eight exact parameter controls. Canonical `ALGH` V2 now admits a bounded
@@ -1437,7 +1438,17 @@ complete source and flattened workspace identities, and accepts imported
 provenance only by fresh flattening plus byte-for-byte regeneration.
 Selected-node and trace-cursor labels expose the stable occurrence/final
 correlation; the sidecar remains non-mutating host metadata and grants no
-firmware authority. A complete bounded allocation-free
+firmware authority. The first direct hierarchy workflow now lists only exact
+dependencies already retained by `ALGH`, adds a selected dependency as a root
+occurrence through the root workspace's monotonic allocator, and deletes a
+selected root occurrence with its incident root wires. Each action regenerates
+and admits the complete `ALGH`/flattened `ALGW`/`ALGM` branch before one unified
+`ALGS` history/persistence commit. Compatible control edits replace the
+selected `ALGC` by exact digest and remap all old bindings while retaining root
+authoring and unrelated dependency encodings. Invalid identities or connector
+shapes remain transactional failures. Main-canvas instance wiring/movement,
+nested definition editing, and general library import/creation remain open. A
+complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
 reference separates all 62 descriptive resources, aliases, owners, safe/hazard facts and
@@ -1505,6 +1516,7 @@ and
 [exact hierarchy source map](evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), and
 [canonical graph authoring session](evidence/M9-CANONICAL-GRAPH-AUTHORING-SESSION.md), and
 [unified graph authoring history](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
+[direct root-instance authoring](evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [authenticated diagnostic transport](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and
