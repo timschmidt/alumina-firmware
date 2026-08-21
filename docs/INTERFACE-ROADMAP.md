@@ -570,12 +570,12 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, nested component dependencies, general hierarchy/panel
-editing, front-panel runtime inputs, live device telemetry, and device-trigger
-capture plots remain open. Replay-only probe triggers are separately
-implemented below. Canonical placement/wiring and a 13-kind audited palette now
-support node create/delete and exact scalar parameter replacement. Bounded
-complete `ALGW`/`ALGP` pair snapshots now provide replay-backed undo/redo across
+resource opcodes, general hierarchy/panel editing, source-path-aware trace
+navigation, front-panel runtime inputs, live device telemetry, and
+device-trigger capture plots remain open. Replay-only probe triggers are
+separately implemented below. Canonical placement/wiring and a 13-kind audited
+palette now supports node create/delete and exact scalar parameter replacement.
+Bounded complete `ALGW`/`ALGP` pair snapshots now provide replay-backed undo/redo across
 graph, probe, trigger, and sidecar-import edits. Pair navigation replays ALGW
 and then ALGP against that exact reconstructed workspace before changing either
 document or history state. Origin-local browser
@@ -590,20 +590,22 @@ front-panel controls/indicators to public terminals or retained exact
 parameters. The first visible PID/interlock component has eight exact controls
 and seven replay-only indicators: four exact-rational values and three Boolean
 interlock states. Invalidating a binding detaches the panel
-without weakening the workspace draft. Canonical `ALGH` now binds leaf
-component instances to exact `ALGC` digests, derives their typed collapsed port
-shape, and deterministically flattens connector wiring into an ordinary
-workspace with fresh monotonic node/wire identities. The visible proof expands
-one instance to 21 audited nodes and 25 wires; V1 rejects every nested instance
-until recursive depth/cycle authority is explicit. Composite or
-identity-bearing parameter editors, collaboration/conflict handling, editable
-component libraries/instances, and general panel authoring remain open. A
-capability-derived catalog now intersects the complete caller-authenticated
-graph-executor document with reviewed deployment bindings and constructs only
-the four TinyBee stable Boolean input handles. A separate offline Realtime
-draft consumes two selected handles in one reviewed conjunction node, feeds a
-required sink, and re-lowers every accepted selector edit into independently
-decoded fixed firmware bytes. A public bounded native/WASM replay boundary now
+without weakening the workspace draft. Canonical `ALGH` V2 now binds root and
+component-scoped instances to exact `ALGC` digests, derives each typed collapsed
+port shape, rejects dependency cycles, bounds depth and expanded occurrences,
+and recursively flattens the dependency DAG into an ordinary workspace with
+fresh monotonic node/wire identities. The visible proof expands a wrapper and
+its PID leaf at depth two to 21 audited nodes and 25 wires, retaining stable
+source paths `[1]` and `[1, 1]`. Composite or identity-bearing parameter
+editors, collaboration/conflict handling, editable component libraries and
+instances, hierarchy-aware persistence, and general panel authoring remain
+open. A capability-derived catalog now intersects the complete
+caller-authenticated graph-executor document with reviewed deployment bindings
+and constructs only the four TinyBee stable Boolean input handles. A separate
+offline Realtime draft consumes two selected handles in one reviewed
+conjunction node, feeds a required sink, and re-lowers every accepted selector
+edit into independently decoded fixed firmware bytes. A public bounded
+native/WASM replay boundary now
 installs those exact bytes independently into the same portable fixed-memory
 Service and Realtime actor types used by firmware, binds the target's static
 opcode/resource palette, performs the actor lifecycle, and retains actual
@@ -676,6 +678,7 @@ annotated-photo rendering remain separate open gates. See the
 and
 [`graph components/front panels`](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [`graph hierarchy flattening`](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
+[`bounded recursive graph hierarchy`](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

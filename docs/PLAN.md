@@ -1490,6 +1490,7 @@ See the
 and
 [graph components/front panels](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [graph hierarchy flattening](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
+[bounded recursive graph hierarchy](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [authenticated diagnostic transport](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and
