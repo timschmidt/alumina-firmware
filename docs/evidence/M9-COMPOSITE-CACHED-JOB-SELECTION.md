@@ -20,8 +20,9 @@ value before any workspace commit.
   (`feat: select cached jobs in composite values`).
 - Preceding qualified interface checkpoint:
   `d0a71319c17e265f5ecba5c62446ede7743e5847`.
-- Provisional firmware documentation checkpoint:
-  `FIRMWARE_CHECKPOINT_PENDING`.
+- Exact firmware documentation checkpoint:
+  `ff9134319874e989e9fd2a6b37d940a76898d9d3`
+  (`docs: record composite cached job selection`).
 - Preceding qualified firmware checkpoint:
   `d9097a7382bb56a1022d7aed077686495ec53f8f`.
 - Both repositories remained on `agent/zizmor-ci-hardening`.
@@ -244,8 +245,43 @@ device, or WLAN error appeared.
 
 ## Firmware documentation qualification
 
-Pending exact qualification of provisional checkpoint
-`FIRMWARE_CHECKPOINT_PENDING`.
+The exact documentation checkpoint above was clean before qualification. Run
+from `alumina-firmware`:
+
+```console
+cargo fmt --all -- --check
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo xtask board list
+cargo xtask board check mks-tinybee-v1
+cargo xtask board check mks-tinybee-v1-4mb
+cargo xtask board check t-deck-pro
+cargo xtask board check mks-esp32-foc-v1
+cargo xtask board check t-lora-pager-current
+cargo xtask capabilities --board mks-tinybee --json | jq -e '
+  .id == "mks-tinybee-v1" and .armable == false and
+  (.clocks | length == 2) and (.hil_requirements | length == 8)'
+cargo xtask capabilities --board mks-tinybee-4mb --json | jq -e '
+  .id == "mks-tinybee-v1-4mb" and .flash_bytes == 4194304 and
+  .armable == false and .capability_digest_verified == true'
+cargo xtask capabilities --board t-deck-pro --json | jq -e '
+  .id == "t-deck-pro" and .armable == false and
+  (.devices | length == 12) and (.hil_requirements | length == 7)'
+git diff --check
+```
+
+Formatting, the complete portable firmware test suite, warnings-denied Clippy,
+all five dual-core board definitions, all three capability assertions, and
+repository whitespace checks pass.
+
+The local host still has no `cargo-deny` subcommand, so no local
+`cargo deny` result is claimed. A fresh locked Cargo-metadata audit reported
+zero missing license declarations, zero GPL-family license expressions, and
+zero non-crates.io external sources. The slice changed only `README.md`,
+`docs/PLAN.md`, the evidence index, and this evidence file; no manifest or
+lockfile changed. Checked-in CI remains configured to run
+`cargo deny check bans licenses sources` against the repository's permissive
+allowlist.
 
 ## Closed claims and licensing
 
