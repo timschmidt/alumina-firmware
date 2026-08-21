@@ -570,8 +570,9 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, general hierarchy/panel editing, source-path-aware trace
-navigation, front-panel runtime inputs, live device telemetry, and
+resource opcodes, general hierarchy/panel editing, interactive traversal from
+flattened items into nested editable canvases, front-panel runtime inputs, live
+device telemetry, and
 device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. Canonical placement/wiring and a 13-kind audited
 palette now supports node create/delete and exact scalar parameter replacement.
@@ -599,7 +600,14 @@ its PID leaf at depth two to 21 audited nodes and 25 wires, retaining stable
 source paths `[1]` and `[1, 1]`. Composite or identity-bearing parameter
 editors, collaboration/conflict handling, editable component libraries and
 instances, hierarchy-aware persistence, and general panel authoring remain
-open. A capability-derived catalog now intersects the complete
+open. A separate canonical `ALGM` V1 sidecar now maps every final node and wire
+to exactly one root or component-occurrence origin and binds both the complete
+source `ALGH` and flattened `ALGW`. Its bounded replay freshly flattens the
+caller-supplied hierarchy and regenerates every byte before returning
+provenance. The selected-node inspector and exact trace cursor expose stable
+occurrence-to-final endpoint correlation, while `.algm` import/export remains
+non-mutating UI audit metadata with no firmware authority. A capability-derived
+catalog now intersects the complete
 caller-authenticated graph-executor document with reviewed deployment bindings
 and constructs only the four TinyBee stable Boolean input handles. A separate
 offline Realtime draft consumes two selected handles in one reviewed
@@ -679,6 +687,7 @@ and
 [`graph components/front panels`](evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), and
 [`graph hierarchy flattening`](evidence/M9-GRAPH-HIERARCHY-FLATTENING.md), and
 [`bounded recursive graph hierarchy`](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
+[`exact hierarchy source map`](evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

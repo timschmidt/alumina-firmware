@@ -239,6 +239,12 @@ the [composite cached-job selection
 evidence](docs/evidence/M9-COMPOSITE-CACHED-JOB-SELECTION.md), plus
 the [graph history/persistence
 evidence](docs/evidence/M9-GRAPH-WORKSPACE-HISTORY-PERSISTENCE.md).
+The reusable graph boundary now also has [component/front-panel
+evidence](docs/evidence/M9-GRAPH-COMPONENT-FRONT-PANEL.md), [bounded recursive
+hierarchy evidence](docs/evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
+[exact hierarchy source-map
+evidence](docs/evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md). The source map is
+host-only correlation metadata and grants no firmware execution authority.
 
 The first M3 foundation adds an explicit little-endian native protocol, bounded
 storage operation bodies, SHA-256 content-addressed sequential uploads, atomic

@@ -273,6 +273,13 @@ a hardware qualification: board promotion still follows the evidence ladder in
   canonical digest-bound `ALGH` libraries/instances, derived collapsed port
   shapes, deterministic connector rewiring with fresh monotonic identities,
   and ordinary audited `ALGW` output.
+- [`M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md`](M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md)
+  — `ALGH` V2 scoped component dependencies, cycle/depth/expansion bounds,
+  deterministic recursive flattening, and stable occurrence source paths.
+- [`M9-EXACT-HIERARCHY-SOURCE-MAP.md`](M9-EXACT-HIERARCHY-SOURCE-MAP.md) —
+  total node/wire root-or-occurrence provenance, canonical bounded `ALGM` V1
+  replay by fresh hierarchy flattening, UI correlation, and exact browser
+  sidecar download evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
