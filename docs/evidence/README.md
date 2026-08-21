@@ -310,6 +310,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   capability-derived split arenas and exact opcode/resource palettes,
   `ALGRIR02` stable safety-input reads, independent dual-core admission,
   fail-closed freshness semantics, and renewed ESP/WASM artifacts.
+- [`M9-EXECUTABLE-COMPOSITE-RESOURCE-CONSUMER.md`](M9-EXECUTABLE-COMPOSITE-RESOURCE-CONSUMER.md)
+  — ordered two-resource graph execution, capability-derived browser lowering,
+  atomic ALGW/ALGR rebinding, portable actor replay, and optimized localhost
+  evidence with every live and physical authority kept closed.
 - [`M9-TINYBEE-GRAPH-INPUT-TIMING-HARNESS.md`](M9-TINYBEE-GRAPH-INPUT-TIMING-HARNESS.md)
   — production-sized dual-core graph-input timing under real Wi-Fi/web tasks,
   exact disconnected-load SLogic wiring, streaming VCD reanalysis, and strict
