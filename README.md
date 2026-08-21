@@ -185,7 +185,7 @@ root validation, catalog membership, semantic analysis, and canonical encoding
 precede every replacement. Each catalog entry retains its MCU, global job,
 partition, capability, configuration, size/block, and local-timer facts; the UI
 accepts no raw identity, path, or command text. Transactional nested rebind,
-canonical replay-backed history, and all-or-nothing bundle restore preserve
+unified complete-`ALGS` replay-backed history, and all-or-nothing session restore preserve
 untouched siblings and stable graph identities, while prepare, arm, start,
 deployment, and live-session authority remain separate and closed.
 The selected-node inspector now also transactionally edits bounded canonical
@@ -193,10 +193,11 @@ UTF-8 labels and concrete execution placement. Domain families come from the
 reviewed node schema, device identities come only from existing graph clocks or
 placements, and complete audited analysis precedes every commit; no raw device
 identity field exists.
-Bounded canonical ALGW/ALGP
-pair snapshots now provide shared undo/redo across graph, probe, trigger, and
-sidecar-import edits; navigation replays both artifacts and their exact binding
-before changing either document or the history stacks. Native/browser `.algw`
+Bounded complete canonical `ALGS` snapshots now provide shared undo/redo across
+graph, probe, trigger, sidecar-import, cached-job, selected-component,
+hierarchy, and source-map state; navigation replays every nested artifact and
+reruns UI semantic/catalog admission before changing authoring state or the
+history stacks. Native/browser `.algw`
 exchange requires full replay and audited draft admission. All edits are
 transactional, and graph changes detach the old graph-bound trace. A shared
 HostExact projection now applies each probe's stride, retention ceiling, and
@@ -219,6 +220,8 @@ and [exact graph/probe pair persistence
 evidence](docs/evidence/M9-EXACT-GRAPH-PROBE-PAIR-PERSISTENCE.md)
 and [exact graph/probe pair history
 evidence](docs/evidence/M9-EXACT-GRAPH-PROBE-PAIR-HISTORY.md)
+and [unified graph authoring history
+evidence](docs/evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md)
 and [bounded graph-probe metadata
 evidence](docs/evidence/M9-BOUNDED-GRAPH-PROBE-METADATA.md)
 and [bounded graph-probe projection

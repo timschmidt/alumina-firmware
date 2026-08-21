@@ -576,10 +576,11 @@ device telemetry, and
 device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. Canonical placement/wiring and a 13-kind audited
 palette now supports node create/delete and exact scalar parameter replacement.
-Bounded complete `ALGW`/`ALGP` pair snapshots now provide replay-backed undo/redo across
-graph, probe, trigger, and sidecar-import edits. Pair navigation replays ALGW
-and then ALGP against that exact reconstructed workspace before changing either
-document or history state. Origin-local browser persistence now stores one
+Bounded complete canonical `ALGS` snapshots now provide replay-backed
+undo/redo across graph, probe, trigger, sidecar-import, cached-job, selected
+component, hierarchy, and source-map state. Navigation replays every nested
+artifact, then reruns UI semantic and cached-job catalog admission before
+changing either authoring state or history stacks. Origin-local browser persistence now stores one
 canonical bounded `ALGS` V1 over the current control ALGW, bound ALGP,
 catalog-bound cached-job ALGW, selected ALGC, complete ALGH, and regenerated
 ALGM. It commits no restored state until every nested replay, cross-artifact
@@ -602,7 +603,7 @@ fresh monotonic node/wire identities. The visible proof expands a wrapper and
 its PID leaf at depth two to 21 audited nodes and 25 wires, retaining stable
 source paths `[1]` and `[1, 1]`. Composite or identity-bearing parameter
 editors, collaboration/conflict handling, editable component libraries and
-instances, hierarchy-aware undo/redo, and general panel authoring remain open.
+instances, direct hierarchy mutation commands, and general panel authoring remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
 source `ALGH` and flattened `ALGW`. Its bounded replay freshly flattens the
@@ -692,6 +693,7 @@ and
 [`bounded recursive graph hierarchy`](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [`exact hierarchy source map`](evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), and
 [`canonical graph authoring session`](evidence/M9-CANONICAL-GRAPH-AUTHORING-SESSION.md), and
+[`unified graph authoring history`](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

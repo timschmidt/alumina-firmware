@@ -284,6 +284,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — one bounded `ALGS` V1 identity over control/probe/cached-job/hierarchy
   authoring state, exact cross-artifact replay, atomic browser persistence and
   `.algs` exchange, and explicit retirement of the provisional bundle format.
+- [`M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md`](M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md)
+  — one bounded ephemeral timeline of complete canonical `ALGS` snapshots,
+  atomic mixed graph/probe/cached-job/hierarchy undo/redo, exact replay plus UI
+  catalog admission, and retirement of split pair/job histories.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate

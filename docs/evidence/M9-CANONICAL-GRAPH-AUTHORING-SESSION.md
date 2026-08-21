@@ -203,9 +203,12 @@ capture.
 ALGS grants no node semantics, deployment lowering, resource allocation,
 firmware install, schedule authority, arming, motion, timing, or safety claim.
 Firmware continues to receive only separately authenticated/lowered runtime
-artifacts. Hierarchy-aware undo/redo, editable nested canvases, signed component
-manifests, multi-user persistence, and durable browser job-cache state remain
-separate work.
+artifacts. The later
+[`M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md`](M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md)
+closes the complete-session undo/redo substrate that was open at this
+checkpoint. Editable nested canvases, direct hierarchy mutation commands,
+signed component manifests, multi-user persistence, and durable browser
+job-cache state remain separate work.
 
 The connected bare MKS TinyBee V1.0 was not contacted, reset, flashed, read, or
 configured. No serial port, GPIO, motor/driver/process power, analyzer, board

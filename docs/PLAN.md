@@ -1396,7 +1396,7 @@ human metadata rather than behavior identity. Domain families come only from
 the reviewed node schema, and concrete device identities come only from
 existing graph device-cycle clocks or node placements; there is no raw identity
 field. Full semantic analysis and canonical ALGW encoding precede commit, while
-the existing ALGW/ALGP pair history and persistence retain exact undo/redo.
+the unified complete-ALGS history and persistence retain exact undo/redo.
 The exact source commit, current live-stack native/WASM checks, optimized
 bundle, and localhost label-edit interaction are qualified independently.
 Canonical `ALGP` sidecars bind bounded named probes to exact `ALGW` output
@@ -1420,10 +1420,11 @@ bounded `.algp` exchange
 replays only against the exact
 current ALGW; malformed or foreign sidecars preserve both prior documents, and
 canonical no-op sidecar edits do not cause redundant persistence. Ephemeral
-undo/redo now retains complete canonical ALGW/ALGP pairs rather than only the
-workspace. Graph, probe, trigger, and changed sidecar-import edits share one
-bounded timeline; each navigation replays ALGW, then ALGP against that exact
-workspace, before changing either document or the history stacks. Per-probe
+undo/redo now retains complete canonical `ALGS` sessions rather than a subset
+of authoring state. Graph, probe, trigger, changed sidecar-import, cached-job,
+selected-component, hierarchy, and source-map state share one bounded timeline;
+each navigation replays every nested artifact and reruns UI semantic/catalog
+admission before changing authoring state or the history stacks. Per-probe
 canonical name, retained-sample ceiling, and event-stride replacement is now
 transactional and pair-historical; stable probe/source/type identity is fixed,
 and an active trigger must still fit the revised retention bound. The reusable
@@ -1457,8 +1458,8 @@ creation/deletion and schema-directed exact scalar/composite parameter editing
 now exist through a 13-kind audited palette. The representative interlock
 composes an exact measurement-range predicate with the external permit through
 an audited Boolean
-conjunction; both exact range limits are front-panel controls. Bounded
-canonical snapshots add replay-backed undo/redo; browser storage atomically
+conjunction; both exact range limits are front-panel controls. Bounded complete
+canonical `ALGS` snapshots add replay-backed undo/redo; browser storage atomically
 retains one complete ALGS authoring session, while native/browser `.algs`,
 `.algw`, `.algp`, and `.algm` exchange preserves only fully replayed,
 identity-bound artifacts. A
@@ -1503,6 +1504,7 @@ and
 [bounded recursive graph hierarchy](evidence/M9-BOUNDED-RECURSIVE-GRAPH-HIERARCHY.md), and
 [exact hierarchy source map](evidence/M9-EXACT-HIERARCHY-SOURCE-MAP.md), and
 [canonical graph authoring session](evidence/M9-CANONICAL-GRAPH-AUTHORING-SESSION.md), and
+[unified graph authoring history](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [authenticated diagnostic transport](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and
