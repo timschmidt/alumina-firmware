@@ -300,6 +300,11 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — canonical `ALCP` transitive definition/binding closures, additive
   collision-safe single-revision merge, exact duplicate no-op, and complete-
   session native/WASM/browser history and persistence qualification.
+- [`M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md`](M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md)
+  — `ALGH` V3 stable panel-item-derived parameter surfaces, recursive
+  promotion, distinct exact per-occurrence values, definition-evolution
+  policy, deterministic flattening, and optimized no-op/rejection/history/
+  reload evidence.
 - [`M9-EXACT-ROOT-HIERARCHY-CANVAS.md`](M9-EXACT-ROOT-HIERARCHY-CANVAS.md) —
   exact bound-root placement, typed monotonic root wiring, complete
   `ALGH`/`ALGM`/`ALGS` admission, and optimized pointer-drag undo/redo/reload

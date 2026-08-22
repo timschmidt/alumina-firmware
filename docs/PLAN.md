@@ -1423,7 +1423,8 @@ canonical no-op sidecar edits do not cause redundant persistence. Ephemeral
 undo/redo now retains complete canonical `ALGS` sessions rather than a subset
 of authoring state. Graph, probe, trigger, changed sidecar-import, cached-job,
 selected-component, component-library, direct root-instance, hierarchy, and
-source-map state share one bounded timeline; each navigation replays every
+source-map state—including exact promoted root-occurrence parameters—share one
+bounded timeline; each navigation replays every
 nested artifact and reruns UI semantic/catalog admission before changing
 authoring state or the history stacks. Per-probe canonical name,
 retained-sample ceiling, and event-stride
@@ -1431,9 +1432,13 @@ replacement is now transactional and pair-historical; stable probe/source/type
 identity is fixed,
 and an active trigger must still fit the revised retention bound. The reusable
 component exposes all seven outputs as replay-only indicators while retaining
-eight exact parameter controls. Canonical `ALGH` V2 now admits a bounded
-acyclic component dependency graph and deterministically flattens the visible
-wrapper/PID hierarchy at depth two. The separate `ALGM` V1 sidecar maps every
+eight exact parameter controls. Canonical `ALGH` V3 now admits a bounded
+acyclic component dependency graph, derives a version-2 placeholder parameter
+surface from stable parameter-control panel-item IDs, recursively promotes
+those values through explicit parent panel bindings, and retains one typed
+value per root occurrence. Deterministic flattening applies those values before
+expanding the visible wrapper/PID hierarchy at depth two. The separate `ALGM`
+V1 sidecar maps every
 final node and wire to one exact root or component-occurrence origin, binds the
 complete source and flattened workspace identities, and accepts imported
 provenance only by fresh flattening plus byte-for-byte regeneration.
@@ -1476,9 +1481,14 @@ selected component plus its exact transitive `ALGC`/scoped-binding closure.
 Import never replaces an existing identity or binding, rejects stable-name and
 parent/node child conflicts atomically, and merges all new records in one
 `ALGH` revision before full flatten/source-map/session admission. Exact
-duplicates change only transient selection. Main-canvas instance
-wiring/movement and parameter promotion/overrides remain open. A
-complete bounded allocation-free
+duplicates change only transient selection. Root occurrence editors now commit
+schema-directed exact values through complete flatten/source-map/session
+admission, with exact no-op, invalid-text atomicity, stable-ID default evolution,
+explicit-override preservation, removal/type-drift rejection, unified history,
+and browser persistence. Runtime `InputControl` values and executable panel
+programs remain open. See
+[`M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md`](evidence/M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md).
+A complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
 reference separates all 62 descriptive resources, aliases, owners, safe/hazard facts and

@@ -596,15 +596,19 @@ front-panel controls/indicators to public terminals or retained exact
 parameters. The first visible PID/interlock component has eight exact controls
 and seven replay-only indicators: four exact-rational values and three Boolean
 interlock states. Invalidating a binding detaches the panel
-without weakening the workspace draft. Canonical `ALGH` V2 now binds root and
+without weakening the workspace draft. Canonical `ALGH` V3 now binds root and
 component-scoped instances to exact `ALGC` digests, derives each typed collapsed
-port shape, rejects dependency cycles, bounds depth and expanded occurrences,
-and recursively flattens the dependency DAG into an ordinary workspace with
-fresh monotonic node/wire identities. The visible proof expands a wrapper and
+port shape plus an exact parameter surface from stable parameter-control panel
+items, rejects dependency cycles, bounds depth and expanded occurrences, and
+recursively flattens the dependency DAG into an ordinary workspace with fresh
+monotonic node/wire identities. Explicit parent panel bindings recursively
+promote leaf parameters; each root occurrence retains its own typed value, and
+flattening applies it only along that source path. The visible proof expands a wrapper and
 its PID leaf at depth two to 21 audited nodes and 25 wires, retaining stable
-source paths `[1]` and `[1, 1]`. Broader identity-bearing parameter editors,
-parameter promotion/overrides, runtime panel value injection/execution, and
-responsive/grouped layout policies remain open. A dedicated library panel now
+source paths `[1]` and `[1, 1]`. Root editors now provide exact no-op-aware,
+history/persistent occurrence values and reject invalid text, incompatible
+default evolution, removal, or type drift atomically. Runtime panel value
+injection/execution and responsive/grouped layout policies remain open. A dedicated library panel now
 selects exact dependencies admitted by `ALGH`, exports the selected canonical
 `ALGC`, imports a bounded semantically audited standalone leaf, removes only an
 unreferenced non-authoritative dependency, adds dependencies as root
@@ -654,8 +658,10 @@ type/clock context, DAG bounds, and canonical bytes. Transactional import only
 adds missing exact definitions and bindings; stable-name or parent/node child
 conflicts reject, an exact duplicate is selection-only, and a changing merge
 advances `ALGH` once before complete flatten/source-map/session admission.
-Parameter promotion/overrides, coordinated descendant/control-authority replacement,
-and collaboration/conflict handling remain open.
+Coordinated descendant/control-authority replacement and collaboration/conflict
+handling remain open. Promoted-parameter design and native/optimized browser
+qualification are recorded in
+[`M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md`](evidence/M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md).
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
 source `ALGH` and flattened `ALGW`. Its bounded replay freshly flattens the

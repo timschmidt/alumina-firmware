@@ -195,7 +195,8 @@ placements, and complete audited analysis precedes every commit; no raw device
 identity field exists.
 Bounded complete canonical `ALGS` snapshots now provide shared undo/redo across
 graph, probe, trigger, sidecar-import, cached-job, selected-component,
-hierarchy, and source-map state; navigation replays every nested artifact and
+hierarchy—including exact root-occurrence parameters—and source-map state;
+navigation replays every nested artifact and
 reruns UI semantic/catalog admission before changing authoring state or the
 history stacks. A dedicated component-library panel now selects only exact
 dependencies already admitted by the current `ALGH`, adds them as root
@@ -238,6 +239,17 @@ and all required component-scoped bindings. Import adds that closure in one
 validated `ALGH` revision without replacement or aliases. Stable-name and
 parent/node binding conflicts reject atomically; exact duplicate packages only
 follow transient selection and create no history or persistence write.
+Canonical `ALGH` V3 now derives each collapsed instance's exact parameter
+surface from stable `ParameterControl` panel-item IDs. A parent panel can bind
+and promote a child placeholder parameter recursively; every root occurrence
+retains its own typed value in canonical `ALGW`. Flattening applies those values
+through their stable panel bindings before copying the ordinary leaf nodes, so
+repeated occurrences can produce distinct exact literals without cloning their
+shared `ALGC`. The visible root editor, complete-session history, and browser
+persistence are no-op aware and reject invalid text atomically. Stable-ID/type-
+compatible explicit overrides survive component default evolution; removal or
+type drift of an explicit override rejects. See the
+[promoted-parameter evidence](docs/evidence/M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md).
 Native/browser `.algw` exchange requires full replay and audited draft
 admission. All edits are transactional, and graph changes detach the old
 graph-bound trace. A shared HostExact projection now applies each probe's
