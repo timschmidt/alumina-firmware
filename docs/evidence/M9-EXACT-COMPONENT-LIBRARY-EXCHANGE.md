@@ -197,7 +197,8 @@ and found no GPL-family source, dependency, compatibility layer, or copied
 external planner/control implementation.
 
 Standalone leaf exchange and exact unreferenced removal are now closed.
-Nested-component exchange with explicit scoped bindings, component creation,
+Nested-component exchange with explicit scoped bindings, component
+rename/version evolution,
 connector/front-panel authoring, main-canvas instance movement/wiring, locked
 or signed dependency manifests, editable nested-definition canvases,
 collaboration/conflict handling, and crash-durable history journals remain

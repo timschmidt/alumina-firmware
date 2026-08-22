@@ -172,7 +172,7 @@ and found no GPL-family source, dependency, compatibility layer, or copied
 external planner/control implementation.
 
 Exact root placement and typed root wiring are now closed. Nested-definition
-canvases, nested package/binding exchange, general component creation,
+canvases, nested package/binding exchange, component rename/version evolution,
 connector/front-panel authoring, parameter promotion/overrides, package
 signatures and permissions, locked dependency manifests, incremental
 flattening, collaborative conflict handling, and crash-durable history remain

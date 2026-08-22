@@ -187,7 +187,10 @@ component destination focus, private/authoritative node selection, local wire
 target selection, one-shot scrolling, stale-origin reconciliation, and
 canonical session/history/persistence isolation are now closed. Dedicated
 component-local wire selection, child rebinding/replacement, nested binding
-import/exchange, general component-library creation, parameter
+import/exchange, component rename/version evolution, parameter
 promotion/overrides, coordinated descendant/control-authority replacement,
 runtime panel injection, collaboration/conflict handling, and crash-durable
-journals remain separate work.
+journals remain separate work. Deterministic named empty component creation is
+separately closed by the
+[`general component-library creation`](M9-GENERAL-COMPONENT-LIBRARY-CREATION.md)
+checkpoint.

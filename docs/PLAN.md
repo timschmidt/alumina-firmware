@@ -1445,13 +1445,19 @@ semantically audited standalone leaf, removes only an unreferenced
 non-authoritative dependency, adds a selected dependency as a root occurrence
 through the root workspace's monotonic allocator, and deletes a selected root
 occurrence with its incident root wires. Exact duplicate import is a no-op.
+The same panel now constructs a named version-1 empty `ALGC` directly from the
+current exact schema/clocks with all monotonic cursors initialized to one and
+selects it for immediate definition authoring. Invalid, overlong, or
+conflicting names reject atomically, while requesting the byte-identical empty
+component is a selection-only no-op.
 Each accepted action regenerates and admits the complete
 `ALGH`/flattened `ALGW`/`ALGM` branch before one unified
 `ALGS` history/persistence commit. Compatible control edits replace the
 selected `ALGC` by exact digest and remap all old bindings while retaining root
 authoring and unrelated dependency encodings. Invalid identities or connector
 shapes remain transactional failures. Main-canvas instance wiring/movement,
-nested definition/binding exchange, and general library creation remain open. A
+nested definition/binding exchange, and component rename/version evolution
+remain open. A
 complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
@@ -1522,6 +1528,10 @@ and
 [unified graph authoring history](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [direct root-instance authoring](evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md), and
 [exact component-library exchange](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
+[selected-component definition canvas](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
+[scoped child-occurrence authoring](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
+[exact flattened-source navigation](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
+[general component-library creation](evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [authenticated diagnostic transport](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

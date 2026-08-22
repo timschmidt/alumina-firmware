@@ -191,8 +191,8 @@ external planner/control implementation.
 
 Canonical front-panel item creation, metadata/layout update, removal, history,
 and persistence are now closed. Connector-pane authoring and recursive
-placeholder/wire shape remapping, editable nested-definition canvases, general
-component-library creation, nested package/binding exchange,
+placeholder/wire shape remapping, editable nested-definition canvases,
+component rename/version evolution, nested package/binding exchange,
 overlap/group/responsive layout policy, runtime input injection, panel
 execution, collaboration/conflict handling, and crash-durable history remain
 separate work. `ALGC`/`ALGH`/`ALGM`/`ALGS` authoring grants no firmware opcode,

@@ -570,8 +570,8 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, child-occurrence rebinding, general
-component-library creation, front-panel runtime inputs, live device telemetry,
+resource opcodes, child-occurrence rebinding, component rename/version
+evolution, front-panel runtime inputs, live device telemetry,
 and device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. The canonical placement/wiring surface and a
 13-kind audited palette now support node create/delete and exact scalar
@@ -609,9 +609,14 @@ selects exact dependencies admitted by `ALGH`, exports the selected canonical
 `ALGC`, imports a bounded semantically audited standalone leaf, removes only an
 unreferenced non-authoritative dependency, adds dependencies as root
 occurrences with monotonic root node identities, and deletes selected root
-occurrences plus incident root wires. Exact duplicate import is a no-op. The UI
-regenerates the complete `ALGH`/flattened `ALGW`/`ALGM` branch, reruns semantic
-admission, and commits
+occurrences plus incident root wires. It can also construct a named version-1
+empty `ALGC` from the current control schema/clocks with all node, wire,
+connector, and panel identity cursors initialized to one, then select it
+immediately for definition editing. Invalid, overlong, or
+conflicting names reject atomically; requesting the same canonical empty
+component is a selection-only no-op. Exact duplicate import is likewise a
+no-op. The UI regenerates the complete `ALGH`/flattened `ALGW`/`ALGM` branch,
+reruns semantic admission, and commits
 through unified complete-`ALGS` history and persistence only after every check
 passes. Compatible selected-component edits remap old digest bindings while
 preserving root state and unrelated dependency encodings. The same exact
@@ -627,7 +632,7 @@ scoped `ALGH` binding, while the dedicated delete action removes that
 placeholder, incident wires, and binding together. Public connector/panel
 bindings veto removal; cycles and indirect control-authority replacement reject
 before commit; deletion never rewinds the parent node cursor. Child rebinding,
-nested binding import/exchange, general library creation, parameter
+nested binding import/exchange, component rename/version evolution, parameter
 promotion/overrides, coordinated descendant/control-authority replacement,
 and collaboration/conflict handling remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
@@ -732,6 +737,7 @@ and
 [`selected-component definition canvas`](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [`exact flattened-source navigation`](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
+[`general component-library creation`](evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

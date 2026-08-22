@@ -219,7 +219,10 @@ child-occurrence creation/deletion is separately closed by its
 [`authoring checkpoint`](M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 flattened-to-source traversal is closed by the
 [`navigation checkpoint`](M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md). Nested
-binding import/exchange, general component-library creation, parameter
+binding import/exchange, component rename/version evolution, parameter
 promotion/overrides, coordinated descendant/control-authority replacement,
 runtime panel injection, collaboration/conflict handling, and crash-durable
-journals remain separate work.
+journals remain separate work. Deterministic named empty component creation is
+separately closed by the
+[`general component-library creation`](M9-GENERAL-COMPONENT-LIBRARY-CREATION.md)
+checkpoint.

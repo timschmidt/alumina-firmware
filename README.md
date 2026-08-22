@@ -202,6 +202,11 @@ dependencies already admitted by the current `ALGH`, adds them as root
 occurrences, and deletes selected root occurrences. Every action freshly
 encodes and flattens `ALGH`, regenerates `ALGM`, admits the flattened draft,
 and commits through the same complete-`ALGS` history/persistence transaction.
+The panel can also construct a named version-1 empty `ALGC` directly from the
+current exact schema and clocks, with every monotonic cursor initialized to
+one, and select it immediately for definition editing. Invalid, overlong, or
+conflicting names reject atomically; requesting the byte-identical empty
+component again is a selection-only no-op.
 Root identities remain monotonic, invalid selections fail without mutation,
 and compatible selected-component edits remap exact digest bindings while
 preserving authored root state and unrelated library bytes. The same selector
@@ -277,7 +282,11 @@ evidence](docs/evidence/M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md), followed by
 the [selected-component definition-canvas
 evidence](docs/evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), followed by
 the [scoped child-occurrence authoring
-evidence](docs/evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md). The source
+evidence](docs/evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), the [exact
+flattened-source navigation
+evidence](docs/evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and the
+[general component-library creation
+evidence](docs/evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.
 

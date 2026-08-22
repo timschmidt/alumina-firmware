@@ -319,6 +319,14 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — atomic parent-placeholder/scoped-binding creation and deletion, public-
   binding vetoes, monotonic child identities, and exact optimized
   history/reload evidence.
+- [`M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md`](M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md)
+  — exact final-node/wire origin revalidation, root/private/authoritative
+  destination focus, stale-origin reconciliation, and transient optimized
+  browser navigation evidence.
+- [`M9-GENERAL-COMPONENT-LIBRARY-CREATION.md`](M9-GENERAL-COMPONENT-LIBRARY-CREATION.md)
+  — deterministic named revision-1 empty `ALGC` construction, exact
+  schema/clock inheritance, stable-name conflict rejection, duplicate no-op,
+  immediate definition editing, and optimized history/reload evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate

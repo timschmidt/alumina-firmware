@@ -171,8 +171,8 @@ external planner/control implementation.
 
 Selected-dependency public connector editing, complete recursive identity
 reports, logical selection retention, control-authority isolation, complete-
-session history, and origin-local persistence are now closed. General
-component-library creation, nested component-definition canvases, coordinated
+session history, and origin-local persistence are now closed. Component
+rename/version evolution, nested component-definition canvases, coordinated
 descendant/control-authority replacement, runtime input injection, connector
 protocol lowering, collaboration/conflict handling, and crash-durable history
 remain separate work. `ALGC`/`ALGH`/`ALGM`/`ALGS` authoring grants no firmware
