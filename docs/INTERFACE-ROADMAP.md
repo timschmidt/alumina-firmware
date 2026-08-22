@@ -632,6 +632,14 @@ scoped `ALGH` binding, while the dedicated delete action removes that
 placeholder, incident wires, and binding together. Public connector/panel
 bindings veto removal; cycles and indirect control-authority replacement reject
 before commit; deletion never rewinds the parent node cursor. The selected
+placeholder can instead be rebound to another exact dependency already in the
+library. Stable child connector IDs preserve compatible parent-local wires and
+public endpoints while node identity, label, placement, and allocation cursors
+remain exact. Same-shape replacement changes only the scoped `ALGH` binding at
+the parent boundary; a public-shape change recursively replaces affected
+parent identities. Both paths freshly flatten and regenerate `ALGM`; selecting
+the already bound child is an exact no-op, and missing live connectors, cycles,
+limits, or an indirect control-authority rewrite reject atomically. The selected
 dependency's stable name and declared behavior version can now be changed as
 one canonical transaction. Versions use canonical nonzero decimal `u32` text
 and may stay unchanged or increase, never regress; stable-name collisions and
@@ -639,8 +647,8 @@ invalid metadata reject, while exact no-ops return before history. Accepted
 metadata evolution uses the complete recursive replacement report to rewrite
 all affected digest
 bindings, regenerate `ALGH`/`ALGM`, preserve unchanged authority exactly, and
-clear stale source focus without retaining an alias. Child rebinding,
-nested binding import/exchange, parameter
+clear stale source focus without retaining an alias. Nested binding
+import/exchange, parameter
 promotion/overrides, coordinated descendant/control-authority replacement,
 and collaboration/conflict handling remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
@@ -745,6 +753,7 @@ and
 [`exact component-library exchange`](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
 [`selected-component definition canvas`](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
+[`exact scoped child-occurrence rebinding`](evidence/M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md), and
 [`exact flattened-source navigation`](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
 [`exact component-wire focus`](evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and
 [`exact component-identity evolution`](evidence/M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md), and

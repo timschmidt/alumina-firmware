@@ -319,6 +319,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — atomic parent-placeholder/scoped-binding creation and deletion, public-
   binding vetoes, monotonic child identities, and exact optimized
   history/reload evidence.
+- [`M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md`](M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md)
+  — exact one-occurrence target replacement, stable-ID endpoint retention,
+  same-shape parent preservation, recursive shape refresh, atomic typed
+  rejection, and optimized no-op/history/reload evidence.
 - [`M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md`](M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md)
   — exact final-node/wire origin revalidation, root/private/authoritative
   destination focus, stale-origin reconciliation, and transient optimized

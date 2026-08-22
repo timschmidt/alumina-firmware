@@ -1457,13 +1457,22 @@ collisions, and treats an identical pair as an exact no-op. Successful edits
 use the complete recursive replacement report to remap every affected digest
 binding and editor scope, regenerate `ALGH`/`ALGM`, and commit one historical
 `ALGS` without an old-identity alias; stale exact source focus clears.
+One selected child placeholder can now be rebound to another admitted exact
+dependency. Stable connector IDs preserve compatible parent-local wires and
+public endpoints together with the node, label, placement, and monotonic
+allocation cursors. A same-shape replacement changes only its scoped `ALGH`
+binding at the parent boundary; a shape change recursively refreshes affected
+parents. Fresh flattening, `ALGM` regeneration, audited admission, and one
+complete-session history transaction precede commit. Same-target requests are
+exact no-ops, while missing live connectors, cycles, limits, unknown targets,
+and indirect control-authority replacement reject atomically.
 Each accepted action regenerates and admits the complete
 `ALGH`/flattened `ALGW`/`ALGM` branch before one unified
 `ALGS` history/persistence commit. Compatible control edits replace the
 selected `ALGC` by exact digest and remap all old bindings while retaining root
 authoring and unrelated dependency encodings. Invalid identities or connector
 shapes remain transactional failures. Main-canvas instance wiring/movement,
-nested definition/binding exchange, child rebinding/replacement, and parameter
+nested definition/binding exchange, and parameter
 promotion/overrides remain open. A
 complete bounded allocation-free
 `ALMCAP04` decoder now
@@ -1537,6 +1546,7 @@ and
 [exact component-library exchange](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
 [selected-component definition canvas](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [scoped child-occurrence authoring](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
+[exact scoped child-occurrence rebinding](evidence/M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md), and
 [exact flattened-source navigation](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
 [exact component-wire focus](evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and
 [exact component-identity evolution](evidence/M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md), and

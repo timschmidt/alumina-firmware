@@ -224,8 +224,15 @@ embedded `ALGW`. It uses the audited palette and stable node/wire allocators,
 exact metadata and integer placement, and complete recursive
 `ALGC`/`ALGH`/`ALGM`/`ALGS` admission. Collapsed child placeholders remain
 visible and wireable but cannot be deleted outside their `ALGH` occurrence
-authority; the complete-session control `ALGC` remains read-only on this
-surface. Native/browser `.algw` exchange requires full replay and audited draft
+authority. The placeholder inspector can now rebind exactly one scoped child
+through the same dependency selector. Stable child connector IDs retain every
+compatible live endpoint plus the placeholder node, label, placement, and
+allocation cursors. Same-shape replacement preserves the parent `ALGC`; a
+public-shape change recursively refreshes affected ancestors. Both paths
+freshly flatten and regenerate `ALGM`, while missing live connectors, cycles,
+limits, and indirect control-authority replacement reject atomically. The
+complete-session control `ALGC` remains read-only on this surface.
+Native/browser `.algw` exchange requires full replay and audited draft
 admission. All edits are transactional, and graph changes detach the old
 graph-bound trace. A shared HostExact projection now applies each probe's
 stride, retention ceiling, and
@@ -292,6 +299,8 @@ the [selected-component definition-canvas
 evidence](docs/evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), followed by
 the [scoped child-occurrence authoring
 evidence](docs/evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), the [exact
+scoped child-occurrence rebinding
+evidence](docs/evidence/M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md), the [exact
 flattened-source navigation
 evidence](docs/evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), the [exact
 component-wire focus
