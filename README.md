@@ -207,6 +207,15 @@ current exact schema and clocks, with every monotonic cursor initialized to
 one, and select it immediately for definition editing. Invalid, overlong, or
 conflicting names reject atomically; requesting the byte-identical empty
 component again is a selection-only no-op.
+The same panel now edits the selected dependency's stable name and declared
+behavior version together. Version text must be one canonical nonzero decimal
+`u32`; authoring may retain or increase the current version but never regress
+it. Duplicate stable names and invalid metadata reject atomically, while an
+identical name/version pair is byte-exact and non-historical. Accepted edits
+use the existing complete recursive replacement report to remap parent/root
+bindings and editor scopes, regenerate `ALGH`/`ALGM`, and commit one `ALGS`
+state without retaining an old-name or old-digest alias. Stale exact source
+focus clears instead of being guessed across the identity boundary.
 Root identities remain monotonic, invalid selections fail without mutation,
 and compatible selected-component edits remap exact digest bindings while
 preserving authored root state and unrelated library bytes. The same selector
@@ -286,7 +295,9 @@ evidence](docs/evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), the [exact
 flattened-source navigation
 evidence](docs/evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), the [exact
 component-wire focus
-evidence](docs/evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and the [general
+evidence](docs/evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), the [exact
+component-identity evolution
+evidence](docs/evidence/M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md), and the [general
 component-library creation
 evidence](docs/evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md). The source
 map is host-only correlation metadata and grants no firmware execution

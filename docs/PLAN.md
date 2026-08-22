@@ -1450,14 +1450,21 @@ current exact schema/clocks with all monotonic cursors initialized to one and
 selects it for immediate definition authoring. Invalid, overlong, or
 conflicting names reject atomically, while requesting the byte-identical empty
 component is a selection-only no-op.
+The selected dependency's stable name and declared behavior version can now be
+evolved together. Authoring accepts canonical nonzero decimal `u32` versions
+that retain or increase the current value, rejects regressions and stable-name
+collisions, and treats an identical pair as an exact no-op. Successful edits
+use the complete recursive replacement report to remap every affected digest
+binding and editor scope, regenerate `ALGH`/`ALGM`, and commit one historical
+`ALGS` without an old-identity alias; stale exact source focus clears.
 Each accepted action regenerates and admits the complete
 `ALGH`/flattened `ALGW`/`ALGM` branch before one unified
 `ALGS` history/persistence commit. Compatible control edits replace the
 selected `ALGC` by exact digest and remap all old bindings while retaining root
 authoring and unrelated dependency encodings. Invalid identities or connector
 shapes remain transactional failures. Main-canvas instance wiring/movement,
-nested definition/binding exchange, and component rename/version evolution
-remain open. A
+nested definition/binding exchange, child rebinding/replacement, and parameter
+promotion/overrides remain open. A
 complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
@@ -1532,6 +1539,7 @@ and
 [scoped child-occurrence authoring](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [exact flattened-source navigation](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
 [exact component-wire focus](evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and
+[exact component-identity evolution](evidence/M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md), and
 [general component-library creation](evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and

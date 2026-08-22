@@ -327,6 +327,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — exact transient component-local wire selection, distinct authoritative and
   private canvas highlighting, retained target-node inspection, stale-digest
   reconciliation, and optimized browser evidence.
+- [`M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md`](M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md)
+  — monotonic stable-name/behavior-version authoring, recursive no-alias digest
+  replacement, exact authority isolation, atomic invalid/no-op behavior, and
+  optimized history/reload evidence.
 - [`M9-GENERAL-COMPONENT-LIBRARY-CREATION.md`](M9-GENERAL-COMPONENT-LIBRARY-CREATION.md)
   — deterministic named revision-1 empty `ALGC` construction, exact
   schema/clock inheritance, stable-name conflict rejection, duplicate no-op,

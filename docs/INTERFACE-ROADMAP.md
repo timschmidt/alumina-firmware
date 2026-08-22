@@ -570,8 +570,8 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, child-occurrence rebinding, component rename/version
-evolution, front-panel runtime inputs, live device telemetry,
+resource opcodes, child-occurrence rebinding, front-panel runtime inputs, live
+device telemetry,
 and device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. The canonical placement/wiring surface and a
 13-kind audited palette now support node create/delete and exact scalar
@@ -631,8 +631,16 @@ definition: one candidate allocates the parent-local placeholder and adds its
 scoped `ALGH` binding, while the dedicated delete action removes that
 placeholder, incident wires, and binding together. Public connector/panel
 bindings veto removal; cycles and indirect control-authority replacement reject
-before commit; deletion never rewinds the parent node cursor. Child rebinding,
-nested binding import/exchange, component rename/version evolution, parameter
+before commit; deletion never rewinds the parent node cursor. The selected
+dependency's stable name and declared behavior version can now be changed as
+one canonical transaction. Versions use canonical nonzero decimal `u32` text
+and may stay unchanged or increase, never regress; stable-name collisions and
+invalid metadata reject, while exact no-ops return before history. Accepted
+metadata evolution uses the complete recursive replacement report to rewrite
+all affected digest
+bindings, regenerate `ALGH`/`ALGM`, preserve unchanged authority exactly, and
+clear stale source focus without retaining an alias. Child rebinding,
+nested binding import/exchange, parameter
 promotion/overrides, coordinated descendant/control-authority replacement,
 and collaboration/conflict handling remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
@@ -739,6 +747,7 @@ and
 [`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [`exact flattened-source navigation`](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
 [`exact component-wire focus`](evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and
+[`exact component-identity evolution`](evidence/M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md), and
 [`general component-library creation`](evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
