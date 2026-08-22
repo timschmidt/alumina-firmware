@@ -311,6 +311,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
 - [`M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md`](M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md)
   — full recursive identity reports, selected-dependency connector editing,
   control-authority isolation, and optimized history/reload evidence.
+- [`M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md`](M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md)
+  — separate selected-dependency `ALGW` authoring, recursive authority-safe
+  replacement, monotonic typed structure, and optimized history/reload
+  evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate

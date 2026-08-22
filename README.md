@@ -204,10 +204,17 @@ encodes and flattens `ALGH`, regenerates `ALGM`, admits the flattened draft,
 and commits through the same complete-`ALGS` history/persistence transaction.
 Root identities remain monotonic, invalid selections fail without mutation,
 and compatible selected-component edits remap exact digest bindings while
-preserving authored root state and unrelated library bytes. Native/browser
-`.algw` exchange requires full replay and audited draft admission. All edits are
-transactional, and graph changes detach the old graph-bound trace. A shared
-HostExact projection now applies each probe's stride, retention ceiling, and
+preserving authored root state and unrelated library bytes. The same selector
+now drives a separate structural canvas for a non-authoritative dependency's
+embedded `ALGW`. It uses the audited palette and stable node/wire allocators,
+exact metadata and integer placement, and complete recursive
+`ALGC`/`ALGH`/`ALGM`/`ALGS` admission. Collapsed child placeholders remain
+visible and wireable but cannot be deleted outside their `ALGH` occurrence
+authority; the complete-session control `ALGC` remains read-only on this
+surface. Native/browser `.algw` exchange requires full replay and audited draft
+admission. All edits are transactional, and graph changes detach the old
+graph-bound trace. A shared HostExact projection now applies each probe's
+stride, retention ceiling, and
 matched exact root-time trigger window under one aggregate memory bound; the
 mixed-signal plot consumes those projected entries directly. Its exact
 rational root-time axis aligns same-root local rates, snaps pointer selection
@@ -266,7 +273,9 @@ authoring evidence](docs/evidence/M9-EXACT-FRONT-PANEL-AUTHORING.md), plus
 [stable component-connector authoring
 evidence](docs/evidence/M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md) and
 [selected-library connector authoring
-evidence](docs/evidence/M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md). The source
+evidence](docs/evidence/M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md), followed by
+the [selected-component definition-canvas
+evidence](docs/evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.
 
