@@ -264,7 +264,9 @@ root-hierarchy canvas
 evidence](docs/evidence/M9-EXACT-ROOT-HIERARCHY-CANVAS.md) and [exact front-panel
 authoring evidence](docs/evidence/M9-EXACT-FRONT-PANEL-AUTHORING.md), plus
 [stable component-connector authoring
-evidence](docs/evidence/M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md). The source
+evidence](docs/evidence/M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md) and
+[selected-library connector authoring
+evidence](docs/evidence/M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.
 
