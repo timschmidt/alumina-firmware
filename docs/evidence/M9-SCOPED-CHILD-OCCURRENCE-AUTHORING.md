@@ -217,6 +217,8 @@ dependencies, public-binding vetoes, monotonic child identities, recursive
 digest selection, complete-session history, and origin-local persistence are
 now closed. Child rebinding/replacement, nested binding import/exchange,
 general component-library creation, parameter promotion/overrides, coordinated
-descendant/control-authority replacement, interactive flattened-to-source
-traversal, runtime panel injection, collaboration/conflict handling, and
-crash-durable journals remain separate work.
+descendant/control-authority replacement, runtime panel injection,
+collaboration/conflict handling, and crash-durable journals remain separate
+work. Interactive flattened-to-source traversal is separately closed by the
+[`exact flattened-source navigation`](M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md)
+checkpoint.

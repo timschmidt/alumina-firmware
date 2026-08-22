@@ -571,8 +571,7 @@ epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
 resource opcodes, child-occurrence rebinding, general
-component-library creation, interactive traversal from flattened items into
-their source definitions, front-panel runtime inputs, live device telemetry,
+component-library creation, front-panel runtime inputs, live device telemetry,
 and device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. The canonical placement/wiring surface and a
 13-kind audited palette now support node create/delete and exact scalar
@@ -630,15 +629,21 @@ bindings veto removal; cycles and indirect control-authority replacement reject
 before commit; deletion never rewinds the parent node cursor. Child rebinding,
 nested binding import/exchange, general library creation, parameter
 promotion/overrides, coordinated descendant/control-authority replacement,
-interactive flattened-to-source traversal, and collaboration/conflict handling
-remain open.
+and collaboration/conflict handling remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
 source `ALGH` and flattened `ALGW`. Its bounded replay freshly flattens the
 caller-supplied hierarchy and regenerates every byte before returning
 provenance. The selected-node inspector and exact trace cursor expose stable
 occurrence-to-final endpoint correlation, while `.algm` import/export remains
-non-mutating UI audit metadata with no firmware authority. A capability-derived
+non-mutating UI audit metadata with no firmware authority. A visible
+flattened-source browser now lists every final node and wire with that exact
+origin. Opening one rechecks the current final-to-origin mapping and resolves
+component paths through current scoped `ALGH` bindings before selecting the
+root, private-library, or authoritative-control source. Component wires focus
+their local target node. Destination selection, highlighting, and one-shot
+scrolling are transient; they do not change `ALGS`, history, or persistence,
+and stale remapped origins clear. A capability-derived
 catalog now intersects the complete
 caller-authenticated graph-executor document with reviewed deployment bindings
 and constructs only the four TinyBee stable Boolean input handles. A separate
@@ -726,6 +731,7 @@ and
 [`exact component-library exchange`](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
 [`selected-component definition canvas`](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
+[`exact flattened-source navigation`](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

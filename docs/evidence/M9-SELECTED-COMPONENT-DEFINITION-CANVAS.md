@@ -215,8 +215,11 @@ path.
 Selected non-authoritative component-definition node/metadata/placement/wire
 authoring, placeholder-deletion isolation, recursive digest selection,
 complete-session history, and origin-local persistence are now closed. Scoped
-child-occurrence creation/deletion, nested binding import/exchange, general
-component-library creation, parameter promotion/overrides, coordinated
-descendant/control-authority replacement, interactive traversal from flattened
-items into source definitions, runtime panel injection, collaboration/conflict
-handling, and crash-durable journals remain separate work.
+child-occurrence creation/deletion is separately closed by its
+[`authoring checkpoint`](M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
+flattened-to-source traversal is closed by the
+[`navigation checkpoint`](M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md). Nested
+binding import/exchange, general component-library creation, parameter
+promotion/overrides, coordinated descendant/control-authority replacement,
+runtime panel injection, collaboration/conflict handling, and crash-durable
+journals remain separate work.
