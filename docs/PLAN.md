@@ -1471,9 +1471,13 @@ Each accepted action regenerates and admits the complete
 `ALGS` history/persistence commit. Compatible control edits replace the
 selected `ALGC` by exact digest and remap all old bindings while retaining root
 authoring and unrelated dependency encodings. Invalid identities or connector
-shapes remain transactional failures. Main-canvas instance wiring/movement,
-nested definition/binding exchange, and parameter
-promotion/overrides remain open. A
+shapes remain transactional failures. Canonical `ALCP` V1 now exchanges one
+selected component plus its exact transitive `ALGC`/scoped-binding closure.
+Import never replaces an existing identity or binding, rejects stable-name and
+parent/node child conflicts atomically, and merges all new records in one
+`ALGH` revision before full flatten/source-map/session admission. Exact
+duplicates change only transient selection. Main-canvas instance
+wiring/movement and parameter promotion/overrides remain open. A
 complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
@@ -1544,6 +1548,7 @@ and
 [unified graph authoring history](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [direct root-instance authoring](evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md), and
 [exact component-library exchange](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
+[canonical nested component-package exchange](evidence/M9-CANONICAL-NESTED-COMPONENT-PACKAGE-EXCHANGE.md), and
 [selected-component definition canvas](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [scoped child-occurrence authoring](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [exact scoped child-occurrence rebinding](evidence/M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md), and

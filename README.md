@@ -232,6 +232,12 @@ public-shape change recursively refreshes affected ancestors. Both paths
 freshly flatten and regenerate `ALGM`, while missing live connectors, cycles,
 limits, and indirect control-authority replacement reject atomically. The
 complete-session control `ALGC` remains read-only on this surface.
+The same selected dependency can now cross library boundaries as canonical
+`ALCP` V1: one exact root `ALGC`, its complete transitive definition closure,
+and all required component-scoped bindings. Import adds that closure in one
+validated `ALGH` revision without replacement or aliases. Stable-name and
+parent/node binding conflicts reject atomically; exact duplicate packages only
+follow transient selection and create no history or persistence write.
 Native/browser `.algw` exchange requires full replay and audited draft
 admission. All edits are transactional, and graph changes detach the old
 graph-bound trace. A shared HostExact projection now applies each probe's
@@ -308,7 +314,9 @@ evidence](docs/evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), the [exact
 component-identity evolution
 evidence](docs/evidence/M9-EXACT-COMPONENT-IDENTITY-EVOLUTION.md), and the [general
 component-library creation
-evidence](docs/evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md). The source
+evidence](docs/evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), followed by
+the [canonical nested component-package exchange
+evidence](docs/evidence/M9-CANONICAL-NESTED-COMPONENT-PACKAGE-EXCHANGE.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.
 

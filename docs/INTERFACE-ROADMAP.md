@@ -587,7 +587,7 @@ catalog-bound cached-job ALGW, selected ALGC, complete ALGH, and regenerated
 ALGM. It commits no restored state until every nested replay, cross-artifact
 identity, audited graph, and catalog-membership check succeeds. The retired
 three-section value is not a compatibility input. Native/browser `.algs`,
-`.algw`, `.algp`, `.algc`, and `.algm` exchange crosses the corresponding
+`.algw`, `.algp`, `.algc`, `.alcp`, and `.algm` exchange crosses the corresponding
 bounded replay boundary; ALGP import can change only the sidecar bound to the
 current workspace.
 A separate bounded canonical `ALGC` envelope now embeds the unchanged workspace,
@@ -647,9 +647,14 @@ invalid metadata reject, while exact no-ops return before history. Accepted
 metadata evolution uses the complete recursive replacement report to rewrite
 all affected digest
 bindings, regenerate `ALGH`/`ALGM`, preserve unchanged authority exactly, and
-clear stale source focus without retaining an alias. Nested binding
-import/exchange, parameter
-promotion/overrides, coordinated descendant/control-authority replacement,
+clear stale source focus without retaining an alias. Canonical `ALCP` V1 now
+exports exactly one selected root component, its transitive `ALGC` closure, and
+all component-scoped bindings. Replay proves closure completeness, one
+type/clock context, DAG bounds, and canonical bytes. Transactional import only
+adds missing exact definitions and bindings; stable-name or parent/node child
+conflicts reject, an exact duplicate is selection-only, and a changing merge
+advances `ALGH` once before complete flatten/source-map/session admission.
+Parameter promotion/overrides, coordinated descendant/control-authority replacement,
 and collaboration/conflict handling remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
@@ -751,6 +756,7 @@ and
 [`unified graph authoring history`](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [`direct root-instance authoring`](evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md), and
 [`exact component-library exchange`](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
+[`canonical nested component-package exchange`](evidence/M9-CANONICAL-NESTED-COMPONENT-PACKAGE-EXCHANGE.md), and
 [`selected-component definition canvas`](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [`exact scoped child-occurrence rebinding`](evidence/M9-EXACT-SCOPED-CHILD-OCCURRENCE-REBINDING.md), and

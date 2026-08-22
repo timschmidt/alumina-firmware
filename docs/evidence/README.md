@@ -296,6 +296,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — bounded standalone `ALGC` leaf import/export, whole-library semantic
   admission, exact duplicate no-op, reference-safe removal, and complete-ALGS
   native/WASM/browser history and persistence qualification.
+- [`M9-CANONICAL-NESTED-COMPONENT-PACKAGE-EXCHANGE.md`](M9-CANONICAL-NESTED-COMPONENT-PACKAGE-EXCHANGE.md)
+  — canonical `ALCP` transitive definition/binding closures, additive
+  collision-safe single-revision merge, exact duplicate no-op, and complete-
+  session native/WASM/browser history and persistence qualification.
 - [`M9-EXACT-ROOT-HIERARCHY-CANVAS.md`](M9-EXACT-ROOT-HIERARCHY-CANVAS.md) —
   exact bound-root placement, typed monotonic root wiring, complete
   `ALGH`/`ALGM`/`ALGS` admission, and optimized pointer-drag undo/redo/reload
