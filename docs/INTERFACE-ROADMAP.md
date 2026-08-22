@@ -645,8 +645,9 @@ non-mutating UI audit metadata with no firmware authority. A visible
 flattened-source browser now lists every final node and wire with that exact
 origin. Opening one rechecks the current final-to-origin mapping and resolves
 component paths through current scoped `ALGH` bindings before selecting the
-root, private-library, or authoritative-control source. Component wires focus
-their local target node. Destination selection, highlighting, and one-shot
+root, private-library, or authoritative-control source. Component wires select
+and distinctly highlight their exact local wire while retaining the target
+node in the inspector. Destination selection, highlighting, and one-shot
 scrolling are transient; they do not change `ALGS`, history, or persistence,
 and stale remapped origins clear. A capability-derived
 catalog now intersects the complete
@@ -737,6 +738,7 @@ and
 [`selected-component definition canvas`](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [`exact flattened-source navigation`](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
+[`exact component-wire focus`](evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and
 [`general component-library creation`](evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and

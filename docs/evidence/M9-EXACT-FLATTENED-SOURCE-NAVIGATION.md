@@ -11,6 +11,10 @@ to its exact root or component-definition source. It adds no compatibility
 path and grants no firmware, network, storage, GPIO, motion, arming, timing,
 start, or safety authority.
 
+The later [`exact component-wire focus`](M9-EXACT-COMPONENT-WIRE-FOCUS.md)
+checkpoint supersedes this checkpoint's target-node-only component-wire UI
+projection with exact transient local-wire selection and distinct highlighting.
+
 ## Exact occurrence resolution
 
 `GraphHierarchyDocument::component_at_instance_path` now walks a nonempty
@@ -185,12 +189,13 @@ path.
 Exact final-to-origin revalidation, scoped occurrence-path resolution, root and
 component destination focus, private/authoritative node selection, local wire
 target selection, one-shot scrolling, stale-origin reconciliation, and
-canonical session/history/persistence isolation are now closed. Dedicated
-component-local wire selection, child rebinding/replacement, nested binding
-import/exchange, component rename/version evolution, parameter
-promotion/overrides, coordinated descendant/control-authority replacement,
-runtime panel injection, collaboration/conflict handling, and crash-durable
-journals remain separate work. Deterministic named empty component creation is
-separately closed by the
+canonical session/history/persistence isolation are now closed. Exact
+component-local wire selection and highlighting are separately closed by the
+[`component-wire focus`](M9-EXACT-COMPONENT-WIRE-FOCUS.md) checkpoint. Child
+rebinding/replacement, nested binding import/exchange, component rename/version
+evolution, parameter promotion/overrides, coordinated
+descendant/control-authority replacement, runtime panel injection,
+collaboration/conflict handling, and crash-durable journals remain separate
+work. Deterministic named empty component creation is separately closed by the
 [`general component-library creation`](M9-GENERAL-COMPONENT-LIBRARY-CREATION.md)
 checkpoint.

@@ -284,8 +284,10 @@ evidence](docs/evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), followed by
 the [scoped child-occurrence authoring
 evidence](docs/evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), the [exact
 flattened-source navigation
-evidence](docs/evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and the
-[general component-library creation
+evidence](docs/evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), the [exact
+component-wire focus
+evidence](docs/evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and the [general
+component-library creation
 evidence](docs/evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.

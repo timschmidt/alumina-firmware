@@ -323,6 +323,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — exact final-node/wire origin revalidation, root/private/authoritative
   destination focus, stale-origin reconciliation, and transient optimized
   browser navigation evidence.
+- [`M9-EXACT-COMPONENT-WIRE-FOCUS.md`](M9-EXACT-COMPONENT-WIRE-FOCUS.md)
+  — exact transient component-local wire selection, distinct authoritative and
+  private canvas highlighting, retained target-node inspection, stale-digest
+  reconciliation, and optimized browser evidence.
 - [`M9-GENERAL-COMPONENT-LIBRARY-CREATION.md`](M9-GENERAL-COMPONENT-LIBRARY-CREATION.md)
   — deterministic named revision-1 empty `ALGC` construction, exact
   schema/clock inheritance, stable-name conflict rejection, duplicate no-op,

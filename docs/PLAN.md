@@ -1531,6 +1531,7 @@ and
 [selected-component definition canvas](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
 [scoped child-occurrence authoring](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [exact flattened-source navigation](evidence/M9-EXACT-FLATTENED-SOURCE-NAVIGATION.md), and
+[exact component-wire focus](evidence/M9-EXACT-COMPONENT-WIRE-FOCUS.md), and
 [general component-library creation](evidence/M9-GENERAL-COMPONENT-LIBRARY-CREATION.md), and
 [capability catalog/diagnostic probes](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [board capability explorer](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
