@@ -570,7 +570,7 @@ the exact identities. Permanent pinned-core actors now execute exact future run
 epochs, and a power-cut-tested selector journal recovers the committed package
 through configuration-first independent boot admission. General node/state/Event
 execution, measured executor timing, physical input HIL, graph outputs, broader
-resource opcodes, scoped child-occurrence creation/deletion, general
+resource opcodes, child-occurrence rebinding, general
 component-library creation, interactive traversal from flattened items into
 their source definitions, front-panel runtime inputs, live device telemetry,
 and device-trigger capture plots remain open. Replay-only probe triggers are
@@ -622,10 +622,16 @@ and typed-wire editing, exact metadata and integer placement, recursive digest
 selection, and complete-session history/persistence. `ALGH`-owned child
 placeholders remain visible and wireable but cannot be deleted through the
 ordinary-node surface, and the selected control authority remains read-only.
-Scoped child-occurrence creation/deletion, nested binding import/exchange,
-general library creation, parameter promotion/overrides, coordinated
-descendant/control-authority replacement, interactive flattened-to-source
-traversal, and collaboration/conflict handling remain open.
+An existing library dependency can now be instantiated inside that selected
+definition: one candidate allocates the parent-local placeholder and adds its
+scoped `ALGH` binding, while the dedicated delete action removes that
+placeholder, incident wires, and binding together. Public connector/panel
+bindings veto removal; cycles and indirect control-authority replacement reject
+before commit; deletion never rewinds the parent node cursor. Child rebinding,
+nested binding import/exchange, general library creation, parameter
+promotion/overrides, coordinated descendant/control-authority replacement,
+interactive flattened-to-source traversal, and collaboration/conflict handling
+remain open.
 A separate canonical `ALGM` V1 sidecar now maps every final node and wire
 to exactly one root or component-occurrence origin and binds both the complete
 source `ALGH` and flattened `ALGW`. Its bounded replay freshly flattens the
@@ -718,6 +724,8 @@ and
 [`unified graph authoring history`](evidence/M9-UNIFIED-GRAPH-AUTHORING-HISTORY.md), and
 [`direct root-instance authoring`](evidence/M9-DIRECT-ROOT-INSTANCE-AUTHORING.md), and
 [`exact component-library exchange`](evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), and
+[`selected-component definition canvas`](evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), and
+[`scoped child-occurrence authoring`](evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md), and
 [`capability catalog/diagnostic probes`](evidence/M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md),
 and [`board capability explorer`](evidence/M9-BOARD-CAPABILITY-EXPLORER.md), and
 [`authenticated diagnostic transport`](evidence/M9-AUTHENTICATED-DIAGNOSTIC-TRANSPORT.md), and

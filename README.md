@@ -275,7 +275,9 @@ evidence](docs/evidence/M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md) and
 [selected-library connector authoring
 evidence](docs/evidence/M9-SELECTED-LIBRARY-CONNECTOR-AUTHORING.md), followed by
 the [selected-component definition-canvas
-evidence](docs/evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md). The source
+evidence](docs/evidence/M9-SELECTED-COMPONENT-DEFINITION-CANVAS.md), followed by
+the [scoped child-occurrence authoring
+evidence](docs/evidence/M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.
 

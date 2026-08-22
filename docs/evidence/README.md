@@ -315,6 +315,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   — separate selected-dependency `ALGW` authoring, recursive authority-safe
   replacement, monotonic typed structure, and optimized history/reload
   evidence.
+- [`M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md`](M9-SCOPED-CHILD-OCCURRENCE-AUTHORING.md)
+  — atomic parent-placeholder/scoped-binding creation and deletion, public-
+  binding vetoes, monotonic child identities, and exact optimized
+  history/reload evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
