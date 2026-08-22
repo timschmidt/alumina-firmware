@@ -262,7 +262,9 @@ component-library exchange
 evidence](docs/evidence/M9-EXACT-COMPONENT-LIBRARY-EXCHANGE.md), plus the [exact
 root-hierarchy canvas
 evidence](docs/evidence/M9-EXACT-ROOT-HIERARCHY-CANVAS.md) and [exact front-panel
-authoring evidence](docs/evidence/M9-EXACT-FRONT-PANEL-AUTHORING.md). The source
+authoring evidence](docs/evidence/M9-EXACT-FRONT-PANEL-AUTHORING.md), plus
+[stable component-connector authoring
+evidence](docs/evidence/M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md). The source
 map is host-only correlation metadata and grants no firmware execution
 authority.
 

@@ -304,6 +304,10 @@ a hardware qualification: board promotion still follows the evidence ladder in
   monotonic bound-item creation, exact metadata/layout update and removal,
   authored-panel retention, and optimized pointer-drag history/persistence
   evidence.
+- [`M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md`](M9-STABLE-COMPONENT-CONNECTOR-AUTHORING.md)
+  — transactional public-input/public-output CRUD, monotonic stable identities,
+  recursive ID-based placeholder/wire/parent refresh, and optimized complete-
+  session history/persistence evidence.
 - [`M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md`](M9-CAPABILITY-CATALOG-DIAGNOSTIC-PROBES.md)
   — caller-authenticated capability/registry intersection into concrete
   TinyBee resource nodes, canonical bounded `ALGP` output probes, separate
