@@ -117,6 +117,7 @@ impl JobService {
     }
 
     /// Dispatches one authenticated job request and returns a correlated frame.
+    #[inline(never)]
     pub async fn dispatch(
         &mut self,
         cache: &mut selected::StorageBackend,
@@ -632,6 +633,7 @@ impl JobService {
     }
 
     /// Advances storage by at most one verified chunk and never waits for credit.
+    #[inline(never)]
     pub async fn prefetch_step(
         &mut self,
         cache: &mut selected::StorageBackend,

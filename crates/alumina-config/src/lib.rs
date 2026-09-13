@@ -1872,6 +1872,22 @@ impl RealtimeConfigurationProfile {
         stepper_output_quantum_cycles: None,
     };
 
+    /// Empty allocation-free storage suitable for static construction before
+    /// exact configuration admission.
+    pub const fn empty() -> Self {
+        Self::EMPTY
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stepper_axes.iter().all(Option::is_none)
+            && self.foc_axes.iter().all(Option::is_none)
+            && self.foc_axis_count == 0
+            && self.safety_inputs.iter().all(Option::is_none)
+            && self.safety_input_count == 0
+            && self.timer_tick_hertz.is_none()
+            && self.stepper_output_quantum_cycles.is_none()
+    }
+
     /// Profile for one logical stepper-axis instance.
     pub const fn stepper_axis(&self, instance: usize) -> Option<StepperAxisProfile> {
         if instance < MAX_EXECUTABLE_STEPPER_AXES {
@@ -2046,6 +2062,33 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
     pub fn finish_with_profile(
         self,
     ) -> Result<(ConfigurationSummary, RealtimeConfigurationProfile), ConfigurationError> {
+        let mut profile = RealtimeConfigurationProfile::EMPTY;
+        let summary = self.finish_into_profile(&mut profile)?;
+        Ok((summary, profile))
+    }
+
+    /// Completes validation directly into caller-owned empty profile storage.
+    ///
+    /// Embedded callers can place that storage in zero-initialized static RAM
+    /// and avoid constructing or returning the multi-kilobyte profile on a
+    /// task stack. A nonempty destination rejects before it is modified.
+    pub fn finish_into_profile(
+        self,
+        profile: &mut RealtimeConfigurationProfile,
+    ) -> Result<ConfigurationSummary, ConfigurationError> {
+        self.finish_into_static_profile(profile)
+    }
+
+    /// Completes immutable admitted state directly into empty static profile
+    /// storage without moving this multi-kilobyte validator onto the caller's
+    /// stack.
+    pub fn finish_into_static_profile(
+        &self,
+        profile: &mut RealtimeConfigurationProfile,
+    ) -> Result<ConfigurationSummary, ConfigurationError> {
+        if !profile.is_empty() {
+            return Err(ConfigurationError::Internal);
+        }
         if self.seen_records != self.header.record_count
             || self.realtime_records != self.header.realtime_record_count
         {
@@ -2053,7 +2096,6 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
         }
         let mut stepper_axes = 0_u8;
         let mut foc_axes = 0_u8;
-        let mut profile = RealtimeConfigurationProfile::EMPTY;
         for (instance, axis) in self.axes.iter().copied().enumerate() {
             let has_step = axis.binding_mask & role_bit(BindingRole::AxisStep) != 0;
             let foc_binding_mask = role_bit(BindingRole::FocPhaseU)
@@ -2349,7 +2391,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationValidator<'a, MAX_BINDINGS> {
             flags: self.header.flags,
         };
         summary.validate()?;
-        Ok((summary, profile))
+        Ok(summary)
     }
 
     fn validate_binding(&mut self, binding: ResourceBinding) -> Result<(), ConfigurationError> {
@@ -4726,11 +4768,7 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
                 self.header_used += count;
                 bytes = &bytes[count..];
                 if self.header_used == CONFIGURATION_HEADER_BYTES {
-                    let header = ConfigurationHeader::decode(&self.header_bytes)?;
-                    if header.total_bytes()? != self.expected_bytes {
-                        return Err(ConfigurationError::Length);
-                    }
-                    self.validator = Some(ConfigurationValidator::new(self.package, header)?);
+                    self.admit_complete_header()?;
                 }
             } else {
                 let count = bytes
@@ -4741,16 +4779,37 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
                 self.record_used += count;
                 bytes = &bytes[count..];
                 if self.record_used == CONFIGURATION_RECORD_BYTES {
-                    let record = ConfigurationRecord::decode(&self.record_bytes)?;
-                    self.validator
-                        .as_mut()
-                        .ok_or(ConfigurationError::Internal)?
-                        .push(record)?;
-                    self.record_used = 0;
-                    self.record_bytes.fill(0);
+                    self.admit_complete_record()?;
                 }
             }
         }
+        Ok(())
+    }
+
+    // Keep the two large semantic construction paths out of `push`'s one
+    // compiler frame. On small embedded targets the stream validator itself is
+    // retained outside the call stack; these phase boundaries ensure header
+    // construction and record admission reuse stack storage instead of being
+    // reserved simultaneously for every chunk.
+    #[inline(never)]
+    fn admit_complete_header(&mut self) -> Result<(), ConfigurationError> {
+        let header = ConfigurationHeader::decode(&self.header_bytes)?;
+        if header.total_bytes()? != self.expected_bytes {
+            return Err(ConfigurationError::Length);
+        }
+        self.validator = Some(ConfigurationValidator::new(self.package, header)?);
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn admit_complete_record(&mut self) -> Result<(), ConfigurationError> {
+        let record = ConfigurationRecord::decode(&self.record_bytes)?;
+        self.validator
+            .as_mut()
+            .ok_or(ConfigurationError::Internal)?
+            .push(record)?;
+        self.record_used = 0;
+        self.record_bytes.fill(0);
         Ok(())
     }
 
@@ -4764,31 +4823,48 @@ impl<'a, const MAX_BINDINGS: usize> ConfigurationStreamValidator<'a, MAX_BINDING
     pub fn finish_with_profile(
         self,
     ) -> Result<(ConfigurationIdentity, RealtimeConfigurationProfile), ConfigurationError> {
+        let mut profile = RealtimeConfigurationProfile::EMPTY;
+        let identity = self.finish_into_profile(&mut profile)?;
+        Ok((identity, profile))
+    }
+
+    /// Completes exact streaming validation directly into caller-owned empty
+    /// profile storage, avoiding a large return value on embedded stacks.
+    pub fn finish_into_profile(
+        self,
+        profile: &mut RealtimeConfigurationProfile,
+    ) -> Result<ConfigurationIdentity, ConfigurationError> {
+        self.finish_into_static_profile(profile)
+    }
+
+    /// Completes immutable stream state into empty static profile storage
+    /// without moving the retained semantic validator onto the caller stack.
+    pub fn finish_into_static_profile(
+        &self,
+        profile: &mut RealtimeConfigurationProfile,
+    ) -> Result<ConfigurationIdentity, ConfigurationError> {
         if self.consumed != self.expected_bytes
             || self.header_used != CONFIGURATION_HEADER_BYTES
             || self.record_used != 0
         {
             return Err(ConfigurationError::Length);
         }
-        let validator = self.validator.ok_or(ConfigurationError::Length)?;
+        let validator = self.validator.as_ref().ok_or(ConfigurationError::Length)?;
         let capability_digest = validator.header.capability_digest;
-        let (summary, realtime_profile) = validator.finish_with_profile()?;
-        let hash = self.hasher.finalize();
+        let summary = validator.finish_into_static_profile(profile)?;
+        let hash = self.hasher.clone().finalize();
         let mut digest = [0_u8; 32];
         digest.copy_from_slice(&hash);
         let digest = Digest(digest);
         if digest != self.expected_digest {
             return Err(ConfigurationError::ConfigurationIdentity);
         }
-        Ok((
-            ConfigurationIdentity {
-                digest,
-                byte_len: self.expected_bytes,
-                capability_digest,
-                summary,
-            },
-            realtime_profile,
-        ))
+        Ok(ConfigurationIdentity {
+            digest,
+            byte_len: self.expected_bytes,
+            capability_digest,
+            summary,
+        })
     }
 
     /// Finishes one exact stream and preserves its identity/profile pairing in
@@ -5360,6 +5436,14 @@ mod tests {
     use embassy_futures::block_on;
 
     const TEST_DEVICE_BLOCKS: usize = 2_300;
+
+    #[test]
+    fn embedded_validation_state_sizes_are_explicit() {
+        assert!(core::mem::size_of::<ConfigurationStreamValidator<'static, 1>>() <= 8 * 1_024);
+        assert!(core::mem::size_of::<ConfigurationValidator<'static, 1>>() <= 8 * 1_024);
+        assert!(core::mem::size_of::<RealtimeConfigurationProfile>() <= 5 * 1_024);
+    }
+
     const TEST_REGION: MediaRegion = MediaRegion {
         start_block: 2_048,
         block_count: 200,
@@ -6554,6 +6638,33 @@ mod tests {
             }
         );
         assert_eq!(profile.foc_axes().count(), 1);
+
+        let mut static_profile = RealtimeConfigurationProfile::empty();
+        let mut static_validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        static_validator.push(&bytes).unwrap();
+        let static_identity = static_validator
+            .finish_into_profile(&mut static_profile)
+            .unwrap();
+        assert_eq!(static_identity, identity);
+        assert_eq!(static_profile, profile);
+
+        let mut reuse_validator = ConfigurationStreamValidator::<32>::new(
+            &package,
+            digest,
+            u32::try_from(bytes.len()).unwrap(),
+        )
+        .unwrap();
+        reuse_validator.push(&bytes).unwrap();
+        assert_eq!(
+            reuse_validator.finish_into_profile(&mut static_profile),
+            Err(ConfigurationError::Internal)
+        );
+        assert_eq!(static_profile, profile);
     }
 
     #[test]

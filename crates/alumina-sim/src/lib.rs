@@ -9,6 +9,7 @@ pub mod foc_hardware;
 pub mod http_fixture;
 mod http_job;
 pub mod motion;
+pub mod network;
 pub mod shift_register;
 mod visual_fixture;
 

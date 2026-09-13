@@ -4,6 +4,11 @@
 use hmac::{Hmac, Mac};
 use sha2::{Digest as _, Sha256};
 
+/// Bounded DNS replies for recovery-AP captive discovery.
+pub mod captive_dns;
+/// Canonical fixed-memory AP/STA provisioning bodies.
+pub mod provisioning;
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Maximum IEEE 802.11 SSID size in bytes.
@@ -177,12 +182,23 @@ pub struct WebLimits {
     pub keepalive_timeout_ms: u32,
     /// Timeout for one complete handler invocation.
     pub request_timeout_ms: u32,
+    /// Timeout for an immutable embedded-interface asset transfer.
+    ///
+    /// This is intentionally distinct from ordinary request handling: a
+    /// multi-megabyte, content-addressed WASM response can make continuous
+    /// progress over an ESP32 access point for longer than an API request is
+    /// allowed to occupy a handler.
+    pub asset_transfer_timeout_ms: u32,
 }
 
 impl WebLimits {
     /// Reviewed initial limits used by the ESP adapter.
     pub const INITIAL: Self = Self {
-        connections: 2,
+        // Three independently stored workers are the reviewed classic-ESP32
+        // RAM budget. Ordinary browsers request the module, WASM preload, and
+        // icon concurrently; admitting all three avoids browser-specific retry
+        // behavior while one worker streams the large immutable asset.
+        connections: 3,
         // Chromium CORS/LAN requests commonly carry 13+ transport,
         // fetch-metadata, origin, and access-control fields before the Alumina
         // headers are counted. Keep the parser bounded without making ordinary
@@ -193,6 +209,7 @@ impl WebLimits {
         io_timeout_ms: 2_000,
         keepalive_timeout_ms: 5_000,
         request_timeout_ms: 3_000,
+        asset_transfer_timeout_ms: 120_000,
     };
 
     /// Rejects zero/unbounded-looking policy and inconsistent timeouts.
@@ -209,7 +226,11 @@ impl WebLimits {
         if self.socket_bytes < 512 || self.socket_bytes > 8_192 {
             return Err(LimitError::SocketBytes);
         }
-        if self.io_timeout_ms == 0 || self.keepalive_timeout_ms == 0 || self.request_timeout_ms == 0
+        if self.io_timeout_ms == 0
+            || self.keepalive_timeout_ms == 0
+            || self.request_timeout_ms == 0
+            || self.asset_transfer_timeout_ms == 0
+            || self.asset_transfer_timeout_ms < self.request_timeout_ms
         {
             return Err(LimitError::Timeout);
         }
@@ -1339,8 +1360,14 @@ mod tests {
     fn initial_profile_and_web_limits_are_bounded() {
         assert_eq!(DEVELOPMENT.validate(), Ok(()));
         assert_eq!(WebLimits::INITIAL.validate(), Ok(()));
+        assert_eq!(WebLimits::INITIAL.connections, 3);
         assert_eq!(WebLimits::INITIAL.header_bytes, 2_048);
         assert_eq!(WebLimits::INITIAL.header_count, 24);
+        assert_eq!(WebLimits::INITIAL.request_timeout_ms, 3_000);
+        assert_eq!(WebLimits::INITIAL.asset_transfer_timeout_ms, 120_000);
+        let mut invalid_asset_timeout = WebLimits::INITIAL;
+        invalid_asset_timeout.asset_transfer_timeout_ms = 2_999;
+        assert_eq!(invalid_asset_timeout.validate(), Err(LimitError::Timeout));
         assert!(!DEVELOPMENT.credential_source.production_armable());
     }
 

@@ -21,6 +21,10 @@ use alumina_service::capability::{CapabilityDocumentService, VerifiedCapabilityV
 use alumina_service::diagnostics::DiagnosticServiceState;
 use alumina_service::health::{RuntimeHealthService, RuntimeQueueHealth};
 use alumina_service::{NativeRequest, ResponseMedia, ServiceRequest, ServiceResponse};
+use alumina_web_assets::{
+    EmbeddedWebAsset, INTERFACE_COMMIT, INTERFACE_CONTENT_SECURITY_POLICY, WEB_BUNDLE_DIGEST,
+    WEB_BUNDLE_FORMAT, web_asset,
+};
 
 use crate::capability;
 use crate::diagnostics::{
@@ -28,6 +32,7 @@ use crate::diagnostics::{
     simulated_resource_overview,
 };
 use crate::http_job::{SimulatedActiveConfiguration, SimulatedCachedJobService};
+use crate::network::SimulatedNetworkService;
 
 const AUTHENTICATION_SCHEME: &str = "hmac-sha256-v2";
 const NATIVE_FRAME_MEDIA_TYPE: &str = "application/vnd.alumina.frame";
@@ -163,6 +168,7 @@ pub struct ClockHttpFixture {
     runtime_health_epoch: Option<DeviceCycle>,
     runtime_health_samples: u32,
     diagnostics: FixtureDiagnosticService,
+    network: SimulatedNetworkService,
     active_configuration: SimulatedActiveConfiguration,
     cached_job_service: SimulatedCachedJobService,
     simulated_telemetry_provider: bool,
@@ -230,6 +236,7 @@ impl ClockHttpFixture {
                 DiagnosticTransportLimits::native_control(),
                 DiagnosticLimits::interactive(),
             ),
+            network: SimulatedNetworkService::new(),
             active_configuration,
             cached_job_service,
             simulated_telemetry_provider: false,
@@ -250,6 +257,11 @@ impl ClockHttpFixture {
     /// Mutably borrow the diagnostic owner to inject deterministic simulator evidence.
     pub const fn diagnostics_mut(&mut self) -> &mut FixtureDiagnosticService {
         &mut self.diagnostics
+    }
+
+    /// Borrow the credential-free infrastructure-WLAN state reached by control.
+    pub const fn network(&self) -> &SimulatedNetworkService {
+        &self.network
     }
 
     /// Enables deterministic completion of admitted immediate waveform captures.
@@ -315,6 +327,7 @@ impl ClockHttpFixture {
             DiagnosticTransportLimits::native_control(),
             DiagnosticLimits::interactive(),
         );
+        self.network = SimulatedNetworkService::new();
         Ok(())
     }
 
@@ -331,6 +344,9 @@ impl ClockHttpFixture {
         receive_cycle: DeviceCycle,
         transmit_cycle: DeviceCycle,
     ) -> FixtureHttpResponse {
+        if let Some(asset) = web_asset(&request.path) {
+            return Self::embedded_asset(request, asset);
+        }
         let route = classify_route(request.method, &request.path);
         match route {
             Route::CorsPreflight => self.preflight(request),
@@ -344,6 +360,35 @@ impl ClockHttpFixture {
                 plain_response(501, "Not Implemented", "fixture route unavailable\n")
             }
         }
+    }
+
+    fn embedded_asset(
+        request: &FixtureHttpRequest,
+        asset: EmbeddedWebAsset,
+    ) -> FixtureHttpResponse {
+        if request.method != HttpMethod::Get {
+            return plain_response(405, "Method Not Allowed", "method not allowed\n")
+                .with_header("Allow", "GET");
+        }
+        let mut response =
+            FixtureHttpResponse::new(200, "OK", Some(asset.media_type()), asset.bytes().to_vec())
+                .with_header("Cross-Origin-Resource-Policy", "same-origin")
+                .with_header("X-Alumina-Interface-Commit", INTERFACE_COMMIT)
+                .with_header("X-Alumina-Bundle-SHA256", &lower_hex(&WEB_BUNDLE_DIGEST.0))
+                .with_header(
+                    "X-Alumina-Source-SHA256",
+                    &lower_hex(&asset.source_digest().0),
+                )
+                .with_header("X-Alumina-Wire-SHA256", &lower_hex(&asset.wire_digest().0))
+                .with_header(
+                    "X-Alumina-Stored-Representation",
+                    asset.stored_representation().label(),
+                );
+        if asset.path() == "/" {
+            response =
+                response.with_header("Content-Security-Policy", INTERFACE_CONTENT_SECURITY_POLICY);
+        }
+        response
     }
 
     fn preflight(&self, request: &FixtureHttpRequest) -> FixtureHttpResponse {
@@ -399,8 +444,9 @@ impl ClockHttpFixture {
         let context = self.diagnostics.context();
         let device_id = lower_hex(&context.device_id.0);
         let capability_digest = lower_hex(&context.capability.digest.0);
+        let interface_bundle_digest = lower_hex(&WEB_BUNDLE_DIGEST.0);
         let body = format!(
-            "{{\"protocol_version\":1,\"board_id\":\"{}\",\"credential_source\":\"development-fallback\",\"production_armable\":false,\"device_id\":\"{device_id}\",\"capability_digest\":\"{capability_digest}\",\"capability_document_bytes\":{}}}",
+            "{{\"protocol_version\":1,\"board_id\":\"{}\",\"credential_source\":\"development-fallback\",\"production_armable\":false,\"device_id\":\"{device_id}\",\"capability_digest\":\"{capability_digest}\",\"capability_document_bytes\":{},\"interface_bundle_format\":\"{WEB_BUNDLE_FORMAT}\",\"interface_commit\":\"{INTERFACE_COMMIT}\",\"interface_bundle_sha256\":\"{interface_bundle_digest}\"}}",
             capability::BOARD_ID,
             context.capability.byte_len
         )
@@ -465,6 +511,9 @@ impl ClockHttpFixture {
         let Ok(native) = NativeRequest::decode(bytes) else {
             return ServiceResponse::invalid_native();
         };
+        if let Some(response) = self.network.dispatch(native, transmit_cycle) {
+            return response;
+        }
         if matches!(
             native.frame.kind,
             FrameKind::Telemetry | FrameKind::Waveform
@@ -816,6 +865,10 @@ mod tests {
         MAX_VISUAL_ASSET_CHUNK_BYTES, VisualAssetReadRequest, VisualAssetReadResponse,
         calculate_identity,
     };
+    use alumina_net::provisioning::{
+        NetworkAuthentication, NetworkJoinRequest, NetworkScanRequest, NetworkScanResult,
+        NetworkStatus, NetworkStatusFlags, StationLinkState,
+    };
     use alumina_net::{
         AUTH_PROOF_HEADER, AUTH_TAG_HEX_BYTES, CORS_REQUEST_HEADERS_HEADER,
         CORS_REQUEST_METHOD_HEADER, HttpMethod, RequestProof, parse_request_proof, sign_request,
@@ -824,6 +877,7 @@ mod tests {
     use alumina_protocol::{FrameHeader, MessageDirection, MessageHeader};
     use alumina_runtime::health::{RuntimeHealthFlags, RuntimeHealthSnapshot};
     use alumina_storage::sha256;
+    use alumina_web_assets::{WEB_ASSETS, WEB_BUNDLE_MANIFEST};
 
     use super::*;
 
@@ -837,6 +891,100 @@ mod tests {
             ClockFixturePolicy::HEALTHY_1MHZ,
         )
         .unwrap()
+    }
+
+    fn response_header<'a>(response: &'a FixtureHttpResponse, name: &str) -> Option<&'a str> {
+        response
+            .headers
+            .iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn native_response_body(response: &FixtureHttpResponse) -> (MessageHeader, &[u8]) {
+        let frame = FrameHeader::decode(&response.body[..FrameHeader::WIRE_LEN], 1_024).unwrap();
+        let message_start = FrameHeader::WIRE_LEN;
+        let message_end = message_start + MessageHeader::WIRE_LEN;
+        let message = MessageHeader::decode_and_validate(
+            &response.body[message_start..message_end],
+            frame.kind,
+            frame.payload_len,
+        )
+        .unwrap();
+        (message, &response.body[message_end..])
+    }
+
+    #[test]
+    fn embedded_interface_assets_match_firmware_negotiation_and_identity() {
+        let mut fixture = fixture();
+        let request = |method, path: &str, headers| FixtureHttpRequest {
+            method,
+            path: path.to_owned(),
+            headers,
+            body: Vec::new(),
+        };
+        let index = fixture.handle(
+            &request(HttpMethod::Get, "/", Vec::new()),
+            0,
+            DeviceCycle(0),
+            DeviceCycle(0),
+        );
+        assert_eq!(index.status, 200);
+        assert_eq!(sha256(&index.body).digest.0, WEB_ASSETS[0].wire_digest().0);
+        assert_eq!(
+            response_header(&index, "Content-Security-Policy"),
+            Some(INTERFACE_CONTENT_SECURITY_POLICY)
+        );
+        let bundle_digest = lower_hex(&WEB_BUNDLE_DIGEST.0);
+        assert_eq!(
+            response_header(&index, "X-Alumina-Bundle-SHA256"),
+            Some(bundle_digest.as_str())
+        );
+
+        let module = fixture.handle(
+            &request(HttpMethod::Get, "/alumina-interface.js.br", Vec::new()),
+            0,
+            DeviceCycle(0),
+            DeviceCycle(0),
+        );
+        assert_eq!(module.status, 200);
+        assert_eq!(response_header(&module, "Content-Encoding"), None);
+        assert_eq!(sha256(&module.body).digest.0, WEB_ASSETS[3].wire_digest().0);
+
+        let duplicate_encoding = fixture.handle(
+            &request(
+                HttpMethod::Get,
+                "/alumina-interface_bg.wasm.br",
+                vec![
+                    (b"Accept-Encoding".to_vec(), b"gzip".to_vec()),
+                    (b"accept-encoding".to_vec(), b"identity".to_vec()),
+                ],
+            ),
+            0,
+            DeviceCycle(0),
+            DeviceCycle(0),
+        );
+        assert_eq!(duplicate_encoding.status, 200);
+        assert_eq!(
+            response_header(&duplicate_encoding, "X-Alumina-Stored-Representation"),
+            Some("brotli-rfc7932-q11-w23")
+        );
+        let wrong_method = fixture.handle(
+            &request(HttpMethod::Post, "/", Vec::new()),
+            0,
+            DeviceCycle(0),
+            DeviceCycle(0),
+        );
+        assert_eq!(wrong_method.status, 405);
+
+        let manifest = fixture.handle(
+            &request(HttpMethod::Get, "/alumina-web-bundle.toml", Vec::new()),
+            0,
+            DeviceCycle(0),
+            DeviceCycle(0),
+        );
+        assert_eq!(manifest.status, 200);
+        assert_eq!(manifest.body, WEB_BUNDLE_MANIFEST);
     }
 
     fn native_clock_request(counter: u64) -> FixtureHttpRequest {
@@ -1009,6 +1157,14 @@ mod tests {
             "\"capability_document_bytes\":{}",
             capability.byte_len
         )));
+        assert!(identity_text.contains(&format!(
+            "\"interface_bundle_format\":\"{WEB_BUNDLE_FORMAT}\""
+        )));
+        assert!(identity_text.contains(&format!("\"interface_commit\":\"{INTERFACE_COMMIT}\"")));
+        assert!(identity_text.contains(&format!(
+            "\"interface_bundle_sha256\":\"{}\"",
+            lower_hex(&WEB_BUNDLE_DIGEST.0)
+        )));
 
         let preflight = FixtureHttpRequest {
             method: HttpMethod::Options,
@@ -1174,6 +1330,73 @@ mod tests {
         assert!(second_snapshot.service_stack.sampled_at > first_snapshot.service_stack.sampled_at);
         assert!(
             second_snapshot.realtime_stack.sampled_at > first_snapshot.realtime_stack.sampled_at
+        );
+    }
+
+    #[test]
+    fn authenticated_network_scan_and_join_preserve_the_recovery_ap() {
+        let mut fixture = fixture();
+        let status_response = fixture.handle(
+            &native_request(77, FrameKind::Network, Operation::NetworkStatus, &[]),
+            10,
+            DeviceCycle(1_000_000),
+            DeviceCycle(1_000_100),
+        );
+        assert_eq!(status_response.status, 200);
+        let (message, body) = native_response_body(&status_response);
+        assert_eq!(message.status, StatusCode::Ok);
+        let initial = NetworkStatus::decode(body).unwrap();
+        assert!(initial.flags.contains(NetworkStatusFlags::AP_EXPECTED));
+
+        let scan_request = NetworkScanRequest { transaction_id: 1 }.encode().unwrap();
+        let scan_response = fixture.handle(
+            &native_request(
+                78,
+                FrameKind::Network,
+                Operation::NetworkScan,
+                &scan_request,
+            ),
+            11,
+            DeviceCycle(1_010_000),
+            DeviceCycle(1_010_100),
+        );
+        let (message, body) = native_response_body(&scan_response);
+        assert_eq!(message.status, StatusCode::Ok);
+        let scan = NetworkScanResult::decode(body).unwrap();
+        assert_eq!(scan.entries().len(), 2);
+        assert_eq!(scan.entries()[0].ssid(), "Alumina Lab");
+
+        let join = NetworkJoinRequest::try_new(
+            2,
+            initial.generation,
+            "Alumina Lab",
+            NetworkAuthentication::Wpa2Personal,
+            "alumina-lab-secret",
+            Some([0x02, 0xa1, 0x51, 0x00, 0x00, 0x01]),
+            Some(6),
+        )
+        .unwrap();
+        let join_response = fixture.handle(
+            &native_request(
+                79,
+                FrameKind::Network,
+                Operation::NetworkJoin,
+                &join.encode(),
+            ),
+            12,
+            DeviceCycle(1_020_000),
+            DeviceCycle(1_020_100),
+        );
+        let (message, body) = native_response_body(&join_response);
+        assert_eq!(message.status, StatusCode::Ok);
+        let joined = NetworkStatus::decode(body).unwrap();
+        assert_eq!(joined.station_link, StationLinkState::Addressed);
+        assert_eq!(joined.ipv4_address, [192, 168, 1, 77]);
+        assert!(joined.flags.contains(NetworkStatusFlags::AP_EXPECTED));
+        assert!(
+            !joined
+                .flags
+                .contains(NetworkStatusFlags::CREDENTIALS_DURABLE)
         );
     }
 

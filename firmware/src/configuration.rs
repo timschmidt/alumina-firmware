@@ -1,5 +1,7 @@
 //! Core-0 machine-configuration ownership, recovery, and authenticated routing.
 
+use alloc::boxed::Box;
+
 use alumina_config::{
     CONFIGURATION_COORDINATOR_STATUS_BYTES, ConfigurationCoordinatorFault,
     ConfigurationCoordinatorFlags, ConfigurationCoordinatorPhase, ConfigurationCoordinatorStatus,
@@ -21,6 +23,7 @@ use alumina_storage::media::{ConfigurationTransition, DurableConfigurationSelect
 use alumina_storage::provisioning::ProvisionedCacheError;
 
 use crate::hardware::selected;
+use crate::poll_boundary::poll_boundary;
 
 type Validation = ServiceConfigurationValidation<'static, { selected::CONFIGURATION_BINDINGS }>;
 
@@ -34,7 +37,10 @@ pub struct ConfigurationService {
     phase: ConfigurationCoordinatorPhase,
     fault: ConfigurationCoordinatorFault,
     publication: Option<ConfigurationPublication>,
-    validation: Option<Validation>,
+    // Validation owns a media chunk and the complete candidate configuration.
+    // It exists only during recovery/replacement and must not inflate the
+    // permanent idle service actor on memory-constrained classic ESP32s.
+    validation: Option<Box<Validation>>,
     validation_status: Option<ServiceConfigurationStatus>,
     service_identity: Option<ConfigurationIdentity>,
     realtime: RealtimeConfigurationReport,
@@ -80,6 +86,52 @@ impl ConfigurationService {
         }
     }
 
+    /// Establishes the boot state when discovery proved that no mounted cache
+    /// can contain a durable configuration selector.
+    ///
+    /// Detached media is an authoritative empty state. A failed transport is
+    /// retained as a storage rejection, but either result is fully bootstrapped
+    /// and therefore does not enter the ready-media replay future.
+    pub fn establish_unmounted_bootstrap(&mut self, storage_faulted: bool) {
+        if self.bootstrapped {
+            return;
+        }
+        self.journal_loaded = true;
+        self.bootstrapped = true;
+        self.boot_recovery = false;
+        self.phase = if storage_faulted {
+            ConfigurationCoordinatorPhase::Rejected
+        } else {
+            ConfigurationCoordinatorPhase::Empty
+        };
+        self.fault = if storage_faulted {
+            ConfigurationCoordinatorFault::Storage
+        } else {
+            ConfigurationCoordinatorFault::None
+        };
+    }
+
+    /// Whether the coordinator has one bounded background transition to run.
+    ///
+    /// Keeping the stable `Empty`, `CandidateValid`, `Active`, and `Rejected`
+    /// phases out of the async step path is material on classic ESP32: the
+    /// validation future has a deliberately large, bounded stack frame even
+    /// when its state-machine arm would immediately return.
+    pub fn requires_step(&self) -> bool {
+        !self.bootstrapped
+            || matches!(
+                self.phase,
+                ConfigurationCoordinatorPhase::Recovering
+                    | ConfigurationCoordinatorPhase::Validating
+                    | ConfigurationCoordinatorPhase::Preparing
+                    | ConfigurationCoordinatorPhase::Activating
+                    | ConfigurationCoordinatorPhase::Committing
+                    | ConfigurationCoordinatorPhase::Authorizing
+                    | ConfigurationCoordinatorPhase::Clearing
+                    | ConfigurationCoordinatorPhase::Aborting
+            )
+    }
+
     /// Whether a valid universal request selects the configuration family.
     pub fn handles(request: &ServiceRequest) -> bool {
         request.kind() == ServiceRequestKind::NativeFrame
@@ -89,6 +141,7 @@ impl ConfigurationService {
 
     /// Processes one authenticated lifecycle request without waiting for the
     /// multi-step core/media transaction to finish.
+    #[inline(never)]
     pub async fn dispatch(
         &mut self,
         cache: &mut selected::StorageBackend,
@@ -115,7 +168,7 @@ impl ConfigurationService {
                 }
             }
             Operation::ConfigurationValidate => {
-                self.begin_validation(cache, native, mutation).await
+                poll_boundary(self.begin_validation(cache, native, mutation)).await
             }
             Operation::ConfigurationCommit => self.request_commit(native, mutation),
             Operation::ConfigurationRollback => self.request_rollback(native, mutation),
@@ -125,6 +178,7 @@ impl ConfigurationService {
     }
 
     /// Advances at most one validation chunk/command or one lifecycle action.
+    #[inline(never)]
     pub async fn step(
         &mut self,
         cache: &mut selected::StorageBackend,
@@ -133,7 +187,7 @@ impl ConfigurationService {
         mutation: MutationContext,
     ) {
         if !self.bootstrapped {
-            self.bootstrap_step(cache, mutation).await;
+            poll_boundary(self.bootstrap_step(cache, mutation)).await;
             if !self.bootstrapped {
                 return;
             }
@@ -148,25 +202,25 @@ impl ConfigurationService {
         match self.phase {
             ConfigurationCoordinatorPhase::Recovering
             | ConfigurationCoordinatorPhase::Validating => {
-                self.validation_step(cache, endpoint, now).await;
+                poll_boundary(self.validation_step(cache, endpoint, now)).await;
             }
             ConfigurationCoordinatorPhase::Preparing => {
-                self.prepare_activation(cache, mutation).await;
+                poll_boundary(self.prepare_activation(cache, mutation)).await;
             }
             ConfigurationCoordinatorPhase::Activating => {
                 self.activation_step(endpoint, now);
             }
             ConfigurationCoordinatorPhase::Committing => {
-                self.commit_activation(cache, mutation).await;
+                poll_boundary(self.commit_activation(cache, mutation)).await;
             }
             ConfigurationCoordinatorPhase::Authorizing => {
                 self.authorization_step(endpoint, now);
             }
             ConfigurationCoordinatorPhase::Clearing => {
-                self.clear_step(cache, endpoint, now, mutation).await;
+                poll_boundary(self.clear_step(cache, endpoint, now, mutation)).await;
             }
             ConfigurationCoordinatorPhase::Aborting => {
-                self.abort_step(cache, endpoint, now, mutation).await;
+                poll_boundary(self.abort_step(cache, endpoint, now, mutation)).await;
             }
             ConfigurationCoordinatorPhase::Empty
             | ConfigurationCoordinatorPhase::CandidateValid
@@ -282,7 +336,7 @@ impl ConfigurationService {
             if mutation.validate().is_err() {
                 return;
             }
-            match cache.abort_configuration_transition(orphan, mutation).await {
+            match poll_boundary(cache.abort_configuration_transition(orphan, mutation)).await {
                 Ok(_) => {
                     self.boot_orphan = None;
                     self.publication = None;
@@ -303,11 +357,11 @@ impl ConfigurationService {
             return;
         };
         let publication = publication_from_durable(active);
-        match Validation::open(cache, selected::PACKAGE, publication).await {
+        match poll_boundary(Validation::open(cache, selected::PACKAGE, publication)).await {
             Ok(validation) => {
                 self.publication = Some(publication);
                 self.validation_status = Some(validation.status());
-                self.validation = Some(validation);
+                self.validation = Some(Box::new(validation));
                 self.phase = ConfigurationCoordinatorPhase::Recovering;
                 self.fault = ConfigurationCoordinatorFault::None;
                 self.bootstrapped = true;
@@ -350,18 +404,19 @@ impl ConfigurationService {
                 StatusCode::Busy
             };
         }
-        let validation = match Validation::open(cache, selected::PACKAGE, publication).await {
-            Ok(validation) => validation,
-            Err(error) => {
-                let (status, fault) = transfer_error(error);
-                self.publication = Some(publication);
-                self.reject(fault);
-                return status;
-            }
-        };
+        let validation =
+            match poll_boundary(Validation::open(cache, selected::PACKAGE, publication)).await {
+                Ok(validation) => validation,
+                Err(error) => {
+                    let (status, fault) = transfer_error(error);
+                    self.publication = Some(publication);
+                    self.reject(fault);
+                    return status;
+                }
+            };
         self.publication = Some(publication);
         self.validation_status = Some(validation.status());
-        self.validation = Some(validation);
+        self.validation = Some(Box::new(validation));
         self.service_identity = None;
         self.durable_pending = None;
         self.durable_prepared = false;
@@ -503,7 +558,7 @@ impl ConfigurationService {
                 self.reject(ConfigurationCoordinatorFault::Internal);
                 return;
             };
-            let next = validation.next(cache).await;
+            let next = poll_boundary(validation.next(cache)).await;
             let status = validation.status();
             self.validation_status = Some(status);
             self.service_identity = status.identity;
@@ -564,10 +619,7 @@ impl ConfigurationService {
             }
         };
         let transition = ConfigurationTransition::activate(durable);
-        match cache
-            .prepare_configuration_transition(transition, mutation)
-            .await
-        {
+        match poll_boundary(cache.prepare_configuration_transition(transition, mutation)).await {
             Ok(_) => {
                 self.durable_pending = Some(transition);
                 self.durable_prepared = true;
@@ -631,10 +683,7 @@ impl ConfigurationService {
             self.reject(ConfigurationCoordinatorFault::Internal);
             return;
         };
-        match cache
-            .commit_configuration_transition(transition, mutation)
-            .await
-        {
+        match poll_boundary(cache.commit_configuration_transition(transition, mutation)).await {
             Ok(journal) => {
                 self.active = journal.active;
                 self.active_identity = self.service_identity;
@@ -692,9 +741,7 @@ impl ConfigurationService {
             .configuration_journal()
             .is_ok_and(|journal| journal.pending == Some(transition));
         if !prepared {
-            match cache
-                .prepare_configuration_transition(transition, mutation)
-                .await
+            match poll_boundary(cache.prepare_configuration_transition(transition, mutation)).await
             {
                 Ok(_) => {
                     self.durable_prepared = true;
@@ -731,10 +778,7 @@ impl ConfigurationService {
         if !self.realtime_cleared_matches() {
             return;
         }
-        match cache
-            .commit_configuration_transition(transition, mutation)
-            .await
-        {
+        match poll_boundary(cache.commit_configuration_transition(transition, mutation)).await {
             Ok(journal) => {
                 self.active = journal.active;
                 self.active_identity = None;
@@ -778,10 +822,7 @@ impl ConfigurationService {
         }
         self.control_sent = true;
         if let Some(transition) = self.durable_pending {
-            match cache
-                .abort_configuration_transition(transition, mutation)
-                .await
-            {
+            match poll_boundary(cache.abort_configuration_transition(transition, mutation)).await {
                 Ok(_) => self.durable_pending = None,
                 Err(_) => {
                     self.reject(ConfigurationCoordinatorFault::Durability);
@@ -958,7 +999,7 @@ impl ConfigurationService {
         let configuration = self
             .validation
             .as_ref()
-            .and_then(Validation::validated_configuration)
+            .and_then(|validation| validation.validated_configuration())
             .filter(|configuration| configuration.identity() == identity)
             .ok_or(())?;
         if identity.summary.foc_axes == 0 {

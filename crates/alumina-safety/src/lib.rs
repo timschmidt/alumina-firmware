@@ -1087,6 +1087,73 @@ impl SafetyObserver {
     }
 }
 
+/// Result of admitting one snapshot at a boot-time safe-output rendezvous.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StartupSafetyOutcome {
+    /// No fresh `Safe` snapshot has crossed the boundary yet.
+    AwaitingFresh,
+    /// A fresh, contract-bound `Safe` snapshot established the rendezvous.
+    Established,
+    /// A fresh, internally valid snapshot reports a latched real-time fault.
+    Faulted,
+}
+
+/// Boot-only gate which distinguishes an expected expired FIFO backlog from
+/// malformed or substituted safety evidence.
+///
+/// Radio initialization may take longer than the steady-state observation
+/// ceiling while the real-time core continues publishing into a lossy queue.
+/// An expired snapshot therefore revokes all retained evidence and keeps the
+/// rendezvous closed, but is not itself evidence that the real-time core must
+/// be faulted. Every other [`ObservationError`] remains an explicit rejection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StartupSafetyGate {
+    observer: SafetyObserver,
+}
+
+impl StartupSafetyGate {
+    /// Constructs a closed rendezvous under one exact contract and age policy.
+    pub const fn new(policy: SafetyObservationPolicy) -> Self {
+        Self {
+            observer: SafetyObserver::new(policy),
+        }
+    }
+
+    /// Revokes any accepted nonterminal observation after an outer frame or
+    /// payload-integrity failure.
+    pub fn invalidate(&mut self) {
+        self.observer.invalidate();
+    }
+
+    /// Admits one encoded safety publication without ever treating expired
+    /// evidence as current authority.
+    pub fn observe_encoded(
+        &mut self,
+        frame_sequence: u32,
+        produced_at_cycle: u64,
+        observed_at_cycle: u64,
+        encoded: &[u8],
+    ) -> Result<StartupSafetyOutcome, ObservationError> {
+        match self.observer.observe_encoded(
+            frame_sequence,
+            produced_at_cycle,
+            observed_at_cycle,
+            encoded,
+        ) {
+            Ok(()) => {}
+            Err(ObservationError::Expired { .. }) => {
+                return Ok(StartupSafetyOutcome::AwaitingFresh);
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(match self.observer.effective(observed_at_cycle).state {
+            SafetyState::Safe => StartupSafetyOutcome::Established,
+            SafetyState::Fault => StartupSafetyOutcome::Faulted,
+            _ => StartupSafetyOutcome::AwaitingFresh,
+        })
+    }
+}
+
 /// Rejected core-1 safety observation. Rejection revokes any prior observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObservationError {
@@ -1783,6 +1850,52 @@ mod tests {
             Err(ObservationError::Snapshot(SnapshotError::Length { .. }))
         ));
         assert_eq!(observer.effective(1_005), EffectiveSafety::UNOBSERVED);
+    }
+
+    #[test]
+    fn startup_gate_drains_expired_wifi_backlog_but_rejects_bad_evidence() {
+        let mut gate = StartupSafetyGate::new(SafetyObservationPolicy {
+            expected_contract: CONTRACT,
+            maximum_age_cycles: 500,
+        });
+        let stale = safe_snapshot(1).encode().unwrap();
+        assert_eq!(
+            gate.observe_encoded(1, 1_000, 1_501, &stale),
+            Ok(StartupSafetyOutcome::AwaitingFresh)
+        );
+
+        let fresh = safe_snapshot(1).encode().unwrap();
+        assert_eq!(
+            gate.observe_encoded(2, 1_502, 1_502, &fresh),
+            Ok(StartupSafetyOutcome::Established)
+        );
+
+        assert!(matches!(
+            gate.observe_encoded(3, 1_503, 1_503, &[0; 3]),
+            Err(ObservationError::Snapshot(SnapshotError::Length { .. }))
+        ));
+
+        let mut wrong_contract = safe_snapshot(1);
+        wrong_contract.safe_output_contract = SafetyContractId(*b"wrong-safe-v0001");
+        assert!(matches!(
+            gate.observe_encoded(4, 1_504, 1_504, &wrong_contract.encode().unwrap()),
+            Err(ObservationError::Contract { .. })
+        ));
+    }
+
+    #[test]
+    fn startup_gate_surfaces_a_fresh_latched_fault() {
+        let mut gate = StartupSafetyGate::new(SafetyObservationPolicy {
+            expected_contract: CONTRACT,
+            maximum_age_cycles: 500,
+        });
+        let mut fault = safe_snapshot(9);
+        fault.state = SafetyState::Fault;
+        fault.fault = Some(FaultCode::SafeOutput);
+        assert_eq!(
+            gate.observe_encoded(1, 10, 10, &fault.encode().unwrap()),
+            Ok(StartupSafetyOutcome::Faulted)
+        );
     }
 
     #[test]

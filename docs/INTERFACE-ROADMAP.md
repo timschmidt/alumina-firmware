@@ -155,13 +155,20 @@ rejection. The same worker now acquires immutable capabilities through bounded
 digest-stable ranges, repeats the exact range after ambiguous loss, revalidates
 the complete canonical document on both sides of schema v3, and exposes a
 board-name-independent live explorer. Complete public device/security/machine-
-membership discovery, broader network/storage fault injection, WLAN
-provisioning, and physical connections remain open. See the
+membership discovery, broader network/storage fault injection, durable WLAN
+credentials, and physical connections remain open. Authenticated WLAN
+status/scan/join/leave/recovery now shares this worker: snapshots are
+credential-free, ambiguous joins reconcile through status without blind secret
+replay, and the live panel keeps provisioning ahead of high-volume diagnostics.
+A clean Chromium UI workflow joins the exact strongest simulated BSSID while
+preserving the recovery AP. See the
 [M7 browser cache-delivery evidence](evidence/M7-BROWSER-CACHE-DELIVERY.md) and
 [clock/coordinator evidence](evidence/M7-BROWSER-CLOCK-COORDINATOR.md), plus the
 [authenticated browser/HTTP evidence](evidence/M7-BROWSER-AUTH-HTTP-SIM.md) and
 [authenticated capability worker/UI
-evidence](evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md).
+evidence](evidence/M10-AUTHENTICATED-CAPABILITY-WORKER-UI.md), and the
+[authenticated WLAN provisioning
+evidence](evidence/M3-AUTHENTICATED-WLAN-PROVISIONING.md).
 
 Exit:
 
@@ -574,7 +581,7 @@ resource opcodes, child-occurrence rebinding, front-panel runtime inputs, live
 device telemetry,
 and device-trigger capture plots remain open. Replay-only probe triggers are
 separately implemented below. The canonical placement/wiring surface and a
-13-kind audited palette now support node create/delete and exact scalar
+18-kind audited palette now support node create/delete and exact scalar
 parameter replacement.
 Bounded complete canonical `ALGS` snapshots now provide replay-backed
 undo/redo across graph, probe, trigger, sidecar-import, cached-job, selected

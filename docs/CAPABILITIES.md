@@ -375,9 +375,9 @@ Current identities are:
 
 | Board | Bytes | SHA-256 |
 | --- | ---: | --- |
-| MKS TinyBee V1.x, 8 MiB primary | 3,607 | `24c011c210b7a7efc3a027c926053b9ac1090f49b79b510487328887ceae5cfd` |
-| MKS TinyBee V1.x, 4 MiB variant | 3,620 | `bbffb55926e95aefbbae6f39c369f7e6376dc06a531447bfa5ae57508877dc6a` |
+| MKS TinyBee V1.x, 8 MiB primary | 3,607 | `a185e405f814a3b61153b4db4a784a6a4fbfa73040ab7ece2b3f20e481495c0c` |
+| MKS TinyBee V1.x, 4 MiB variant | 3,620 | `0ed7a49c0f8b47ca65c697d4335afe8f83a343318f78e33840e9cff1517f58b7` |
 | T-Deck Pro | 2,837 | `1de707aa21a0f8427e619c6501836cb8b281ff59e7294707c24b766be4e163d5` |
 | MKS ESP32 FOC V1.0 | 3,040 | `cbe9b541f90a0f9a63487f7fc43855b742bc4e7c1bc4776aca27aea3fbc60384` |
 | T-LoRa Pager (current compile-only stub) | 3,157 | `38b450496cb2a53d188eff6f06061b68dffc6a29573a093d0e012ac1e7672d1a` |
-| Host TinyBee simulator | 4,040 | `cd79743abb05c28500dedca7fb075433922528ea4e269dfbe53287f7aa77026c` |
+| Host TinyBee simulator | 4,040 | `7fb9aebe3ce7a7905e13542c09169dc1007850e7883d0d0577ea0c25252196c7` |

@@ -80,7 +80,6 @@ impl AppStackInitializer {
 /// initializer reports the failure and firmware can disable passive measurement.
 pub fn start_second_core_with_watermark<const BYTES: usize>(
     cpu_control: CPU_CTRL,
-    interrupt0: SoftwareInterrupt<'static, 0>,
     interrupt1: SoftwareInterrupt<'static, 1>,
     stack: &'static mut Stack<BYTES>,
     entry: impl FnOnce(AppStackInitializer) + Send + 'static,
@@ -90,7 +89,7 @@ pub fn start_second_core_with_watermark<const BYTES: usize>(
         .checked_add(BYTES)
         .ok_or(TargetStackWatermarkError::Bounds)
         .and_then(|top| StackBounds::new(bottom, top));
-    esp_rtos::start_second_core(cpu_control, interrupt0, interrupt1, stack, move || {
+    esp_rtos::start_second_core(cpu_control, interrupt1, stack, move || {
         entry(AppStackInitializer(bounds))
     });
 }

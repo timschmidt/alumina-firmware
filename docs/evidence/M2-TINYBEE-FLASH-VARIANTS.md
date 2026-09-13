@@ -1,124 +1,63 @@
 # M2 TinyBee flash-variant evidence
 
-Date: 2026-08-11
+Date: 2026-08-26
 
-Status: 8 MiB is the primary compile-time TinyBee package and 4 MiB is a
-separate opportunistic compile-time variant. Both currently link and fit an
-explicit image of their declared capacity. Neither result changes the board's
-`compiles`, non-armable qualification.
+Status: 8 MiB remains the primary TinyBee target. The separately identified
+4 MiB variant still links the complete maximum-compression Brotli interface,
+but its app no longer fits the physical partition. No asset was pruned and no
+compatibility build was created. Both remain non-armable; there is no physical
+4 MiB fixture.
 
-## Decision and evidence boundary
+## Exact identities
 
-The connected bare PCB is operator-identified as `MKS TinyBee v1.0` and a
-read-only `espflash board-info` observation reported 8 MB. The operator expects
-most shipped TinyBees to use that capacity and directed Alumina to make it the
-primary target while retaining 4 MiB when feasible. The primary choice uses
-that direction plus the observed fixture. This checkpoint does not claim an
-independent population survey or identify the fixture's module marking.
+| Selector | Board ID | Flash bytes | Capability digest |
+| --- | --- | ---: | --- |
+| `mks-tinybee-v1` | `mks-tinybee-v1` | 8,388,608 | `a185e405f814a3b61153b4db4a784a6a4fbfa73040ab7ece2b3f20e481495c0c` |
+| `mks-tinybee-v1-4mb` | `mks-tinybee-v1-4mb` | 4,194,304 | `0ed7a49c0f8b47ca65c697d4335afe8f83a343318f78e33840e9cff1517f58b7` |
 
-The earlier safe-smoke evidence contained an erroneous sentence saying the
-then-current board package declared 4 MB. Inspection of the package at its
-recorded `e91886a` commit shows that it declared 8 MiB. That evidence record now
-contains an explicit correction rather than carrying the contradiction forward.
+The packages share routed V1.x PCB facts but have different board IDs, flash
+capacities, and canonical capability documents. Both now publish the measured
+TinyBee graph envelope: 1 KiB service state, 1 KiB realtime state, 2 KiB per
+local channel arena, and 2 KiB cross-core channels. Firmware selects exactly
+one package at compile time and never probes flash to substitute the other.
 
-## Exact package identities
+## Full-image fit
 
-| Selector | Canonical board ID | Cargo feature | Flash bytes | Capability digest | Fixture |
-| --- | --- | --- | ---: | --- | --- |
-| `mks-tinybee` / `mks-tinybee-8mb` | `mks-tinybee-v1` | `board-mks-tinybee` | 8,388,608 | `c4e2345314b33276263aba379a02249ec81a1ad6da00c108c00cc9837c31da0c` | connected V1.0 PCB reports 8 MB |
-| `mks-tinybee-4mb` | `mks-tinybee-v1-4mb` | `board-mks-tinybee-4mb` | 4,194,304 | `179360f544c215fcc792734482d5d920a11e262326c553093e53fa55addf9ee6` | unavailable |
+Both release targets link their full seven-asset plus manifest bundle.
+`espflash 4.3.0 save-image` encodes the 8 MiB primary and rejects the oversized
+4 MiB variant:
 
-The canonical documents share the established PCB routing, buses, ownership,
-safe-image, and HIL requirements. Their IDs, revision descriptions, memory
-capacities, and SHA-256 capability identities differ. `xtask` validates each
-metadata file against the corresponding Rust package. The firmware build script
-accepts exactly one board feature and embeds that exact ID; the selected TinyBee
-hardware module exports only its matching package. There is no flash-capacity
-probe, runtime fallback, aliasing of capability identities, or compatibility
-shim.
+| Variant | ELF SHA-256 | App bytes / partition | Merged bytes | Merged SHA-256 |
+| --- | --- | ---: | ---: | --- |
+| 8 MiB | `6805cc1458a158c0315315df3f5ae50d29b27a74dc28c111020c100f0bed8acb` | 4,243,168 / 8,323,072 (50.98%) | 4,308,704 | `7eaf3d9f01859f9c251d376cae177455eea5def1c71baf282bc34deba8873346` |
+| 4 MiB | `9e418eaf59e45272c8d2c05c4b550f38e5c1953148d0adccad79ac28537e8dea` | 4,243,168 / 4,128,768 (oversize) | rejected | none |
 
-Every successful `xtask build` copies Cargo's conventional ELF to a
-board-qualified filename. This prevents a later build from leaving only an
-ambiguously named artifact:
+The 4 MiB result exceeds the current app partition by 114,400 bytes. It is
+compile evidence only, not a flashable image or a production partition
+commitment. The fitting 8 MiB image remains primary.
 
-```text
-target/xtensa-esp32-none-elf/release/alumina-firmware-mks-tinybee-v1
-target/xtensa-esp32-none-elf/release/alumina-firmware-mks-tinybee-v1-4mb
-```
-
-## Current linked and flash-image fit
-
-The release ELFs have these identities:
-
-| Package | ELF SHA-256 | text | data | BSS |
-| --- | --- | ---: | ---: | ---: |
-| 8 MiB primary | `0a9887909648117eb5ba6c80f1377145c0bc3797bdce695d8dc807f551ca2fe8` | 913,144 | 12,072 | 250,064 |
-| 4 MiB variant | `167a9e7b04ab9e72fced5e4bbe7883da56a8c956558fa390b7421f50c8967492` | 913,164 | 12,072 | 250,064 |
-
-`espflash 4.3.0 save-image` was run with explicit `--flash-size`, `--merge`,
-`--skip-padding`, and `--skip-update-check` into a temporary directory. It
-reported:
-
-```text
-8 MiB: App/part. size 925,328 / 8,323,072 bytes (11.12%)
-4 MiB: App/part. size 925,344 / 4,128,768 bytes (22.41%)
-```
-
-The unpadded merged binaries were respectively 990,864 and 990,880 bytes. This
-proves that the present firmware can be encoded for each declared capacity. It
-does not establish a final Alumina partition table, dual update slots, embedded
-web/WASM asset budget, rollback space, crash-log allocation, or future fit. The
-4 MiB build remains opportunistic: later required content must either fit its
-separately reviewed budget or the variant must stay at a lower support level.
-
-## Reproduced checks
-
-Run from the repository root:
+## Reproduction and boundary
 
 ```console
-cargo fmt --all -- --check
-cargo test --locked --offline
-cargo clippy --all-targets --locked --offline -- -D warnings
-cargo xtask board list
-cargo xtask board check mks-tinybee
-cargo xtask board check mks-tinybee-4mb
-cargo xtask capabilities --board mks-tinybee --json
-cargo xtask capabilities --board mks-tinybee-4mb --json
-cargo +esp clippy -p alumina-firmware --bin alumina-firmware \
-  --no-default-features --features board-mks-tinybee \
-  --target xtensa-esp32-none-elf --locked --offline -- -D warnings
-cargo +esp clippy -p alumina-firmware --bin alumina-firmware \
-  --no-default-features --features board-mks-tinybee-4mb \
-  --target xtensa-esp32-none-elf --locked --offline -- -D warnings
-cargo xtask build --board mks-tinybee --profile release
-cargo xtask build --board mks-tinybee-4mb --profile release
-cargo xtask build --board t-deck-pro --profile release
-cargo xtask build --board mks-esp32-foc-v1 --profile release
-cargo tree --workspace --all-features --locked --offline \
-  --prefix none --format '{p}|{l}'
-git diff --check
+cargo xtask board check mks-tinybee-v1
+cargo xtask board check mks-tinybee-v1-4mb
+cargo xtask capabilities --board mks-tinybee-v1 --json
+cargo xtask capabilities --board mks-tinybee-v1-4mb --json
+cargo xtask build --board mks-tinybee-v1 --profile release
+cargo xtask build --board mks-tinybee-v1-4mb --profile release
+espflash save-image --chip esp32 --flash-size 8mb --merge --skip-padding \
+  target/xtensa-esp32-none-elf/release/alumina-firmware-mks-tinybee-v1 \
+  /tmp/alumina-tinybee-8mb.bin
+espflash save-image --chip esp32 --flash-size 4mb --merge --skip-padding \
+  target/xtensa-esp32-none-elf/release/alumina-firmware-mks-tinybee-v1-4mb \
+  /tmp/alumina-tinybee-4mb.bin
 ```
 
-Both board packages and capability identities validate, both strict target
-Clippy checks pass, and both release targets link. The full portable workspace
-has 316 passing tests. T-Deck Pro and MKS ESP32 FOC V1.0 also link after the
-feature-selection change, and `xtask` preserves a board-qualified ELF for every
-successful build.
-
-## Hardware and licensing boundary
-
-The connected 8 MiB TinyBee was not read, flashed, reset, or otherwise touched
-for this checkpoint. No motor or motor power was connected. No 4 MiB fixture is
-available, so that variant has compile/encoding evidence only. The SLogic16U3
-remains disconnected; flash capacity work requires no waveform capture.
-
-All changes are independently authored under `MIT OR Apache-2.0` and add no
-external dependency package. The board crate gains a dev-only edge to the
-already locked, repository-owned `alumina-capability` crate so both compiled
-digests are independently recomputed in tests. No GPL-family source, dependency,
-or asset was introduced or consulted. The all-feature Cargo tree contains 851
-nonempty package/license records, zero missing license expressions, and zero
-GPL/AGPL/LGPL/SSPL-family expressions. A Rust/C/C++/header/Cargo-manifest scan
-outside documentation likewise has no GPL-family match. `cargo-deny` remains
-configured in CI but is not installed locally, so no local `cargo deny` result
-is claimed.
+On 2026-08-26 the connected V1.0 fixture re-enumerated and `espflash board-info`
+reconfirmed ESP32 revision 1.0, dual-core operation, and 8 MiB flash. A write of
+the then-current primary image was then attempted, but the USB serial device
+disappeared after image sizing and before `espflash` reported write
+verification. The stalled process was stopped, the resulting device state is
+deliberately unqualified, and the 4 MiB image was not flashed. No motor or motor
+power was connected. All implementation is `MIT OR Apache-2.0`; no GPL-family
+source, dependency, or asset was introduced.

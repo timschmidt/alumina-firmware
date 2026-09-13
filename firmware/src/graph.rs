@@ -1,5 +1,7 @@
 //! Core-0 ownership of authenticated published graph installation and lifecycle.
 
+use alloc::boxed::Box;
+
 use alumina_board::ResourceId;
 use alumina_graph_ir::{
     CoreGraphCommand, CoreGraphExecutionAction, CoreGraphExecutionCommand, GRAPH_IR_PACKAGE_BYTES,
@@ -31,6 +33,7 @@ pub use crate::graph_platform::{
     GRAPH_RUNTIME_LIMITS, GraphBridge, RealtimeGraphActor, ServiceGraphActor,
 };
 use crate::hardware::selected;
+use crate::poll_boundary::poll_boundary;
 
 const _: () = assert!(
     FrameHeader::WIRE_LEN
@@ -284,7 +287,10 @@ pub struct GraphService {
     phase: GraphCoordinatorPhase,
     fault: GraphCoordinatorFault,
     operation: Option<GraphPublication>,
-    validation: Option<ServiceGraphValidation>,
+    // The publication cursor and complete candidate package are transient.
+    // Keeping them behind an owned allocation releases their arena whenever
+    // activation, rejection, or recovery finishes.
+    validation: Option<Box<ServiceGraphValidation>>,
     validation_status: Option<ServiceGraphValidationStatus>,
     durable_active: Option<DurableGraphSelection>,
     durable_pending: Option<GraphTransition>,
@@ -339,6 +345,56 @@ impl GraphService {
             service_last_release_tick: None,
             execution_command_sent: false,
         }
+    }
+
+    /// Establishes the boot state when discovery proved that no mounted cache
+    /// can contain a durable graph selector.
+    ///
+    /// A later freshly provisioned cache begins empty, so this state remains a
+    /// valid base for greenfield installation. Transport failure is retained as
+    /// a storage rejection rather than repeatedly entering media replay.
+    pub fn establish_unmounted_bootstrap(&mut self, storage_faulted: bool) {
+        if self.bootstrapped {
+            return;
+        }
+        self.journal_loaded = true;
+        self.bootstrapped = true;
+        self.boot_recovery = false;
+        self.phase = if storage_faulted {
+            GraphCoordinatorPhase::Rejected
+        } else {
+            GraphCoordinatorPhase::Empty
+        };
+        self.fault = if storage_faulted {
+            GraphCoordinatorFault::Storage
+        } else {
+            GraphCoordinatorFault::None
+        };
+    }
+
+    /// Whether the coordinator has one bounded background transition or
+    /// scheduled Service-domain graph release to run.
+    ///
+    /// Stable phases bypass the large validation future entirely. This is not
+    /// merely an optimization on classic ESP32: every cooperative task shares
+    /// the linker-owned core-0 executor stack, while an idle graph has no work
+    /// which could justify entering that frame.
+    pub fn requires_step(&self) -> bool {
+        !self.bootstrapped
+            || matches!(
+                self.phase,
+                GraphCoordinatorPhase::Recovering
+                    | GraphCoordinatorPhase::Validating
+                    | GraphCoordinatorPhase::Preparing
+                    | GraphCoordinatorPhase::Activating
+                    | GraphCoordinatorPhase::Committing
+                    | GraphCoordinatorPhase::Authorizing
+                    | GraphCoordinatorPhase::Clearing
+                    | GraphCoordinatorPhase::Aborting
+                    | GraphCoordinatorPhase::Starting
+                    | GraphCoordinatorPhase::Running
+                    | GraphCoordinatorPhase::Stopping
+            )
     }
 
     /// Whether a valid universal request selects the graph family.
@@ -524,6 +580,7 @@ impl GraphService {
     }
 
     /// Dispatch one already authenticated graph lifecycle request.
+    #[inline(never)]
     pub async fn dispatch(
         &mut self,
         cache: &mut selected::StorageBackend,
@@ -544,7 +601,9 @@ impl GraphService {
         } else {
             match native.message.operation {
                 Operation::GraphGet if native.body.is_empty() => StatusCode::Ok,
-                Operation::GraphInstall => self.begin_install(cache, native, mutation).await,
+                Operation::GraphInstall => {
+                    poll_boundary(self.begin_install(cache, native, mutation)).await
+                }
                 Operation::GraphActivate => self.request_activate(native, mutation),
                 Operation::GraphClear => self.request_clear(native, mutation),
                 Operation::GraphStart => self.request_start(native, now, mutation),
@@ -556,6 +615,7 @@ impl GraphService {
     }
 
     /// Advance at most one media read, command send, or lifecycle transition.
+    #[inline(never)]
     pub async fn step(
         &mut self,
         cache: &mut selected::StorageBackend,
@@ -564,7 +624,7 @@ impl GraphService {
         mutation: MutationContext,
     ) {
         if !self.bootstrapped {
-            self.bootstrap_step(cache, mutation).await;
+            poll_boundary(self.bootstrap_step(cache, mutation)).await;
             if !self.bootstrapped {
                 return;
             }
@@ -578,21 +638,21 @@ impl GraphService {
         }
         match self.phase {
             GraphCoordinatorPhase::Recovering | GraphCoordinatorPhase::Validating => {
-                self.validation_step(cache, endpoint, now).await;
+                poll_boundary(self.validation_step(cache, endpoint, now)).await;
             }
             GraphCoordinatorPhase::Preparing => {
-                self.prepare_activation(cache, mutation).await;
+                poll_boundary(self.prepare_activation(cache, mutation)).await;
             }
             GraphCoordinatorPhase::Activating => self.activation_step(endpoint, now),
             GraphCoordinatorPhase::Committing => {
-                self.commit_activation(cache, mutation).await;
+                poll_boundary(self.commit_activation(cache, mutation)).await;
             }
             GraphCoordinatorPhase::Authorizing => self.authorization_step(endpoint, now),
             GraphCoordinatorPhase::Clearing => {
-                self.clear_step(cache, endpoint, now, mutation).await;
+                poll_boundary(self.clear_step(cache, endpoint, now, mutation)).await;
             }
             GraphCoordinatorPhase::Aborting => {
-                self.abort_step(cache, endpoint, now, mutation).await;
+                poll_boundary(self.abort_step(cache, endpoint, now, mutation)).await;
             }
             GraphCoordinatorPhase::Starting => {
                 if mutation.validate().is_err() {
@@ -654,7 +714,7 @@ impl GraphService {
             if mutation.validate().is_err() {
                 return;
             }
-            match cache.abort_graph_transition(orphan, mutation).await {
+            match poll_boundary(cache.abort_graph_transition(orphan, mutation)).await {
                 Ok(journal) => {
                     self.durable_active = journal.active;
                     self.boot_orphan = None;
@@ -682,13 +742,18 @@ impl GraphService {
             config_digest: self.active_config,
             implementation_digest: publication.implementation_digest,
         };
-        match ServiceGraphValidation::open(cache, publication, authority, GRAPH_RUNTIME_LIMITS)
-            .await
+        match poll_boundary(ServiceGraphValidation::open(
+            cache,
+            publication,
+            authority,
+            GRAPH_RUNTIME_LIMITS,
+        ))
+        .await
         {
             Ok(validation) => {
                 self.operation = Some(publication);
                 self.validation_status = Some(validation.status());
-                self.validation = Some(validation);
+                self.validation = Some(Box::new(validation));
                 self.pending_command = None;
                 self.control_sent = false;
                 self.transfer_sent = false;
@@ -746,21 +811,25 @@ impl GraphService {
             config_digest: self.active_config,
             implementation_digest: publication.implementation_digest,
         };
-        let validation =
-            match ServiceGraphValidation::open(cache, publication, authority, GRAPH_RUNTIME_LIMITS)
-                .await
-            {
-                Ok(validation) => validation,
-                Err(error) => {
-                    let (status, fault) = transfer_error(error);
-                    self.operation = Some(publication);
-                    self.reject(fault);
-                    return status;
-                }
-            };
+        let validation = match poll_boundary(ServiceGraphValidation::open(
+            cache,
+            publication,
+            authority,
+            GRAPH_RUNTIME_LIMITS,
+        ))
+        .await
+        {
+            Ok(validation) => validation,
+            Err(error) => {
+                let (status, fault) = transfer_error(error);
+                self.operation = Some(publication);
+                self.reject(fault);
+                return status;
+            }
+        };
         self.operation = Some(publication);
         self.validation_status = Some(validation.status());
-        self.validation = Some(validation);
+        self.validation = Some(Box::new(validation));
         self.pending_command = None;
         self.control_sent = false;
         self.transfer_sent = false;
@@ -1044,7 +1113,7 @@ impl GraphService {
                 self.reject(GraphCoordinatorFault::Internal);
                 return;
             };
-            let next = validation.next(cache).await;
+            let next = poll_boundary(validation.next(cache)).await;
             self.validation_status = Some(validation.status());
             match next {
                 Ok(command) => self.pending_command = command,
@@ -1099,7 +1168,7 @@ impl GraphService {
             }
         };
         let transition = GraphTransition::activate(durable);
-        match cache.prepare_graph_transition(transition, mutation).await {
+        match poll_boundary(cache.prepare_graph_transition(transition, mutation)).await {
             Ok(_) => {
                 self.durable_pending = Some(transition);
                 self.phase = GraphCoordinatorPhase::Activating;
@@ -1154,7 +1223,7 @@ impl GraphService {
             self.reject(GraphCoordinatorFault::Internal);
             return;
         }
-        match cache.commit_graph_transition(transition, mutation).await {
+        match poll_boundary(cache.commit_graph_transition(transition, mutation)).await {
             Ok(journal) => {
                 self.durable_active = journal.active;
                 self.durable_pending = None;
@@ -1221,7 +1290,7 @@ impl GraphService {
             .graph_journal()
             .is_ok_and(|journal| journal.pending == Some(transition));
         if !prepared {
-            match cache.prepare_graph_transition(transition, mutation).await {
+            match poll_boundary(cache.prepare_graph_transition(transition, mutation)).await {
                 Ok(_) => return,
                 Err(_) => {
                     self.reject(GraphCoordinatorFault::Durability);
@@ -1258,7 +1327,7 @@ impl GraphService {
         if !settled {
             return;
         }
-        match cache.commit_graph_transition(transition, mutation).await {
+        match poll_boundary(cache.commit_graph_transition(transition, mutation)).await {
             Ok(journal) => {
                 self.durable_active = journal.active;
                 self.durable_pending = None;
@@ -1294,7 +1363,7 @@ impl GraphService {
             if let Some(transition) = self.durable_pending
                 && transition.action() == GraphTransitionAction::Activate
             {
-                match cache.abort_graph_transition(transition, mutation).await {
+                match poll_boundary(cache.abort_graph_transition(transition, mutation)).await {
                     Ok(_) => self.durable_pending = None,
                     Err(_) => {
                         self.reject(GraphCoordinatorFault::Durability);
@@ -1339,7 +1408,7 @@ impl GraphService {
             if let Some(transition) = self.durable_pending
                 && transition.action() == GraphTransitionAction::Activate
             {
-                match cache.abort_graph_transition(transition, mutation).await {
+                match poll_boundary(cache.abort_graph_transition(transition, mutation)).await {
                     Ok(_) => self.durable_pending = None,
                     Err(_) => {
                         self.reject(GraphCoordinatorFault::Durability);

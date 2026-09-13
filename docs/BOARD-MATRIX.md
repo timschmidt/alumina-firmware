@@ -53,9 +53,12 @@ not treated as independently verified hardware evidence. A separate
 `mks-tinybee-4mb` build retains the same routed PCB facts but reports exactly
 4 MiB under board ID `mks-tinybee-v1-4mb`. Its different canonical capability
 digest prevents a 4 MiB image/configuration from masquerading as the primary
-package. There is no runtime autodetection or fallback. The 4 MiB variant
-currently links and fits an explicitly generated 4 MiB flash image, but has no
-physical fixture and may require reduced future asset/update budgets.
+package. There is no runtime autodetection or fallback. With q11/w23 Brotli the
+complete linked app is now 4,243,168 bytes, 114,400 bytes beyond its
+4,128,768-byte app partition, and `espflash save-image` rejects it. It remains
+an opportunistic compile variant: no physical 4 MiB fixture exists, no fitting
+image is claimed, and the primary 8 MiB image is not constrained to preserve
+future 4 MiB fit.
 
 ### Critical physical resources
 
@@ -127,6 +130,19 @@ This mapping has consequences:
 6. Verify hard-limit latency and controlled-stop/emergency-disable paths.
 7. Verify heater/fan watchdog and thermal-fault shutdown with representative
    loads before exposing those capabilities in the UI.
+
+### TinyBee embedded-interface budget
+
+The 2026-08-26 composition uses two concurrently listening TinyBee HTTP workers
+and a finite browser schedule: a data-URL favicon, decoder-first bootstrap, then
+two parallel Brotli payloads. The complete app occupies 4,243,168 of 8,323,072
+bytes (50.98%). Linked `.bss` is 162,660 bytes, linker-residual core-0 stack is
+21,084 bytes, and 98,304 bytes of bootloader-reclaimed memory are registered.
+Those are static/link facts, not runtime stack or allocator headroom. The bare
+TinyBee transferred the large Brotli resource exactly on the preceding
+one-worker image. The current-image flash attempt again lost the USB device
+before write verification, so its physical boot and browser qualification
+remain open.
 
 ## T-Deck Pro model
 

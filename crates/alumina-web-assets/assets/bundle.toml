@@ -1,0 +1,75 @@
+format = "alumina-web-bundle-v2"
+interface_commit = "0a111d2e5243db0e356e9befa1ac28c77785753a"
+asset_count = 7
+brotli_quality = 11
+brotli_lgwin = 23
+
+[[asset]]
+path = "/"
+source_media_type = "text/html; charset=utf-8"
+wire_media_type = "text/html; charset=utf-8"
+stored_representation = "identity"
+source_bytes = 1077
+wire_bytes = 1077
+source_sha256 = "3ccd883461eb1c786c2418512f8cb6094a141a8459a2dd597fad00cccf5a3a2b"
+wire_sha256 = "3ccd883461eb1c786c2418512f8cb6094a141a8459a2dd597fad00cccf5a3a2b"
+
+[[asset]]
+path = "/alumina-bootstrap.js"
+source_media_type = "text/javascript; charset=utf-8"
+wire_media_type = "text/javascript; charset=utf-8"
+stored_representation = "identity"
+source_bytes = 16235
+wire_bytes = 16235
+source_sha256 = "2d3d556f85918dd4d4a93490b40a6d957c55bce5449274220a898171307fef18"
+wire_sha256 = "2d3d556f85918dd4d4a93490b40a6d957c55bce5449274220a898171307fef18"
+
+[[asset]]
+path = "/alumina-brotli-decoder_bg.wasm"
+source_media_type = "application/wasm"
+wire_media_type = "application/wasm"
+stored_representation = "identity"
+source_bytes = 196134
+wire_bytes = 196134
+source_sha256 = "8a656d9cb18dfce82838f06f6153005a6cfa0c22c3cf575ef5cf30932fb46cab"
+wire_sha256 = "8a656d9cb18dfce82838f06f6153005a6cfa0c22c3cf575ef5cf30932fb46cab"
+
+[[asset]]
+path = "/alumina-interface.js.br"
+source_media_type = "text/javascript; charset=utf-8"
+wire_media_type = "application/octet-stream"
+stored_representation = "brotli-rfc7932-q11-w23"
+source_bytes = 91816
+wire_bytes = 10909
+source_sha256 = "4f0d819019f81df95b324a7f9a521effeb1c7d95ca56172be6b3af7e6c7f192e"
+wire_sha256 = "5d6515aa29962f29b17b25496c0911c3ba9b4ca619fe9fdbaef60c35f55b10c3"
+
+[[asset]]
+path = "/alumina-interface_bg.wasm.br"
+source_media_type = "application/wasm"
+wire_media_type = "application/octet-stream"
+stored_representation = "brotli-rfc7932-q11-w23"
+source_bytes = 8421767
+wire_bytes = 2820967
+source_sha256 = "b9670ad660146faa860bd1c7ee086e32da9b174f333fec3c161e6f11dd4ff8d9"
+wire_sha256 = "9c6310d1993a7facbfd97d84be6185b20cb72af2d6997433e3bee40b1e20a415"
+
+[[asset]]
+path = "/alumina-worker.js"
+source_media_type = "text/javascript; charset=utf-8"
+wire_media_type = "text/javascript; charset=utf-8"
+stored_representation = "identity"
+source_bytes = 678
+wire_bytes = 678
+source_sha256 = "2d23324fa4fe34169abcc34046dcbcadbd13a02b99958f465ab3878a709c9a75"
+wire_sha256 = "2d23324fa4fe34169abcc34046dcbcadbd13a02b99958f465ab3878a709c9a75"
+
+[[asset]]
+path = "/favicon.ico"
+source_media_type = "image/x-icon"
+wire_media_type = "image/x-icon"
+stored_representation = "identity"
+source_bytes = 196
+wire_bytes = 196
+source_sha256 = "311f2089f900726358e69d1c490236942ea17aa418f198764a5662c8eaeeb5af"
+wire_sha256 = "311f2089f900726358e69d1c490236942ea17aa418f198764a5662c8eaeeb5af"

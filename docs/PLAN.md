@@ -170,8 +170,9 @@ The TinyBee flash-identity follow-up now makes the observed 8 MiB module the
 primary `mks-tinybee` build and retains a separately identified 4 MiB variant.
 Both compile through the same physical-routing composition, export distinct
 canonical capability digests, and leave board-qualified ELFs; runtime probing
-cannot substitute them. The 4 MiB image currently fits, but its physical
-fixture and final partition/web/update budgets remain open. See the
+cannot substitute them. The current 4 MiB variant links but exceeds its app
+partition by 114,400 bytes, so only the 8 MiB primary produces a fitting image;
+the smaller fixture and future partition/web/update budgets remain open. See the
 [flash-variant evidence](evidence/M2-TINYBEE-FLASH-VARIANTS.md).
 
 ### M3 — Native protocol, Wi-Fi/web service, simulator, and SD cache
@@ -205,6 +206,15 @@ bounded async phase before awaiting the service bridge. All limits and
 two-connection concurrency remain unchanged, while the permanent HTTP task pool
 falls by exactly 4,000 bytes on every current board. See
 [`M10-HTTP-PHASE-STORAGE-REUSE.md`](evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
+
+Authenticated-WLAN checkpoint: fixed native status/scan/join/leave/recover
+bodies, the core-0 AP+STA owner, strongest-first deterministic simulation,
+credential-safe client reconciliation, and the visible browser workflow are
+implemented. A clean Chromium run scans and joins the exact simulated WPA2
+BSSID while preserving the recovery AP, then verifies final state through an
+independently authenticated read-only query. Credentials remain explicitly
+volatile and physical AP+STA qualification remains open. See
+[`M3-AUTHENTICATED-WLAN-PROVISIONING.md`](evidence/M3-AUTHENTICATED-WLAN-PROVISIONING.md).
 
 Exit gate:
 
@@ -1240,10 +1250,13 @@ ownership. Cross-clock Stream feedthrough now requires an audited exact
 latest-at-or-before transition: rational clock analysis proves one shared root,
 the smallest repeating schedule, minimum queue capacity, and bounded held
 sample storage. A separate fixed HostExact implementation registry and bounded
-simulator now execute eleven reviewed behaviors: external Stream source, that
-audited transition, Stream sink, exact add/subtract/dimensionless scale/clamp,
-an exact inclusive-range predicate, Boolean conjunction, explicit
-read-before-write unit delay, and fail-safe exact permit gating. Its
+simulator now execute thirteen reviewed behaviors through eighteen fixed
+kind/version bindings: external Stream source, that audited transition, Stream
+sink, exact add/subtract/dimensionless scale/clamp, an exact inclusive-range
+predicate, Boolean conjunction, schema-generic constants and Boolean-selected
+cases bound for Boolean and exact-rational Streams, explicit read-before-write
+typed unit delay, and fail-safe exact
+permit gating. Its
 `ALSI` V2 identity binds the complete unit/type and clock context. A visible
 50 Hz to 10 Hz fixture composes those primitives into a discrete
 PID/interlock, keeps both state values explicit, applies exact registered unit
@@ -1260,6 +1273,23 @@ transactional. Structural changes detach the graph-bound reference trace, and
 invalid or cyclic candidates cannot mutate the draft. This remains HostExact
 authority only; none of those control behaviors or editor values grants
 firmware opcodes or physical output.
+The first conditional/state slice is now explicit rather than opaque:
+`control.bool.constant`, `control.bool.case`, and `control.bool.delay` are
+schema-validated `HostExact` palette nodes. A reset-dominant latch is assembled
+as two visible cases around one read-before-write delay; simultaneous set/reset
+selects false, and the independently replayed current-state trace is
+`false,false,true,true,false,false,true`. All three case inputs remain required
+at every tick, malformed bindings fail registry admission, reversed external
+sample order is authority-free, and false-safe palette defaults edit
+transactionally. The representative graph remains unchanged while the renewed
+`ALSI` identity covers the added behavior. There is deliberately no graph-IR,
+Service/Realtime, device-resource, or physical-output binding for this slice.
+The following typed-case slice reuses those same fixed behaviors for
+`control.exact.constant` and `control.exact.case`. Together with the existing
+exact delay they form a visible reset-dominant exact register whose fractional
+state survives reversed caller order and independent `ALGT` replay without a
+float or type-specific evaluator. The audited palette is now 18 kinds; this
+still grants no graph-IR or physical-output authority.
 The first portable deployed boundary is now a fixed 4 KiB `ALGRIR02` package with
 allocation-free independent admission, whitelisted Boolean Service/Realtime
 opcodes, integer device-cycle schedules, declared WCET plus executor reserve,
@@ -1485,9 +1515,21 @@ duplicates change only transient selection. Root occurrence editors now commit
 schema-directed exact values through complete flatten/source-map/session
 admission, with exact no-op, invalid-text atomicity, stable-ID default evolution,
 explicit-override preservation, removal/type-drift rejection, unified history,
-and browser persistence. Runtime `InputControl` values and executable panel
-programs remain open. See
-[`M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md`](evidence/M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md).
+and browser persistence. Canonical host-only `ALFR` V1 now resolves hierarchy-
+local `InputControl` authority, executes bounded exact sample-and-hold programs,
+and exposes a transient multi-change timeline whose edits invalidate stale run
+evidence without entering `ALGS`, persistence, or history. Live device control
+and promotion through deployment authority remain open. Public component
+Stream outputs now resolve through bounded nested occurrence placeholders
+to exact flattened endpoints and project the latest bound `ALGT` sample at or
+before one shared canonical rational root-clock cursor. Exact rate conversion,
+execution-context validation, and cursor changes remain host-only and never
+mutate canonical authoring or run evidence. See
+[`M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md`](evidence/M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md)
+and
+[`M9-EXACT-FRONT-PANEL-TIMELINE.md`](evidence/M9-EXACT-FRONT-PANEL-TIMELINE.md),
+followed by
+[`M9-EXACT-FRONT-PANEL-OUTPUT-CURSOR.md`](evidence/M9-EXACT-FRONT-PANEL-OUTPUT-CURSOR.md).
 A complete bounded allocation-free
 `ALMCAP04` decoder now
 feeds a board-name-independent owned explorer model. The visible TinyBee
@@ -1506,7 +1548,7 @@ the generic annotated-resource pipeline. Every physical package still publishes
 no visual, so a connected board draws no inferred shape or hotspot and keeps
 the physical-reconciliation HIL gate visibly open. Canonical HostExact node
 creation/deletion and schema-directed exact scalar/composite parameter editing
-now exist through a 13-kind audited palette. The representative interlock
+now exist through an 18-kind audited palette. The representative interlock
 composes an exact measurement-range predicate with the external permit through
 an audited Boolean
 conjunction; both exact range limits are front-panel controls. Bounded complete
@@ -1531,6 +1573,8 @@ See the
 [deterministic-simulation](evidence/M9-DETERMINISTIC-GRAPH-SIMULATION.md), and
 [exact-control graph](evidence/M9-EXACT-CONTROL-GRAPH.md), and
 [exact-interlock primitives](evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md), and
+[exact Boolean case/state composition](evidence/M9-EXACT-BOOLEAN-CASE-STATE.md), and
+[exact typed case/state composition](evidence/M9-EXACT-TYPED-CASE-STATE.md), and
 [mixed-signal control trace](evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md), and
 [interlock cause trace](evidence/M9-INTERLOCK-CAUSE-TRACE.md), and
 [exact replay probe trigger](evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md), and

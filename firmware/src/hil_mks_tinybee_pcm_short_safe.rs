@@ -114,8 +114,9 @@ async fn main(_spawner: Spawner) -> ! {
         }
     };
     let timer_group0 = TimerGroup::new(runtime.timer_group0);
-    esp_rtos::start(timer_group0.timer0);
-    let _retained_core_tokens = (runtime.cpu_control, runtime.software_interrupt);
+    let software_interrupt = SoftwareInterruptControl::new(runtime.software_interrupt);
+    esp_rtos::start(timer_group0.timer0, software_interrupt.software_interrupt0);
+    let _retained_core_tokens = (runtime.cpu_control, software_interrupt.software_interrupt1);
 
     if let Err(reason) = mks_tinybee::PACKAGE.validate() {
         error!(

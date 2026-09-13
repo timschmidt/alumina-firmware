@@ -10,6 +10,8 @@
     reason = "the isolated HIL binary reuses production board, network, and service modules but intentionally leaves unrelated APIs inert"
 )]
 
+extern crate alloc;
+
 #[cfg(not(feature = "hil-mks-tinybee-graph-input-timing-safe"))]
 compile_error!("this binary requires `hil-mks-tinybee-graph-input-timing-safe`");
 
@@ -26,6 +28,7 @@ mod storage;
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use alloc::boxed::Box;
 use alumina_board::{OwnerDomain, ResourceId};
 use alumina_config::{
     BindingFlags, BindingRole, ConfigurationFlags, ConfigurationHeader, ConfigurationRecord,
@@ -52,8 +55,7 @@ use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ram;
 use esp_hal::system::{Cpu, Stack};
 use esp_hal::timer::timg::TimerGroup;
-use panic_rtt_target as _;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use graph_platform::{GRAPH_RUNTIME_LIMITS, GraphBridge, RealtimeGraphActor, ServiceGraphActor};
 use hardware::mks_tinybee;
@@ -83,7 +85,8 @@ const _: () = {
 static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
 static SERVICE_ACTOR: StaticCell<ServiceGraphActor> = StaticCell::new();
 static REALTIME_ACTOR: StaticCell<RealtimeGraphActor> = StaticCell::new();
-static REALTIME_PROFILE: StaticCell<RealtimeConfigurationProfile> = StaticCell::new();
+static REALTIME_PROFILE: ConstStaticCell<RealtimeConfigurationProfile> =
+    ConstStaticCell::new(RealtimeConfigurationProfile::empty());
 static RUN_SIGNAL: StaticCell<Signal<CriticalSectionRawMutex, GraphRunIdentity>> =
     StaticCell::new();
 static APP_CORE_STACK: StaticCell<Stack<HIL_APP_CORE_STACK_BYTES>> = StaticCell::new();
@@ -109,7 +112,6 @@ esp_bootloader_esp_idf::esp_app_desc!();
 /// never initializes storage, motion streaming, or a process-output API.
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    rtt_target::rtt_init_defmt!();
     esp_println_uart::println!("ALUMINA_HIL_BOOT stage=entry");
 
     if let Err(reason) = mks_tinybee::PACKAGE.validate() {
@@ -120,26 +122,39 @@ async fn main(spawner: Spawner) -> ! {
         );
         park().await
     }
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=board-package-valid");
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
-    let device_id = DeviceId::from_esp_base_mac(esp_hal::efuse::Efuse::read_base_mac_address());
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=hal-initialized");
+    let base_mac = esp_hal::efuse::base_mac_address();
+    let device_id = DeviceId::from_esp_base_mac(
+        base_mac
+            .as_bytes()
+            .try_into()
+            .expect("ESP base MAC must contain six bytes"),
+    );
     esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
     esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
     let mut split = mks_tinybee::split(peripherals);
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=board-split");
 
     let timer_group0 = TimerGroup::new(split.runtime.timer_group0);
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
     let realtime_interrupt = software_interrupt.software_interrupt2;
-    esp_rtos::start(timer_group0.timer0);
+    esp_rtos::start(timer_group0.timer0, software_interrupt.software_interrupt0);
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=runtime-started");
 
     let wifi = split.service.take_wifi();
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=wifi-handle-taken");
     let (timing_marker, sink_marker) = split.service.into_graph_hil_markers();
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=hil-markers-selected");
     let (config_digest, realtime_profile) = build_configuration();
-    let realtime_profile = REALTIME_PROFILE.init(realtime_profile);
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-built");
     let package = build_graph_package(device_id, config_digest);
     let content_digest = graph_ir_content_digest(package.bytes());
     let package_digest = package.digest();
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=graph-package-built");
     let authority = GraphRuntimeAuthority {
         device_id,
         capability_digest: mks_tinybee::PACKAGE.board.capability_digest,
@@ -150,6 +165,7 @@ async fn main(spawner: Spawner) -> ! {
     let bridge: &'static GraphBridge = GRAPH_BRIDGE.init(GraphBridge::new());
     let service_actor = SERVICE_ACTOR.init(ServiceGraphActor::new(bridge));
     let realtime_actor = REALTIME_ACTOR.init(RealtimeGraphActor::new(bridge));
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=actors-created");
     install_actor(
         service_actor,
         package.bytes(),
@@ -171,7 +187,6 @@ async fn main(spawner: Spawner) -> ! {
     let app_stack = APP_CORE_STACK.init(Stack::new());
     esp_rtos::start_second_core(
         split.runtime.cpu_control,
-        software_interrupt.software_interrupt0,
         software_interrupt.software_interrupt1,
         app_stack,
         move || {
@@ -179,14 +194,17 @@ async fn main(spawner: Spawner) -> ! {
                 realtime_interrupt,
             ));
             let realtime_spawner = executor.start(Priority::Priority3);
-            realtime_spawner.must_spawn(realtime_task(
-                split.realtime,
-                realtime_actor,
-                realtime_profile,
-                run_signal,
-                timing_marker,
-                sink_marker,
-            ));
+            realtime_spawner.spawn(
+                realtime_task(
+                    split.realtime,
+                    realtime_actor,
+                    realtime_profile,
+                    run_signal,
+                    timing_marker,
+                    sink_marker,
+                )
+                .expect("failed to allocate HIL realtime task"),
+            );
         },
     );
 
@@ -281,7 +299,8 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
-fn build_configuration() -> (Digest, RealtimeConfigurationProfile) {
+fn build_configuration() -> (Digest, &'static RealtimeConfigurationProfile) {
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-entered");
     let header = ConfigurationHeader {
         capability_digest: mks_tinybee::PACKAGE.board.capability_digest,
         record_count: 1,
@@ -303,31 +322,44 @@ fn build_configuration() -> (Digest, RealtimeConfigurationProfile) {
     let header_bytes = header
         .encode()
         .unwrap_or_else(|_| panic!("HIL configuration header is invalid"));
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-header-encoded");
     let record_bytes = record
         .encode()
         .unwrap_or_else(|_| panic!("HIL configuration record is invalid"));
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-record-encoded");
     let mut hasher = ContentHasher::new();
     hasher.update(&header_bytes);
     hasher.update(&record_bytes);
     let digest = hasher.finalize().digest;
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-digested");
     let total_bytes = header
         .total_bytes()
         .unwrap_or_else(|_| panic!("HIL configuration length is invalid"));
-    let mut validator =
+    let mut validator = Box::new(
         ConfigurationStreamValidator::<1>::new(mks_tinybee::PACKAGE, digest, total_bytes)
-            .unwrap_or_else(|_| panic!("HIL configuration validator did not initialize"));
+            .unwrap_or_else(|_| panic!("HIL configuration validator did not initialize")),
+    );
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-validator-created");
     validator
         .push(&header_bytes)
         .unwrap_or_else(|_| panic!("HIL configuration header was not admitted"));
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-header-admitted");
     validator
         .push(&record_bytes)
         .unwrap_or_else(|_| panic!("HIL configuration record was not admitted"));
-    let (identity, profile) = validator
-        .finish_with_profile()
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-record-admitted");
+    let profile = REALTIME_PROFILE.take();
+    let identity = validator
+        .finish_into_static_profile(profile)
         .unwrap_or_else(|_| panic!("HIL configuration did not complete"));
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-finished");
     if identity.digest != digest || profile.safety_input_count() != 1 {
+        esp_println_uart::println!("ALUMINA_HIL_ABORT code=101 stage=configuration-identity");
         panic!("HIL configuration identity/profile mismatch");
     }
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-identity-valid");
+    drop(validator);
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=configuration-profile-retained");
     (digest, profile)
 }
 
@@ -402,17 +434,22 @@ fn install_actor(
     package_digest: Digest,
     authority: GraphRuntimeAuthority,
 ) {
-    actor
-        .install(
-            bytes,
-            GRAPH_TRANSACTION_ID,
-            content_digest,
-            package_digest,
-            authority,
-            GRAPH_RUNTIME_LIMITS,
-            true,
-        )
-        .unwrap_or_else(|_| panic!("service HIL graph admission failed"));
+    if let Err(reason) = actor.install(
+        bytes,
+        GRAPH_TRANSACTION_ID,
+        content_digest,
+        package_digest,
+        authority,
+        GRAPH_RUNTIME_LIMITS,
+        true,
+    ) {
+        esp_println_uart::println!(
+            "ALUMINA_HIL_ABORT code=102 stage=service-graph-admission reason={:?}",
+            reason
+        );
+        panic!("service HIL graph admission failed");
+    }
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=service-actor-installed");
 }
 
 fn install_realtime_actor(
@@ -422,17 +459,22 @@ fn install_realtime_actor(
     package_digest: Digest,
     authority: GraphRuntimeAuthority,
 ) {
-    actor
-        .install(
-            bytes,
-            GRAPH_TRANSACTION_ID,
-            content_digest,
-            package_digest,
-            authority,
-            GRAPH_RUNTIME_LIMITS,
-            true,
-        )
-        .unwrap_or_else(|_| panic!("realtime HIL graph admission failed"));
+    if let Err(reason) = actor.install(
+        bytes,
+        GRAPH_TRANSACTION_ID,
+        content_digest,
+        package_digest,
+        authority,
+        GRAPH_RUNTIME_LIMITS,
+        true,
+    ) {
+        esp_println_uart::println!(
+            "ALUMINA_HIL_ABORT code=103 stage=realtime-graph-admission reason={:?}",
+            reason
+        );
+        panic!("realtime HIL graph admission failed");
+    }
+    esp_println_uart::println!("ALUMINA_HIL_BOOT stage=realtime-actor-installed");
 }
 
 #[embassy_executor::task]
@@ -727,5 +769,13 @@ async fn realtime_fault(
 async fn park() -> ! {
     loop {
         Timer::after(Duration::from_secs(60)).await;
+    }
+}
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
+    esp_println_uart::println!("ALUMINA_GRAPH_HIL_PANIC {}", info);
+    loop {
+        core::hint::spin_loop();
     }
 }

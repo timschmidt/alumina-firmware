@@ -14,16 +14,18 @@ use alumina_shift_register::{
 use alumina_storage::provisioning::ProvisionedCache;
 use defmt::{info, warn};
 use embassy_time::Delay;
+use esp_hal::Blocking;
 use esp_hal::delay::Delay as BlockingDelay;
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::peripherals::{
-    ADC1, DMA_I2S0, GPIO0, GPIO1, GPIO2, GPIO3, GPIO4, GPIO5, GPIO12, GPIO13, GPIO14, GPIO15,
-    GPIO16, GPIO17, GPIO18, GPIO19, GPIO21, GPIO22, GPIO23, GPIO25, GPIO26, GPIO27, GPIO32, GPIO33,
-    GPIO34, GPIO35, GPIO36, GPIO39, I2S0, Peripherals, SPI2, TIMG1, UART0, UART2, WIFI,
+    ADC1, DMA_I2S0, GPIO0, GPIO2, GPIO4, GPIO5, GPIO12, GPIO13, GPIO14, GPIO15, GPIO16, GPIO17,
+    GPIO18, GPIO19, GPIO21, GPIO22, GPIO23, GPIO25, GPIO26, GPIO27, GPIO32, GPIO33, GPIO34, GPIO35,
+    GPIO36, GPIO39, I2S0, Peripherals, SPI2, TIMG1, UART2, WIFI,
 };
 use esp_hal::spi::Mode;
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
+use esp_hal::uart::{Config as UartConfig, Uart};
 
 use super::RuntimeResources;
 use super::safety_inputs::{
@@ -118,9 +120,7 @@ pub struct ServiceResources {
     spi_mosi: Option<GPIO23<'static>>,
     spi_clock: Option<GPIO18<'static>>,
     sd_chip_select: Option<GPIO5<'static>>,
-    uart0: UART0<'static>,
-    uart0_tx: GPIO1<'static>,
-    uart0_rx: GPIO3<'static>,
+    diagnostic_uart: Uart<'static, Blocking>,
     uart2: UART2<'static>,
     uart2_tx_lcd_d7: GPIO17<'static>,
     uart2_rx_lcd_d5: GPIO16<'static>,
@@ -134,6 +134,19 @@ pub struct ServiceResources {
 }
 
 impl ServiceResources {
+    /// Emits one transport-level marker through the HAL-owned programming
+    /// bridge UART before any ROM-printer or Defmt diagnostics are attempted.
+    pub fn write_diagnostic_boot_marker(&mut self) {
+        let mut remaining = b"alumina: uart configured\r\n".as_slice();
+        while !remaining.is_empty() {
+            match self.diagnostic_uart.write(remaining) {
+                Ok(written) if written != 0 => remaining = &remaining[written..],
+                _ => return,
+            }
+        }
+        let _ = self.diagnostic_uart.flush();
+    }
+
     /// Consumes otherwise dormant service tokens and establishes the
     /// disconnected-load HIL marker on nonhazardous GPIO4/LCD_RS.
     ///
@@ -545,6 +558,14 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
         ..
     } = peripherals;
 
+    // Reapply an explicit 115200-baud configuration after esp-hal changes the
+    // clock tree. The default APB source has enough divisor resolution on the
+    // classic ESP32; RefTick does not and produced a receiver-dependent rate.
+    let diagnostic_uart = Uart::new(uart0, UartConfig::default())
+        .unwrap_or_else(|_| panic!("invalid TinyBee diagnostic UART configuration"))
+        .with_tx(uart0_tx)
+        .with_rx(uart0_rx);
+
     SplitResources {
         runtime: RuntimeResources {
             timer_group0,
@@ -558,9 +579,7 @@ pub fn split(peripherals: Peripherals) -> SplitResources {
             spi_mosi: Some(spi_mosi),
             spi_clock: Some(spi_clock),
             sd_chip_select: Some(sd_chip_select),
-            uart0,
-            uart0_tx,
-            uart0_rx,
+            diagnostic_uart,
             uart2,
             uart2_tx_lcd_d7,
             uart2_rx_lcd_d5,

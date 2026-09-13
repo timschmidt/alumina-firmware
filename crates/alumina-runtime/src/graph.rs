@@ -611,7 +611,8 @@ impl<
             return Err(GraphRuntimeError::MissingExpectedDigest);
         }
 
-        let (package, metadata, usage) = admit_package(
+        let (metadata, usage) = admit_package_into(
+            &mut self.package,
             bytes,
             expected_package_digest,
             authority,
@@ -636,7 +637,6 @@ impl<
             bridge.queues.fill(QueueCursor::EMPTY);
         });
         self.metadata = metadata;
-        self.package = Some(package);
         self.phase = GraphRuntimePhase::Installed;
 
         let package = self
@@ -776,10 +776,48 @@ fn admit_package(
     authority: GraphRuntimeAuthority,
     limits: GraphRuntimeLimits,
 ) -> Result<(GraphIrPackage, GraphRuntimeMetadata, GraphRuntimeUsage), GraphRuntimeError> {
+    let package = GraphIrPackage::from_slice(bytes)?;
+    let (metadata, usage) =
+        admit_decoded_package(&package, expected_package_digest, authority, limits)?;
+    Ok((package, metadata, usage))
+}
+
+/// Admit directly into the caller's otherwise-empty permanent package slot.
+/// Any failed identity, palette, or arena check restores the empty slot.
+fn admit_package_into(
+    destination: &mut Option<GraphIrPackage>,
+    bytes: &[u8],
+    expected_package_digest: Digest,
+    authority: GraphRuntimeAuthority,
+    limits: GraphRuntimeLimits,
+) -> Result<(GraphRuntimeMetadata, GraphRuntimeUsage), GraphRuntimeError> {
+    if destination.is_some() {
+        return Err(GraphRuntimeError::RuntimeShape);
+    }
+    GraphIrPackage::replace_from_slice(destination, bytes)?;
+    let result = admit_decoded_package(
+        destination
+            .as_ref()
+            .ok_or(GraphRuntimeError::RuntimeShape)?,
+        expected_package_digest,
+        authority,
+        limits,
+    );
+    if result.is_err() {
+        *destination = None;
+    }
+    result
+}
+
+fn admit_decoded_package(
+    package: &GraphIrPackage,
+    expected_package_digest: Digest,
+    authority: GraphRuntimeAuthority,
+    limits: GraphRuntimeLimits,
+) -> Result<(GraphRuntimeMetadata, GraphRuntimeUsage), GraphRuntimeError> {
     if expected_package_digest.is_zero() {
         return Err(GraphRuntimeError::MissingExpectedDigest);
     }
-    let package = GraphIrPackage::from_slice(bytes)?;
     if package.digest() != expected_package_digest {
         return Err(GraphRuntimeError::PackageDigest {
             expected: expected_package_digest,
@@ -806,8 +844,8 @@ fn admit_package(
         ));
     }
 
-    validate_capability_palette(&package, limits)?;
-    let metadata = GraphRuntimeMetadata::from_package(&package)?;
+    validate_capability_palette(package, limits)?;
+    let metadata = GraphRuntimeMetadata::from_package(package)?;
     check_capacity(
         GraphRuntimeArena::ServiceState,
         header.service_state_bytes,
@@ -840,7 +878,7 @@ fn admit_package(
         realtime_channel_bytes: metadata.realtime_channel_bytes,
         bridge_channel_bytes: metadata.bridge_channel_bytes,
     };
-    Ok((package, metadata, usage))
+    Ok((metadata, usage))
 }
 
 fn validate_capability_palette(

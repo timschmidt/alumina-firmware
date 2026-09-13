@@ -15,7 +15,7 @@ use super::{
     BridgeArena, DomainCursor, GraphDeploymentFault, GraphDeploymentIdentity, GraphExecutionError,
     GraphExecutionFault, GraphFaultObservation, GraphInstallReport, GraphReleaseReport,
     GraphReleaseWindow, GraphRuntimeArena, GraphRuntimeAuthority, GraphRuntimeError,
-    GraphRuntimeLimits, GraphRuntimeMetadata, GraphStartReport, QueueCursor, admit_package,
+    GraphRuntimeLimits, GraphRuntimeMetadata, GraphStartReport, QueueCursor, admit_package_into,
     check_capacity, checked_next_cycle, checked_next_tick, cursor_after_prime, cursor_at_start,
     cursor_release_window, execute_realtime_release, execute_service_release, release_prelude,
 };
@@ -899,41 +899,57 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
                 GraphDeploymentFault::ContentDigest,
             ));
         }
-        let (package, metadata, usage) = admit_package(bytes, package_digest, authority, limits)
-            .map_err(GraphDeploymentFault::from_runtime)
-            .map_err(GraphLiveError::Deployment)?;
-        let identity = GraphDeploymentIdentity {
-            transaction_id,
-            content_digest,
-            package_digest,
-            implementation_digest: authority.implementation_digest,
-            graph_digest: package.header().graph_digest,
-            summary: package.summary(),
-            usage,
+        let admission = (|| {
+            let (metadata, usage) =
+                admit_package_into(&mut self.package, bytes, package_digest, authority, limits)
+                    .map_err(GraphDeploymentFault::from_runtime)
+                    .map_err(GraphLiveError::Deployment)?;
+            let package = self.package.as_ref().ok_or(GraphLiveError::Internal)?;
+            let identity = GraphDeploymentIdentity {
+                transaction_id,
+                content_digest,
+                package_digest,
+                implementation_digest: authority.implementation_digest,
+                graph_digest: package.header().graph_digest,
+                summary: package.summary(),
+                usage,
+            };
+            check_capacity(
+                GraphRuntimeArena::ServiceState,
+                identity.usage.service_state_bytes,
+                STATE,
+            )
+            .map_err(GraphLiveError::Runtime)?;
+            check_capacity(
+                GraphRuntimeArena::ServiceChannels,
+                identity.usage.service_channel_bytes,
+                CHANNELS,
+            )
+            .map_err(GraphLiveError::Runtime)?;
+            check_capacity(
+                GraphRuntimeArena::ServiceToRealtime,
+                identity.usage.bridge_channel_bytes,
+                BRIDGE,
+            )
+            .map_err(GraphLiveError::Runtime)?;
+            Ok((metadata, identity))
+        })();
+        let (metadata, identity) = match admission {
+            Ok(admission) => admission,
+            Err(error) => {
+                self.package = None;
+                return Err(error);
+            }
         };
-        check_capacity(
-            GraphRuntimeArena::ServiceState,
-            identity.usage.service_state_bytes,
-            STATE,
-        )
-        .map_err(GraphLiveError::Runtime)?;
-        check_capacity(
-            GraphRuntimeArena::ServiceChannels,
-            identity.usage.service_channel_bytes,
-            CHANNELS,
-        )
-        .map_err(GraphLiveError::Runtime)?;
-        check_capacity(
-            GraphRuntimeArena::ServiceToRealtime,
-            identity.usage.bridge_channel_bytes,
-            BRIDGE,
-        )
-        .map_err(GraphLiveError::Runtime)?;
-        self.bridge
-            .select_package(GraphBridgeSide::Service, identity)?;
+        if let Err(error) = self
+            .bridge
+            .select_package(GraphBridgeSide::Service, identity)
+        {
+            self.package = None;
+            return Err(error);
+        }
         self.reset_local();
         self.identity = Some(identity);
-        self.package = Some(package);
         self.metadata = metadata;
         self.phase = GraphActorPhase::Installed;
         Ok(install_report::<Self>(identity))
@@ -1230,41 +1246,57 @@ impl<'a, const STATE: usize, const CHANNELS: usize, const BRIDGE: usize>
                 GraphDeploymentFault::ContentDigest,
             ));
         }
-        let (package, metadata, usage) = admit_package(bytes, package_digest, authority, limits)
-            .map_err(GraphDeploymentFault::from_runtime)
-            .map_err(GraphLiveError::Deployment)?;
-        let identity = GraphDeploymentIdentity {
-            transaction_id,
-            content_digest,
-            package_digest,
-            implementation_digest: authority.implementation_digest,
-            graph_digest: package.header().graph_digest,
-            summary: package.summary(),
-            usage,
+        let admission = (|| {
+            let (metadata, usage) =
+                admit_package_into(&mut self.package, bytes, package_digest, authority, limits)
+                    .map_err(GraphDeploymentFault::from_runtime)
+                    .map_err(GraphLiveError::Deployment)?;
+            let package = self.package.as_ref().ok_or(GraphLiveError::Internal)?;
+            let identity = GraphDeploymentIdentity {
+                transaction_id,
+                content_digest,
+                package_digest,
+                implementation_digest: authority.implementation_digest,
+                graph_digest: package.header().graph_digest,
+                summary: package.summary(),
+                usage,
+            };
+            check_capacity(
+                GraphRuntimeArena::RealtimeState,
+                identity.usage.realtime_state_bytes,
+                STATE,
+            )
+            .map_err(GraphLiveError::Runtime)?;
+            check_capacity(
+                GraphRuntimeArena::RealtimeChannels,
+                identity.usage.realtime_channel_bytes,
+                CHANNELS,
+            )
+            .map_err(GraphLiveError::Runtime)?;
+            check_capacity(
+                GraphRuntimeArena::ServiceToRealtime,
+                identity.usage.bridge_channel_bytes,
+                BRIDGE,
+            )
+            .map_err(GraphLiveError::Runtime)?;
+            Ok((metadata, identity))
+        })();
+        let (metadata, identity) = match admission {
+            Ok(admission) => admission,
+            Err(error) => {
+                self.package = None;
+                return Err(error);
+            }
         };
-        check_capacity(
-            GraphRuntimeArena::RealtimeState,
-            identity.usage.realtime_state_bytes,
-            STATE,
-        )
-        .map_err(GraphLiveError::Runtime)?;
-        check_capacity(
-            GraphRuntimeArena::RealtimeChannels,
-            identity.usage.realtime_channel_bytes,
-            CHANNELS,
-        )
-        .map_err(GraphLiveError::Runtime)?;
-        check_capacity(
-            GraphRuntimeArena::ServiceToRealtime,
-            identity.usage.bridge_channel_bytes,
-            BRIDGE,
-        )
-        .map_err(GraphLiveError::Runtime)?;
-        self.bridge
-            .select_package(GraphBridgeSide::Realtime, identity)?;
+        if let Err(error) = self
+            .bridge
+            .select_package(GraphBridgeSide::Realtime, identity)
+        {
+            self.package = None;
+            return Err(error);
+        }
         self.reset_local();
         self.identity = Some(identity);
-        self.package = Some(package);
         self.metadata = metadata;
         self.phase = GraphActorPhase::Installed;
         Ok(install_report::<Self>(identity))

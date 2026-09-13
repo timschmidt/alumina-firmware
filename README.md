@@ -157,9 +157,10 @@ current workspace. Each probe row now transactionally edits its canonical
 name, host-retention ceiling, and event-decimation stride while preserving
 stable probe/source/type identity; invalid names, bounds, or active trigger
 windows fail without mutation. Canonical `ALGW` keeps presentation-only integer
-placement separate from the embedded `ALGR`; its 13-entry fixed-schema palette
-includes
-exact inclusive range predicates and Boolean conjunction and supports monotonic
+placement separate from the embedded `ALGR`; its 18-entry fixed-schema palette
+includes exact inclusive range predicates, Boolean conjunction, clocked
+typed constants/cases for Boolean and exact-rational Streams, and typed delay
+state, and supports monotonic
 node creation, atomic node/incident-wire deletion, node moves, typed wire edits,
 and bounded schema-directed exact scalar/composite parameter replacement. A
 separate offline TinyBee target draft admits only four capability-derived
@@ -250,6 +251,14 @@ persistence are no-op aware and reject invalid text atomically. Stable-ID/type-
 compatible explicit overrides survive component default evolution; removal or
 type drift of an explicit override rejects. See the
 [promoted-parameter evidence](docs/evidence/M9-EXACT-PROMOTED-COMPONENT-PARAMETERS.md).
+Canonical host-only `ALFR` V1 now resolves active hierarchy-local
+`InputControl` items and the visible panel authors bounded, exact multi-change
+sample-and-hold timelines without mutating `ALGS`, persistence, or history. See
+the [exact front-panel timeline execution
+evidence](docs/evidence/M9-EXACT-FRONT-PANEL-TIMELINE.md). Public Stream outputs
+now resolve through nested occurrences and share one transient exact root-time
+cursor; see the [exact front-panel output cursor
+evidence](docs/evidence/M9-EXACT-FRONT-PANEL-OUTPUT-CURSOR.md).
 Native/browser `.algw` exchange requires full replay and audited draft
 admission. All edits are transactional, and graph changes detach the old
 graph-bound trace. A shared HostExact projection now applies each probe's
@@ -266,6 +275,8 @@ execution evidence](docs/evidence/M9-SPLIT-CORE-GRAPH-EXECUTION.md), plus the
 [durable-selection evidence](docs/evidence/M9-DURABLE-GRAPH-SELECTION.md) and
 [capability-bound input evidence](docs/evidence/M9-CAPABILITY-BOUND-GRAPH-INPUT.md),
 plus the [exact-interlock primitive evidence](docs/evidence/M9-EXACT-INTERLOCK-PRIMITIVES.md)
+and [exact Boolean case/state evidence](docs/evidence/M9-EXACT-BOOLEAN-CASE-STATE.md)
+and [exact typed case/state evidence](docs/evidence/M9-EXACT-TYPED-CASE-STATE.md)
 and [mixed-signal control-trace evidence](docs/evidence/M9-MIXED-SIGNAL-CONTROL-TRACE.md)
 and [interlock-causality evidence](docs/evidence/M9-INTERLOCK-CAUSE-TRACE.md)
 and [exact replay-trigger evidence](docs/evidence/M9-EXACT-REPLAY-PROBE-TRIGGER.md)
@@ -339,13 +350,32 @@ The durable coordinator remains encapsulated by a core-0-owned backend; core 1
 has no media handle. See the
 [protocol/storage simulation evidence](docs/evidence/M3-PROTOCOL-STORAGE-SIM.md).
 
-The first live-network foundation now initializes `esp-radio` on core 0 before
-the real-time core starts, runs a protected WPA2 device AP, a fixed four-lease
-DHCP service, and a two-connection bounded HTTP bootstrap on that same service
-executor. Only exact greenfield read-only routes are admitted. A repository
+The live-network foundation initializes `esp-radio` on core 0 only after core 1
+has established the safe-output contract, then runs a protected WPA2 device AP,
+a fixed four-lease DHCP service, and board-bounded HTTP listeners on that
+service executor. TinyBee uses two listeners plus a finite browser schedule;
+ESP32-S3 targets retain three. They serve the exact content-addressed
+`alumina-interface` bootstrap/decoder/q11-w23-Brotli/worker/manifest bundle,
+close every response connection, retain a three-second API deadline, and allow
+a progress-making immutable asset transfer up to 120 seconds. The complete
+bundle renders under strict Chromium qualification against the simulator, and
+the large Brotli payload transferred byte-exactly through the physical TinyBee
+AP. The revised two-listener physical browser pass remains open. A repository
 development password exists for bench discovery, is reported as non-production,
-and can never make an image production-armable. See the
-[Wi-Fi/web compile evidence](docs/evidence/M3-WIFI-WEB-FOUNDATION.md).
+and can never make an image production-armable. See the historical
+[Wi-Fi/web foundation](docs/evidence/M3-WIFI-WEB-FOUNDATION.md) and the
+[embedded-interface evidence](docs/evidence/M3-EMBEDDED-INTERFACE-BUNDLE.md).
+
+Authenticated AP+STA provisioning now spans the portable native protocol,
+core-0 firmware owner, deterministic simulator, credential-redacting browser
+worker, and visible interface. Scan results are strongest-first and joins bind
+the retained scan generation plus exact BSSID; an ambiguous credential-bearing
+request is reconciled with read-only status and is never blindly replayed. The
+device recovery AP remains active while the station associates and receives an
+address. Current infrastructure credentials are explicitly volatile, not
+durable. A clean Chromium run used only the UI to join the simulated WPA2 WLAN,
+then independently verified the signed final status. See the
+[authenticated WLAN provisioning evidence](docs/evidence/M3-AUTHENTICATED-WLAN-PROVISIONING.md).
 
 Authenticated storage admission is also wired end to end: the public auth route
 returns a fresh 128-bit boot challenge; browser/WASM requests and device
@@ -362,7 +392,7 @@ the historical
 [authenticated-service evidence](docs/evidence/M3-AUTHENTICATED-SERVICE.md).
 The target HTTP adapter now separates bounded body authentication/decode from
 the later service-bridge wait, preserving all route, body, proof, timeout, and
-two-connection limits while reclaiming 4,000 bytes of permanent task storage.
+bounded-worker limits while reclaiming 4,000 bytes of permanent task storage.
 See the [HTTP phase-storage
 evidence](docs/evidence/M10-HTTP-PHASE-STORAGE-REUSE.md).
 
@@ -1007,8 +1037,10 @@ own immutable board ID and capability digest. Selection is compile-time only;
 firmware never probes flash and substitutes packages at runtime. Successful
 builds preserve board-qualified ELF names beside Cargo's conventional output
 so building one variant cannot erase the only clearly named artifact for the
-other. The 4 MiB profile is compile-supported but has no matching fixture and
-remains subject to future web-bundle/update-slot flash budgets.
+other. The complete 4 MiB variant still links, but `espflash save-image`
+correctly rejects its 4,243,168-byte app against the 4,128,768-byte partition.
+That opportunistic profile has no matching fixture and is not a fitting image
+at the current UI size.
 
 ## Imported T-Deck support
 

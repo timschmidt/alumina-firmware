@@ -22,8 +22,10 @@ members = [
     "crates/alumina-service",
     "crates/alumina-sim",
     "crates/alumina-storage",
+    "crates/alumina-web-assets",
     "drivers/embedded-bus-async",
     "drivers/alumina-as5600",
+    "drivers/alumina-esp-radio-audit",
     "drivers/alumina-shift-register",
     "drivers/alumina-sd-spi",
     "drivers/alumina-xtensa-stack-watermark",
@@ -61,6 +63,7 @@ default-members = [
     "crates/alumina-service",
     "crates/alumina-sim",
     "crates/alumina-storage",
+    "crates/alumina-web-assets",
     "drivers/embedded-bus-async",
     "drivers/alumina-as5600",
     "drivers/alumina-shift-register",
@@ -94,7 +97,9 @@ alumina-safety = { path = "crates/alumina-safety" }
 alumina-service = { path = "crates/alumina-service" }
 alumina-sim = { path = "crates/alumina-sim" }
 alumina-storage = { path = "crates/alumina-storage" }
+alumina-web-assets = { path = "crates/alumina-web-assets" }
 alumina-as5600 = { path = "drivers/alumina-as5600" }
+alumina-esp-radio-audit = { path = "drivers/alumina-esp-radio-audit" }
 alumina-sd-spi = { path = "drivers/alumina-sd-spi" }
 alumina-shift-register = { path = "drivers/alumina-shift-register" }
 alumina-xtensa-stack-watermark = { path = "drivers/alumina-xtensa-stack-watermark" }
@@ -106,7 +111,7 @@ bt-hci = "0.6.0"
 chrono = { version = "0.4.38", default-features = false, features = ["serde"] }
 critical-section = "1.2.0"
 defmt = "1.0.1"
-embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-executor = { version = "0.10.0", features = ["defmt"] }
 embassy-futures = "0.1.1"
 embassy-net = { version = "0.7.1", features = ["defmt", "dhcpv4", "medium-ethernet", "tcp", "udp"] }
 embassy-sync = "0.7.2"
@@ -128,27 +133,28 @@ embedded-hal-async = "1.0.0-rc.3"
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
 embedded-io-async-v06 = { package = "embedded-io-async", version = "0.6.1", default-features = false }
-esp-alloc = { version = "0.9.0", features = ["defmt"] }
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt"] }
-esp-hal = { version = "~1.0", features = ["defmt", "unstable"] }
-esp-println = { version = "0.15.0", features = ["log-04", "defmt-espflash"] }
-esp-radio = { version = "0.17.0", features = [
-    "defmt",
+esp-alloc = { version = "0.10.0", features = ["defmt"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["defmt"] }
+esp-hal = { version = "~1.1", features = ["unstable"] }
+esp-println = { version = "0.17.0", features = ["log-04", "defmt-espflash"] }
+esp-radio = { version = "0.18.0", features = [
     "esp-alloc",
-    "smoltcp",
     "unstable",
     "wifi",
 ] }
-esp-rtos = { version = "0.2.0", features = [
-    "defmt",
+esp-radio-rtos-driver = { version = "0.3.0", default-features = false }
+esp-rtos = { version = "0.3.0", features = [
     "embassy",
 ] }
+esp-wifi-sys-esp32 = "0.2.0"
+esp-wifi-sys-esp32s3 = "0.2.0"
 heapless = "0.8.0"
 hmac = { version = "0.12.1", default-features = false }
 log = "0.4.27"
 nmea = { version = "0.5.0", default-features = false, features = ["GGA", "RMC", "VTG", "GSA", "GSV", "GLL", "TXT"] }
 nb = "1.1.0"
 panic-rtt-target = { version = "0.2.0", features = ["defmt"] }
+pin-project-lite = "0.2.17"
 rtt-target = { version = "0.6.2", features = ["defmt"] }
 sha2 = { version = "0.10.9", default-features = false }
 smoltcp = { version = "0.12.0", default-features = false, features = [
@@ -186,3 +192,12 @@ incremental = false
 lto = "fat"
 opt-level = "s"
 overflow-checks = true
+
+[patch.crates-io]
+# esp-rtos 0.3.0 is the newest release compatible with the installed Xtensa
+# Rust 1.90 toolchain, but it predates the upstream main-stack and Xtensa
+# interrupt-context corrections released in 0.4.0 (which requires Rust 1.95).
+# These vendored MIT/Apache packages carry the exact relevant changes from
+# verified upstream commit 998e4faeaf0afc92b494ece4edc75e80df5624f2.
+esp-rtos = { path = "vendor/esp-rtos-0.3.0" }
+xtensa-lx-rt = { path = "vendor/xtensa-lx-rt-0.22.0" }

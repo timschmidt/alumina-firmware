@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <meta
+      name="description"
+      content="Alumina exact CAD/CAM and machine-control interface"
+    />
+    <title>Alumina</title>
+    <script
+      type="module"
+      src="/alumina-bootstrap.js"
+      integrity="sha384-pZnJ4MKaw+52k5keOQatC3SJLAWck8fi+KQE3QZL3IpBG7xJH4AShuBRiEhGPgMe"
+      crossorigin="anonymous"
+    ></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #11151a;
+      }
+
+      #alumina_canvas {
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+
+      #alumina_bootstrap_error {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 2rem;
+        min-height: 100%;
+        color: #ffb4ab;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="alumina_canvas"></canvas>
+  </body>
+</html>

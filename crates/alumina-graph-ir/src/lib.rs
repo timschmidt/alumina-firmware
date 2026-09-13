@@ -1087,6 +1087,34 @@ pub struct GraphIrPackage {
 }
 
 impl GraphIrPackage {
+    const EMPTY: Self = Self {
+        bytes: [0; GRAPH_IR_PACKAGE_BYTES],
+        header: GraphIrHeader {
+            device_id: DeviceId([0; 16]),
+            graph_digest: Digest::ZERO,
+            implementation_digest: Digest::ZERO,
+            capability_digest: Digest::ZERO,
+            config_digest: Digest::ZERO,
+            service_schedule: GraphIrSchedule::EMPTY,
+            realtime_schedule: GraphIrSchedule::EMPTY,
+            total_state_bytes: 0,
+            service_state_bytes: 0,
+            realtime_state_bytes: 0,
+            channel_storage_bytes: 0,
+            bridge_storage_bytes: 0,
+        },
+        summary: GraphIrSummary {
+            node_count: 0,
+            channel_count: 0,
+            bridge_count: 0,
+            service_state_bytes: 0,
+            realtime_state_bytes: 0,
+            channel_storage_bytes: 0,
+            bridge_storage_bytes: 0,
+        },
+        digest: Digest::ZERO,
+    };
+
     /// Encode, pad, hash, and independently decode one canonical package.
     pub fn encode(
         header: GraphIrHeader,
@@ -1185,6 +1213,28 @@ impl GraphIrPackage {
         let bytes: [u8; GRAPH_IR_PACKAGE_BYTES] =
             bytes.try_into().map_err(|_| GraphIrError::Length)?;
         Self::decode(bytes)
+    }
+
+    /// Validate borrowed bytes and copy them directly into caller-retained
+    /// package storage.
+    ///
+    /// The destination is modified only after complete canonical validation;
+    /// an invalid replacement leaves any previously admitted package intact.
+    /// Embedded runtimes use this form to avoid returning the multi-kilobyte
+    /// fixed package through a task call stack.
+    pub fn replace_from_slice(
+        destination: &mut Option<Self>,
+        bytes: &[u8],
+    ) -> Result<(), GraphIrError> {
+        let bytes: &[u8; GRAPH_IR_PACKAGE_BYTES] =
+            bytes.try_into().map_err(|_| GraphIrError::Length)?;
+        let (header, summary, digest) = validate_package(bytes)?;
+        let package = destination.get_or_insert_with(|| Self::EMPTY);
+        package.bytes.copy_from_slice(bytes);
+        package.header = header;
+        package.summary = summary;
+        package.digest = digest;
+        Ok(())
     }
 
     /// Borrow all canonical fixed-size bytes, including zero padding and digest.
@@ -2125,6 +2175,20 @@ mod tests {
                 0xb2, 0xe3, 0x3d, 0x66,
             ]
         );
+    }
+
+    #[test]
+    fn retained_package_replacement_is_exact_and_transactional() {
+        let (header, nodes, channels) = fixture();
+        let package = GraphIrPackage::encode(header, &nodes, &channels).unwrap();
+        let mut retained = None;
+        GraphIrPackage::replace_from_slice(&mut retained, package.bytes()).unwrap();
+        assert_eq!(retained.as_ref(), Some(&package));
+
+        let mut corrupt = *package.bytes();
+        corrupt[GRAPH_IR_HEADER_BYTES] ^= 1;
+        assert!(GraphIrPackage::replace_from_slice(&mut retained, &corrupt).is_err());
+        assert_eq!(retained.as_ref(), Some(&package));
     }
 
     #[test]

@@ -10,14 +10,61 @@ use alumina_runtime::graph::{
 
 use crate::hardware::selected;
 
+// The no-PSRAM TinyBee publishes a smaller, exact graph arena so its service
+// core can retain two independent browser admissions alongside the Wi-Fi
+// driver. Larger boards keep the original general-purpose graph envelope.
+#[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
+/// Core-0 graph state reservation.
+pub const GRAPH_SERVICE_STATE_BYTES: usize = 1_024;
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-t-deck-pro",
+    feature = "board-t-lora-pager"
+))]
 /// Core-0 graph state reservation.
 pub const GRAPH_SERVICE_STATE_BYTES: usize = 2 * 1_024;
+
+#[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
+/// Core-1 graph state reservation.
+pub const GRAPH_REALTIME_STATE_BYTES: usize = 1_024;
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-t-deck-pro",
+    feature = "board-t-lora-pager"
+))]
 /// Core-1 graph state reservation.
 pub const GRAPH_REALTIME_STATE_BYTES: usize = 2 * 1_024;
+
+#[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
+/// Core-0-local graph channel reservation.
+pub const GRAPH_SERVICE_CHANNEL_BYTES: usize = 2 * 1_024;
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-t-deck-pro",
+    feature = "board-t-lora-pager"
+))]
 /// Core-0-local graph channel reservation.
 pub const GRAPH_SERVICE_CHANNEL_BYTES: usize = 4 * 1_024;
+
+#[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
+/// Core-1-local graph channel reservation.
+pub const GRAPH_REALTIME_CHANNEL_BYTES: usize = 2 * 1_024;
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-t-deck-pro",
+    feature = "board-t-lora-pager"
+))]
 /// Core-1-local graph channel reservation.
 pub const GRAPH_REALTIME_CHANNEL_BYTES: usize = 4 * 1_024;
+
+#[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
+/// Cross-core graph channel reservation.
+pub const GRAPH_BRIDGE_BYTES: usize = 2 * 1_024;
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-t-deck-pro",
+    feature = "board-t-lora-pager"
+))]
 /// Cross-core graph channel reservation.
 pub const GRAPH_BRIDGE_BYTES: usize = 4 * 1_024;
 

@@ -124,8 +124,9 @@ ordinary cooperative task: the hardware-timed ISR/DMA layer remains explicit.
 ### Executor-stack watermark boundary
 
 Core 0 executes on the linker-owned `_stack_end_cpu0.._stack_start_cpu0`
-region. Core 1 executes on a separate permanent 32 KiB ESP-HAL `Stack`
-allocated from reclaimed internal RAM before the ordinary heap is registered.
+region. Core 1 executes on a separate permanent ESP-HAL `Stack` allocated from
+reclaimed internal RAM before the ordinary heap is registered: 16 KiB on the
+classic ESP32 targets and 32 KiB on ESP32-S3 targets.
 The two ranges therefore have different construction and ownership, but the
 measurement rule is identical: each core alone paints and scans its own
 downward-growing unused prefix with interrupts masked. No core reads the other
@@ -157,29 +158,62 @@ remains compile evidence until exercised under physical load.
 
 ### Implemented M3 network foundation
 
-The initial adapter initializes the radio and its scheduler-backed allocation on
-core 0 before starting core 1. It keeps the Wi-Fi controller, AP device, station
-device, `embassy-net` stack, DHCP server, HTTP server, and all socket buffers on
-the service side. Firmware registers a 64 KiB reclaimed-memory region first,
-permanently reserves the 32 KiB core-1 stack from it, and then adds a 4 KiB
-ordinary heap; the real-time core still performs no general allocation after
-arming.
+The current adapter keeps the Wi-Fi controller, AP and retained station devices,
+`embassy-net` stack, DHCP service, HTTP listeners, and every socket buffer on
+core 0. Core 1 starts first and publishes a fresh matching safe-output snapshot;
+radio initialization cannot begin before that gate. Because radio bring-up can
+outlive the 500 ms safety freshness ceiling while core 1 continues filling its
+lossy telemetry FIFO, core 0 drains the expected expired startup backlog and
+requires a second fresh matching `Safe` snapshot before spawning the service
+actor. Expired rendezvous frames grant no authority and do not manufacture a
+real-time E-stop; malformed, future-dated, contract-mismatched, or
+non-monotonic safety frames still fault closed. The safety window is independent
+of the optional diagnostic-overview freshness setting, which is correctly zero
+on boards without that provider. Classic ESP32 registers 96 KiB of its
+98,768-byte bootloader-reclaimed region and ESP32-S3 registers 72 KiB of its
+73,744-byte region. The target-sized core-1 stack is allocated first (16 KiB on
+classic ESP32 and 32 KiB on ESP32-S3).
+Permanent graph/service objects and classic-ESP32 network buffers then occupy
+space that the older 64 KiB registration left unused, while the separate 4 KiB
+ordinary heap and the pre-existing dynamic reclaimed-memory budget remain.
+Core 1 still performs no general allocation after arming.
 
-The recovery AP is `192.168.4.1/24`, admits at most four clients, and offers only
-`.100` through `.103`. HTTP starts with two handlers, exact route matching,
-fixed headers/socket buffers, per-I/O and per-request timeouts, no-store
-responses, and a restrictive bootstrap-page CSP. The first linked image exposes
-only `/`, `/api/v1/identity`, `/api/v1/health`, and `/api/v1/network` as read-only
-bootstrap endpoints. Unknown routes are 404 and mutation methods are 405; there
-are no legacy aliases.
+The recovery AP is `192.168.4.1/24` and offers only `.100` through `.103`.
+Classic-ESP32 SoftAP policy currently admits one associated client. TinyBee has
+two independently stored HTTP workers, 2 KiB header workspaces, and bounded
+1,536-byte RX/TX socket pairs. Its document uses a data-URL favicon; bootstrap
+loads the decoder first and then exactly two Brotli payloads in parallel. This
+finite schedule bounds browser concurrency at two. The unmeasured classic-ESP32
+FOC target retains one worker, while ESP32-S3 targets retain three. Every
+response declares `Connection: close`; socket operations time out after two
+seconds, ordinary API handling after three seconds, and a continuously
+progressing immutable asset after 120 seconds.
 
-This foundation deliberately does not yet claim AP+STA coexistence, scanning,
-association, authentication, WebSocket streaming, asset bundles, storage
-mutation, or request-rate admission. The controller and station device stay
-owned by core 0 for those additions. The selected DHCP adapter may need a
-link-layer workaround for clients which clear the DHCP broadcast flag before
-they have an IP address, because `embassy-net` cannot necessarily unicast to
-their not-yet-learned MAC address; physical-client qualification is mandatory.
+The finite public bundle routes are `/`, `/alumina-bootstrap.js`,
+`/alumina-brotli-decoder_bg.wasm`, `/alumina-interface.js.br`,
+`/alumina-interface_bg.wasm.br`, `/alumina-worker.js`, `/favicon.ico`, and
+`/alumina-web-bundle.toml`. JS and WASM are retained at standard Brotli quality
+11/window 23 as explicit application resources, never HTTP content coding.
+The integrity-pinned decoder verifies wire/source lengths and SHA-256 before
+import. Content length, source SHA-256, wire SHA-256, bundle SHA-256, interface
+commit, media, CSP, and same-origin policy are emitted without firmware-side
+decompression or rewriting. The separate
+greenfield API remains `/api/v1/identity`, `/api/v1/health`,
+`/api/v1/network`, `/api/v1/auth`, `/api/v1/storage`, and
+`/api/v1/control`, with exact method and authentication policy. Unknown routes
+are 404, invalid methods are 405, and no compatibility aliases exist.
+
+A Linux client has obtained a DHCP lease and transferred a complete earlier
+Brotli payload through a physical TinyBee AP. The current exact bundle passes a
+strict rendered-browser check against the simulator. Authenticated AP+STA
+provisioning is now implemented on the retained core-0 controller/station
+objects: canonical scans are strongest-first, join binds an exact scan
+generation/BSSID, the recovery AP remains active, and failed or ambiguous
+credential mutations reconcile through status without blind replay. A clean
+Chromium UI-only simulation joined an addressed WPA2 station and independently
+verified the final response HMAC. These results do not establish general
+interoperability, sustained physical AP+STA load, durable station credentials,
+WebSocket streaming, or production credential provisioning.
 
 The next admission layer keeps authentication policy in portable `alumina-net`
 and native service dispatch in portable `alumina-service`. The HTTP task reads at
@@ -443,9 +477,11 @@ TinyBee's short selector names the 8 MiB primary package. The 4 MiB variant has
 an independent board ID, Cargo feature, capacity field, canonical capability
 digest, and board-qualified ELF. They deliberately share the physical routing
 implementation, but a running image cannot probe flash and exchange one package
-for the other. Future partition/web/update layouts must be validated separately
-against each exact capacity; a successful 8 MiB build is never fit evidence for
-4 MiB.
+for the other. The current full q11/w23 Brotli variant links to a 4,243,168-byte
+app, 114,400 bytes beyond its 4,128,768-byte partition; `espflash save-image`
+rejects it. Future web growth and partition/update layouts must still be
+validated separately against each exact capacity; successful 8 MiB fit is
+never evidence for 4 MiB.
 
 ### Runtime machine configuration
 

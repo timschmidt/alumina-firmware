@@ -9,6 +9,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(not(any(
     feature = "board-mks-esp32-foc-v1",
@@ -46,6 +47,7 @@ mod hardware;
 mod job;
 mod motion;
 mod network;
+mod poll_boundary;
 pub mod service;
 #[cfg(any(
     feature = "board-mks-tinybee",
@@ -78,16 +80,17 @@ use alumina_runtime::graph::{
 };
 use alumina_runtime::stack::StackWatermarkSnapshot;
 use alumina_runtime::{
-    APP_CORE_STACK_BYTES, APP_CORE_STACK_WORDS, COMMAND_QUEUE_DEPTH, DeadlineProbe,
-    DefaultBoundary, DefaultRealtimeEndpoint, DefaultServiceEndpoint, IntercoreFrame,
-    RuntimeBudget, TELEMETRY_PAYLOAD_BYTES, TELEMETRY_QUEUE_DEPTH, UrgentKind, WORK_QUEUE_DEPTH,
+    COMMAND_QUEUE_DEPTH, DeadlineProbe, DefaultBoundary, DefaultRealtimeEndpoint,
+    DefaultServiceEndpoint, IntercoreFrame, RuntimeBudget, TELEMETRY_PAYLOAD_BYTES,
+    TELEMETRY_QUEUE_DEPTH, UrgentKind, WORK_QUEUE_DEPTH,
 };
 use alumina_safety::{
     Conditions, Event as SafetyEvent, FaultCode, SNAPSHOT_FLAG_REALTIME_JOB_ACTIVE,
     SNAPSHOT_FLAG_SAFE_OUTPUTS_ESTABLISHED, SafetyInputMonitor, SafetyInputReaction,
-    SafetyInputStatus, SafetyMachine, SafetyObservationPolicy, SafetyObserver, SafetySnapshot,
-    SafetyState, safety_input_facts_changed,
+    SafetyInputStatus, SafetyMachine, SafetyObservationPolicy, SafetySnapshot, SafetyState,
+    StartupSafetyGate, StartupSafetyOutcome, safety_input_facts_changed,
 };
+use alumina_storage::provisioning::ProvisionedCacheAvailability;
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, TICK_HZ, Timer};
@@ -96,8 +99,98 @@ use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ram;
 use esp_hal::system::{Cpu, Stack};
 use esp_hal::timer::timg::TimerGroup;
-use panic_rtt_target as _;
-use static_cell::StaticCell;
+// Force-link the target-specific `esp-println` Defmt global logger even on S3
+// images whose terse pre-Defmt UART boot markers are intentionally disabled.
+use esp_println_uart as _;
+use static_cell::{ConstStaticCell, StaticCell};
+
+static BOOT_STAGE: AtomicU8 = AtomicU8::new(0);
+static SERVICE_STAGE: AtomicU8 = AtomicU8::new(0);
+
+#[cfg(all(
+    feature = "task-context-diagnostics",
+    any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    )
+))]
+fn print_task_creation_diagnostics() {
+    use esp_rtos::task_diagnostics::{TaskCreationDiagnostic, task_creation_diagnostics};
+
+    let mut records = [TaskCreationDiagnostic::EMPTY; 8];
+    let count = task_creation_diagnostics(&mut records);
+    esp_println_uart::println!("alumina: rtos task creations={}", count);
+    for (index, record) in records[..count].iter().enumerate() {
+        let name =
+            core::str::from_utf8(&record.name[..record.name_len as usize]).unwrap_or("<invalid>");
+        esp_println_uart::println!(
+            "alumina: rtos create index={} name={} entry=0x{:08x} param=0x{:08x} stack=0x{:08x}..0x{:08x} pc=0x{:08x} a6=0x{:08x} a7=0x{:08x} priority={} core={}",
+            index,
+            name,
+            record.entry,
+            record.parameter,
+            record.stack_bottom,
+            record.stack_top,
+            record.context_pc,
+            record.context_a6,
+            record.context_a7,
+            record.priority,
+            record.pinned_core,
+        );
+    }
+}
+
+#[cfg(all(
+    feature = "task-context-diagnostics",
+    any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    )
+))]
+fn print_task_wrapper_diagnostics() {
+    use esp_rtos::task_diagnostics::{TaskWrapperDiagnostic, task_wrapper_diagnostics};
+
+    let mut records = [TaskWrapperDiagnostic::EMPTY; 8];
+    let count = task_wrapper_diagnostics(&mut records);
+    esp_println_uart::println!("alumina: rtos wrapper entries={}", count);
+    for (index, record) in records[..count].iter().enumerate() {
+        esp_println_uart::println!(
+            "alumina: rtos wrapper index={} entry=0x{:08x} param=0x{:08x}",
+            index,
+            record.entry,
+            record.parameter,
+        );
+    }
+}
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    {
+        let stack_pointer = esp_hal::xtensa_lx::get_stack_pointer() as usize;
+        #[cfg(feature = "task-context-diagnostics")]
+        print_task_wrapper_diagnostics();
+        esp_println_uart::println!(
+            "alumina: panic core={} boot-stage={} service-stage={} sp=0x{:08x}: {}",
+            Cpu::current() as u8,
+            BOOT_STAGE.load(Ordering::Acquire),
+            SERVICE_STAGE.load(Ordering::Acquire),
+            stack_pointer,
+            info
+        );
+    }
+    #[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+    let _ = info;
+    loop {
+        core::hint::spin_loop();
+    }
+}
 
 use alumina_service::diagnostics::{
     DiagnosticProviderPolicy, DiagnosticServiceError, DiagnosticServiceState, RealtimeInputObserver,
@@ -114,13 +207,41 @@ use graph::{GraphBridge, GraphService, RealtimeGraphExecutor};
 use hardware::selected;
 use job::{JobService, RealtimeJobService, ServiceJobContext};
 use motion::{MotionAction, MotionService};
+use poll_boundary::poll_boundary;
 use service::{ServiceBridge, StorageServiceState, init_service_bridge};
 
 type TargetSafetyInputMonitor = SafetyInputMonitor<{ selected::SAFETY_INPUT_CAPACITY }>;
 
-static BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
-static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
+// Classic ESP32 has one shared internal-DRAM budget for both core stacks. Its
+// generated real-time poll frame is 3,744 bytes, so 16 KiB retains a generous
+// interrupt/call margin while returning 16 KiB to the substantially deeper
+// Wi-Fi/storage service poll path. ESP32-S3 retains the portable 32 KiB default.
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb"
+))]
+const TARGET_APP_CORE_STACK_BYTES: usize = 16 * 1_024;
+#[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+const TARGET_APP_CORE_STACK_BYTES: usize = alumina_runtime::APP_CORE_STACK_BYTES;
+const TARGET_APP_CORE_STACK_WORDS: usize =
+    TARGET_APP_CORE_STACK_BYTES / core::mem::size_of::<u32>();
+
+static APP_CORE_STACK: ConstStaticCell<Stack<TARGET_APP_CORE_STACK_BYTES>> =
+    ConstStaticCell::new(Stack::new());
 static APP_CORE_EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb"
+))]
+static INTERCORE_BOUNDARY: StaticCell<DefaultBoundary> = StaticCell::new();
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb"
+))]
+static GRAPH_BRIDGE: StaticCell<GraphBridge> = StaticCell::new();
 // TinyBee's four core-1-owned configured safety inputs have a passive,
 // freshness-bound overview provider. Waveform acquisition remains unsupported,
 // so no configure/record storage is reserved. Other targets retain zero-sized
@@ -132,7 +253,6 @@ type TargetDiagnosticService = DiagnosticServiceState<
     0,
 >;
 type TargetRealtimeInputObserver = RealtimeInputObserver<{ selected::SAFETY_INPUT_CAPACITY }>;
-static DIAGNOSTIC_SERVICE: StaticCell<TargetDiagnosticService> = StaticCell::new();
 
 const TARGET_DIAGNOSTIC_PROVIDERS: DiagnosticProviderPolicy = DiagnosticProviderPolicy {
     resource_overview: selected::DIAGNOSTIC_RESOURCE_OVERVIEW,
@@ -164,22 +284,56 @@ const _: () = assert!(
     !selected::DIAGNOSTIC_RESOURCE_OVERVIEW
         || selected::DIAGNOSTIC_OVERVIEW_PERIOD_MICROS == MANAGEMENT_REPORT_PERIOD_MICROS
 );
-const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 =
+// Safety snapshots are published every 100 ms and retain an independent 500 ms
+// cross-core freshness budget. This must not inherit the optional diagnostic
+// overview policy: boards without that provider correctly publish a zero
+// diagnostic maximum age, but still require observable safety state.
+const SAFETY_OBSERVATION_MAX_AGE_CYCLES: u64 = Duration::from_millis(500).as_ticks();
+const DIAGNOSTIC_OBSERVATION_MAX_AGE_CYCLES: u64 =
     Duration::from_micros(selected::DIAGNOSTIC_MAXIMUM_AGE_MICROS as u64).as_ticks();
 const RUNTIME_HEALTH_MAX_AGE_CYCLES: u64 = Duration::from_secs(2).as_ticks();
-/// Small general internal heap retained alongside the separate 64 KiB reclaimed region.
-///
-/// The permanent split-core graph actors now reserve both package images and
-/// every execution arena statically. Retaining those fail-closed bounds costs
-/// 28 KiB formerly available to this secondary region. Target qualification
-/// must measure both allocator regions' low-water marks under Wi-Fi load.
+// Classic ESP32 boards expose UART0 through their programming bridge. These
+// terse, allocation-free markers remain readable even before RTT attachment
+// and make fail-closed split-core/network startup diagnosable on a bare board.
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb"
+))]
+macro_rules! boot_trace {
+    ($message:literal) => {
+        esp_println_uart::println!($message)
+    };
+}
+#[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+macro_rules! boot_trace {
+    ($message:literal) => {};
+}
+
+// Register the complete safely reclaimed bootloader region, rounded down to a
+// linker-friendly KiB boundary. Classic ESP32 exposes 98,768 bytes and ESP32-S3
+// exposes 73,744 bytes. The additional space holds permanent service objects
+// and, on classic ESP32, network buffers that would otherwise consume the
+// linker-residual core-0 stack. It does not enlarge any real-time arena.
+#[cfg(any(
+    feature = "board-mks-esp32-foc-v1",
+    feature = "board-mks-tinybee",
+    feature = "board-mks-tinybee-4mb"
+))]
+const RECLAIMED_HEAP_BYTES: usize = 96 * 1_024;
+#[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+const RECLAIMED_HEAP_BYTES: usize = 72 * 1_024;
+// Preserve a small second allocator region in ordinary DRAM. The classic
+// ESP32 radio needs dynamic packet headroom after permanent service actors are
+// constructed; 4 KiB leaves the measured executor stack close to 29 KiB while
+// restoring the original two-region allocation policy.
 const GENERAL_HEAP_BYTES: usize = 4 * 1_024;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    rtt_target::rtt_init_defmt!();
+    BOOT_STAGE.store(1, Ordering::Release);
 
     if let Err(reason) = selected::PACKAGE.validate() {
         error!(
@@ -188,9 +342,10 @@ async fn main(spawner: Spawner) -> ! {
         );
         panic!("invalid compile-time board package");
     }
+    BOOT_STAGE.store(2, Ordering::Release);
     let budget = RuntimeBudget {
         internal_bytes: 64 * 1_024,
-        app_core_stack_words: APP_CORE_STACK_WORDS,
+        app_core_stack_words: TARGET_APP_CORE_STACK_WORDS,
         maximum_service_stall_cycles: 10_000,
         minimum_realtime_horizon_cycles: 20_000,
     };
@@ -205,24 +360,63 @@ async fn main(spawner: Spawner) -> ! {
     {
         panic!("invalid compile-time runtime budget");
     }
+    BOOT_STAGE.store(3, Ordering::Release);
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    BOOT_STAGE.store(4, Ordering::Release);
     let peripherals = esp_hal::init(config);
-    let device_id = DeviceId::from_esp_base_mac(esp_hal::efuse::Efuse::read_base_mac_address());
-    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: 64 * 1_024);
-    // The reclaimed region is the sole registered heap at this point, so this
-    // permanent allocation deterministically reserves the core-1 stack there.
-    // The remaining half stays available to later allocations.
-    let app_stack = Box::leak(Box::write(
-        Box::<Stack<APP_CORE_STACK_BYTES>>::new_uninit(),
-        Stack::new(),
-    ));
-    esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
+    BOOT_STAGE.store(5, Ordering::Release);
     let mut split = selected::split(peripherals);
+    split.service.write_diagnostic_boot_marker();
+    #[cfg(feature = "radio-driver-diagnostics")]
+    esp_println_uart::logger::init_logger(log::LevelFilter::Debug);
+    boot_trace!("alumina: boot");
+    boot_trace!("alumina: board valid");
+    boot_trace!("alumina: peripherals ready");
+    let base_mac = esp_hal::efuse::base_mac_address();
+    let device_id = DeviceId::from_esp_base_mac(
+        base_mac
+            .as_bytes()
+            .try_into()
+            .expect("ESP base MAC must contain six bytes"),
+    );
+    boot_trace!("alumina: device identity ready");
+    esp_alloc::heap_allocator!(#[ram(reclaimed)] size: RECLAIMED_HEAP_BYTES);
+    esp_alloc::heap_allocator!(size: GENERAL_HEAP_BYTES);
+    boot_trace!("alumina: reclaimed heap ready");
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    {
+        let heap = esp_alloc::HEAP.stats();
+        esp_println_uart::println!(
+            "alumina: reclaimed heap size={} used={}",
+            heap.size,
+            heap.current_usage
+        );
+    }
+    // The core-1 stack is fully static: no allocator call or value-sized
+    // temporary may consume the much smaller linker-residual core-0 stack.
+    let app_stack = APP_CORE_STACK.take();
+    boot_trace!("alumina: core1 stack allocated");
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    esp_println_uart::println!(
+        "alumina: core1 stack static bottom=0x{:08x} top=0x{:08x}",
+        app_stack.bottom() as usize,
+        app_stack.top() as usize
+    );
+    boot_trace!("alumina: core1 stack ready");
+    boot_trace!("alumina: board split ready");
 
     let timer_group0 = TimerGroup::new(split.runtime.timer_group0);
     let software_interrupt = SoftwareInterruptControl::new(split.runtime.software_interrupt);
-    esp_rtos::start(timer_group0.timer0);
+    esp_rtos::start(timer_group0.timer0, software_interrupt.software_interrupt0);
     let service_stack = match initialize_service_current(DeviceCycle(Instant::now().as_ticks())) {
         Ok(stack) => Some(stack),
         Err(_) => {
@@ -231,12 +425,32 @@ async fn main(spawner: Spawner) -> ! {
         }
     };
 
-    let boundary = BOUNDARY.init(DefaultBoundary::new());
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    let boundary = INTERCORE_BOUNDARY.init(DefaultBoundary::new());
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
     let graph_bridge: &'static GraphBridge = GRAPH_BRIDGE.init(GraphBridge::new());
+    #[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+    let boundary = Box::leak(Box::write(
+        Box::<DefaultBoundary>::new_uninit(),
+        DefaultBoundary::new(),
+    ));
+    #[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+    let graph_bridge: &'static GraphBridge = Box::leak(Box::write(
+        Box::<GraphBridge>::new_uninit(),
+        GraphBridge::new(),
+    ));
+    boot_trace!("alumina: graph bridge ready");
     let (mut service_endpoint, realtime_endpoint) = boundary.split();
     start_second_core_with_watermark(
         split.runtime.cpu_control,
-        software_interrupt.software_interrupt0,
         software_interrupt.software_interrupt1,
         app_stack,
         move |stack_initializer| {
@@ -251,38 +465,72 @@ async fn main(spawner: Spawner) -> ! {
             };
             let app_executor = APP_CORE_EXECUTOR.init(esp_rtos::embassy::Executor::new());
             app_executor.run(move |realtime_spawner| {
-                realtime_spawner.must_spawn(realtime_task(
-                    split.realtime,
-                    realtime_endpoint,
-                    device_id,
-                    graph_bridge,
-                    realtime_stack,
-                ));
+                realtime_spawner.spawn(
+                    realtime_task(
+                        split.realtime,
+                        realtime_endpoint,
+                        device_id,
+                        graph_bridge,
+                        realtime_stack,
+                    )
+                    .expect("failed to allocate realtime task"),
+                );
             });
         },
     );
+    boot_trace!("alumina: core1 requested");
 
     // Hazardous outputs are established by their sole core-1 owner. Wi-Fi is
     // intentionally not initialized until a fresh contract-bound `Safe`
     // snapshot crosses the owned inter-core boundary.
     await_initial_safe_snapshot(&mut service_endpoint).await;
+    boot_trace!("alumina: safe snapshot received");
     let service_bridge = init_service_bridge();
-    let network = network::start(
+    boot_trace!("alumina: service bridge ready");
+    boot_trace!("alumina: network starting");
+    let network = poll_boundary(network::start(
         spawner,
         split.service.take_wifi(),
         service_bridge,
         device_id,
-    )
+    ))
     .await;
+    boot_trace!("alumina: network ready");
+    // Network bring-up can take longer than the safety freshness ceiling while
+    // core 1 continues publishing into the lossy FIFO. Consume that expected
+    // startup backlog and require a new contract-bound Safe snapshot before
+    // the service actor is allowed to admit any request.
+    await_initial_safe_snapshot(&mut service_endpoint).await;
+    boot_trace!("alumina: post-network safe snapshot received");
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    {
+        let heap = esp_alloc::HEAP.stats();
+        esp_println_uart::println!(
+            "alumina: post-network heap size={} used={}",
+            heap.size,
+            heap.current_usage
+        );
+    }
 
-    spawner.must_spawn(service_task(
-        split.service,
-        service_endpoint,
-        network,
-        service_bridge,
-        graph_bridge,
-        service_stack,
-    ));
+    #[cfg(feature = "task-context-diagnostics")]
+    print_task_creation_diagnostics();
+
+    spawner.spawn(
+        service_task(
+            split.service,
+            service_endpoint,
+            network,
+            service_bridge,
+            graph_bridge,
+            service_stack,
+        )
+        .expect("failed to allocate service task"),
+    );
+    boot_trace!("alumina: service task spawned");
     info!(
         "Alumina dual-core runtime started for {}",
         env!("ALUMINA_BOARD_ID")
@@ -294,209 +542,264 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 async fn await_initial_safe_snapshot(endpoint: &mut DefaultServiceEndpoint) {
-    let mut observer = SafetyObserver::new(SafetyObservationPolicy {
+    let mut gate = StartupSafetyGate::new(SafetyObservationPolicy {
         expected_contract: selected::SAFE_OUTPUT_CONTRACT,
         maximum_age_cycles: SAFETY_OBSERVATION_MAX_AGE_CYCLES,
     });
     loop {
         let frame = endpoint.receive_telemetry().await;
-        if frame.header().kind == FrameKind::Health {
-            // Passive instrumentation can race initial service startup but can
-            // never participate in safe-output establishment.
+        if frame.header().kind != FrameKind::Telemetry {
+            // Reports for actors that do not exist yet can race either startup
+            // rendezvous. They cannot establish safe outputs and are discarded
+            // rather than being interpreted as malformed safety telemetry.
             continue;
         }
         let now = DeviceCycle(Instant::now().as_ticks());
         if frame.validate(FrameKind::Telemetry).is_err() {
-            observer.invalidate();
+            gate.invalidate();
             endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
             continue;
         }
         let payload = match frame.payload() {
             Ok(payload) => payload,
             Err(_) => {
-                observer.invalidate();
+                gate.invalidate();
                 endpoint.publish_urgent(UrgentKind::EmergencyStop, 2);
                 continue;
             }
         };
-        if observer
-            .observe_encoded(
-                frame.header().sequence,
-                frame.header().cycle.0,
-                now.0,
-                payload,
-            )
-            .is_err()
-        {
-            endpoint.publish_urgent(UrgentKind::EmergencyStop, 3);
-            continue;
-        }
-        match observer.effective(now.0).state {
-            SafetyState::Safe => {
-                info!("core-1 safe-output contract established before Wi-Fi");
+        match gate.observe_encoded(
+            frame.header().sequence,
+            frame.header().cycle.0,
+            now.0,
+            payload,
+        ) {
+            Ok(StartupSafetyOutcome::Established) => {
+                info!("core-1 safe-output contract established before service admission");
                 return;
             }
-            SafetyState::Fault => {
-                error!("core-1 safe-output establishment faulted before Wi-Fi");
+            Ok(StartupSafetyOutcome::Faulted) => {
+                error!("core-1 safe-output establishment faulted before service admission");
                 panic!("safe-output establishment failed");
             }
-            _ => {}
+            Ok(StartupSafetyOutcome::AwaitingFresh) => continue,
+            Err(_) => {
+                endpoint.publish_urgent(UrgentKind::EmergencyStop, 3);
+                continue;
+            }
         }
     }
+}
+
+// Construct permanent actors inside their final allocations. In particular,
+// do not materialize the graph/configuration arenas as value-sized temporaries
+// in the Embassy task poll frame: that frame is charged to the one physical
+// core-0 executor stack even though the objects live for the entire boot.
+#[inline(never)]
+fn allocate_storage_service() -> Box<StorageServiceState> {
+    Box::write(
+        Box::<StorageServiceState>::new_uninit(),
+        StorageServiceState::new(
+            selected::SAFE_OUTPUT_CONTRACT,
+            SAFETY_OBSERVATION_MAX_AGE_CYCLES,
+        ),
+    )
+}
+
+#[inline(never)]
+fn allocate_clock_service(boot_id: BootId) -> Box<ClockService> {
+    Box::write(
+        Box::<ClockService>::new_uninit(),
+        ClockService::new(boot_id),
+    )
+}
+
+#[inline(never)]
+fn allocate_job_service(boot_id: BootId) -> Box<JobService> {
+    Box::write(Box::<JobService>::new_uninit(), JobService::new(boot_id))
+}
+
+#[inline(never)]
+fn allocate_configuration_service() -> Box<ConfigurationService> {
+    Box::write(
+        Box::<ConfigurationService>::new_uninit(),
+        ConfigurationService::new(),
+    )
+}
+
+#[inline(never)]
+fn allocate_graph_service(
+    device_id: DeviceId,
+    graph_bridge: &'static GraphBridge,
+) -> Box<GraphService> {
+    Box::write(
+        Box::<GraphService>::new_uninit(),
+        GraphService::new(device_id, graph_bridge),
+    )
+}
+
+#[inline(never)]
+fn allocate_health_service() -> Box<RuntimeHealthService> {
+    Box::write(
+        Box::<RuntimeHealthService>::new_uninit(),
+        RuntimeHealthService::new(RUNTIME_HEALTH_MAX_AGE_CYCLES),
+    )
+}
+
+#[inline(never)]
+fn allocate_realtime_input_observer() -> Box<TargetRealtimeInputObserver> {
+    Box::write(
+        Box::<TargetRealtimeInputObserver>::new_uninit(),
+        TargetRealtimeInputObserver::new(DIAGNOSTIC_OBSERVATION_MAX_AGE_CYCLES),
+    )
+}
+
+#[inline(never)]
+fn allocate_diagnostic_service(context: DiagnosticContext) -> Box<TargetDiagnosticService> {
+    Box::write(
+        Box::<TargetDiagnosticService>::new_uninit(),
+        TargetDiagnosticService::new(
+            context,
+            TARGET_DIAGNOSTIC_PROVIDERS,
+            DiagnosticTransportLimits::native_control(),
+            DiagnosticLimits::interactive(),
+        ),
+    )
 }
 
 #[embassy_executor::task]
 async fn service_task(
     mut resources: selected::ServiceResources,
     mut endpoint: DefaultServiceEndpoint,
-    network: network::NetworkControl,
+    mut network: network::NetworkControl,
     service_bridge: &'static ServiceBridge,
     graph_bridge: &'static GraphBridge,
     mut stack_watermark: Option<TargetStackWatermark>,
 ) {
+    boot_trace!("alumina: service task entered");
     if Cpu::current() != Cpu::ProCpu {
         panic!("service executor started on the wrong core");
     }
 
     // Service admission and every future media/backend handle live only in the
     // core-0 task future. Core 1 receives verified owned blocks, never SD.
-    let mut storage = StorageServiceState::new(
-        selected::SAFE_OUTPUT_CONTRACT,
-        SAFETY_OBSERVATION_MAX_AGE_CYCLES,
-    );
-    let mut storage_backend = resources.initialize_storage().await;
+    let mut storage = allocate_storage_service();
+    #[cfg(feature = "diagnostic-pre-storage-network-window")]
+    {
+        boot_trace!("alumina: diagnostic pre-storage network window starting");
+        Timer::after(Duration::from_secs(20)).await;
+        boot_trace!("alumina: diagnostic pre-storage network window finished");
+    }
+    boot_trace!("alumina: storage discovery starting");
+    let mut storage_backend = poll_boundary(resources.initialize_storage()).await;
+    boot_trace!("alumina: storage discovery finished");
+    #[cfg(feature = "task-context-diagnostics")]
+    {
+        print_task_wrapper_diagnostics();
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        esp_println_uart::println!(
+            "alumina: AP interface link-up={}",
+            network.access_point_link_up()
+        );
+    }
     let boot_id = BootId::new(network.boot_nonce().as_bytes())
         .unwrap_or_else(|_| panic!("network boot nonce did not form a clock identity"));
-    let mut clocks = ClockService::new(boot_id);
-    let mut jobs = JobService::new(boot_id);
-    let mut configurations = ConfigurationService::new();
-    let mut graphs = GraphService::new(network.device_id(), graph_bridge);
-    let mut health = RuntimeHealthService::new(RUNTIME_HEALTH_MAX_AGE_CYCLES);
-    let mut realtime_inputs = TargetRealtimeInputObserver::new(SAFETY_OBSERVATION_MAX_AGE_CYCLES);
-    let diagnostics = DIAGNOSTIC_SERVICE.init(TargetDiagnosticService::new(
-        DiagnosticContext {
-            device_id: network.device_id(),
-            boot_id,
-            capability: network.capability_identity(),
-            config_digest: Digest::ZERO,
-            clock_frequency_hz: TICK_HZ,
-        },
-        TARGET_DIAGNOSTIC_PROVIDERS,
-        DiagnosticTransportLimits::native_control(),
-        DiagnosticLimits::interactive(),
-    ));
+    let mut clocks = allocate_clock_service(boot_id);
+    let mut jobs = allocate_job_service(boot_id);
+    let mut configurations = allocate_configuration_service();
+    let mut graphs = allocate_graph_service(network.device_id(), graph_bridge);
+    let storage_availability = storage_backend.status().availability;
+    if storage_availability != ProvisionedCacheAvailability::Ready {
+        let storage_faulted = storage_availability == ProvisionedCacheAvailability::Faulted;
+        configurations.establish_unmounted_bootstrap(storage_faulted);
+        graphs.establish_unmounted_bootstrap(storage_faulted);
+        boot_trace!("alumina: unmounted durable selectors established");
+    }
+    let mut health = allocate_health_service();
+    let mut realtime_inputs = allocate_realtime_input_observer();
+    let mut diagnostics = allocate_diagnostic_service(DiagnosticContext {
+        device_id: network.device_id(),
+        boot_id,
+        capability: network.capability_identity(),
+        config_digest: Digest::ZERO,
+        clock_frequency_hz: TICK_HZ,
+    });
+    // Storage discovery and construction of the permanent service actors can
+    // independently outlive the safety-observation window (notably with an
+    // absent SD card). Drain that expected startup backlog and require one
+    // final fresh, contract-bound Safe snapshot before the normal service loop
+    // can interpret telemetry or admit any request.
+    await_initial_safe_snapshot(&mut endpoint).await;
+    boot_trace!("alumina: service safety snapshot received");
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    {
+        let heap = esp_alloc::HEAP.stats();
+        esp_println_uart::println!(
+            "alumina: service actors ready heap-used={} free={}",
+            heap.current_usage,
+            esp_alloc::HEAP.free()
+        );
+    }
     let mut last_fault_generation = 0_u16;
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    let mut trace_first_service_iteration = true;
     loop {
+        SERVICE_STAGE.store(10, Ordering::Release);
         let sample_cycle = DeviceCycle(Instant::now().as_ticks());
         let stack_sample_failed = stack_watermark.as_mut().is_some_and(|stack| {
             stack
                 .sample_current(SERVICE_SCAN_WORDS, sample_cycle)
                 .is_err()
         });
+        SERVICE_STAGE.store(11, Ordering::Release);
         if stack_sample_failed {
             stack_watermark = None;
             error!("service stack watermark sampling stopped");
         }
-        while let Ok(frame) = endpoint.try_receive_telemetry() {
-            let now = DeviceCycle(Instant::now().as_ticks());
-            let valid = match frame.header().kind {
-                FrameKind::Telemetry => {
-                    frame.validate(FrameKind::Telemetry).is_ok()
-                        && frame.payload().is_ok_and(|payload| {
-                            storage
-                                .observe_safety_snapshot(
-                                    frame.header().sequence,
-                                    frame.header().cycle,
-                                    now,
-                                    payload,
-                                )
-                                .is_ok()
-                        })
-                }
-                FrameKind::Job => {
-                    frame.validate(FrameKind::Job).is_ok()
-                        && frame.payload().is_ok_and(|payload| {
-                            match RealtimeJobReport::decode(payload) {
-                                Ok(report) => jobs
-                                    .observe_realtime(frame.header().config_digest, report)
-                                    .is_ok(),
-                                Err(_) => match JobScheduleReport::decode(payload) {
-                                    Ok(report) => jobs
-                                        .observe_schedule(frame.header().config_digest, report)
-                                        .is_ok(),
-                                    Err(_) => false,
-                                },
-                            }
-                        })
-                }
-                FrameKind::ClockSample => {
-                    frame.validate(FrameKind::ClockSample).is_ok()
-                        && frame.payload().is_ok_and(|payload| {
-                            RealtimeClockReport::decode(payload).is_ok_and(|report| {
-                                clocks
-                                    .observe_realtime(
-                                        frame.header().sequence,
-                                        frame.header().cycle,
-                                        now,
-                                        report,
-                                    )
-                                    .is_ok()
-                            })
-                        })
-                }
-                FrameKind::Configuration => {
-                    frame.validate(FrameKind::Configuration).is_ok()
-                        && frame.payload().is_ok_and(|payload| {
-                            RealtimeConfigurationReport::decode(payload).is_ok_and(|report| {
-                                frame.header().config_digest == report.active_digest
-                                    && configurations.observe_realtime(report).is_ok()
-                            })
-                        })
-                }
-                FrameKind::Graph => {
-                    frame.validate(FrameKind::Graph).is_ok()
-                        && frame.payload().is_ok_and(|payload| {
-                            if let Ok(report) = RealtimeGraphReport::decode(payload) {
-                                graphs
-                                    .observe_realtime(frame.header().config_digest, report)
-                                    .is_ok()
-                            } else {
-                                RealtimeGraphExecutionReport::decode(payload).is_ok_and(|report| {
-                                    graphs
-                                        .observe_realtime_execution(
-                                            frame.header().config_digest,
-                                            report,
-                                        )
-                                        .is_ok()
-                                })
-                            }
-                        })
-                }
-                FrameKind::Health => {
-                    observe_passive_health_frame(&frame, now, &mut health, &mut realtime_inputs);
-                    // Health is deliberately passive: rejecting malformed or
-                    // stale instrumentation revokes only its matching evidence
-                    // and makes no safety, timing, storage, or output transition.
-                    true
-                }
-                _ => false,
-            };
-            if !valid {
-                storage.invalidate_safety_observation();
-                clocks.invalidate_realtime();
-                health.invalidate_realtime();
-                endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
-            }
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first stack sample finished");
         }
-        if let Some(fault) = endpoint.fault_after(last_fault_generation) {
-            last_fault_generation = fault.generation;
-            storage.invalidate_safety_observation();
-            clocks.invalidate_realtime();
-            health.invalidate_realtime();
-            error!("RT fault code={} detail={}", fault.code, fault.detail);
+        SERVICE_STAGE.store(20, Ordering::Release);
+        drain_service_telemetry(
+            &mut endpoint,
+            &mut storage,
+            &mut jobs,
+            &mut clocks,
+            &mut configurations,
+            &mut graphs,
+            &mut health,
+            &mut realtime_inputs,
+            &mut last_fault_generation,
+        );
+        SERVICE_STAGE.store(21, Ordering::Release);
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first telemetry drain finished");
         }
 
         let now = DeviceCycle(Instant::now().as_ticks());
+        SERVICE_STAGE.store(30, Ordering::Release);
         storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
         storage.set_configuration_transaction_active(
             configurations.blocks_job_admission() || graphs.blocks_storage_mutation(),
@@ -504,23 +807,43 @@ async fn service_task(
         graphs.set_active_config(configurations.authorized_digest());
         let mut configuration_mutation = storage.configuration_mutation_context(now);
         configuration_mutation.realtime_job_active |= graphs.blocks_configuration_mutation();
-        configurations
-            .step(
+        if configurations.requires_step() {
+            poll_boundary(configurations.step(
                 &mut storage_backend,
                 &mut endpoint,
                 now,
                 configuration_mutation,
-            )
+            ))
             .await;
+        }
+        SERVICE_STAGE.store(31, Ordering::Release);
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first configuration step finished");
+        }
         graphs.set_active_config(configurations.authorized_digest());
-        graphs
-            .step(
+        if graphs.requires_step() {
+            poll_boundary(graphs.step(
                 &mut storage_backend,
                 &mut endpoint,
                 now,
                 storage.configuration_mutation_context(now),
-            )
+            ))
             .await;
+        }
+        SERVICE_STAGE.store(32, Ordering::Release);
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first graph step finished");
+        }
         jobs.set_configuration_transition(
             configurations.blocks_job_admission() || graphs.blocks_job_admission(),
         );
@@ -528,118 +851,65 @@ async fn service_task(
         storage.set_configuration_active(
             configurations.has_durable_active() || graphs.blocks_configuration_mutation(),
         );
-        diagnostics.rebind_context(DiagnosticContext {
-            device_id: network.device_id(),
+        refresh_service_context(
+            &mut storage,
+            &endpoint,
+            &mut jobs,
+            &configurations,
+            &mut graphs,
+            &mut diagnostics,
+            &network,
             boot_id,
-            capability: network.capability_identity(),
-            config_digest: configurations.authorized_digest(),
-            clock_frequency_hz: TICK_HZ,
-        });
+        );
+        SERVICE_STAGE.store(33, Ordering::Release);
 
-        while let Some(request) = service_bridge.try_receive() {
-            storage.set_service_job_active(jobs.excludes_storage_mutation(&endpoint));
-            storage.set_configuration_active(
-                configurations.has_durable_active() || graphs.blocks_configuration_mutation(),
-            );
-            storage.set_configuration_transaction_active(
-                configurations.blocks_job_admission() || graphs.blocks_storage_mutation(),
-            );
-            jobs.set_configuration_transition(
-                configurations.blocks_job_admission() || graphs.blocks_job_admission(),
-            );
-            jobs.set_active_config(configurations.authorized_digest());
-            graphs.set_active_config(configurations.authorized_digest());
-            diagnostics.rebind_context(DiagnosticContext {
-                device_id: network.device_id(),
-                boot_id,
-                capability: network.capability_identity(),
-                config_digest: configurations.authorized_digest(),
-                clock_frequency_hz: TICK_HZ,
-            });
-            let now = DeviceCycle(Instant::now().as_ticks());
-            let response = if ClockService::handles(request.request()) {
-                clocks.dispatch(
-                    request.request(),
-                    now,
-                    &endpoint,
-                    storage.effective_safety(now),
-                    jobs.clock_facts(now),
-                )
-            } else if CapabilityService::handles(request.request()) {
-                CapabilityService::dispatch(request.request(), now)
-            } else if ConfigurationService::handles(request.request()) {
-                let mut mutation = storage.configuration_mutation_context(now);
-                mutation.realtime_job_active |= graphs.blocks_configuration_mutation();
-                configurations
-                    .dispatch(&mut storage_backend, request.request(), now, mutation)
-                    .await
-            } else if GraphService::handles(request.request()) {
-                graphs
-                    .dispatch(
-                        &mut storage_backend,
-                        request.request(),
-                        now,
-                        storage.configuration_mutation_context(now),
-                    )
-                    .await
-            } else if JobService::handles(request.request()) {
-                let latest_probe = clocks.latest_probe_id(now);
-                jobs.dispatch(
-                    &mut storage_backend,
-                    &mut endpoint,
-                    request.request(),
-                    now,
-                    ServiceJobContext::new(
-                        latest_probe,
-                        storage.effective_safety(now).state,
-                        configurations.authorized_identity(),
-                        configurations.authorized_servo_configuration(),
-                    ),
-                )
-                .await
-            } else if TargetDiagnosticService::handles(request.request()) {
-                diagnostics.dispatch(request.request(), now)
-            } else if RuntimeHealthService::handles(request.request()) {
-                health.dispatch(
-                    request.request(),
-                    now,
-                    RuntimeQueueHealth {
-                        command_depth: u16::try_from(endpoint.command_depth())
-                            .expect("command queue depth fits u16"),
-                        command_capacity: u16::try_from(COMMAND_QUEUE_DEPTH)
-                            .expect("command queue capacity fits u16"),
-                        work_depth: u16::try_from(endpoint.work_depth())
-                            .expect("work queue depth fits u16"),
-                        work_capacity: u16::try_from(WORK_QUEUE_DEPTH)
-                            .expect("work queue capacity fits u16"),
-                        telemetry_depth: u16::try_from(endpoint.telemetry_depth())
-                            .expect("telemetry queue depth fits u16"),
-                        telemetry_capacity: u16::try_from(TELEMETRY_QUEUE_DEPTH)
-                            .expect("telemetry queue capacity fits u16"),
-                    },
-                    stack_watermark.as_ref().map(TargetStackWatermark::snapshot),
-                )
-            } else {
-                storage
-                    .dispatch(&mut storage_backend, request.request(), now)
-                    .await
-            };
-            service_bridge.respond(&request, response);
+        poll_boundary(drain_service_requests(
+            service_bridge,
+            &mut storage,
+            &mut storage_backend,
+            &mut endpoint,
+            &mut clocks,
+            &mut jobs,
+            &mut configurations,
+            &mut graphs,
+            &mut diagnostics,
+            &health,
+            &mut network,
+            stack_watermark.as_ref(),
+            boot_id,
+        ))
+        .await;
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first request drain finished");
         }
 
         publish_service_input_overview(
-            diagnostics,
+            &mut diagnostics,
             &realtime_inputs,
             DeviceCycle(Instant::now().as_ticks()),
         );
+        SERVICE_STAGE.store(42, Ordering::Release);
 
-        if jobs
-            .prefetch_step(&mut storage_backend, &mut endpoint)
+        if poll_boundary(jobs.prefetch_step(&mut storage_backend, &mut endpoint))
             .await
             .is_err()
         {
             endpoint.publish_urgent(UrgentKind::EmergencyStop, 4);
             error!("cached job prefetch faulted closed");
+        }
+        SERVICE_STAGE.store(50, Ordering::Release);
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first prefetch step finished");
         }
 
         let _keep_service_state_core_local = (
@@ -657,10 +927,311 @@ async fn service_task(
         let wake = graphs.next_release_cycle().map_or(ordinary_wake, |cycle| {
             ordinary_wake.min(Instant::from_ticks(cycle.0))
         });
+        SERVICE_STAGE.store(70, Ordering::Release);
         Timer::at(wake).await;
+        SERVICE_STAGE.store(71, Ordering::Release);
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        if trace_first_service_iteration {
+            boot_trace!("alumina: service first cooperative wake finished");
+            trace_first_service_iteration = false;
+        }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn drain_service_requests(
+    service_bridge: &'static ServiceBridge,
+    storage: &mut StorageServiceState,
+    storage_backend: &mut selected::StorageBackend,
+    endpoint: &mut DefaultServiceEndpoint,
+    clocks: &mut ClockService,
+    jobs: &mut JobService,
+    configurations: &mut ConfigurationService,
+    graphs: &mut GraphService,
+    diagnostics: &mut TargetDiagnosticService,
+    health: &RuntimeHealthService,
+    network: &mut network::NetworkControl,
+    stack_watermark: Option<&TargetStackWatermark>,
+    boot_id: BootId,
+) {
+    while let Some(request) = service_bridge.try_receive() {
+        SERVICE_STAGE.store(40, Ordering::Release);
+        refresh_service_context(
+            storage,
+            endpoint,
+            jobs,
+            configurations,
+            graphs,
+            diagnostics,
+            network,
+            boot_id,
+        );
+        let now = DeviceCycle(Instant::now().as_ticks());
+        let response = poll_boundary(dispatch_service_request(
+            &request,
+            storage,
+            storage_backend,
+            endpoint,
+            clocks,
+            jobs,
+            configurations,
+            graphs,
+            diagnostics,
+            health,
+            network,
+            stack_watermark.map(TargetStackWatermark::snapshot),
+            now,
+        ))
+        .await;
+        service_bridge.respond(&request, response);
+    }
+    SERVICE_STAGE.store(41, Ordering::Release);
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn drain_service_telemetry(
+    endpoint: &mut DefaultServiceEndpoint,
+    storage: &mut StorageServiceState,
+    jobs: &mut JobService,
+    clocks: &mut ClockService,
+    configurations: &mut ConfigurationService,
+    graphs: &mut GraphService,
+    health: &mut RuntimeHealthService,
+    realtime_inputs: &mut TargetRealtimeInputObserver,
+    last_fault_generation: &mut u16,
+) {
+    while let Ok(frame) = endpoint.try_receive_telemetry() {
+        let now = DeviceCycle(Instant::now().as_ticks());
+        let valid = match frame.header().kind {
+            FrameKind::Telemetry => {
+                frame.validate(FrameKind::Telemetry).is_ok()
+                    && frame.payload().is_ok_and(|payload| {
+                        storage
+                            .observe_safety_snapshot(
+                                frame.header().sequence,
+                                frame.header().cycle,
+                                now,
+                                payload,
+                            )
+                            .is_ok()
+                    })
+            }
+            FrameKind::Job => {
+                frame.validate(FrameKind::Job).is_ok()
+                    && frame.payload().is_ok_and(|payload| {
+                        match RealtimeJobReport::decode(payload) {
+                            Ok(report) => jobs
+                                .observe_realtime(frame.header().config_digest, report)
+                                .is_ok(),
+                            Err(_) => match JobScheduleReport::decode(payload) {
+                                Ok(report) => jobs
+                                    .observe_schedule(frame.header().config_digest, report)
+                                    .is_ok(),
+                                Err(_) => false,
+                            },
+                        }
+                    })
+            }
+            FrameKind::ClockSample => {
+                frame.validate(FrameKind::ClockSample).is_ok()
+                    && frame.payload().is_ok_and(|payload| {
+                        RealtimeClockReport::decode(payload).is_ok_and(|report| {
+                            clocks
+                                .observe_realtime(
+                                    frame.header().sequence,
+                                    frame.header().cycle,
+                                    now,
+                                    report,
+                                )
+                                .is_ok()
+                        })
+                    })
+            }
+            FrameKind::Configuration => {
+                frame.validate(FrameKind::Configuration).is_ok()
+                    && frame.payload().is_ok_and(|payload| {
+                        RealtimeConfigurationReport::decode(payload).is_ok_and(|report| {
+                            frame.header().config_digest == report.active_digest
+                                && configurations.observe_realtime(report).is_ok()
+                        })
+                    })
+            }
+            FrameKind::Graph => {
+                frame.validate(FrameKind::Graph).is_ok()
+                    && frame.payload().is_ok_and(|payload| {
+                        if let Ok(report) = RealtimeGraphReport::decode(payload) {
+                            graphs
+                                .observe_realtime(frame.header().config_digest, report)
+                                .is_ok()
+                        } else {
+                            RealtimeGraphExecutionReport::decode(payload).is_ok_and(|report| {
+                                graphs
+                                    .observe_realtime_execution(
+                                        frame.header().config_digest,
+                                        report,
+                                    )
+                                    .is_ok()
+                            })
+                        }
+                    })
+            }
+            FrameKind::Health => {
+                observe_passive_health_frame(&frame, now, health, realtime_inputs);
+                // Health is deliberately passive: rejecting malformed or
+                // stale instrumentation revokes only its matching evidence.
+                true
+            }
+            _ => false,
+        };
+        if !valid {
+            storage.invalidate_safety_observation();
+            clocks.invalidate_realtime();
+            health.invalidate_realtime();
+            endpoint.publish_urgent(UrgentKind::EmergencyStop, 1);
+        }
+    }
+    if let Some(fault) = endpoint.fault_after(*last_fault_generation) {
+        *last_fault_generation = fault.generation;
+        storage.invalidate_safety_observation();
+        clocks.invalidate_realtime();
+        health.invalidate_realtime();
+        #[cfg(any(
+            feature = "board-mks-esp32-foc-v1",
+            feature = "board-mks-tinybee",
+            feature = "board-mks-tinybee-4mb"
+        ))]
+        esp_println_uart::println!(
+            "alumina: RT fault code={} detail={}",
+            fault.code,
+            fault.detail
+        );
+        #[cfg(any(feature = "board-t-deck-pro", feature = "board-t-lora-pager"))]
+        error!("RT fault code={} detail={}", fault.code, fault.detail);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn refresh_service_context(
+    storage: &mut StorageServiceState,
+    endpoint: &DefaultServiceEndpoint,
+    jobs: &mut JobService,
+    configurations: &ConfigurationService,
+    graphs: &mut GraphService,
+    diagnostics: &mut TargetDiagnosticService,
+    network: &network::NetworkControl,
+    boot_id: BootId,
+) {
+    storage.set_service_job_active(jobs.excludes_storage_mutation(endpoint));
+    storage.set_configuration_active(
+        configurations.has_durable_active() || graphs.blocks_configuration_mutation(),
+    );
+    storage.set_configuration_transaction_active(
+        configurations.blocks_job_admission() || graphs.blocks_storage_mutation(),
+    );
+    jobs.set_configuration_transition(
+        configurations.blocks_job_admission() || graphs.blocks_job_admission(),
+    );
+    jobs.set_active_config(configurations.authorized_digest());
+    graphs.set_active_config(configurations.authorized_digest());
+    diagnostics.rebind_context(DiagnosticContext {
+        device_id: network.device_id(),
+        boot_id,
+        capability: network.capability_identity(),
+        config_digest: configurations.authorized_digest(),
+        clock_frequency_hz: TICK_HZ,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_service_request(
+    request: &service::RequestEnvelope,
+    storage: &mut StorageServiceState,
+    storage_backend: &mut selected::StorageBackend,
+    endpoint: &mut DefaultServiceEndpoint,
+    clocks: &mut ClockService,
+    jobs: &mut JobService,
+    configurations: &mut ConfigurationService,
+    graphs: &mut GraphService,
+    diagnostics: &mut TargetDiagnosticService,
+    health: &RuntimeHealthService,
+    network: &mut network::NetworkControl,
+    stack_watermark: Option<StackWatermarkSnapshot>,
+    now: DeviceCycle,
+) -> alumina_service::ServiceResponse {
+    if network::NetworkControl::handles(request.request()) {
+        network.dispatch(request.request(), now).await
+    } else if ClockService::handles(request.request()) {
+        clocks.dispatch(
+            request.request(),
+            now,
+            endpoint,
+            storage.effective_safety(now),
+            jobs.clock_facts(now),
+        )
+    } else if CapabilityService::handles(request.request()) {
+        CapabilityService::dispatch(request.request(), now)
+    } else if ConfigurationService::handles(request.request()) {
+        let mut mutation = storage.configuration_mutation_context(now);
+        mutation.realtime_job_active |= graphs.blocks_configuration_mutation();
+        poll_boundary(configurations.dispatch(storage_backend, request.request(), now, mutation))
+            .await
+    } else if GraphService::handles(request.request()) {
+        poll_boundary(graphs.dispatch(
+            storage_backend,
+            request.request(),
+            now,
+            storage.configuration_mutation_context(now),
+        ))
+        .await
+    } else if JobService::handles(request.request()) {
+        let latest_probe = clocks.latest_probe_id(now);
+        poll_boundary(jobs.dispatch(
+            storage_backend,
+            endpoint,
+            request.request(),
+            now,
+            ServiceJobContext::new(
+                latest_probe,
+                storage.effective_safety(now).state,
+                configurations.authorized_identity(),
+                configurations.authorized_servo_configuration(),
+            ),
+        ))
+        .await
+    } else if TargetDiagnosticService::handles(request.request()) {
+        diagnostics.dispatch(request.request(), now)
+    } else if RuntimeHealthService::handles(request.request()) {
+        health.dispatch(
+            request.request(),
+            now,
+            RuntimeQueueHealth {
+                command_depth: u16::try_from(endpoint.command_depth())
+                    .expect("command queue depth fits u16"),
+                command_capacity: u16::try_from(COMMAND_QUEUE_DEPTH)
+                    .expect("command queue capacity fits u16"),
+                work_depth: u16::try_from(endpoint.work_depth())
+                    .expect("work queue depth fits u16"),
+                work_capacity: u16::try_from(WORK_QUEUE_DEPTH)
+                    .expect("work queue capacity fits u16"),
+                telemetry_depth: u16::try_from(endpoint.telemetry_depth())
+                    .expect("telemetry queue depth fits u16"),
+                telemetry_capacity: u16::try_from(TELEMETRY_QUEUE_DEPTH)
+                    .expect("telemetry queue capacity fits u16"),
+            },
+            stack_watermark,
+        )
+    } else {
+        poll_boundary(storage.dispatch(storage_backend, request.request(), now)).await
+    }
+}
+
+#[inline(never)]
 fn observe_passive_health_frame<const PAYLOAD: usize>(
     frame: &IntercoreFrame<PAYLOAD>,
     observed_at: DeviceCycle,
@@ -692,7 +1263,8 @@ fn observe_passive_health_frame<const PAYLOAD: usize>(
     let accepted = frame.header().config_digest.is_zero()
         && StackWatermarkSnapshot::decode(payload).is_ok_and(|report| {
             report.allocated_bytes
-                == u32::try_from(APP_CORE_STACK_BYTES).expect("app stack size fits health report")
+                == u32::try_from(TARGET_APP_CORE_STACK_BYTES)
+                    .expect("app stack size fits health report")
                 && report.excluded_low_bytes
                     == u32::try_from(STACK_LOW_EXCLUSION_BYTES)
                         .expect("stack exclusion fits health report")
@@ -710,6 +1282,7 @@ fn observe_passive_health_frame<const PAYLOAD: usize>(
     }
 }
 
+#[inline(never)]
 fn publish_service_input_overview(
     diagnostics: &mut TargetDiagnosticService,
     realtime_inputs: &TargetRealtimeInputObserver,
@@ -757,6 +1330,7 @@ async fn realtime_task(
     graph_bridge: &'static GraphBridge,
     mut stack_watermark: Option<TargetStackWatermark>,
 ) {
+    boot_trace!("alumina: core1 entered");
     if Cpu::current() != Cpu::AppCpu {
         endpoint.publish_fault(1, 0);
         panic!("realtime executor started on the wrong core");
@@ -768,6 +1342,7 @@ async fn realtime_task(
             hold_safe_output_fault(&mut endpoint, 0).await;
         }
     };
+    boot_trace!("alumina: outputs safe");
     let mut safety = SafetyMachine::new();
     let mut safe_outputs_established = true;
     if safety
@@ -782,6 +1357,8 @@ async fn realtime_task(
     {
         hold_safe_output_fault(&mut endpoint, 1).await;
     }
+    boot_trace!("alumina: safety initialized");
+    BOOT_STAGE.store(10, Ordering::Release);
 
     let period = Duration::from_millis(1);
     let mut expected = Instant::now() + period;
@@ -791,12 +1368,16 @@ async fn realtime_task(
     let mut divider = 0_u8;
     let mut urgent_generation = 0_u16;
     let mut jobs = RealtimeJobService::new();
+    BOOT_STAGE.store(11, Ordering::Release);
     let mut motion = MotionService::new();
+    BOOT_STAGE.store(12, Ordering::Release);
     let mut configurations =
         RealtimeConfigurationService::<{ selected::CONFIGURATION_BINDINGS }>::new(
             selected::PACKAGE,
         );
+    BOOT_STAGE.store(13, Ordering::Release);
     let mut graphs = RealtimeGraphExecutor::new(device_id, graph_bridge);
+    BOOT_STAGE.store(14, Ordering::Release);
     let mut safety_inputs: Option<TargetSafetyInputMonitor> = None;
     let mut safety_input_status = SafetyInputStatus::unconfigured();
     let mut last_job_active = false;
@@ -807,6 +1388,16 @@ async fn realtime_task(
     let mut input_diagnostic_sequence = 0_u32;
     let mut next_health_report = Instant::now() + Duration::from_secs(1);
 
+    BOOT_STAGE.store(15, Ordering::Release);
+    #[cfg(any(
+        feature = "board-mks-esp32-foc-v1",
+        feature = "board-mks-tinybee",
+        feature = "board-mks-tinybee-4mb"
+    ))]
+    esp_println_uart::println!(
+        "alumina: initial snapshot call sp=0x{:08x}",
+        esp_hal::xtensa_lx::get_stack_pointer() as usize
+    );
     publish_safety_snapshot(
         &mut endpoint,
         &mut telemetry_sequence,
@@ -817,6 +1408,8 @@ async fn realtime_task(
         safety_input_status,
         0,
     );
+    BOOT_STAGE.store(16, Ordering::Release);
+    boot_trace!("alumina: initial snapshot sent");
     if selected::DIAGNOSTIC_RESOURCE_OVERVIEW {
         let _ = publish_realtime_input_snapshot(
             &mut endpoint,
@@ -1389,6 +1982,7 @@ async fn realtime_task(
     }
 }
 
+#[inline(never)]
 fn start_realtime_motion(
     motion: &mut MotionService,
     jobs: &mut RealtimeJobService,
@@ -1420,6 +2014,7 @@ fn start_realtime_motion(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline(never)]
 fn prime_realtime_motion(
     resources: &mut selected::EstablishedRealtimeResources,
     motion: &mut MotionService,
@@ -1467,6 +2062,7 @@ fn minimum_wake_cycle(
 
 /// Services every transaction due at the same observed cycle, while bounding
 /// internal zero-time handoffs between adjacent cached blocks.
+#[inline(never)]
 fn service_realtime_motion(
     resources: &mut selected::EstablishedRealtimeResources,
     motion: &mut MotionService,
@@ -1558,6 +2154,7 @@ struct ArmReconciliationInputs {
     deadline_healthy: bool,
 }
 
+#[inline(never)]
 fn reconcile_arm_state(
     jobs: &RealtimeJobService,
     motion: &MotionService,
@@ -1780,6 +2377,7 @@ fn request_realtime_stop(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline(never)]
 fn apply_configuration_command(
     configurations: &mut RealtimeConfigurationService<
         'static,
@@ -1911,6 +2509,7 @@ fn publish_configuration_report(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[inline(never)]
 fn apply_graph_command(
     graphs: &mut RealtimeGraphExecutor,
     configurations: &RealtimeConfigurationService<'static, { selected::CONFIGURATION_BINDINGS }>,
@@ -1991,6 +2590,7 @@ fn publish_graph_execution_report(
     Ok(())
 }
 
+#[inline(never)]
 fn publish_clock_report(
     endpoint: &mut DefaultRealtimeEndpoint,
     report_sequence: &mut u32,
@@ -2018,6 +2618,7 @@ fn publish_clock_report(
     Ok(())
 }
 
+#[inline(never)]
 fn publish_stack_watermark_report(
     endpoint: &mut DefaultRealtimeEndpoint,
     report_sequence: &mut u32,
@@ -2089,6 +2690,7 @@ fn publish_safety_snapshot(
     safety_inputs: SafetyInputStatus,
     maximum_lateness_cycles: u64,
 ) {
+    BOOT_STAGE.store(150, Ordering::Release);
     let snapshot = SafetySnapshot {
         state: safety.state(),
         fault: safety.fault(),
@@ -2098,6 +2700,7 @@ fn publish_safety_snapshot(
         maximum_lateness_cycles,
         safety_inputs,
     };
+    BOOT_STAGE.store(151, Ordering::Release);
     let payload = match snapshot.encode() {
         Ok(payload) => payload,
         Err(_) => {
@@ -2105,7 +2708,9 @@ fn publish_safety_snapshot(
             return;
         }
     };
+    BOOT_STAGE.store(152, Ordering::Release);
     *telemetry_sequence = next_nonzero(*telemetry_sequence);
+    BOOT_STAGE.store(153, Ordering::Release);
     if let Ok(frame) = IntercoreFrame::new(
         FrameKind::Telemetry,
         *telemetry_sequence,
@@ -2113,7 +2718,9 @@ fn publish_safety_snapshot(
         Digest::ZERO,
         &payload,
     ) {
+        BOOT_STAGE.store(154, Ordering::Release);
         let _ = endpoint.try_publish_telemetry(frame);
+        BOOT_STAGE.store(155, Ordering::Release);
     }
 }
 

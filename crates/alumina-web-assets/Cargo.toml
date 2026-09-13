@@ -1,0 +1,19 @@
+[package]
+name = "alumina-web-assets"
+description = "Content-addressed embedded Alumina browser-interface bundle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+alumina-protocol.workspace = true
+
+[dev-dependencies]
+alumina-storage.workspace = true
+brotli-decompressor = "=5.0.3"
+
+[lints]
+workspace = true

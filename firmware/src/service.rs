@@ -1,5 +1,6 @@
 //! Cancellation-safe, fixed-memory HTTP-to-service request bridge.
 
+use alloc::boxed::Box;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[allow(
@@ -12,13 +13,10 @@ use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
-use static_cell::StaticCell;
-
-static SERVICE_BRIDGE: StaticCell<ServiceBridge> = StaticCell::new();
 
 /// Initializes the single bridge before any core-0 HTTP/service task is spawned.
 pub fn init_service_bridge() -> &'static ServiceBridge {
-    SERVICE_BRIDGE.init(ServiceBridge::new())
+    Box::leak(Box::<ServiceBridge>::default())
 }
 
 #[derive(Debug)]

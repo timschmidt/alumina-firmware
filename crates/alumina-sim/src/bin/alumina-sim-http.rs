@@ -219,6 +219,11 @@ fn print_help() {
 
 fn parse_operation(value: &str, argument: &str) -> Result<Operation, ServerError> {
     let named = match value {
+        "network-status" => Some(Operation::NetworkStatus),
+        "network-scan" => Some(Operation::NetworkScan),
+        "network-join" => Some(Operation::NetworkJoin),
+        "network-leave" => Some(Operation::NetworkLeave),
+        "network-recover-ap" => Some(Operation::NetworkRecoverAp),
         "storage-inspect" => Some(Operation::StorageInspect),
         "storage-begin-upload" => Some(Operation::StorageBeginUpload),
         "storage-put-chunk" => Some(Operation::StoragePutChunk),
@@ -890,6 +895,18 @@ mod tests {
             parse_operation("job-abort", "--duplicate-operation-request").unwrap(),
             Operation::JobAbort
         );
+        for (name, operation) in [
+            ("network-status", Operation::NetworkStatus),
+            ("network-scan", Operation::NetworkScan),
+            ("network-join", Operation::NetworkJoin),
+            ("network-leave", Operation::NetworkLeave),
+            ("network-recover-ap", Operation::NetworkRecoverAp),
+        ] {
+            assert_eq!(
+                parse_operation(name, "--drop-operation-response").unwrap(),
+                operation
+            );
+        }
         assert!(parse_operation("0x090b", "--drop-operation-request").is_err());
         assert!(parse_operation("put-something", "--drop-operation-response").is_err());
     }

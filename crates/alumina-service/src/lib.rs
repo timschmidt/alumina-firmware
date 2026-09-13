@@ -725,6 +725,7 @@ impl StorageServiceState {
     }
 
     /// Dispatches one already authenticated request on the sole service owner.
+    #[inline(never)]
     pub async fn dispatch<B: StorageBackend>(
         &mut self,
         backend: &mut B,
@@ -764,6 +765,7 @@ impl StorageServiceState {
         self.safety.effective(now.0)
     }
 
+    #[inline(never)]
     async fn dispatch_native<B: StorageBackend>(
         &mut self,
         backend: &mut B,

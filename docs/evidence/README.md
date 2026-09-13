@@ -16,14 +16,21 @@ a hardware qualification: board promotion still follows the evidence ladder in
   renewed host/ESP compile evidence.
 - [`M2-TINYBEE-FLASH-VARIANTS.md`](M2-TINYBEE-FLASH-VARIANTS.md) — 8 MiB
   primary and separately identified 4 MiB TinyBee packages, distinct canonical
-  capabilities, board-qualified artifacts, and explicit current image-fit
-  evidence.
+  capabilities, board-qualified artifacts, primary-image fit, and explicit
+  4 MiB oversize rejection evidence.
 - [`M3-PROTOCOL-STORAGE-SIM.md`](M3-PROTOCOL-STORAGE-SIM.md) — exact native wire
   foundations, resumable content-addressed transaction model, rebootable cache,
   and bounded service/RT prefetch simulation.
 - [`M3-WIFI-WEB-FOUNDATION.md`](M3-WIFI-WEB-FOUNDATION.md) — core-0 radio/AP,
   static IPv4, bounded DHCP/HTTP bootstrap, credential policy, and linked-image
   evidence for both first boards.
+- [`M3-EMBEDDED-INTERFACE-BUNDLE.md`](M3-EMBEDDED-INTERFACE-BUNDLE.md) — exact
+  q11/w23 Brotli browser assets, bounded two-listener TinyBee schedule, strict
+  simulator Chromium and physical transfer evidence, production memory layout,
+  plus exact 8 MiB fit and 4 MiB oversize rejection.
+- [`M3-AUTHENTICATED-WLAN-PROVISIONING.md`](M3-AUTHENTICATED-WLAN-PROVISIONING.md)
+  — canonical AP+STA status/scan/join/leave/recovery protocol, credential-safe
+  UI reconciliation, deterministic simulator, and passing Chromium UI workflow.
 - [`M3-AUTHENTICATED-SERVICE.md`](M3-AUTHENTICATED-SERVICE.md) — canonical
   request/response HMAC, replay/rate/header admission, cancellation-safe core-0
   dispatch, and fail-closed native storage endpoints.
@@ -194,8 +201,15 @@ a hardware qualification: board promotion still follows the evidence ladder in
   context binding.
 - [`M9-EXACT-INTERLOCK-PRIMITIVES.md`](M9-EXACT-INTERLOCK-PRIMITIVES.md) —
   exact inclusive-range and Boolean-conjunction HostExact primitives,
-  independently exercised fail-closed semantics, a 13-kind editor palette,
+  independently exercised fail-closed semantics, the then-13-kind editor palette,
   and renewed graph/workspace/component identities.
+- [`M9-EXACT-BOOLEAN-CASE-STATE.md`](M9-EXACT-BOOLEAN-CASE-STATE.md) — clocked
+  Boolean constants and cases, typed read-before-write delay, a visible
+  reset-dominant state-machine composition, fail-closed admission, and the
+  renewed 16-kind editor palette.
+- [`M9-EXACT-TYPED-CASE-STATE.md`](M9-EXACT-TYPED-CASE-STATE.md) — schema-generic
+  typed constants and cases, exact-rational palette bindings, a lossless
+  reset-dominant fractional register, and the renewed 18-kind editor palette.
 - [`M9-MIXED-SIGNAL-CONTROL-TRACE.md`](M9-MIXED-SIGNAL-CONTROL-TRACE.md) — six
   canonical reference probes and component outputs, certified exact-rational
   plots, aligned Boolean logic-analyzer lanes, and shared exact cursor evidence.
@@ -305,6 +319,14 @@ a hardware qualification: board promotion still follows the evidence ladder in
   promotion, distinct exact per-occurrence values, definition-evolution
   policy, deterministic flattening, and optimized no-op/rejection/history/
   reload evidence.
+- [`M9-EXACT-FRONT-PANEL-TIMELINE.md`](M9-EXACT-FRONT-PANEL-TIMELINE.md) —
+  hierarchy-resolved host-only `ALFR` authority, bounded exact multi-change
+  timeline authoring, transient evidence invalidation, independent replay, and
+  maximum-Brotli native/WASM/browser/target evidence.
+- [`M9-EXACT-FRONT-PANEL-OUTPUT-CURSOR.md`](M9-EXACT-FRONT-PANEL-OUTPUT-CURSOR.md)
+  — recursive public-output authority, exact multirate sample-and-hold
+  projection at one transient rational root cursor, atomic UI state, and
+  renewed maximum-Brotli native/WASM/browser/target evidence.
 - [`M9-EXACT-ROOT-HIERARCHY-CANVAS.md`](M9-EXACT-ROOT-HIERARCHY-CANVAS.md) —
   exact bound-root placement, typed monotonic root wiring, complete
   `ALGH`/`ALGM`/`ALGS` admission, and optimized pointer-drag undo/redo/reload

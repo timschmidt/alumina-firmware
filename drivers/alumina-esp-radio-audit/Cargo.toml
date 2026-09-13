@@ -1,0 +1,27 @@
+[package]
+name = "alumina-esp-radio-audit"
+description = "Audited read-only ESP radio configuration introspection for Alumina"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+esp32 = ["dep:esp-wifi-sys-esp32"]
+esp32s3 = ["dep:esp-wifi-sys-esp32s3"]
+
+[dependencies]
+esp-wifi-sys-esp32 = { workspace = true, optional = true }
+esp-wifi-sys-esp32s3 = { workspace = true, optional = true }
+
+# This target-only crate is the reviewed FFI boundary for read-only vendor
+# radio configuration introspection. All firmware callers remain safe Rust.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+alloc_instead_of_core = "warn"
+std_instead_of_core = "warn"
