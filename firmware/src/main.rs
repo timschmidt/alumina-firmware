@@ -367,6 +367,7 @@ async fn main(spawner: Spawner) -> ! {
     let peripherals = esp_hal::init(config);
     BOOT_STAGE.store(5, Ordering::Release);
     let mut split = selected::split(peripherals);
+    #[cfg(any(feature = "board-mks-tinybee", feature = "board-mks-tinybee-4mb"))]
     split.service.write_diagnostic_boot_marker();
     #[cfg(feature = "radio-driver-diagnostics")]
     esp_println_uart::logger::init_logger(log::LevelFilter::Debug);
