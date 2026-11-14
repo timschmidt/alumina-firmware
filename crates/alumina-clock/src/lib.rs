@@ -2,6 +2,7 @@
 #![doc = "Canonical heartbeat and conservative exact clock mapping for Alumina."]
 
 use alumina_protocol::DeviceCycle;
+use hyperinterval::{IntegerRange, MidpointRounding, integer_quotient_bounds};
 
 /// Exact request body carried by `ClockHeartbeat`.
 pub const CLOCK_HEARTBEAT_REQUEST_BYTES: usize = 32;
@@ -574,21 +575,20 @@ impl ClockEstimator {
             observation.ui_receive_ns,
         )?;
         let sample_high = scaled_offset(response.receive_cycle.0, rate_low, response.ui_send_ns)?;
-        if sample_low > sample_high {
-            return self.reject(ClockEstimateError::Inconsistent);
-        }
-
-        let (offset_low, offset_high) = if self.accepted_samples == 0 {
-            (sample_low, sample_high)
-        } else {
-            (
-                self.offset_low_scaled.max(sample_low),
-                self.offset_high_scaled.min(sample_high),
-            )
+        let sample = match IntegerRange::new(sample_low, sample_high) {
+            Ok(sample) => sample,
+            Err(_) => return self.reject(ClockEstimateError::Inconsistent),
         };
-        if offset_low > offset_high {
+        let offsets = if self.accepted_samples == 0 {
+            sample
+        } else {
+            let retained = IntegerRange::new(self.offset_low_scaled, self.offset_high_scaled)
+                .map_err(|_| ClockEstimateError::Inconsistent)?;
+            retained.intersection(&sample)
+        };
+        let Some((offset_low, offset_high)) = offsets.bounds() else {
             return self.reject(ClockEstimateError::Inconsistent);
-        }
+        };
 
         self.boot_id = Some(response.boot_id);
         self.frequency_hz = response.frequency_hz;
@@ -643,9 +643,8 @@ impl ClockEstimator {
         }
         let (now_earliest, now_latest) = self.cycle_bounds(now_ui_ns)?;
         let (earliest, latest) = self.cycle_bounds(target_ui_ns)?;
-        if latest < earliest {
-            return Err(ClockEstimateError::Inconsistent);
-        }
+        let range =
+            IntegerRange::new(earliest, latest).map_err(|_| ClockEstimateError::Inconsistent)?;
         let required_start = now_latest
             .checked_add(self.minimum_lead_cycles)
             .ok_or(ClockEstimateError::Arithmetic)?;
@@ -655,11 +654,11 @@ impl ClockEstimator {
         if earliest < required_start || latest > latest_admitted {
             return Err(ClockEstimateError::DeviceDeadline);
         }
-        let width = latest - earliest;
-        let scheduled = earliest
-            .checked_add(width / 2)
-            .ok_or(ClockEstimateError::Arithmetic)?;
-        let uncertainty = (scheduled - earliest).max(latest - scheduled);
+        let scheduled = range
+            .midpoint(MidpointRounding::Floor)
+            .expect("nonempty cycle range");
+        let uncertainty = u64::try_from(range.radius().expect("nonempty cycle range"))
+            .map_err(|_| ClockEstimateError::Arithmetic)?;
         if uncertainty > maximum_uncertainty_cycles {
             return Err(ClockEstimateError::Uncertainty);
         }
@@ -705,14 +704,13 @@ impl ClockEstimator {
             return Err(ClockEstimateError::Stale);
         }
         let (earliest, latest) = self.cycle_bounds(ui_ns)?;
-        if latest < earliest {
-            return Err(ClockEstimateError::Inconsistent);
-        }
-        let width = latest - earliest;
-        let midpoint = earliest
-            .checked_add(width / 2)
-            .ok_or(ClockEstimateError::Arithmetic)?;
-        let uncertainty = (midpoint - earliest).max(latest - midpoint);
+        let range =
+            IntegerRange::new(earliest, latest).map_err(|_| ClockEstimateError::Inconsistent)?;
+        let midpoint = range
+            .midpoint(MidpointRounding::Floor)
+            .expect("nonempty cycle range");
+        let uncertainty = u64::try_from(range.radius().expect("nonempty cycle range"))
+            .map_err(|_| ClockEstimateError::Arithmetic)?;
         if uncertainty > maximum_uncertainty_cycles {
             return Err(ClockEstimateError::Uncertainty);
         }
@@ -762,14 +760,13 @@ impl ClockEstimator {
         }
         let earliest_ui_ns = self.earliest_ui_for_cycle(earliest_cycle.0)?;
         let latest_ui_ns = self.latest_ui_for_cycle(latest_cycle.0)?;
-        if latest_ui_ns < earliest_ui_ns {
-            return Err(ClockEstimateError::Inconsistent);
-        }
-        let width = latest_ui_ns - earliest_ui_ns;
-        let midpoint_ui_ns = earliest_ui_ns
-            .checked_add(width / 2)
-            .ok_or(ClockEstimateError::Arithmetic)?;
-        let uncertainty_ns = (midpoint_ui_ns - earliest_ui_ns).max(latest_ui_ns - midpoint_ui_ns);
+        let range = IntegerRange::new(earliest_ui_ns, latest_ui_ns)
+            .map_err(|_| ClockEstimateError::Inconsistent)?;
+        let midpoint_ui_ns = range
+            .midpoint(MidpointRounding::Floor)
+            .expect("nonempty time range");
+        let uncertainty_ns = u64::try_from(range.radius().expect("nonempty time range"))
+            .map_err(|_| ClockEstimateError::Arithmetic)?;
         if uncertainty_ns > maximum_uncertainty_ns {
             return Err(ClockEstimateError::Uncertainty);
         }
@@ -808,26 +805,27 @@ impl ClockEstimator {
             i128::try_from(self.rate_high).map_err(|_| ClockEstimateError::Arithmetic)?;
         let denominator =
             i128::try_from(RATE_DENOMINATOR).map_err(|_| ClockEstimateError::Arithmetic)?;
-        let low_scaled = self
-            .offset_low_scaled
-            .checked_add(
-                rate_low
-                    .checked_mul(target)
-                    .ok_or(ClockEstimateError::Arithmetic)?,
-            )
-            .ok_or(ClockEstimateError::Arithmetic)?;
-        let high_scaled = self
-            .offset_high_scaled
-            .checked_add(
-                rate_high
-                    .checked_mul(target)
-                    .ok_or(ClockEstimateError::Arithmetic)?,
-            )
-            .ok_or(ClockEstimateError::Arithmetic)?;
-        let earliest = u64::try_from(div_floor(low_scaled, denominator))
-            .map_err(|_| ClockEstimateError::Range)?;
-        let latest = u64::try_from(div_ceil(high_scaled, denominator))
-            .map_err(|_| ClockEstimateError::Range)?;
+        let rates =
+            IntegerRange::new(rate_low, rate_high).map_err(|_| ClockEstimateError::Arithmetic)?;
+        let offsets = IntegerRange::new(self.offset_low_scaled, self.offset_high_scaled)
+            .map_err(|_| ClockEstimateError::Arithmetic)?;
+        let scaled = rates
+            .scale(target)
+            .and_then(|product| product.checked_add(&offsets))
+            .map_err(|_| ClockEstimateError::Arithmetic)?;
+        let (low_scaled, high_scaled) = scaled.bounds().expect("nonempty affine clock image");
+        let earliest = u64::try_from(
+            integer_quotient_bounds(low_scaled, denominator)
+                .map_err(|_| ClockEstimateError::Arithmetic)?
+                .0,
+        )
+        .map_err(|_| ClockEstimateError::Range)?;
+        let latest = u64::try_from(
+            integer_quotient_bounds(high_scaled, denominator)
+                .map_err(|_| ClockEstimateError::Arithmetic)?
+                .1,
+        )
+        .map_err(|_| ClockEstimateError::Range)?;
         Ok((earliest, latest))
     }
 
@@ -843,7 +841,10 @@ impl ClockEstimator {
         let numerator = cycle
             .checked_sub(self.offset_high_scaled)
             .ok_or(ClockEstimateError::Arithmetic)?;
-        let earliest = div_ceil(numerator, rate_high).max(0);
+        let earliest = integer_quotient_bounds(numerator, rate_high)
+            .map_err(|_| ClockEstimateError::Arithmetic)?
+            .1
+            .max(0);
         u64::try_from(earliest).map_err(|_| ClockEstimateError::Range)
     }
 
@@ -858,7 +859,9 @@ impl ClockEstimator {
         let numerator = cycle
             .checked_sub(self.offset_low_scaled)
             .ok_or(ClockEstimateError::Arithmetic)?;
-        let latest = div_floor(numerator, rate_low);
+        let latest = integer_quotient_bounds(numerator, rate_low)
+            .map_err(|_| ClockEstimateError::Arithmetic)?
+            .0;
         u64::try_from(latest).map_err(|_| ClockEstimateError::Range)
     }
 }
@@ -901,19 +904,6 @@ fn scaled_offset(
     device
         .checked_sub(time)
         .ok_or(ClockEstimateError::Arithmetic)
-}
-
-fn div_floor(numerator: i128, denominator: i128) -> i128 {
-    numerator.div_euclid(denominator)
-}
-
-fn div_ceil(numerator: i128, denominator: i128) -> i128 {
-    let quotient = numerator.div_euclid(denominator);
-    if numerator.rem_euclid(denominator) == 0 {
-        quotient
-    } else {
-        quotient + 1
-    }
 }
 
 const fn read_u16(encoded: &[u8], offset: usize) -> u16 {
@@ -1190,6 +1180,93 @@ mod tests {
         assert_eq!(
             lead_limited.predict(2_000_500_000, 2_500_000_000, 1_000),
             Err(ClockEstimateError::DeviceDeadline)
+        );
+    }
+
+    #[test]
+    fn exact_affine_image_and_inverse_keep_fractional_offsets() {
+        for shift in [-500_i64, 0, 500] {
+            let mut estimator = ClockEstimator::new(ClockEstimationPolicy {
+                maximum_drift_ppm: 0,
+                minimum_samples: 1,
+                ..policy()
+            })
+            .unwrap();
+            // Processing occupies the complete causal exchange: the offset
+            // interval is exactly -shift/1000 cycles, including half cycles.
+            let send = u64::try_from(1_000_000 + shift).unwrap();
+            estimator
+                .observe(ClockObservation {
+                    response: response(1, send, 1_000, 1_001),
+                    ui_receive_ns: send + 1_000,
+                })
+                .unwrap();
+            for time in [1_000, 1_001, 1_499, 1_500, 1_501, 9_999, u64::MAX] {
+                let numerator = i128::from(time) - i128::from(shift);
+                let floor = u64::try_from(numerator / 1_000).unwrap();
+                let ceil = floor + u64::from(numerator % 1_000 != 0);
+                assert_eq!(estimator.cycle_bounds(time), Ok((floor, ceil)));
+            }
+            for cycle in [1, 2, 10, u64::MAX / 1_000 - 1] {
+                let exact = u64::try_from(i128::from(cycle) * 1_000 + i128::from(shift)).unwrap();
+                assert_eq!(estimator.earliest_ui_for_cycle(cycle), Ok(exact));
+                assert_eq!(estimator.latest_ui_for_cycle(cycle), Ok(exact));
+            }
+            assert_eq!(
+                estimator.latest_ui_for_cycle(u64::MAX),
+                Err(ClockEstimateError::Range)
+            );
+            if shift > 0 {
+                assert_eq!(estimator.cycle_bounds(0), Err(ClockEstimateError::Range));
+            }
+        }
+    }
+
+    #[test]
+    fn disjoint_exact_offsets_reject_without_poisoning_a_later_sample() {
+        let mut estimator = ClockEstimator::new(ClockEstimationPolicy {
+            maximum_drift_ppm: 0,
+            minimum_samples: 1,
+            ..policy()
+        })
+        .unwrap();
+        estimator
+            .observe(ClockObservation {
+                response: response(1, 1_000_000, 1_000, 1_001),
+                ui_receive_ns: 1_001_000,
+            })
+            .unwrap();
+        let mut expected = estimator;
+        expected.rejected_samples = 1;
+        assert_eq!(
+            estimator.observe(ClockObservation {
+                response: response(2, 2_000_000, 2_001, 2_002),
+                ui_receive_ns: 2_001_000,
+            }),
+            Err(ClockEstimateError::Inconsistent)
+        );
+        assert_eq!(estimator, expected);
+        estimator
+            .observe(ClockObservation {
+                response: response(2, 2_000_000, 2_000, 2_001),
+                ui_receive_ns: 2_001_000,
+            })
+            .unwrap();
+        assert_eq!(estimator.accepted_samples(), 2);
+        assert_eq!(estimator.rejected_samples(), 1);
+        let estimate = estimator.estimate_at(2_001_001, 1).unwrap();
+        assert_eq!(
+            (
+                estimate.earliest_cycle.0,
+                estimate.midpoint_cycle.0,
+                estimate.latest_cycle.0,
+                estimate.uncertainty_cycles
+            ),
+            (2_001, 2_001, 2_002, 1)
+        );
+        assert_eq!(
+            estimator.estimate_at(2_001_001, 0),
+            Err(ClockEstimateError::Uncertainty)
         );
     }
 }
