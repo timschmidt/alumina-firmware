@@ -80,7 +80,7 @@ repository = "https://github.com/timschmidt/alumina-firmware"
 publish = false
 
 [workspace.dependencies]
-hyperinterval = { path = "../csgrs/crates/hyperinterval", version = "0.1.0", default-features = false, features = ["integer"] }
+hyperinterval = { path = "../csgrs/crates/hyperinterval", version = "0.1.0", default-features = false }
 alumina-board = { path = "crates/alumina-board" }
 alumina-capability = { path = "crates/alumina-capability" }
 alumina-clock = { path = "crates/alumina-clock" }

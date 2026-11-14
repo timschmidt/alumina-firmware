@@ -2,6 +2,7 @@
 #![doc = "Allocation-free fixed-point FOC mathematics and control contracts for Alumina."]
 
 use alumina_protocol::{DeviceCycle, Digest};
+use hyperinterval::{FixedInterval, IntervalError, MidpointRounding};
 
 mod angle;
 mod axis;
@@ -168,6 +169,34 @@ pub struct Q30Interval {
 }
 
 impl Q30Interval {
+    // Q30 constructors establish ordered, nonempty endpoints; scale 30 is
+    // valid for i32. Keep the domain storage and const API unchanged.
+    #[inline(always)]
+    fn fixed(self) -> FixedInterval<i32, Q30_FRACTION_BITS> {
+        match FixedInterval::new(self.lower.bits(), self.upper.bits()) {
+            Ok(interval) => interval,
+            Err(_) => panic!("Q30 endpoints must be ordered"),
+        }
+    }
+
+    #[inline(always)]
+    fn from_fixed(
+        result: Result<FixedInterval<i32, Q30_FRACTION_BITS>, IntervalError>,
+    ) -> Result<Self, FocError> {
+        let interval = match result {
+            Ok(interval) => interval,
+            Err(IntervalError::Overflow) => return Err(FocError::Range),
+            Err(IntervalError::ContainsZero) => return Err(FocError::DivideByZero),
+            // The delegated operations on nonempty i32/F30 inputs can only
+            // fail by endpoint overflow or a zero-containing denominator.
+            Err(error) => panic!("unexpected fixed Q30 arithmetic failure: {error}"),
+        };
+        let (lower, upper) = interval
+            .bounds()
+            .expect("Q30 arithmetic preserves nonempty intervals");
+        Ok(Self::from_raw_bits(lower, upper))
+    }
+
     /// Exact zero interval.
     pub const ZERO: Self = Self::point(Q30::ZERO);
     /// Exact unit interval containing only one.
@@ -209,22 +238,12 @@ impl Q30Interval {
     ///
     /// Returns [`FocError::DivideByZero`] for zero denominator and
     /// [`FocError::Range`] when either outward-rounded endpoint is unrepresentable.
+    #[inline(always)]
     pub fn from_ratio(numerator: i64, denominator: i64) -> Result<Self, FocError> {
-        if denominator == 0 {
-            return Err(FocError::DivideByZero);
-        }
-        let (numerator, denominator) = if denominator < 0 {
-            (-i128::from(numerator), -i128::from(denominator))
-        } else {
-            (i128::from(numerator), i128::from(denominator))
-        };
-        let scaled = numerator
-            .checked_mul(i128::from(Q30_SCALE))
-            .ok_or(FocError::Range)?;
-        Self::new(
-            q30_from_i128(div_floor(scaled, denominator))?,
-            q30_from_i128(div_ceil(scaled, denominator))?,
-        )
+        Self::from_fixed(FixedInterval::<i32, Q30_FRACTION_BITS>::from_ratio(
+            numerator,
+            denominator,
+        ))
     }
 
     /// Inclusive lower endpoint.
@@ -239,8 +258,11 @@ impl Q30Interval {
 
     /// Integer midpoint, rounded toward the lower endpoint.
     pub fn midpoint(self) -> Q30 {
-        let width = i64::from(self.upper.0) - i64::from(self.lower.0);
-        Q30::from_bits((i64::from(self.lower.0) + width / 2) as i32)
+        Q30::from_bits(
+            self.fixed()
+                .midpoint(MidpointRounding::Floor)
+                .expect("Q30 intervals are nonempty"),
+        )
     }
 
     /// Width in exact Q2.30 lattice units.
@@ -258,11 +280,9 @@ impl Q30Interval {
     /// # Errors
     ///
     /// Returns [`FocError::Range`] when an endpoint is not representable.
+    #[inline(always)]
     pub fn checked_add(self, other: Self) -> Result<Self, FocError> {
-        Self::new(
-            q30_from_i64(i64::from(self.lower.0) + i64::from(other.lower.0))?,
-            q30_from_i64(i64::from(self.upper.0) + i64::from(other.upper.0))?,
-        )
+        Self::from_fixed(self.fixed().checked_add(&other.fixed()))
     }
 
     /// Exact interval subtraction.
@@ -270,11 +290,9 @@ impl Q30Interval {
     /// # Errors
     ///
     /// Returns [`FocError::Range`] when an endpoint is not representable.
+    #[inline(always)]
     pub fn checked_sub(self, other: Self) -> Result<Self, FocError> {
-        Self::new(
-            q30_from_i64(i64::from(self.lower.0) - i64::from(other.upper.0))?,
-            q30_from_i64(i64::from(self.upper.0) - i64::from(other.lower.0))?,
-        )
+        Self::from_fixed(self.fixed().checked_sub(&other.fixed()))
     }
 
     /// Exact interval negation.
@@ -282,8 +300,9 @@ impl Q30Interval {
     /// # Errors
     ///
     /// Returns [`FocError::Range`] for an unrepresentable endpoint.
+    #[inline(always)]
     pub fn checked_neg(self) -> Result<Self, FocError> {
-        Self::new(self.upper.checked_neg()?, self.lower.checked_neg()?)
+        Self::from_fixed(self.fixed().checked_neg())
     }
 
     /// Outward-rounded interval multiplication.
@@ -292,18 +311,7 @@ impl Q30Interval {
     ///
     /// Returns [`FocError::Range`] when an endpoint is not representable.
     pub fn checked_mul(self, other: Self) -> Result<Self, FocError> {
-        let products = [
-            i128::from(self.lower.0) * i128::from(other.lower.0),
-            i128::from(self.lower.0) * i128::from(other.upper.0),
-            i128::from(self.upper.0) * i128::from(other.lower.0),
-            i128::from(self.upper.0) * i128::from(other.upper.0),
-        ];
-        let minimum = products.into_iter().min().ok_or(FocError::Range)?;
-        let maximum = products.into_iter().max().ok_or(FocError::Range)?;
-        Self::new(
-            q30_from_i128(div_floor(minimum, i128::from(Q30_SCALE)))?,
-            q30_from_i128(div_ceil(maximum, i128::from(Q30_SCALE)))?,
-        )
+        Self::from_fixed(self.fixed().checked_mul(&other.fixed()))
     }
 
     /// Outward-rounded interval division.
@@ -313,26 +321,7 @@ impl Q30Interval {
     /// Returns [`FocError::DivideByZero`] when the denominator includes zero and
     /// [`FocError::Range`] when an endpoint is not representable.
     pub fn checked_div(self, other: Self) -> Result<Self, FocError> {
-        if other.contains(Q30::ZERO) {
-            return Err(FocError::DivideByZero);
-        }
-        let ratios = [
-            ratio_bounds(self.lower.0, other.lower.0),
-            ratio_bounds(self.lower.0, other.upper.0),
-            ratio_bounds(self.upper.0, other.lower.0),
-            ratio_bounds(self.upper.0, other.upper.0),
-        ];
-        let minimum = ratios
-            .iter()
-            .map(|(lower, _)| *lower)
-            .min()
-            .ok_or(FocError::Range)?;
-        let maximum = ratios
-            .iter()
-            .map(|(_, upper)| *upper)
-            .max()
-            .ok_or(FocError::Range)?;
-        Self::new(q30_from_i128(minimum)?, q30_from_i128(maximum)?)
+        Self::from_fixed(self.fixed().checked_div(&other.fixed()))
     }
 
     /// Tight outward-rounded square interval.
@@ -341,18 +330,7 @@ impl Q30Interval {
     ///
     /// Returns [`FocError::Range`] when an endpoint is not representable.
     pub fn checked_square(self) -> Result<Self, FocError> {
-        let lower_squared = i128::from(self.lower.0) * i128::from(self.lower.0);
-        let upper_squared = i128::from(self.upper.0) * i128::from(self.upper.0);
-        let minimum = if self.contains(Q30::ZERO) {
-            0
-        } else {
-            lower_squared.min(upper_squared)
-        };
-        let maximum = lower_squared.max(upper_squared);
-        Self::new(
-            q30_from_i128(div_floor(minimum, i128::from(Q30_SCALE)))?,
-            q30_from_i128(div_ceil(maximum, i128::from(Q30_SCALE)))?,
-        )
+        Self::from_fixed(self.fixed().square())
     }
 }
 
@@ -1144,26 +1122,24 @@ fn scale_wide_interval(
     upper_bits: i64,
     scale: Q30Interval,
 ) -> Result<Q30Interval, FocError> {
-    let products = [
-        i128::from(lower_bits) * i128::from(scale.lower().bits()),
-        i128::from(lower_bits) * i128::from(scale.upper().bits()),
-        i128::from(upper_bits) * i128::from(scale.lower().bits()),
-        i128::from(upper_bits) * i128::from(scale.upper().bits()),
-    ];
-    let minimum = products.into_iter().min().ok_or(FocError::Range)?;
-    let maximum = products.into_iter().max().ok_or(FocError::Range)?;
-    Q30Interval::new(
-        q30_from_i128(div_floor(minimum, i128::from(Q30_SCALE)))?,
-        q30_from_i128(div_ceil(maximum, i128::from(Q30_SCALE)))?,
+    // Clarke differences may exceed Q30's i32 endpoint range. Retain i64
+    // storage through the product and round once before narrowing to Q30.
+    let lower =
+        FixedInterval::<i64, Q30_FRACTION_BITS>::point(lower_bits).expect("scale 30 is valid");
+    let upper =
+        FixedInterval::<i64, Q30_FRACTION_BITS>::point(upper_bits).expect("scale 30 is valid");
+    // The generated difference's endpoints are ordered; their singleton hull
+    // is the same exact closed interval without a second ingress boundary.
+    let source = lower.hull(&upper);
+    let coefficient = FixedInterval::<i64, Q30_FRACTION_BITS>::new(
+        i64::from(scale.lower().bits()),
+        i64::from(scale.upper().bits()),
     )
-}
-
-fn ratio_bounds(numerator: i32, denominator: i32) -> (i128, i128) {
-    let numerator = i128::from(numerator) * i128::from(Q30_SCALE);
-    let denominator = i128::from(denominator);
-    (
-        div_floor(numerator, denominator),
-        div_ceil(numerator, denominator),
+    .expect("ordered Q30 coefficient");
+    Q30Interval::from_fixed(
+        source
+            .checked_mul(&coefficient)
+            .and_then(|value| value.convert::<i32>()),
     )
 }
 

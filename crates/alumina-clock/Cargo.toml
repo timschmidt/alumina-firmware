@@ -10,7 +10,7 @@ publish.workspace = true
 
 [dependencies]
 alumina-protocol.workspace = true
-hyperinterval.workspace = true
+hyperinterval = { workspace = true, features = ["integer"] }
 
 [lints]
 workspace = true
