@@ -1025,3 +1025,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod interval_widening;
