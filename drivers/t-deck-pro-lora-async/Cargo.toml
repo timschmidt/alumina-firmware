@@ -25,7 +25,7 @@ path = "examples/example_sender.rs"
 
 [dependencies]
 esp-alloc = { workspace = true }
-embedded-bus-async = { path = "../embedded-bus-async" }
+embedded-bus-async = { version = "0.1.0", path = "../embedded-bus-async" }
 sx126x_async = { workspace = true }
 log = { workspace = true }
 embassy-time = { workspace = true }

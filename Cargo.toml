@@ -81,33 +81,33 @@ publish = false
 
 [workspace.dependencies]
 hyperinterval = { path = "../csgrs/crates/hyperinterval", version = "0.1.0", default-features = false }
-alumina-board = { path = "crates/alumina-board" }
-alumina-capability = { path = "crates/alumina-capability" }
-alumina-clock = { path = "crates/alumina-clock" }
-alumina-config = { path = "crates/alumina-config" }
-alumina-diagnostics = { path = "crates/alumina-diagnostics" }
-alumina-foc = { path = "crates/alumina-foc" }
-alumina-graph-ir = { path = "crates/alumina-graph-ir" }
-alumina-machine-ir = { path = "crates/alumina-machine-ir" }
-alumina-motion = { path = "crates/alumina-motion" }
-alumina-job = { path = "crates/alumina-job" }
-alumina-net = { path = "crates/alumina-net" }
-alumina-protocol = { path = "crates/alumina-protocol" }
-alumina-runtime = { path = "crates/alumina-runtime" }
-alumina-safety = { path = "crates/alumina-safety" }
-alumina-service = { path = "crates/alumina-service" }
-alumina-sim = { path = "crates/alumina-sim" }
-alumina-storage = { path = "crates/alumina-storage" }
-alumina-web-assets = { path = "crates/alumina-web-assets" }
-alumina-as5600 = { path = "drivers/alumina-as5600" }
-alumina-esp-radio-audit = { path = "drivers/alumina-esp-radio-audit" }
-alumina-sd-spi = { path = "drivers/alumina-sd-spi" }
-alumina-shift-register = { path = "drivers/alumina-shift-register" }
-alumina-xtensa-stack-watermark = { path = "drivers/alumina-xtensa-stack-watermark" }
-board-mks-tinybee = { path = "boards/mks-tinybee" }
-board-mks-esp32-foc-v1 = { path = "boards/mks-esp32-foc-v1" }
-board-t-deck-pro = { path = "boards/t-deck-pro" }
-board-t-lora-pager = { path = "boards/t-lora-pager" }
+alumina-board = { version = "0.1.0", path = "crates/alumina-board" }
+alumina-capability = { version = "0.1.0", path = "crates/alumina-capability" }
+alumina-clock = { version = "0.1.0", path = "crates/alumina-clock" }
+alumina-config = { version = "0.1.0", path = "crates/alumina-config" }
+alumina-diagnostics = { version = "0.1.0", path = "crates/alumina-diagnostics" }
+alumina-foc = { version = "0.1.0", path = "crates/alumina-foc" }
+alumina-graph-ir = { version = "0.1.0", path = "crates/alumina-graph-ir" }
+alumina-machine-ir = { version = "0.1.0", path = "crates/alumina-machine-ir" }
+alumina-motion = { version = "0.1.0", path = "crates/alumina-motion" }
+alumina-job = { version = "0.1.0", path = "crates/alumina-job" }
+alumina-net = { version = "0.1.0", path = "crates/alumina-net" }
+alumina-protocol = { version = "0.1.0", path = "crates/alumina-protocol" }
+alumina-runtime = { version = "0.1.0", path = "crates/alumina-runtime" }
+alumina-safety = { version = "0.1.0", path = "crates/alumina-safety" }
+alumina-service = { version = "0.1.0", path = "crates/alumina-service" }
+alumina-sim = { version = "0.1.0", path = "crates/alumina-sim" }
+alumina-storage = { version = "0.1.0", path = "crates/alumina-storage" }
+alumina-web-assets = { version = "0.1.0", path = "crates/alumina-web-assets" }
+alumina-as5600 = { version = "0.1.0", path = "drivers/alumina-as5600" }
+alumina-esp-radio-audit = { version = "0.1.0", path = "drivers/alumina-esp-radio-audit" }
+alumina-sd-spi = { version = "0.1.0", path = "drivers/alumina-sd-spi" }
+alumina-shift-register = { version = "0.1.0", path = "drivers/alumina-shift-register" }
+alumina-xtensa-stack-watermark = { version = "0.1.0", path = "drivers/alumina-xtensa-stack-watermark" }
+board-mks-tinybee = { version = "0.1.0", path = "boards/mks-tinybee" }
+board-mks-esp32-foc-v1 = { version = "0.1.0", path = "boards/mks-esp32-foc-v1" }
+board-t-deck-pro = { version = "0.1.0", path = "boards/t-deck-pro" }
+board-t-lora-pager = { version = "0.1.0", path = "boards/t-lora-pager" }
 bt-hci = "0.6.0"
 chrono = { version = "0.4.38", default-features = false, features = ["serde"] }
 critical-section = "1.2.0"
@@ -127,7 +127,7 @@ edge-nal-embassy = { version = "0.6.0", default-features = false, features = [
     "tcp",
     "udp",
 ] }
-embedded-bus-async = { path = "drivers/embedded-bus-async" }
+embedded-bus-async = { version = "0.1.0", path = "drivers/embedded-bus-async" }
 embedded-graphics = "0.8.1"
 embedded-hal = "1.0.0-rc.3"
 embedded-hal-async = "1.0.0-rc.3"
@@ -172,8 +172,8 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
     "socket-udp",
 ] }
 static_cell = "2.1.0"
-sx126x_async = { path = "drivers/sx126x-async-rs" }
-t-deck-pro-keyboard-async = { path = "drivers/t-deck-pro-keyboard-async" }
+sx126x_async = { version = "0.3.0", path = "drivers/sx126x-async-rs" }
+t-deck-pro-keyboard-async = { version = "0.1.0", path = "drivers/t-deck-pro-keyboard-async" }
 trouble-host = { version = "0.5.0", features = ["gatt"] }
 
 [workspace.lints.rust]

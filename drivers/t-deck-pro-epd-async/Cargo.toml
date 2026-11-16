@@ -21,7 +21,7 @@ path = "examples/simple_example.rs"
 
 [dependencies]
 embassy-sync = { workspace = true }
-embedded-bus-async = { path = "../embedded-bus-async" }
+embedded-bus-async = { version = "0.1.0", path = "../embedded-bus-async" }
 log = { workspace = true }
 embassy-time = { workspace = true }
 embassy-futures = { workspace = true }
