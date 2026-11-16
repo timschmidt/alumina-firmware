@@ -20,18 +20,38 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          path: alumina-firmware
+      - name: Check out the qualified interval stack
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: timschmidt/csgrs
+          ref: a1adc106811c8b4f9bb892fabb80f73c870d85d2
+          path: csgrs
+          persist-credentials: false
       - name: Permissive dependency and source policy
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           rust-version: "1.88.0"
+          manifest-path: alumina-firmware/Cargo.toml
           command: check bans licenses sources
 
   portable:
     name: Portable checks
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: alumina-firmware
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+          path: alumina-firmware
+      - name: Check out the qualified interval stack
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: timschmidt/csgrs
+          ref: a1adc106811c8b4f9bb892fabb80f73c870d85d2
+          path: csgrs
           persist-credentials: false
       - name: Install Rust 1.88.0
         run: |
