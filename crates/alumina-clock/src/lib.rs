@@ -590,6 +590,12 @@ impl ClockEstimator {
             return self.reject(ClockEstimateError::Inconsistent);
         };
 
+        // Complete every fallible check before publishing the new model.
+        let accepted_samples = self
+            .accepted_samples
+            .checked_add(1)
+            .ok_or(ClockEstimateError::Arithmetic)?;
+
         self.boot_id = Some(response.boot_id);
         self.frequency_hz = response.frequency_hz;
         self.rate_low = rate_low;
@@ -603,10 +609,7 @@ impl ClockEstimator {
         self.latest_flags = response.flags;
         self.minimum_lead_cycles = response.minimum_lead_cycles;
         self.maximum_schedule_horizon_cycles = response.maximum_schedule_horizon_cycles;
-        self.accepted_samples = self
-            .accepted_samples
-            .checked_add(1)
-            .ok_or(ClockEstimateError::Arithmetic)?;
+        self.accepted_samples = accepted_samples;
         Ok(())
     }
 
@@ -1016,6 +1019,63 @@ mod tests {
         let mut invalid = realtime;
         invalid.missed_deadlines = invalid.samples + 1;
         assert_eq!(invalid.encode(), Err(ClockWireError::DeadlineCounters));
+    }
+
+    #[test]
+    fn accepted_count_exhaustion_does_not_publish_a_new_model() {
+        let first = ClockObservation {
+            response: response(1, 1_000_000_000, 1_050_200, 1_050_250),
+            ui_receive_ns: 1_000_700_000,
+        };
+        let second = ClockObservation {
+            response: response(2, 2_000_000_000, 2_050_120, 2_050_180),
+            ui_receive_ns: 2_000_500_000,
+        };
+        let third = ClockObservation {
+            response: response(3, 3_000_000_000, 3_050_120, 3_050_180),
+            ui_receive_ns: 3_000_500_000,
+        };
+        let mut ordinary = ClockEstimator::new(policy()).unwrap();
+        ordinary.observe(first).unwrap();
+        let mut exhausted = ordinary;
+        // Exercise the final count transitions without billions of exchanges.
+        exhausted.accepted_samples = u32::MAX - 1;
+        ordinary.observe(second).unwrap();
+        exhausted.observe(second).unwrap();
+        let mut expected = ordinary;
+        expected.accepted_samples = u32::MAX;
+        assert_eq!(exhausted, expected);
+        let estimate = exhausted.estimate_at(second.ui_receive_ns, 1_000).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                exhausted.observe(third),
+                Err(ClockEstimateError::Arithmetic)
+            );
+            assert_eq!(
+                exhausted, expected,
+                "a failed observation published model state"
+            );
+            assert_eq!(
+                exhausted.estimate_at(second.ui_receive_ns, 1_000),
+                Ok(estimate)
+            );
+        }
+        // Earlier input validation still takes precedence over count exhaustion.
+        let mut invalid = expected;
+        let mut changed_boot = third;
+        changed_boot.response.boot_id = BootId::new([0x55; BOOT_ID_BYTES]).unwrap();
+        assert_eq!(
+            invalid.observe(changed_boot),
+            Err(ClockEstimateError::BootChanged)
+        );
+        let mut expected_rejection = expected;
+        expected_rejection.rejected_samples += 1;
+        assert_eq!(invalid, expected_rejection);
+
+        exhausted.reset();
+        exhausted.observe(first).unwrap();
+        exhausted.observe(second).unwrap();
+        assert_eq!(exhausted, ordinary);
     }
 
     #[test]
