@@ -53,3 +53,53 @@ fn generated_bounds_reenter_arithmetic_without_rounding_nominally() {
         Err(FocError::Range)
     );
 }
+
+#[test]
+fn inverse_clarke_and_modulation_preserve_each_rounding_boundary() {
+    use alumina_foc::{AlphaBeta, inverse_clarke, space_vector_modulate};
+
+    let interval = |lo, hi| I::new(Q30::from_bits(lo), Q30::from_bits(hi)).unwrap();
+    let input = AlphaBeta {
+        alpha: interval(-3, 1),
+        beta: interval(-1, 3),
+    };
+    // In lattice units, -alpha/2 rounds to [-1, 2] and beta*sqrt(3)/2
+    // to [-1, 3]. The firmware sums and subtracts those rounded terms.
+    let phases = inverse_clarke(input).unwrap();
+    assert_eq!(phases.a, input.alpha);
+    assert_eq!(phases.b, interval(-2, 5));
+    assert_eq!(phases.c, interval(-4, 3));
+    let modulate = |limit| space_vector_modulate(input, Q30::from_bits(limit));
+    let result = modulate(10).unwrap();
+    assert_eq!(result.common_mode, interval(-3, 3));
+    let centered = result.centered_phases;
+    assert_eq!(centered.a, interval(-6, 4));
+    assert_eq!(centered.b, interval(-5, 8));
+    assert_eq!(centered.c, interval(-7, 6));
+    // With limit 10 the exact duty bounds are [4,14]/20, [5,18]/20 and
+    // [3,16]/20. Compare both endpoints after rounding to Q2.30.
+    let duties = result.duties;
+    assert_eq!(duties.a, interval(214_748_364, 751_619_277));
+    assert_eq!(duties.b, interval(268_435_456, 966_367_642));
+    assert_eq!(duties.c, interval(161_061_273, 858_993_460));
+    assert_eq!(modulate(8).unwrap().duties.b.upper(), Q30::ONE);
+    assert!(matches!(modulate(7), Err(FocError::ModulationRange)));
+
+    let full_alpha = AlphaBeta {
+        alpha: FULL,
+        beta: I::ZERO,
+    };
+    let phases = inverse_clarke(full_alpha).unwrap();
+    assert_eq!(phases.a, FULL);
+    assert_eq!(phases.b, interval(-(1 << 30), 1 << 30));
+    assert_eq!(phases.c, phases.b);
+    // The sum used for common mode exceeds the grid before it is halved.
+    assert!(matches!(
+        space_vector_modulate(full_alpha, Q30::ONE),
+        Err(FocError::Range)
+    ));
+    assert!(matches!(
+        space_vector_modulate(full_alpha, Q30::ZERO),
+        Err(FocError::ModulationRange)
+    ));
+}
