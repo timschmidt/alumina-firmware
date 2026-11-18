@@ -969,6 +969,15 @@ actor, no HAL writes or reads back a compare image, no shutdown transaction is
 invoked, and no WCET or physical timing is claimed. See the
 [portable complete-axis evidence](docs/evidence/M8-PORTABLE-SERVO-FOC-AXIS.md).
 
+To inspect how calibrated ADC counts bound normalized motor current on the
+host, run the example from the repository root. It maps counts on both sides
+of zero using a gain interval and additive error in Q30 units and checks the
+out-of-range result.
+
+```sh
+cargo run --locked -p alumina-foc --example current_calibration
+```
+
 ## Developer checks
 
 The repository pins Rust 1.88. Run the portable checks from its root:

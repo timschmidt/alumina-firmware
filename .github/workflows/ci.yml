@@ -61,6 +61,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Portable tests
         run: cargo test --locked
+      - name: Run current calibration example
+        run: cargo run --locked -p alumina-foc --example current_calibration
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Board registry
