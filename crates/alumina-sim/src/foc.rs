@@ -200,18 +200,19 @@ impl FirstOrderDqPlant {
         self.updates
     }
 
-    /// Applies one bounded normalized voltage vector.
+    /// Applies one bounded normalized voltage vector. The state is unchanged on error.
     ///
     /// # Errors
     ///
     /// Returns [`DqPlantError::VectorRange`] when `voltage` exceeds the unit
-    /// circle and propagates any fixed-point arithmetic rejection.
+    /// circle, or [`DqPlantError::TraceLength`] when the update counter is full.
+    /// Propagates any fixed-point arithmetic rejection.
     pub fn update(&mut self, voltage: DqPoint) -> Result<DqPoint, DqPlantError> {
         if !within_unit_circle(voltage) {
             return Err(DqPlantError::VectorRange);
         }
         let retained = Q30::ONE.checked_sub(self.response_per_update)?;
-        self.current = DqPoint {
+        let current = DqPoint {
             d: convex_update(
                 self.current.d,
                 voltage.d,
@@ -225,11 +226,12 @@ impl FirstOrderDqPlant {
                 self.response_per_update,
             )?,
         };
-        self.updates = self
-            .updates
-            .checked_add(1)
-            .ok_or(DqPlantError::TraceLength)?;
-        Ok(self.current)
+        let Some(updates) = self.updates.checked_add(1) else {
+            return Err(DqPlantError::TraceLength);
+        };
+        self.current = current;
+        self.updates = updates;
+        Ok(current)
     }
 }
 
@@ -721,6 +723,34 @@ mod tests {
         );
         assert_eq!(plant.current(), DqPoint::default());
         assert_eq!(plant.updates(), 0);
+
+        plant.updates = u64::MAX - 1;
+        for attempt in 0..3 {
+            let voltage = DqPoint {
+                d: if attempt == 1 { Q30::ZERO } else { Q30::ONE },
+                q: Q30::ZERO,
+            };
+            let outcome_matches = match plant.update(voltage) {
+                Ok(DqPoint {
+                    d: Q30::HALF,
+                    q: Q30::ZERO,
+                }) => attempt == 0,
+                Err(DqPlantError::TraceLength) => attempt != 0,
+                _ => false,
+            };
+            assert!(outcome_matches);
+            assert!(matches!(
+                plant,
+                FirstOrderDqPlant {
+                    current: DqPoint {
+                        d: Q30::HALF,
+                        q: Q30::ZERO
+                    },
+                    updates: u64::MAX,
+                    response_per_update: Q30::HALF,
+                }
+            ));
+        }
     }
 
     #[test]
