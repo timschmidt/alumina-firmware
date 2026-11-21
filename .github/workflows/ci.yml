@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: timschmidt/csgrs
-          ref: a1adc106811c8b4f9bb892fabb80f73c870d85d2
+          ref: 20330cd30a7b0ce27713d0404d4bbc6b08473d91
           path: csgrs
           persist-credentials: false
       - name: Permissive dependency and source policy
@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: timschmidt/csgrs
-          ref: a1adc106811c8b4f9bb892fabb80f73c870d85d2
+          ref: 20330cd30a7b0ce27713d0404d4bbc6b08473d91
           path: csgrs
           persist-credentials: false
       - name: Install Rust 1.88.0
